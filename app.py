@@ -36,7 +36,7 @@ game_data_cache = None
 streaks_cache = None
 results_cache = None
 last_update_time = 0
-CACHE_TTL = 5000  # 5초
+CACHE_TTL = 1000  # 1초 (10초 게임에 맞춰 빠른 업데이트)
 
 # Socket.IO 관련
 socketio_client = None
@@ -1237,8 +1237,8 @@ RESULTS_HTML = '''
                     return;
                 }
                 
-                // 1초마다 서버에서 데이터 가져오기 (요청 빈도 감소)
-                if (now - timerData.lastFetch > 1000) {
+                // 0.5초마다 서버에서 데이터 가져오기 (10초 게임에 맞춰 빠른 업데이트)
+                if (now - timerData.lastFetch > 500) {
                     try {
                     // 타임아웃 설정 (15초로 증가)
                     const controller = new AbortController();
@@ -1274,11 +1274,11 @@ RESULTS_HTML = '''
                             
                             if (roundChanged || roundEnded || roundStarted) {
                                 console.log('라운드 변경 감지:', { roundChanged, roundEnded, roundStarted, prevRound, newRound: timerData.round, prevElapsed, newElapsed: data.elapsed });
-                                // 약간의 지연 후 결과 로드 (서버에서 결과가 업데이트될 시간 확보)
+                                // 즉시 결과 로드 (10초 게임에 맞춰 빠른 반응)
                                 setTimeout(() => {
                                     loadResults();
                                     lastResultsUpdate = Date.now();
-                                }, 500);
+                                }, 200);
                             }
                             // updateBettingInfo는 별도로 실행하므로 여기서 제거
                         }
@@ -1303,18 +1303,18 @@ RESULTS_HTML = '''
                     timeElement.classList.add('warning');
                 }
                 
-                // 타이머가 거의 0이 되면 경기 결과 새로고침 (라운드 종료 직전)
-                if (remaining <= 0.5 && now - lastResultsUpdate > 500) {
+                // 타이머가 거의 0이 되면 경기 결과 새로고침 (라운드 종료 직전, 10초 게임에 맞춰 빠른 반응)
+                if (remaining <= 0.5 && now - lastResultsUpdate > 200) {
                     loadResults();
                     lastResultsUpdate = now;
                 }
                 
-                // 타이머가 0이 되면 즉시 결과 새로고침
-                if (remaining <= 0 && now - lastResultsUpdate > 200) {
+                // 타이머가 0이 되면 즉시 결과 새로고침 (10초 게임에 맞춰 빠른 반응)
+                if (remaining <= 0 && now - lastResultsUpdate > 100) {
                     setTimeout(() => {
                         loadResults();
                         lastResultsUpdate = Date.now();
-                    }, 300);
+                    }, 100);
                 }
             } catch (error) {
                 console.error('타이머 업데이트 오류:', error);
@@ -1340,21 +1340,21 @@ RESULTS_HTML = '''
         
         initialLoad();
         
-        // 5초마다 결과 새로고침 (요청 빈도 더 감소)
+        // 1초마다 결과 새로고침 (10초 게임에 맞춰 빠른 업데이트)
         setInterval(() => {
-            if (Date.now() - lastResultsUpdate > 5000) {
+            if (Date.now() - lastResultsUpdate > 1000) {
                 loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
                 lastResultsUpdate = Date.now();
             }
-        }, 5000);
+        }, 1000);
         
-        // 5초마다 베팅 정보 업데이트 (요청 빈도 더 감소)
+        // 1초마다 베팅 정보 업데이트 (10초 게임에 맞춰 빠른 업데이트)
         setInterval(() => {
-            if (Date.now() - lastBettingUpdate > 5000) {
+            if (Date.now() - lastBettingUpdate > 1000) {
                 updateBettingInfo().catch(e => console.warn('베팅 정보 새로고침 실패:', e));
                 lastBettingUpdate = Date.now();
             }
-        }, 5000);
+        }, 1000);
         
         // 0.2초마다 타이머 업데이트 (UI만 업데이트, 서버 요청은 1초마다)
         setInterval(updateTimer, 200);
