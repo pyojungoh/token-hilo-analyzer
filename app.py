@@ -211,15 +211,18 @@ def load_results_data():
                             else:
                                 json_data = json_str
                             
+                            # 실제 데이터 구조에 맞게 파싱 (boolean 값)
                             results.append({
-                                'gameID': game_id,
+                                'gameID': str(game_id),  # 문자열로 변환
                                 'result': result,
-                                'hi': json_data.get('hi', ''),
-                                'lo': json_data.get('lo', ''),
-                                'red': json_data.get('red', ''),
-                                'black': json_data.get('black', ''),
-                                'jqka': json_data.get('jqka', ''),
-                                'joker': json_data.get('joker', '')
+                                'hi': json_data.get('hi', False),
+                                'lo': json_data.get('lo', False),
+                                'red': json_data.get('red', False),
+                                'black': json_data.get('black', False),
+                                'jqka': json_data.get('jqka', False),
+                                'joker': json_data.get('joker', False),
+                                'hash': game.get('hash', ''),
+                                'salt': game.get('salt', '')
                             })
                         except Exception as e:
                             # 개별 게임 파싱 오류는 무시
@@ -700,9 +703,9 @@ RESULTS_HTML = '''
             try {
                 isLoadingResults = true;
                 
-                // 타임아웃 설정 (10초)
+                // 타임아웃 설정 (30초로 증가)
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 10000);
+                const timeoutId = setTimeout(() => controller.abort(), 30000);
                 
                 const response = await fetch('/api/results?t=' + Date.now(), {
                     signal: controller.signal,
@@ -922,9 +925,9 @@ RESULTS_HTML = '''
             try {
                 isUpdatingBetting = true;
                 
-                // 타임아웃 설정 (5초)
+                // 타임아웃 설정 (15초로 증가)
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 5000);
+                const timeoutId = setTimeout(() => controller.abort(), 15000);
                 
                 const response = await fetch('/api/current-status?t=' + Date.now(), {
                     signal: controller.signal,
@@ -1019,8 +1022,9 @@ RESULTS_HTML = '''
                     console.error('betting-info 요소를 찾을 수 없음');
                 }
             } catch (error) {
+                // AbortError는 조용히 처리 (타임아웃은 정상적인 상황)
                 if (error.name === 'AbortError') {
-                    console.warn('베팅 정보 요청 시간 초과');
+                    console.warn('베팅 정보 요청 타임아웃 (정상)');
                 } else {
                     console.error('베팅 정보 업데이트 오류:', error);
                 }
