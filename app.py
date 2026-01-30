@@ -58,8 +58,14 @@ def init_socketio():
         print("[❌ 경고] pip install python-socketio로 설치하세요")
     print("=" * 50)
 
-# 모듈 로드 시 Socket.IO 초기화
-init_socketio()
+# 모듈 로드 시 Socket.IO 초기화 (Gunicorn 워커 프로세스에서 실행됨)
+# 주의: 모듈 레벨에서 실행되므로 각 워커 프로세스마다 실행됨
+try:
+    init_socketio()
+except Exception as e:
+    print(f"[❌ 오류] Socket.IO 초기화 실패: {e}")
+    import traceback
+    traceback.print_exc()
 
 # 캐시
 game_data_cache = None
