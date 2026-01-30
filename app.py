@@ -149,48 +149,71 @@ def load_game_data():
     }
 
 def load_results_data():
-    """경기 결과 데이터 로드 (result.json)"""
-    try:
-        url = f"{BASE_URL}/result.json?t={int(time.time() * 1000)}"
-        response = fetch_with_retry(url, silent=True)
-        
-        if not response:
-            return []
-        
-        data = response.json()
-        
-        # 결과 파싱
-        results = []
-        for game in data:
-            try:
-                game_id = game.get('gameID', '')
-                result = game.get('result', '')
-                json_str = game.get('json', '{}')
-                
-                # JSON 파싱
-                if isinstance(json_str, str):
-                    json_data = json.loads(json_str)
-                else:
-                    json_data = json_str
-                
-                results.append({
-                    'gameID': game_id,
-                    'result': result,
-                    'hi': json_data.get('hi', ''),
-                    'lo': json_data.get('lo', ''),
-                    'red': json_data.get('red', ''),
-                    'black': json_data.get('black', ''),
-                    'jqka': json_data.get('jqka', ''),
-                    'joker': json_data.get('joker', '')
-                })
-            except Exception:
-                # 개별 게임 파싱 오류는 무시
-                continue
-        
-        return results
-    except Exception:
-        # 전체 오류 시 빈 배열 반환
-        return []
+    """경기 결과 데이터 로드 (result.json) - 여러 경로 시도"""
+    # 가능한 URL 경로들 (우선순위 순)
+    possible_paths = [
+        f"{BASE_URL}/frame/hilo/result.json",
+        f"{BASE_URL}/result.json",
+        f"{BASE_URL}/hilo/result.json",
+        f"{BASE_URL}/frame/result.json",
+    ]
+    
+    for url_path in possible_paths:
+        try:
+            url = f"{url_path}?t={int(time.time() * 1000)}"
+            print(f"[결과 데이터 요청 시도] {url}")
+            response = fetch_with_retry(url, silent=True)
+            
+            if response:
+                print(f"[✅ 결과 데이터 성공] {url}")
+                try:
+                    data = response.json()
+                    print(f"[결과 데이터 파싱] 받은 데이터 개수: {len(data) if isinstance(data, list) else '리스트 아님'}")
+                    
+                    # 결과 파싱
+                    results = []
+                    for game in data:
+                        try:
+                            game_id = game.get('gameID', '')
+                            result = game.get('result', '')
+                            json_str = game.get('json', '{}')
+                            
+                            # JSON 파싱
+                            if isinstance(json_str, str):
+                                json_data = json.loads(json_str)
+                            else:
+                                json_data = json_str
+                            
+                            results.append({
+                                'gameID': game_id,
+                                'result': result,
+                                'hi': json_data.get('hi', ''),
+                                'lo': json_data.get('lo', ''),
+                                'red': json_data.get('red', ''),
+                                'black': json_data.get('black', ''),
+                                'jqka': json_data.get('jqka', ''),
+                                'joker': json_data.get('joker', '')
+                            })
+                        except Exception as e:
+                            # 개별 게임 파싱 오류는 무시
+                            print(f"[결과 파싱 오류] {str(e)[:100]}")
+                            continue
+                    
+                    print(f"[결과 데이터 최종] {len(results)}개 게임 결과 파싱 완료")
+                    return results
+                except (ValueError, json.JSONDecodeError) as e:
+                    print(f"[결과 JSON 파싱 오류] {str(e)[:200]}")
+                    continue  # 다음 경로 시도
+            else:
+                print(f"[❌ 결과 데이터 실패] {url} - 다음 경로 시도")
+                continue  # 다음 경로 시도
+        except Exception as e:
+            print(f"[결과 데이터 오류] {url_path}: {str(e)[:100]}")
+            continue  # 다음 경로 시도
+    
+    # 모든 경로 실패
+    print(f"[경고] 모든 경로에서 결과 데이터를 가져올 수 없음")
+    return []
 
 def parse_csv_data(csv_text):
     """CSV 데이터 파싱 (bet_result_log.csv)"""
