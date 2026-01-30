@@ -1334,9 +1334,9 @@ RESULTS_HTML = '''
             try {
                 isLoadingResults = true;
                 
-                // 타임아웃 15초 (느린 연결 대비)
+                // 10초 경기 룰: 8초 안에 응답 없으면 재시도 (한 라운드 안에 결과 봐야 함)
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 15000);
+                const timeoutId = setTimeout(() => controller.abort(), 8000);
                 
                 const response = await fetch('/api/results?t=' + Date.now(), {
                     signal: controller.signal,
@@ -1373,17 +1373,6 @@ RESULTS_HTML = '''
                     if (statusElement) statusElement.textContent = '화면 오류 - 새로고침 해 주세요';
                     return;
                 }
-                
-                // 서버에서 받은 데이터에 colorMatch가 있는지 확인 (디버깅)
-                console.log('[클라이언트] 서버에서 받은 데이터:', {
-                    total: newResults.length,
-                    firstFew: newResults.slice(0, 3).map(r => ({
-                        gameID: r.gameID,
-                        hasColorMatch: 'colorMatch' in r,
-                        colorMatch: r.colorMatch,
-                        colorMatchType: typeof r.colorMatch
-                    }))
-                });
                 
                 // 새로운 결과를 기존 결과와 병합 (중복 제거, 최신 150개 유지 - 그래프 쭉 표시용)
                 if (newResults.length > 0) {
@@ -1618,13 +1607,15 @@ RESULTS_HTML = '''
                 const statusEl = document.getElementById('status');
                 // AbortError는 조용히 처리 (타임아웃은 정상적인 상황)
                 if (error.name === 'AbortError') {
-                    if (statusEl) statusEl.textContent = allResults.length === 0 ? '연결 시간 초과(15초) - 자동 재시도 중...' : '갱신 대기 중...';
+                    if (statusEl) statusEl.textContent = allResults.length === 0 ? '8초 내 응답 없음 - 곧 다시 시도...' : '갱신 대기 중...';
+                    if (allResults.length === 0) setTimeout(() => loadResults(), 1500);
                     return;
                 }
                 
                 // Failed to fetch는 네트워크 오류이므로 조용히 처리 (기존 결과 유지)
                 if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
-                    if (statusEl && allResults.length === 0) statusEl.textContent = '연결 실패 - 다시 시도 중...';
+                    if (statusEl && allResults.length === 0) statusEl.textContent = '연결 실패 - 1.5초 후 재시도...';
+                    if (allResults.length === 0) setTimeout(() => loadResults(), 1500);
                     return;
                 }
                 
@@ -1653,9 +1644,9 @@ RESULTS_HTML = '''
                 // 0.5초마다 서버에서 데이터 가져오기 (10초 게임에 맞춰 빠른 업데이트)
                 if (now - timerData.lastFetch > 500) {
                     try {
-                    // 타임아웃 15초 (느린 연결 대비)
+                    // 10초 경기 룰: 8초 타임아웃
                     const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 15000);
+                    const timeoutId = setTimeout(() => controller.abort(), 8000);
                     
                     const response = await fetch('/api/current-status?t=' + now, {
                         signal: controller.signal,
@@ -1751,13 +1742,14 @@ RESULTS_HTML = '''
         
         initialLoad();
         
-        // 1초마다 결과 새로고침 (10초 게임에 맞춰 빠른 업데이트)
+        // 데이터 없을 때 0.5초마다, 있으면 1초마다 (10초 경기 안에 결과 보기)
         setInterval(() => {
-            if (Date.now() - lastResultsUpdate > 1000) {
+            const interval = allResults.length === 0 ? 500 : 1000;
+            if (Date.now() - lastResultsUpdate > interval) {
                 loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
                 lastResultsUpdate = Date.now();
             }
-        }, 1000);
+        }, 500);
         
         // 0.2초마다 타이머 업데이트 (UI만 업데이트, 서버 요청은 1초마다)
         setInterval(updateTimer, 200);
