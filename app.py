@@ -1220,6 +1220,27 @@ def index():
         'version': '1.0.0'
     }), 200
 
+@app.route('/api/test-betting', methods=['GET'])
+def test_betting():
+    """베팅 데이터 테스트 엔드포인트 (디버깅용)"""
+    try:
+        data = load_game_data()
+        return jsonify({
+            'success': True,
+            'data': data,
+            'red_count': len(data.get('currentBets', {}).get('red', [])),
+            'black_count': len(data.get('currentBets', {}).get('black', [])),
+            'red_sample': data.get('currentBets', {}).get('red', [])[:3] if len(data.get('currentBets', {}).get('red', [])) > 0 else [],
+            'black_sample': data.get('currentBets', {}).get('black', [])[:3] if len(data.get('currentBets', {}).get('black', [])) > 0 else []
+        }), 200
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
 @app.route('/favicon.ico', methods=['GET'])
 def favicon():
     """favicon 404 에러 방지"""
