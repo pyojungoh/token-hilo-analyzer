@@ -1253,9 +1253,9 @@ RESULTS_HTML = '''
         <div class="bet-calc">
             <h4>가상 배팅 계산기</h4>
             <div class="bet-inputs">
-                <label>자본금 <input type="number" id="bet-capital" min="0" value="100000" placeholder="원"></label>
+                <label>자본금 <input type="number" id="bet-capital" min="0" value="1000000" placeholder="원"></label>
                 <label>배팅금액 <input type="number" id="bet-base" min="1" value="1000" placeholder="원"></label>
-                <label>배당 <input type="number" id="bet-odds" min="1" step="0.01" value="1.95" placeholder="배"></label>
+                <label>배당 <input type="number" id="bet-odds" min="1" step="0.01" value="1.97" placeholder="배"></label>
             </div>
             <div class="bet-row">
                 <div id="bet-status" class="bet-status">상태: 정지 | 현재 배팅: - | 경과: 00:00</div>
@@ -1397,7 +1397,7 @@ RESULTS_HTML = '''
         let lastCurrentBetAmount = 0;  // 현재 배팅 금액 (표시용)
         let betElapsedSeconds = 0;
         let betTimerIntervalId = null;
-        let betCalcPaused = false;  // 리셋 후 계산 일시정지, 실행 시 재개
+        let betCalcRunning = false;  // 실행 눌렀을 때만 true, 정지/리셋 시 false
         
         async function loadResults() {
             // 이미 로딩 중이면 스킵
@@ -1748,12 +1748,12 @@ RESULTS_HTML = '''
                             '<div class="hit-rate">적중률: ' + hit + '/' + total + ' (' + hitPct + '%)</div>';
                     }
                     
-                    // 가상 배팅 계산: 승=동일금액, 패=마틴(2배). 리셋 후에는 갱신 안 함(실행 시 재개)
+                    // 가상 배팅 계산: 실행 눌렀을 때만 갱신. 승=배당(설정값)만큼 수익, 패=걸은 금액 전액 손실. 마틴 2배.
                     const betResultDiv = document.getElementById('bet-result');
-                    if (betResultDiv && predictionHistory.length > 0 && !betCalcPaused) {
-                        const capitalInput = parseFloat(document.getElementById('bet-capital')?.value) || 100000;
+                    if (betResultDiv && predictionHistory.length > 0 && betCalcRunning) {
+                        const capitalInput = parseFloat(document.getElementById('bet-capital')?.value) || 1000000;
                         const baseBetInput = parseFloat(document.getElementById('bet-base')?.value) || 1000;
-                        const oddsInput = parseFloat(document.getElementById('bet-odds')?.value) || 1.95;
+                        const oddsInput = parseFloat(document.getElementById('bet-odds')?.value) || 1.97;
                         let cap = capitalInput;
                         let currentBet = baseBetInput;
                         let totalRolling = 0;
@@ -1761,7 +1761,7 @@ RESULTS_HTML = '''
                         let bust = false;
                         for (let i = 0; i < predictionHistory.length; i++) {
                             const isWin = predictionHistory[i].predicted === predictionHistory[i].actual;
-                            const bet = Math.min(currentBet, cap);
+                            const bet = Math.min(currentBet, Math.floor(cap));
                             if (cap < bet || cap <= 0) { bust = true; break; }
                             totalRolling += bet;
                             if (isWin) {
@@ -1770,7 +1770,7 @@ RESULTS_HTML = '''
                                 wins++;
                             } else {
                                 cap -= bet;
-                                currentBet = Math.min(currentBet * 2, cap);
+                                currentBet = Math.min(currentBet * 2, Math.floor(cap));
                                 losses++;
                             }
                             if (cap <= 0) { bust = true; break; }
@@ -1778,9 +1778,9 @@ RESULTS_HTML = '''
                         const profit = cap - capitalInput;
                         const profitClass = profit >= 0 ? 'plus' : 'minus';
                         lastCurrentBetAmount = bust ? 0 : currentBet;
-                        let msg = '총 롤링: ' + totalRolling.toLocaleString() + '원 | 현재 자본금: ' + Math.max(0, cap).toLocaleString() + '원 | 수익: <span class="profit ' + profitClass + '">' + (profit >= 0 ? '+' : '') + profit.toLocaleString() + '원</span> | 승 ' + wins + ' / 패 ' + losses;
+                        let msg = '총 롤링: ' + totalRolling.toLocaleString() + '원 | 현재 자본금: ' + Math.max(0, Math.floor(cap)).toLocaleString() + '원 | 수익: <span class="profit ' + profitClass + '">' + (profit >= 0 ? '+' : '') + Math.floor(profit).toLocaleString() + '원</span> | 승 ' + wins + ' / 패 ' + losses;
                         if (bust) msg += ' <span class="bust">(자본 소진)</span>';
-                        else msg += ' | 배당 반영 수익: 승 시 +' + (baseBetInput * (oddsInput - 1)).toFixed(0) + '원/회';
+                        else msg += ' | 승 시 배당 ' + oddsInput + '배 수익 +' + Math.floor(baseBetInput * (oddsInput - 1)).toLocaleString() + '원/회';
                         betResultDiv.innerHTML = msg;
                         lastPredictionHistoryForBet = predictionHistory.slice();
                         updateBetStatusDisplay();
@@ -1836,9 +1836,9 @@ RESULTS_HTML = '''
                 updateBetStatusDisplay();
                 return;
             }
-            const capitalInput = parseFloat(document.getElementById('bet-capital')?.value) || 100000;
+            const capitalInput = parseFloat(document.getElementById('bet-capital')?.value) || 1000000;
             const baseBetInput = parseFloat(document.getElementById('bet-base')?.value) || 1000;
-            const oddsInput = parseFloat(document.getElementById('bet-odds')?.value) || 1.95;
+            const oddsInput = parseFloat(document.getElementById('bet-odds')?.value) || 1.97;
             let cap = capitalInput;
             let currentBet = baseBetInput;
             let totalRolling = 0;
@@ -1846,7 +1846,7 @@ RESULTS_HTML = '''
             let bust = false;
             for (let i = 0; i < lastPredictionHistoryForBet.length; i++) {
                 const isWin = lastPredictionHistoryForBet[i].predicted === lastPredictionHistoryForBet[i].actual;
-                const bet = Math.min(currentBet, cap);
+                const bet = Math.min(currentBet, Math.floor(cap));
                 if (cap < bet || cap <= 0) { bust = true; break; }
                 totalRolling += bet;
                 if (isWin) {
@@ -1855,7 +1855,7 @@ RESULTS_HTML = '''
                     wins++;
                 } else {
                     cap -= bet;
-                    currentBet = Math.min(currentBet * 2, cap);
+                    currentBet = Math.min(currentBet * 2, Math.floor(cap));
                     losses++;
                 }
                 if (cap <= 0) { bust = true; break; }
@@ -1863,9 +1863,9 @@ RESULTS_HTML = '''
             const profit = cap - capitalInput;
             const profitClass = profit >= 0 ? 'plus' : 'minus';
             lastCurrentBetAmount = bust ? 0 : currentBet;
-            let msg = '총 롤링: ' + totalRolling.toLocaleString() + '원 | 현재 자본금: ' + Math.max(0, cap).toLocaleString() + '원 | 수익: <span class="profit ' + profitClass + '">' + (profit >= 0 ? '+' : '') + profit.toLocaleString() + '원</span> | 승 ' + wins + ' / 패 ' + losses;
+            let msg = '총 롤링: ' + totalRolling.toLocaleString() + '원 | 현재 자본금: ' + Math.max(0, Math.floor(cap)).toLocaleString() + '원 | 수익: <span class="profit ' + profitClass + '">' + (profit >= 0 ? '+' : '') + Math.floor(profit).toLocaleString() + '원</span> | 승 ' + wins + ' / 패 ' + losses;
             if (bust) msg += ' <span class="bust">(자본 소진)</span>';
-            else msg += ' | 배당 반영 수익: 승 시 +' + (baseBetInput * (oddsInput - 1)).toFixed(0) + '원/회';
+            else msg += ' | 승 시 배당 ' + oddsInput + '배 수익 +' + Math.floor(baseBetInput * (oddsInput - 1)).toLocaleString() + '원/회';
             betResultDiv.innerHTML = msg;
             updateBetStatusDisplay();
         }
@@ -1884,7 +1884,7 @@ RESULTS_HTML = '''
             el.textContent = '상태: ' + stateStr + ' | 현재 배팅: ' + betStr + ' | 경과: ' + formatMmSs(betElapsedSeconds);
         }
         document.getElementById('bet-run')?.addEventListener('click', function() {
-            betCalcPaused = false;
+            betCalcRunning = true;
             if (betTimerIntervalId) return;
             betTimerIntervalId = setInterval(function() {
                 betElapsedSeconds++;
@@ -1893,13 +1893,14 @@ RESULTS_HTML = '''
             updateBetStatusDisplay();
         });
         document.getElementById('bet-stop')?.addEventListener('click', function() {
+            betCalcRunning = false;
             if (betTimerIntervalId) { clearInterval(betTimerIntervalId); betTimerIntervalId = null; }
             updateBetStatusDisplay();
         });
         document.getElementById('bet-reset-btn')?.addEventListener('click', function() {
+            betCalcRunning = false;
             if (betTimerIntervalId) { clearInterval(betTimerIntervalId); betTimerIntervalId = null; }
             betElapsedSeconds = 0;
-            betCalcPaused = true;
             lastPredictionHistoryForBet = [];
             const baseInput = parseFloat(document.getElementById('bet-base')?.value) || 1000;
             lastCurrentBetAmount = baseInput;
