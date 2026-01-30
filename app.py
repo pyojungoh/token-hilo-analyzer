@@ -256,16 +256,18 @@ def start_socketio_client():
                 socketio_client.on('result', on_socketio_result)
                 
                 # 연결 시도 (SSL 검증 비활성화)
-                import ssl
-                ssl_context = ssl.create_default_context()
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_NONE
+                # python-socketio 5.x에서는 기본적으로 SSL 검증을 시도하지만,
+                # 환경 변수나 다른 방법으로 비활성화할 수 있습니다
+                print(f"🔵 [연결 정보] URL: {SOCKETIO_URL}")
+                
+                # SSL 검증 경고 무시를 위한 환경 변수 설정
+                import os
+                os.environ['PYTHONHTTPSVERIFY'] = '0'
                 
                 socketio_client.connect(
                     SOCKETIO_URL, 
                     wait_timeout=10,
-                    transports=['websocket', 'polling'],  # WebSocket 우선, 실패시 polling
-                    ssl_context=ssl_context  # SSL 검증 비활성화
+                    transports=['websocket', 'polling']  # WebSocket 우선, 실패시 polling
                 )
                 
                 # 연결 유지
