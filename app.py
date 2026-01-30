@@ -471,12 +471,13 @@ RESULTS_HTML = '''
             return cardWrapper;
         }
         
-        let lastTimerUpdate = Date.now();
-        let localTimer = 0;
-        
         async function loadResults() {
             try {
                 const response = await fetch('/api/results');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
                 const data = await response.json();
                 
                 if (data.error) {
@@ -485,28 +486,51 @@ RESULTS_HTML = '''
                 }
                 
                 const results = data.results || [];
-                document.getElementById('status').textContent = `총 ${results.length}개 경기 결과`;
+                const statusElement = document.getElementById('status');
+                const cardsDiv = document.getElementById('cards');
+                
+                if (!statusElement || !cardsDiv) {
+                    console.error('DOM 요소를 찾을 수 없습니다');
+                    return;
+                }
+                
+                statusElement.textContent = `총 ${results.length}개 경기 결과`;
                 
                 // 최신 결과가 왼쪽에 오도록 (원본 데이터가 최신이 앞에 있음)
                 // 최신 15개만 표시 (반응형으로 모두 보이도록)
                 const displayResults = results.slice(0, 15);
                 
-                const cardsDiv = document.getElementById('cards');
                 cardsDiv.innerHTML = '';
                 
+                if (displayResults.length === 0) {
+                    statusElement.textContent = '경기 결과가 없습니다';
+                    return;
+                }
+                
                 displayResults.forEach((result, index) => {
-                    const card = createCard(result, index);
-                    cardsDiv.appendChild(card);
+                    try {
+                        const card = createCard(result, index);
+                        cardsDiv.appendChild(card);
+                    } catch (error) {
+                        console.error('카드 생성 오류:', error, result);
+                    }
                 });
                 
                 // 헤더 정보 업데이트
                 if (displayResults.length > 0) {
                     const latest = displayResults[0];
                     const gameID = latest.gameID || '';
-                    document.getElementById('prev-round').textContent = `이전회차: ${gameID}`;
+                    const prevRoundElement = document.getElementById('prev-round');
+                    if (prevRoundElement) {
+                        prevRoundElement.textContent = `이전회차: ${gameID}`;
+                    }
                 }
             } catch (error) {
-                document.getElementById('status').textContent = '오류: ' + error.message;
+                console.error('loadResults 오류:', error);
+                const statusElement = document.getElementById('status');
+                if (statusElement) {
+                    statusElement.textContent = '오류: ' + error.message;
+                }
             }
         }
         
