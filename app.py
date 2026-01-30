@@ -29,6 +29,7 @@ BASE_URL = os.getenv('BASE_URL', 'http://tgame365.com')
 DATA_PATH = ''  # 데이터 파일 경로 (루트)
 TIMEOUT = int(os.getenv('TIMEOUT', '10'))  # 타임아웃을 10초로 단축
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))  # 재시도 횟수 감소
+WEBSOCKET_URL = os.getenv('WEBSOCKET_URL', '')  # WebSocket URL (환경 변수로 설정)
 
 # 캐시
 game_data_cache = None
@@ -36,6 +37,22 @@ streaks_cache = None
 results_cache = None
 last_update_time = 0
 CACHE_TTL = 5000  # 5초
+
+# WebSocket 관련
+websocket_thread = None
+websocket_connected = False
+current_status_data = {
+    'round': 0,
+    'elapsed': 0,
+    'currentBets': {
+        'red': [],
+        'black': []
+    },
+    'timestamp': datetime.now().isoformat()
+}
+
+# WebSocket 프레임 패턴 (기존 파일과 동일)
+frame_pattern = re.compile(r'^42(\[.*\])$')
 
 def fetch_with_retry(url, max_retries=MAX_RETRIES, silent=False):
     """재시도 로직 포함 fetch (기존 파일과 동일한 방식)"""
@@ -171,8 +188,13 @@ def load_game_data():
             print(f"[오류] {url_path}: {str(e)[:100]}")
             continue  # 다음 경로 시도
     
-    # 모든 경로 실패
-    print(f"[경고] 모든 경로에서 데이터를 가져올 수 없음")
+    # 모든 경로 실패 - WebSocket 데이터 반환 (연결되어 있으면)
+    if websocket_connected:
+        print(f"[정보] WebSocket 데이터 사용")
+        return current_status_data
+    
+    # WebSocket도 없으면 빈 데이터 반환
+    print(f"[경고] 모든 경로에서 데이터를 가져올 수 없음 (WebSocket 연결 필요)")
     return {
         'round': 0,
         'elapsed': 0,
