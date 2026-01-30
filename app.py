@@ -1154,15 +1154,23 @@ RESULTS_HTML = '''
             background: #f44336;
         }
         .graph-stats {
-            margin-top: 8px;
+            margin-top: 12px;
             font-size: clamp(12px, 2vw, 14px);
-            color: #666;
-            display: flex;
-            justify-content: center;
-            gap: 20px;
-            flex-wrap: wrap;
+            color: #333;
+            overflow-x: auto;
         }
-        .graph-stats span { font-weight: bold; }
+        .graph-stats table {
+            border-collapse: collapse;
+            margin: 0 auto;
+            min-width: 260px;
+        }
+        .graph-stats th, .graph-stats td {
+            border: 1px solid #ddd;
+            padding: 8px 12px;
+            text-align: center;
+        }
+        .graph-stats th { background: #f5f5f5; font-weight: bold; }
+        .graph-stats td:first-child { text-align: left; font-weight: bold; }
         .graph-stats .jung-next { color: #4caf50; }
         .graph-stats .kkuk-next { color: #f44336; }
         .status {
@@ -1565,12 +1573,11 @@ RESULTS_HTML = '''
                     });
                 }
                 
-                // 전이 확률: 정 다음 정, 꺽 다음 꺽 (연속된 비-null 쌍만 사용)
-                const statsDiv = document.getElementById('graph-stats');
-                if (statsDiv && graphValues.length >= 2) {
+                // 전이 확률 표: 전체 / 최근 30회 (연속된 비-null 쌍만 사용)
+                function calcTransitions(arr) {
                     let jj = 0, jk = 0, kj = 0, kk = 0;
-                    for (let i = 0; i < graphValues.length - 1; i++) {
-                        const a = graphValues[i], b = graphValues[i + 1];
+                    for (let i = 0; i < arr.length - 1; i++) {
+                        const a = arr[i], b = arr[i + 1];
                         if (a !== true && a !== false || b !== true && b !== false) continue;
                         if (a === true && b === true) jj++;
                         else if (a === true && b === false) jk++;
@@ -1578,9 +1585,21 @@ RESULTS_HTML = '''
                         else kk++;
                     }
                     const jungDenom = jj + jk, kkukDenom = kk + kj;
-                    const pJung = jungDenom > 0 ? (100 * jj / jungDenom).toFixed(1) : '-';
-                    const pKkuk = kkukDenom > 0 ? (100 * kk / kkukDenom).toFixed(1) : '-';
-                    statsDiv.innerHTML = '<span class="jung-next">정→정</span> ' + pJung + '% (' + jj + '/' + jungDenom + ') &nbsp; <span class="kkuk-next">꺽→꺽</span> ' + pKkuk + '% (' + kk + '/' + kkukDenom + ')';
+                    return {
+                        pJung: jungDenom > 0 ? (100 * jj / jungDenom).toFixed(1) : '-',
+                        pKkuk: kkukDenom > 0 ? (100 * kk / kkukDenom).toFixed(1) : '-',
+                        jj, jk, kj, kk, jungDenom, kkukDenom
+                    };
+                }
+                const statsDiv = document.getElementById('graph-stats');
+                if (statsDiv && graphValues.length >= 2) {
+                    const full = calcTransitions(graphValues);
+                    const recent30 = calcTransitions(graphValues.slice(0, 30));
+                    const fmt = (p, n, d) => d > 0 ? p + '% (' + n + '/' + d + ')' : '-';
+                    statsDiv.innerHTML = '<table><thead><tr><th></th><th>전체</th><th>최근 30회</th></tr></thead><tbody>' +
+                        '<tr><td><span class="jung-next">정→정</span></td><td>' + fmt(full.pJung, full.jj, full.jungDenom) + '</td><td>' + fmt(recent30.pJung, recent30.jj, recent30.jungDenom) + '</td></tr>' +
+                        '<tr><td><span class="kkuk-next">꺽→꺽</span></td><td>' + fmt(full.pKkuk, full.kk, full.kkukDenom) + '</td><td>' + fmt(recent30.pKkuk, recent30.kk, recent30.kkukDenom) + '</td></tr>' +
+                        '</tbody></table>';
                 } else if (statsDiv) {
                     statsDiv.innerHTML = '';
                 }
