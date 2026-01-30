@@ -1007,9 +1007,21 @@ RESULTS_HTML = '''
                 // 1초마다 서버에서 데이터 가져오기 (요청 빈도 감소)
                 if (now - timerData.lastFetch > 1000) {
                     try {
-                        const response = await fetch('/api/current-status?t=' + now);
-                        if (!response.ok) throw new Error('Network error');
-                        const data = await response.json();
+                    // 타임아웃 설정 (5초)
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 5000);
+                    
+                    const response = await fetch('/api/current-status?t=' + now, {
+                        signal: controller.signal,
+                        cache: 'no-cache'
+                    });
+                    
+                    clearTimeout(timeoutId);
+                    
+                    if (!response.ok) {
+                        throw new Error('Network error: ' + response.status);
+                    }
+                    const data = await response.json();
                         
                         if (!data.error && data.elapsed !== undefined) {
                             const prevElapsed = timerData.elapsed;
