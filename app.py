@@ -11,6 +11,14 @@ from datetime import datetime
 import time
 import json
 import traceback
+import threading
+import re
+try:
+    import websocket
+    WEBSOCKET_AVAILABLE = True
+except ImportError:
+    WEBSOCKET_AVAILABLE = False
+    print("[경고] websocket-client가 설치되지 않았습니다. pip install websocket-client")
 
 app = Flask(__name__)
 CORS(app)
@@ -1356,5 +1364,12 @@ def favicon():
     return '', 204  # No Content
 
 if __name__ == '__main__':
+    # WebSocket 클라이언트 시작 (환경 변수가 설정된 경우)
+    if WEBSOCKET_URL:
+        start_websocket_client()
+    else:
+        print("[정보] WEBSOCKET_URL이 설정되지 않아 WebSocket 연결을 사용하지 않습니다")
+        print("[정보] Railway 환경 변수에 WEBSOCKET_URL을 설정하세요")
+    
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
