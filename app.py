@@ -1188,6 +1188,12 @@ RESULTS_HTML = '''
         }
         .prediction-box .pred-round { font-weight: bold; color: #81c784; }
         .prediction-box .pred-value { font-weight: bold; font-size: 1.1em; }
+        .prediction-box .pred-color { font-weight: bold; }
+        .prediction-box .pred-color.red { color: #e57373; }
+        .prediction-box .pred-color.black { color: #90a4ae; }
+        .prediction-box .pred-prob { font-size: 0.95em; color: #aaa; }
+        .prediction-box .streak-line { margin-top: 6px; font-size: 0.9em; color: #bbb; }
+        .prediction-box .streak-now { font-weight: bold; }
         .prediction-box .hit-rate { margin-top: 6px; font-size: 0.9em; color: #aaa; }
         .status {
             text-align: center;
@@ -1630,13 +1636,42 @@ RESULTS_HTML = '''
                     }
                     lastPrediction = { value: predict, round: predictedRound };
                     
-                    // 예측·적중률 UI
+                    // 15번째 카드 색상 기준 → 고를 카드: 정이면 같은 색, 꺽이면 반대 색
+                    const card15 = displayResults.length >= 15 ? parseCardValue(displayResults[14].result || '') : null;
+                    const is15Red = card15 ? card15.isRed : false;
+                    const colorToPick = predict === '정' ? (is15Red ? '빨강' : '검정') : (is15Red ? '검정' : '빨강');
+                    const colorClass = colorToPick === '빨강' ? 'red' : 'black';
+                    
+                    // 예측한 픽이 나올 확률 (최근 30회 기준)
+                    let predProb = 0;
+                    if (predict === '정') {
+                        predProb = last === true && recent30.jungDenom > 0 ? (100 * recent30.jj / recent30.jungDenom) : (last === false && recent30.kkukDenom > 0 ? (100 * recent30.kj / recent30.kkukDenom) : 50);
+                    } else {
+                        predProb = last === true && recent30.jungDenom > 0 ? (100 * recent30.jk / recent30.jungDenom) : (last === false && recent30.kkukDenom > 0 ? (100 * recent30.kk / recent30.kkukDenom) : 50);
+                    }
+                    
+                    // 연승/연패: 정=승, 꺽=패. 최근 15개를 "패 패 패 승 패 승 승" 형식, 현재 연승/연패
+                    const streakArr = graphValues.slice(0, 15).map(v => v === true ? '승' : (v === false ? '패' : '·')).filter(x => x !== '·');
+                    const streakStr = streakArr.join(' ') || '-';
+                    let streakCount = 0;
+                    let streakType = '';
+                    for (let i = 0; i < graphValues.length; i++) {
+                        if (graphValues[i] !== true && graphValues[i] !== false) break;
+                        if (i === 0) { streakType = graphValues[i] ? '승' : '패'; streakCount = 1; }
+                        else if ((graphValues[i] ? '승' : '패') === streakType) streakCount++;
+                        else break;
+                    }
+                    const streakNow = streakCount > 0 ? '현재 ' + streakCount + '연' + streakType : '';
+                    
+                    // 예측·적중률·연승연패 UI
                     const predDiv = document.getElementById('prediction-box');
                     if (predDiv) {
                         const hit = predictionHistory.filter(h => h.predicted === h.actual).length;
                         const total = predictionHistory.length;
                         const hitPct = total > 0 ? (100 * hit / total).toFixed(1) : '-';
-                        predDiv.innerHTML = '<span class="pred-round">' + predictedRound + '회 예측</span>: <span class="pred-value">' + predict + '</span>' +
+                        predDiv.innerHTML = '<span class="pred-round">' + predictedRound + '회 예측</span>: <span class="pred-value">' + predict + '</span> <span class="pred-color ' + colorClass + '">(' + colorToPick + ')</span>' +
+                            '<div class="pred-prob">나올 확률: ' + predProb.toFixed(1) + '%</div>' +
+                            '<div class="streak-line">' + streakStr + (streakNow ? ' <span class="streak-now">' + streakNow + '</span>' : '') + '</div>' +
                             '<div class="hit-rate">적중률: ' + hit + '/' + total + ' (' + hitPct + '%)</div>';
                     }
                 } else if (statsDiv) {
