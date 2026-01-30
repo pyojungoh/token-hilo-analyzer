@@ -1138,8 +1138,9 @@ RESULTS_HTML = '''
             min-width: 1.1em;
             text-align: center;
         }
-        .jung-kkuk-graph .graph-row.graph-top .graph-cell { color: #f44336; }
-        .jung-kkuk-graph .graph-row.graph-bottom .graph-cell { color: #4caf50; }
+        /* 위: 정(초록), 아래: 꺽(빨강) */
+        .jung-kkuk-graph .graph-row.graph-top .graph-cell { color: #4caf50; }
+        .jung-kkuk-graph .graph-row.graph-bottom .graph-cell { color: #f44336; }
         .status {
             text-align: center;
             margin-top: 15px;
@@ -1481,24 +1482,25 @@ RESULTS_HTML = '''
                     }
                 });
                 
-                // 정/꺽 그래프 갱신 (위: 꺽, 아래: 정)
+                // 정/꺽 그래프: 위=정, 아래=꺽 / 왼쪽=과거, 오른쪽=최신(우측으로 늘어남)
                 const graphDiv = document.getElementById('jung-kkuk-graph');
                 if (graphDiv) {
                     graphDiv.innerHTML = '';
                     const hasAny = graphValues.some(v => v === true || v === false);
                     if (hasAny) {
+                        const reversed = graphValues.slice().reverse();
                         const topRow = document.createElement('div');
                         topRow.className = 'graph-row graph-top';
                         const bottomRow = document.createElement('div');
                         bottomRow.className = 'graph-row graph-bottom';
-                        graphValues.forEach(v => {
+                        reversed.forEach(v => {
                             const topCell = document.createElement('span');
                             topCell.className = 'graph-cell';
-                            topCell.textContent = (v === false) ? '꺽' : ' ';
+                            topCell.textContent = (v === true) ? '정' : ' ';
                             topRow.appendChild(topCell);
                             const bottomCell = document.createElement('span');
                             bottomCell.className = 'graph-cell';
-                            bottomCell.textContent = (v === true) ? '정' : ' ';
+                            bottomCell.textContent = (v === false) ? '꺽' : ' ';
                             bottomRow.appendChild(bottomCell);
                         });
                         graphDiv.appendChild(topRow);
