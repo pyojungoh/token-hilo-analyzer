@@ -808,6 +808,8 @@ RESULTS_HTML = '''
                         statusElement.textContent = '오류: ' + error.message;
                     }
                 }
+            } finally {
+                isLoadingResults = false;  // 로딩 완료
             }
         }
         
@@ -893,6 +895,8 @@ RESULTS_HTML = '''
                 }
             } catch (error) {
                 console.error('베팅 정보 업데이트 오류:', error);
+            } finally {
+                isUpdatingBetting = false;  // 업데이트 완료
             }
         }
         
@@ -905,8 +909,8 @@ RESULTS_HTML = '''
                     return;
                 }
                 
-                // 0.2초마다 서버에서 데이터 가져오기 (더 빠른 동기화)
-                if (now - timerData.lastFetch > 200) {
+                // 1초마다 서버에서 데이터 가져오기 (요청 빈도 감소)
+                if (now - timerData.lastFetch > 1000) {
                     try {
                         const response = await fetch('/api/current-status?t=' + now);
                         if (!response.ok) throw new Error('Network error');
@@ -936,9 +940,7 @@ RESULTS_HTML = '''
                                     lastResultsUpdate = Date.now();
                                 }, 500);
                             }
-                            
-                            // 베팅 정보도 함께 업데이트
-                            updateBettingInfo();
+                            // updateBettingInfo는 별도로 실행하므로 여기서 제거
                         }
                     } catch (error) {
                         // 에러가 나도 클라이언트 측 계산 계속
@@ -988,22 +990,24 @@ RESULTS_HTML = '''
         updateTimer();
         updateBettingInfo();
         
-        // 1초마다 결과 새로고침 (더 빠른 동기화)
+        // 3초마다 결과 새로고침 (요청 빈도 감소)
         setInterval(() => {
-            if (Date.now() - lastResultsUpdate > 1000) {
+            if (Date.now() - lastResultsUpdate > 3000) {
                 loadResults();
                 lastResultsUpdate = Date.now();
             }
-        }, 1000);
+        }, 3000);
         
-        // 1초마다 베팅 정보 업데이트 (더 빠른 업데이트)
+        // 3초마다 베팅 정보 업데이트 (요청 빈도 감소)
         setInterval(() => {
-            updateBettingInfo();
-            lastBettingUpdate = Date.now();
-        }, 1000);
+            if (Date.now() - lastBettingUpdate > 3000) {
+                updateBettingInfo();
+                lastBettingUpdate = Date.now();
+            }
+        }, 3000);
         
-        // 0.1초마다 타이머 업데이트 (실시간 동기화)
-        setInterval(updateTimer, 100);
+        // 0.2초마다 타이머 업데이트 (UI만 업데이트, 서버 요청은 1초마다)
+        setInterval(updateTimer, 200);
     </script>
 </body>
 </html>
