@@ -1700,7 +1700,7 @@ RESULTS_HTML = '''
                     const flowStr = '최근 15회(정꺽): <span class="pong">퐁당 ' + pongPct + '%</span> / <span class="line">줄 ' + linePct + '%</span>';
                     const last = graphValues[0];  // 직전 정/꺽 (아래 단기vs장기·전이 확률에서 사용)
                     
-                    // 줄 패턴: 덩어리(연속2+ 다수) vs 띄엄띄엄(1-1) vs 두줄한개(2-1)
+                    // 줄 패턴 (최근 30회 기준): 덩어리/띄엄띄엄/두줄한개 지수 수치화 → 예측 픽에 반영
                     function getLinePongRuns(arr) {
                         const pairs = [];
                         for (let i = 0; i < arr.length - 1; i++) {
@@ -1709,37 +1709,42 @@ RESULTS_HTML = '''
                             pairs.push(a === b ? 1 : 0);  // 1=줄, 0=퐁당
                         }
                         const lineRuns = [], pongRuns = [];
-                        let i = 0;
-                        while (i < pairs.length) {
-                            if (pairs[i] === 1) {
+                        let idx = 0;
+                        while (idx < pairs.length) {
+                            if (pairs[idx] === 1) {
                                 let c = 0;
-                                while (i < pairs.length && pairs[i] === 1) { c++; i++; }
+                                while (idx < pairs.length && pairs[idx] === 1) { c++; idx++; }
                                 lineRuns.push(c);
                             } else {
                                 let c = 0;
-                                while (i < pairs.length && pairs[i] === 0) { c++; i++; }
+                                while (idx < pairs.length && pairs[idx] === 0) { c++; idx++; }
                                 pongRuns.push(c);
                             }
                         }
                         return { lineRuns, pongRuns };
                     }
-                    const useForPattern = graphValues.slice(0, 31);
+                    const useForPattern = graphValues.slice(0, 30);  // 최근 30회 = 30개 값 → 29쌍
                     const { lineRuns, pongRuns } = getLinePongRuns(useForPattern);
+                    const totalLineRuns = lineRuns.length;
+                    const totalPongRuns = pongRuns.length;
+                    const lineTwoPlus = totalLineRuns > 0 ? lineRuns.filter(l => l >= 2).length : 0;
+                    const lineOne = totalLineRuns > 0 ? lineRuns.filter(l => l === 1).length : 0;
+                    const lineTwo = totalLineRuns > 0 ? lineRuns.filter(l => l === 2).length : 0;
+                    const pongOne = totalPongRuns > 0 ? pongRuns.filter(p => p === 1).length : 0;
+                    // 지수 0~1: 덩어리(유지 가산), 띄엄띄엄(바뀜 가산), 두줄한개(유지 소폭 가산)
+                    const chunkIdx = totalLineRuns > 0 ? lineTwoPlus / totalLineRuns : 0;
+                    const scatterIdx = (totalLineRuns > 0 && totalPongRuns > 0) ? (lineOne / totalLineRuns) * (pongOne / totalPongRuns) : 0;
+                    const twoOneIdx = (totalLineRuns > 0 && totalPongRuns > 0) ? (lineTwo / totalLineRuns) * (pongOne / totalPongRuns) : 0;
                     let linePatternStr = '';
-                    if (lineRuns.length >= 1 || pongRuns.length >= 1) {
-                        const lineTwoPlus = lineRuns.filter(l => l >= 2).length;
-                        const lineOne = lineRuns.filter(l => l === 1).length;
-                        const pongOne = pongRuns.filter(p => p === 1).length;
-                        const totalLineRuns = lineRuns.length;
-                        const totalPongRuns = pongRuns.length;
-                        if (totalLineRuns >= 2 && lineTwoPlus / totalLineRuns >= 0.5) {
-                            linePatternStr = '줄 패턴: <span class="line">덩어리</span> (연속줄 2개 이상 다수)';
+                    if (totalLineRuns >= 1 || totalPongRuns >= 1) {
+                        if (totalLineRuns >= 2 && chunkIdx >= 0.5) {
+                            linePatternStr = '줄 패턴(30회): <span class="line">덩어리</span> 지수 ' + (chunkIdx * 100).toFixed(0) + '%';
                         } else if (totalLineRuns >= 2 && lineOne / totalLineRuns >= 0.7 && totalPongRuns >= 1 && pongOne / totalPongRuns >= 0.7) {
-                            linePatternStr = '줄 패턴: <span class="pong">띄엄띄엄</span> (한줄-한퐁당 반복)';
-                        } else if (totalLineRuns >= 2 && lineRuns.filter(l => l === 2).length >= Math.ceil(totalLineRuns / 2) && totalPongRuns >= 1 && pongOne / totalPongRuns >= 0.6) {
-                            linePatternStr = '줄 패턴: <span class="line">두줄한개</span> (2줄-1퐁당 식)';
-                        } else if (totalLineRuns >= 1) {
-                            linePatternStr = '줄 패턴: 혼합 (줄 연속 ' + lineRuns.join(',') + (pongRuns.length ? ' / 퐁당 연속 ' + pongRuns.join(',') : '') + ')';
+                            linePatternStr = '줄 패턴(30회): <span class="pong">띄엄띄엄</span> 지수 ' + (scatterIdx * 100).toFixed(0) + '%';
+                        } else if (totalLineRuns >= 2 && lineTwo >= Math.ceil(totalLineRuns / 2) && totalPongRuns >= 1 && pongOne / totalPongRuns >= 0.6) {
+                            linePatternStr = '줄 패턴(30회): <span class="line">두줄한개</span> 지수 ' + (twoOneIdx * 100).toFixed(0) + '%';
+                        } else {
+                            linePatternStr = '줄 패턴(30회): 혼합 덩' + (chunkIdx * 100).toFixed(0) + '% 띄' + (scatterIdx * 100).toFixed(0) + '% 2-1' + (twoOneIdx * 100).toFixed(0) + '%';
                         }
                     }
                     
@@ -1799,12 +1804,17 @@ RESULTS_HTML = '''
                         Pjung = recent30.kj / recent30.kkukDenom;
                         Pkkuk = recent30.kk / recent30.kkukDenom;
                     }
-                    // 퐁당=바뀜, 줄=유지. 흐름 감지 시 가중치 반영: 줄 강함→유지 비중↑, 퐁당 강함→바뀜 비중↑
+                    // 퐁당=바뀜, 줄=유지. 흐름 감지 + 줄 패턴(30회) 지수로 유지/바뀜 가중치 반영
                     const probSame = last === true ? Pjung : Pkkuk;
                     const probChange = last === true ? Pkkuk : Pjung;
                     let lineW = linePct / 100, pongW = pongPct / 100;
                     if (flowState === 'line_strong') { lineW = Math.min(1, lineW + 0.25); pongW = Math.max(0, 1 - lineW); }
                     else if (flowState === 'pong_strong') { pongW = Math.min(1, pongW + 0.25); lineW = Math.max(0, 1 - pongW); }
+                    // 줄 패턴 지수(최근 30회): 덩어리·두줄한개 → 유지 가산, 띄엄띄엄 → 바뀜 가산
+                    lineW += chunkIdx * 0.2 + twoOneIdx * 0.1;
+                    pongW += scatterIdx * 0.2;
+                    const totalW = lineW + pongW;
+                    if (totalW > 0) { lineW = lineW / totalW; pongW = pongW / totalW; }
                     const adjSame = probSame * lineW;
                     const adjChange = probChange * pongW;
                     const sum = adjSame + adjChange || 1;
