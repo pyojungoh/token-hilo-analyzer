@@ -852,11 +852,6 @@ def index():
         'version': '1.0.0'
     }), 200
 
-@app.before_first_request
-def initialize_app():
-    """애플리케이션 초기화 (더 이상 사용되지 않지만 호환성을 위해 유지)"""
-    pass
-
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
