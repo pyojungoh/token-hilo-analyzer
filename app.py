@@ -167,8 +167,117 @@ def save_game_result(game_data):
             pass
         return False
 
+def parse_card_color(result_str):
+    """카드 결과 문자열에서 색상 추출 (빨강/검정)"""
+    if not result_str:
+        return None
+    
+    # 첫 글자가 문양인지 확인
+    first_char = result_str[0].upper()
+    if first_char in ['H', 'D']:  # 하트, 다이아몬드 = 빨강
+        return True
+    elif first_char in ['S', 'C']:  # 스페이드, 클럽 = 검정
+        return False
+    return None
+
+def calculate_and_save_color_matches(results):
+    """정/꺽 결과 계산 및 저장 (서버 측)"""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return
+    
+    if len(results) < 16:
+        return  # 최소 16개 필요
+    
+    conn = get_db_connection()
+    if not conn:
+        return
+    
+    try:
+        cur = conn.cursor()
+        saved_count = 0
+        
+        # 1번째~15번째 카드를 16번째~30번째 카드와 비교
+        for i in range(min(15, len(results) - 15)):
+            current_result = results[i]
+            compare_result = results[i + 15]
+            
+            current_game_id = str(current_result.get('gameID', ''))
+            compare_game_id = str(compare_result.get('gameID', ''))
+            
+            # 조커 카드는 비교 불가
+            if current_result.get('joker') or compare_result.get('joker'):
+                continue
+            
+            if not current_game_id or not compare_game_id:
+                continue
+            
+            # 색상 비교
+            current_color = parse_card_color(current_result.get('result', ''))
+            compare_color = parse_card_color(compare_result.get('result', ''))
+            
+            if current_color is None or compare_color is None:
+                continue
+            
+            match_result = (current_color == compare_color)  # True = 정, False = 꺽
+            
+            # DB에 저장 (중복 체크)
+            try:
+                cur.execute('''
+                    INSERT INTO color_matches (game_id, compare_game_id, match_result)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (game_id, compare_game_id) DO NOTHING
+                ''', (current_game_id, compare_game_id, match_result))
+                saved_count += 1
+            except Exception as e:
+                print(f"[경고] 정/꺽 결과 저장 실패: {str(e)[:100]}")
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        if saved_count > 0:
+            print(f"[✅] 정/꺽 결과 {saved_count}개 저장 완료")
+    except Exception as e:
+        print(f"[❌ 오류] 정/꺽 결과 계산 실패: {str(e)[:200]}")
+        try:
+            conn.close()
+        except:
+            pass
+
+def get_color_match(game_id, compare_game_id):
+    """정/꺽 결과 조회"""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return None
+    
+    conn = get_db_connection()
+    if not conn:
+        return None
+    
+    try:
+        cur = conn.cursor()
+        cur.execute('''
+            SELECT match_result
+            FROM color_matches
+            WHERE game_id = %s AND compare_game_id = %s
+        ''', (str(game_id), str(compare_game_id)))
+        
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        
+        if row:
+            return row[0]  # boolean 값 반환
+        return None
+    except Exception as e:
+        print(f"[❌ 오류] 정/꺽 결과 조회 실패: {str(e)[:200]}")
+        try:
+            conn.close()
+        except:
+            pass
+        return None
+
 def get_recent_results(hours=5):
-    """최근 N시간 데이터 조회"""
+    """최근 N시간 데이터 조회 (정/꺽 결과 포함)"""
     if not DB_AVAILABLE or not DATABASE_URL:
         return []
     
@@ -202,6 +311,23 @@ def get_recent_results(hours=5):
                 'hash': row['hash'] or '',
                 'salt': row['salt'] or ''
             })
+        
+        # 정/꺽 결과 계산 및 저장 (30개 이상일 때만)
+        if len(results) >= 16:
+            calculate_and_save_color_matches(results)
+        
+        # 각 결과에 정/꺽 정보 추가
+        for i in range(min(15, len(results))):
+            if i + 15 < len(results):
+                current_game_id = results[i].get('gameID')
+                compare_game_id = results[i + 15].get('gameID')
+                
+                # 조커 카드는 비교 불가
+                if results[i].get('joker') or results[i + 15].get('joker'):
+                    results[i]['colorMatch'] = None
+                else:
+                    match_result = get_color_match(current_game_id, compare_game_id)
+                    results[i]['colorMatch'] = match_result
         
         cur.close()
         conn.close()
