@@ -58,14 +58,31 @@ def init_socketio():
         print("[❌ 경고] pip install python-socketio로 설치하세요")
     print("=" * 50)
 
-# 모듈 로드 시 Socket.IO 초기화 (Gunicorn 워커 프로세스에서 실행됨)
-# 주의: 모듈 레벨에서 실행되므로 각 워커 프로세스마다 실행됨
-try:
-    init_socketio()
-except Exception as e:
-    print(f"[❌ 오류] Socket.IO 초기화 실패: {e}")
-    import traceback
-    traceback.print_exc()
+# Socket.IO 초기화 플래그
+socketio_initialized = False
+
+# Socket.IO 초기화를 지연 실행 (서버 시작 후 별도 스레드에서 실행)
+def delayed_socketio_init():
+    """Socket.IO 초기화를 지연 실행 (서버 시작을 막지 않음)"""
+    global socketio_initialized
+    if socketio_initialized:
+        return
+    
+    # 서버가 완전히 시작될 때까지 약간 대기
+    import time
+    time.sleep(2)
+    
+    try:
+        init_socketio()
+        socketio_initialized = True
+    except Exception as e:
+        print(f"[❌ 오류] Socket.IO 초기화 실패: {e}")
+        import traceback
+        traceback.print_exc()
+
+# 별도 스레드에서 Socket.IO 초기화 시작 (서버 시작을 막지 않음)
+init_thread = threading.Thread(target=delayed_socketio_init, daemon=True)
+init_thread.start()
 
 # 캐시
 game_data_cache = None
