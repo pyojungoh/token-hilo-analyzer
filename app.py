@@ -1198,6 +1198,23 @@ RESULTS_HTML = '''
         .prediction-box .flow-type .pong { color: #64b5f6; }
         .prediction-box .flow-type .line { color: #ffb74d; }
         .prediction-box .hit-rate { margin-top: 6px; font-size: 0.9em; color: #aaa; }
+        .bet-calc {
+            margin-top: 16px;
+            padding: 12px 14px;
+            background: #2a2a2a;
+            border-radius: 8px;
+            color: #fff;
+            font-size: clamp(12px, 2vw, 14px);
+        }
+        .bet-calc h4 { margin: 0 0 10px 0; font-size: 1em; color: #81c784; }
+        .bet-calc .bet-inputs { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-bottom: 10px; }
+        .bet-calc .bet-inputs label { display: flex; align-items: center; gap: 6px; }
+        .bet-calc .bet-inputs input { width: 90px; padding: 4px 8px; border-radius: 4px; border: 1px solid #555; background: #1a1a1a; color: #fff; }
+        .bet-calc .bet-result { margin-top: 10px; padding-top: 10px; border-top: 1px solid #444; color: #bbb; font-size: 0.9em; }
+        .bet-calc .bet-result .profit { font-weight: bold; }
+        .bet-calc .bet-result .profit.plus { color: #81c784; }
+        .bet-calc .bet-result .profit.minus { color: #e57373; }
+        .bet-calc .bet-result .bust { color: #e57373; font-weight: bold; }
         .status {
             text-align: center;
             margin-top: 15px;
@@ -1224,6 +1241,15 @@ RESULTS_HTML = '''
         <div id="jung-kkuk-graph" class="jung-kkuk-graph"></div>
         <div id="graph-stats" class="graph-stats"></div>
         <div id="prediction-box" class="prediction-box"></div>
+        <div class="bet-calc">
+            <h4>가상 배팅 계산기</h4>
+            <div class="bet-inputs">
+                <label>자본금 <input type="number" id="bet-capital" min="0" value="100000" placeholder="원"></label>
+                <label>배팅금액 <input type="number" id="bet-base" min="1" value="1000" placeholder="원"></label>
+                <label>배당 <input type="number" id="bet-odds" min="1" step="0.01" value="1.95" placeholder="배"></label>
+            </div>
+            <div id="bet-result" class="bet-result">예측 기록이 쌓이면 자동 계산됩니다.</div>
+        </div>
         <div class="status" id="status">로딩 중...</div>
     </div>
     <script>
@@ -1350,6 +1376,7 @@ RESULTS_HTML = '''
         // 예측 기록 (최근 30회): { round, predicted, actual }
         let predictionHistory = [];
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
+        let lastPredictionHistoryForBet = [];  // 가상 배팅 계산용 복사
         
         async function loadResults() {
             // 이미 로딩 중이면 스킵
@@ -1699,6 +1726,42 @@ RESULTS_HTML = '''
                             '<div class="flow-type">' + flowStr + '</div>' +
                             '<div class="hit-rate">적중률: ' + hit + '/' + total + ' (' + hitPct + '%)</div>';
                     }
+                    
+                    // 가상 배팅 계산: 승=동일금액, 패=마틴(2배). 자본금·배당 반영
+                    const betResultDiv = document.getElementById('bet-result');
+                    if (betResultDiv && predictionHistory.length > 0) {
+                        const capitalInput = parseFloat(document.getElementById('bet-capital')?.value) || 100000;
+                        const baseBetInput = parseFloat(document.getElementById('bet-base')?.value) || 1000;
+                        const oddsInput = parseFloat(document.getElementById('bet-odds')?.value) || 1.95;
+                        let cap = capitalInput;
+                        let currentBet = baseBetInput;
+                        let totalRolling = 0;
+                        let wins = 0, losses = 0;
+                        let bust = false;
+                        for (let i = 0; i < predictionHistory.length; i++) {
+                            const isWin = predictionHistory[i].predicted === predictionHistory[i].actual;
+                            const bet = Math.min(currentBet, cap);
+                            if (cap < bet || cap <= 0) { bust = true; break; }
+                            totalRolling += bet;
+                            if (isWin) {
+                                cap += bet * (oddsInput - 1);
+                                currentBet = baseBetInput;
+                                wins++;
+                            } else {
+                                cap -= bet;
+                                currentBet = Math.min(currentBet * 2, cap);
+                                losses++;
+                            }
+                            if (cap <= 0) { bust = true; break; }
+                        }
+                        const profit = cap - capitalInput;
+                        const profitClass = profit >= 0 ? 'plus' : 'minus';
+                        let msg = '총 롤링: ' + totalRolling.toLocaleString() + '원 | 현재 자본금: ' + Math.max(0, cap).toLocaleString() + '원 | 수익: <span class="profit ' + profitClass + '">' + (profit >= 0 ? '+' : '') + profit.toLocaleString() + '원</span> | 승 ' + wins + ' / 패 ' + losses;
+                        if (bust) msg += ' <span class="bust">(자본 소진)</span>';
+                        else msg += ' | 배당 반영 수익: 승 시 +' + (baseBetInput * (oddsInput - 1)).toFixed(0) + '원/회';
+                        betResultDiv.innerHTML = msg;
+                        lastPredictionHistoryForBet = predictionHistory.slice();
+                    }
                 } else if (statsDiv) {
                     statsDiv.innerHTML = '';
                 }
@@ -1739,6 +1802,49 @@ RESULTS_HTML = '''
                 isLoadingResults = false;  // 로딩 완료
             }
         }
+        
+        function updateBetResult() {
+            const betResultDiv = document.getElementById('bet-result');
+            if (!betResultDiv) return;
+            if (lastPredictionHistoryForBet.length === 0) {
+                betResultDiv.textContent = '예측 기록이 쌓이면 자동 계산됩니다.';
+                return;
+            }
+            const capitalInput = parseFloat(document.getElementById('bet-capital')?.value) || 100000;
+            const baseBetInput = parseFloat(document.getElementById('bet-base')?.value) || 1000;
+            const oddsInput = parseFloat(document.getElementById('bet-odds')?.value) || 1.95;
+            let cap = capitalInput;
+            let currentBet = baseBetInput;
+            let totalRolling = 0;
+            let wins = 0, losses = 0;
+            let bust = false;
+            for (let i = 0; i < lastPredictionHistoryForBet.length; i++) {
+                const isWin = lastPredictionHistoryForBet[i].predicted === lastPredictionHistoryForBet[i].actual;
+                const bet = Math.min(currentBet, cap);
+                if (cap < bet || cap <= 0) { bust = true; break; }
+                totalRolling += bet;
+                if (isWin) {
+                    cap += bet * (oddsInput - 1);
+                    currentBet = baseBetInput;
+                    wins++;
+                } else {
+                    cap -= bet;
+                    currentBet = Math.min(currentBet * 2, cap);
+                    losses++;
+                }
+                if (cap <= 0) { bust = true; break; }
+            }
+            const profit = cap - capitalInput;
+            const profitClass = profit >= 0 ? 'plus' : 'minus';
+            let msg = '총 롤링: ' + totalRolling.toLocaleString() + '원 | 현재 자본금: ' + Math.max(0, cap).toLocaleString() + '원 | 수익: <span class="profit ' + profitClass + '">' + (profit >= 0 ? '+' : '') + profit.toLocaleString() + '원</span> | 승 ' + wins + ' / 패 ' + losses;
+            if (bust) msg += ' <span class="bust">(자본 소진)</span>';
+            else msg += ' | 배당 반영 수익: 승 시 +' + (baseBetInput * (oddsInput - 1)).toFixed(0) + '원/회';
+            betResultDiv.innerHTML = msg;
+        }
+        ['bet-capital', 'bet-base', 'bet-odds'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('input', updateBetResult);
+        });
         
         let timerData = { elapsed: 0, lastFetch: 0, round: 0, serverTime: 0 };
         let lastResultsUpdate = 0;
