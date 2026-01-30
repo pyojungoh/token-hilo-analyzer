@@ -1191,6 +1191,12 @@ RESULTS_HTML = '''
             flex-direction: column;
             align-items: flex-start;
         }
+        .prediction-pick-title {
+            font-size: 0.9em;
+            font-weight: bold;
+            color: #81c784;
+            margin-bottom: 6px;
+        }
         .prediction-card {
             width: 80px;
             height: 80px;
@@ -1202,14 +1208,23 @@ RESULTS_HTML = '''
             justify-content: center;
             box-shadow: 0 4px 16px rgba(0,0,0,0.5);
         }
+        .prediction-card.card-red {
+            background: #c62828;
+            border-color: #e57373;
+            box-shadow: 0 4px 16px rgba(198,40,40,0.5);
+        }
+        .prediction-card.card-black {
+            background: #1a1a1a;
+            border-color: #424242;
+        }
         .prediction-card .pred-value-big {
             font-size: 2.2em;
             font-weight: 900;
             color: #fff;
             text-shadow: 0 0 12px rgba(255,255,255,0.4);
         }
-        .prediction-card .pred-value-big.red { color: #e57373; text-shadow: 0 0 12px rgba(229,115,115,0.6); }
-        .prediction-card .pred-value-big.black { color: #e0e0e0; }
+        .prediction-card.card-red .pred-value-big { color: #fff; text-shadow: 0 0 12px rgba(255,255,255,0.5); }
+        .prediction-card.card-black .pred-value-big { color: #e0e0e0; }
         .prediction-prob-under {
             margin-top: 8px;
             font-size: 0.95em;
@@ -1951,17 +1966,19 @@ RESULTS_HTML = '''
                     const hitPct = countForPct > 0 ? hitPctNum.toFixed(1) : '-';
                     const lowWinRate = countForPct > 0 && hitPctNum <= 50;
                     const leftBlock = is15Joker ? ('<div class="prediction-pick">' +
+                        '<div class="prediction-pick-title">예측 픽</div>' +
                         '<div class="prediction-card" style="background:#455a64;border-color:#78909c">' +
                         '<span class="pred-value-big" style="color:#fff;font-size:1.2em">보류</span>' +
                         '</div>' +
                         '<div class="prediction-prob-under" style="color:#ffb74d">15번 카드 조커 · 배팅하지 마세요</div>' +
                         '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + predictedRound + '회</div>' +
                         '</div>') : ('<div class="prediction-pick">' +
-                        '<div class="prediction-card">' +
-                        '<span class="pred-value-big ' + colorClass + '">' + predict + '</span>' +
+                        '<div class="prediction-pick-title">예측 픽 · ' + colorToPick + '</div>' +
+                        '<div class="prediction-card card-' + colorClass + '">' +
+                        '<span class="pred-value-big">' + predict + '</span>' +
                         '</div>' +
                         '<div class="prediction-prob-under">나올 확률 ' + predProb.toFixed(1) + '%</div>' +
-                        '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + predictedRound + '회 · ' + colorToPick + '</div>' +
+                        '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + predictedRound + '회</div>' +
                         '</div>');
                     let rightBlock = flowAdvice ? ('<div class="prediction-alert">' +
                         '<div class="prediction-alert-icon">!</div>' +
