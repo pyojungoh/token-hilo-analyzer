@@ -1176,6 +1176,7 @@ RESULTS_HTML = '''
         .graph-stats .kkuk-next { color: #e57373; }
         .graph-stats .jung-kkuk { color: #ffb74d; }
         .graph-stats .kkuk-jung { color: #64b5f6; }
+        .graph-stats-note { margin-top: 6px; font-size: 0.85em; color: #aaa; text-align: center; }
         .status {
             text-align: center;
             margin-top: 15px;
@@ -1584,12 +1585,12 @@ RESULTS_HTML = '''
                     const full = calcTransitions(graphValues);
                     const recent30 = calcTransitions(graphValues.slice(0, 30));
                     const fmt = (p, n, d) => d > 0 ? p + '% (' + n + '/' + d + ')' : '-';
-                    statsDiv.innerHTML = '<table><thead><tr><th></th><th>전체</th><th>최근 30회</th></tr></thead><tbody>' +
-                        '<tr><td><span class="jung-next">정 ↑</span></td><td>' + fmt(full.pJung, full.jj, full.jungDenom) + '</td><td>' + fmt(recent30.pJung, recent30.jj, recent30.jungDenom) + '</td></tr>' +
-                        '<tr><td><span class="kkuk-next">꺽 ↑</span></td><td>' + fmt(full.pKkuk, full.kk, full.kkukDenom) + '</td><td>' + fmt(recent30.pKkuk, recent30.kk, recent30.kkukDenom) + '</td></tr>' +
-                        '<tr><td><span class="jung-kkuk">← 꺽</span></td><td>' + fmt(full.pJungToKkuk, full.jk, full.jungDenom) + '</td><td>' + fmt(recent30.pJungToKkuk, recent30.jk, recent30.jungDenom) + '</td></tr>' +
-                        '<tr><td><span class="kkuk-jung">← 정</span></td><td>' + fmt(full.pKkukToJung, full.kj, full.kkukDenom) + '</td><td>' + fmt(recent30.pKkukToJung, recent30.kj, recent30.kkukDenom) + '</td></tr>' +
-                        '</tbody></table>';
+                    statsDiv.innerHTML = '<table><thead><tr><th></th><th>최근 30회</th><th>전체</th></tr></thead><tbody>' +
+                        '<tr><td><span class="jung-next">정 ↑</span></td><td>' + fmt(recent30.pJung, recent30.jj, recent30.jungDenom) + '</td><td>' + fmt(full.pJung, full.jj, full.jungDenom) + '</td></tr>' +
+                        '<tr><td><span class="kkuk-next">꺽 ↑</span></td><td>' + fmt(recent30.pKkuk, recent30.kk, recent30.kkukDenom) + '</td><td>' + fmt(full.pKkuk, full.kk, full.kkukDenom) + '</td></tr>' +
+                        '<tr><td><span class="jung-kkuk">← 꺽</span></td><td>' + fmt(recent30.pJungToKkuk, recent30.jk, recent30.jungDenom) + '</td><td>' + fmt(full.pJungToKkuk, full.jk, full.jungDenom) + '</td></tr>' +
+                        '<tr><td><span class="kkuk-jung">← 정</span></td><td>' + fmt(recent30.pKkukToJung, recent30.kj, recent30.kkukDenom) + '</td><td>' + fmt(full.pKkukToJung, full.kj, full.kkukDenom) + '</td></tr>' +
+                        '</tbody></table><p class="graph-stats-note">※ 다음 회차 예측 시 최근 30회 확률 우선 참고</p>';
                 } else if (statsDiv) {
                     statsDiv.innerHTML = '';
                 }
