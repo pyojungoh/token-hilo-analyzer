@@ -10,6 +10,7 @@ import os
 from datetime import datetime
 import time
 import json
+import traceback
 
 app = Flask(__name__)
 CORS(app)
@@ -17,8 +18,8 @@ CORS(app)
 # 환경 변수
 BASE_URL = os.getenv('BASE_URL', 'http://tgame365.com')
 DATA_PATH = '/frame/hilo'  # 데이터 파일 경로
-TIMEOUT = int(os.getenv('TIMEOUT', '30'))
-MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))
+TIMEOUT = int(os.getenv('TIMEOUT', '10'))  # 타임아웃을 10초로 단축
+MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))  # 재시도 횟수 감소
 
 # 캐시
 game_data_cache = None
@@ -73,7 +74,19 @@ def load_game_data():
                 'timestamp': datetime.now().isoformat()
             }
         
-        data = response.json()
+        try:
+            data = response.json()
+        except (ValueError, json.JSONDecodeError) as e:
+            print(f"JSON 파싱 오류: {str(e)[:100]}")
+            return {
+                'round': 0,
+                'elapsed': 0,
+                'currentBets': {
+                    'red': [],
+                    'black': []
+                },
+                'timestamp': datetime.now().isoformat()
+            }
         
         # red, black 배열 가져오기
         red_bets = data.get('red', [])
@@ -85,17 +98,36 @@ def load_game_data():
         if not isinstance(black_bets, list):
             black_bets = []
         
-        # 디버깅: 베팅 데이터 확인
-        print(f"[베팅 데이터] RED: {len(red_bets)}개, BLACK: {len(black_bets)}개")
-        if len(red_bets) > 0:
-            print(f"[베팅 데이터] RED 첫 번째: {red_bets[0]}")
-        if len(black_bets) > 0:
-            print(f"[베팅 데이터] BLACK 첫 번째: {black_bets[0]}")
-        
-        # 총액 계산 (서버 측에서도 확인)
-        red_total = sum(bet.get('cash', bet.get('amount', 0)) for bet in red_bets if isinstance(bet, dict))
-        black_total = sum(bet.get('cash', bet.get('amount', 0)) for bet in black_bets if isinstance(bet, dict))
-        print(f"[베팅 데이터] RED 총액: {red_total}, BLACK 총액: {black_total}")
+        # 디버깅: 베팅 데이터 확인 (안전하게)
+        try:
+            print(f"[베팅 데이터] RED: {len(red_bets)}개, BLACK: {len(black_bets)}개")
+            if len(red_bets) > 0 and isinstance(red_bets[0], dict):
+                print(f"[베팅 데이터] RED 첫 번째: {str(red_bets[0])[:100]}")
+            if len(black_bets) > 0 and isinstance(black_bets[0], dict):
+                print(f"[베팅 데이터] BLACK 첫 번째: {str(black_bets[0])[:100]}")
+            
+            # 총액 계산 (서버 측에서도 확인, 안전하게)
+            red_total = 0
+            for bet in red_bets:
+                if isinstance(bet, dict):
+                    try:
+                        cash = bet.get('cash') or bet.get('amount') or 0
+                        red_total += int(cash) if cash else 0
+                    except (ValueError, TypeError):
+                        continue
+            
+            black_total = 0
+            for bet in black_bets:
+                if isinstance(bet, dict):
+                    try:
+                        cash = bet.get('cash') or bet.get('amount') or 0
+                        black_total += int(cash) if cash else 0
+                    except (ValueError, TypeError):
+                        continue
+            
+            print(f"[베팅 데이터] RED 총액: {red_total}, BLACK 총액: {black_total}")
+        except Exception as debug_error:
+            print(f"디버깅 로그 오류 (무시): {str(debug_error)[:100]}")
         
         return {
             'round': data.get('round', 0),
@@ -1098,8 +1130,10 @@ def get_current_status():
     except Exception as e:
         # 에러 발생 시 기본값 반환 (서버 크래시 방지)
         print(f"게임 상태 로드 오류: {str(e)[:200]}")
-        import traceback
-        print(traceback.format_exc())
+        try:
+            print(traceback.format_exc())
+        except:
+            pass
         return jsonify({
             'round': 0,
             'elapsed': 0,
