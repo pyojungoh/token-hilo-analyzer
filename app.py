@@ -22,6 +22,16 @@ except ImportError as e:
     print(f"[❌ 경고] python-socketio가 설치되지 않았습니다: {e}")
     print("[❌ 경고] pip install python-socketio로 설치하세요")
 
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    DB_AVAILABLE = True
+    print("[✅] psycopg2 라이브러리 로드 성공")
+except ImportError as e:
+    DB_AVAILABLE = False
+    print(f"[❌ 경고] psycopg2가 설치되지 않았습니다: {e}")
+    print("[❌ 경고] pip install psycopg2-binary로 설치하세요")
+
 app = Flask(__name__)
 CORS(app)
 
@@ -35,6 +45,186 @@ SOCKETIO_URL = os.getenv('SOCKETIO_URL', 'https://game.cmx258.com:8080')  # Sock
 
 # Socket.IO 초기화 플래그
 socketio_initialized = False
+
+# 데이터베이스 연결 및 초기화
+def init_database():
+    """데이터베이스 테이블 생성 및 초기화"""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        print("[❌ 경고] 데이터베이스 연결 불가 (psycopg2 없음 또는 DATABASE_URL 미설정)")
+        return False
+    
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        
+        # game_results 테이블 생성
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS game_results (
+                id SERIAL PRIMARY KEY,
+                game_id VARCHAR(50) UNIQUE NOT NULL,
+                result VARCHAR(10),
+                hi BOOLEAN DEFAULT FALSE,
+                lo BOOLEAN DEFAULT FALSE,
+                red BOOLEAN DEFAULT FALSE,
+                black BOOLEAN DEFAULT FALSE,
+                jqka BOOLEAN DEFAULT FALSE,
+                joker BOOLEAN DEFAULT FALSE,
+                hash_value VARCHAR(100),
+                salt_value VARCHAR(100),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # game_id에 인덱스 생성 (조회 성능 향상)
+        cur.execute('''
+            CREATE INDEX IF NOT EXISTS idx_game_id ON game_results(game_id)
+        ''')
+        
+        # created_at에 인덱스 생성 (시간 기반 조회 성능 향상)
+        cur.execute('''
+            CREATE INDEX IF NOT EXISTS idx_created_at ON game_results(created_at)
+        ''')
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("[✅] 데이터베이스 테이블 초기화 완료")
+        return True
+    except Exception as e:
+        print(f"[❌ 오류] 데이터베이스 초기화 실패: {str(e)[:200]}")
+        return False
+
+def get_db_connection():
+    """데이터베이스 연결 반환"""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return None
+    try:
+        return psycopg2.connect(DATABASE_URL)
+    except Exception as e:
+        print(f"[❌ 오류] 데이터베이스 연결 실패: {str(e)[:200]}")
+        return None
+
+def save_game_result(game_data):
+    """게임 결과를 데이터베이스에 저장 (중복 체크)"""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return False
+    
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cur = conn.cursor()
+        
+        # 중복 체크 후 저장
+        cur.execute('''
+            INSERT INTO game_results 
+            (game_id, result, hi, lo, red, black, jqka, joker, hash_value, salt_value)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (game_id) DO NOTHING
+        ''', (
+            str(game_data.get('gameID', '')),
+            game_data.get('result', ''),
+            game_data.get('hi', False),
+            game_data.get('lo', False),
+            game_data.get('red', False),
+            game_data.get('black', False),
+            game_data.get('jqka', False),
+            game_data.get('joker', False),
+            game_data.get('hash', ''),
+            game_data.get('salt', '')
+        ))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[❌ 오류] 게임 결과 저장 실패: {str(e)[:200]}")
+        try:
+            conn.close()
+        except:
+            pass
+        return False
+
+def get_recent_results(hours=5):
+    """최근 N시간 데이터 조회"""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return []
+    
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # 최근 5시간 데이터 조회 (최신순)
+        cur.execute('''
+            SELECT game_id as "gameID", result, hi, lo, red, black, jqka, joker, 
+                   hash_value as hash, salt_value as salt
+            FROM game_results
+            WHERE created_at >= NOW() - INTERVAL '%s hours'
+            ORDER BY created_at DESC
+        ''', (hours,))
+        
+        results = []
+        for row in cur.fetchall():
+            results.append({
+                'gameID': str(row['gameID']),
+                'result': row['result'] or '',
+                'hi': row['hi'] or False,
+                'lo': row['lo'] or False,
+                'red': row['red'] or False,
+                'black': row['black'] or False,
+                'jqka': row['jqka'] or False,
+                'joker': row['joker'] or False,
+                'hash': row['hash'] or '',
+                'salt': row['salt'] or ''
+            })
+        
+        cur.close()
+        conn.close()
+        return results
+    except Exception as e:
+        print(f"[❌ 오류] 게임 결과 조회 실패: {str(e)[:200]}")
+        try:
+            conn.close()
+        except:
+            pass
+        return []
+
+def cleanup_old_results(hours=5):
+    """5시간이 지난 데이터 삭제"""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return
+    
+    conn = get_db_connection()
+    if not conn:
+        return
+    
+    try:
+        cur = conn.cursor()
+        
+        # 5시간 이전 데이터 삭제
+        cur.execute('''
+            DELETE FROM game_results
+            WHERE created_at < NOW() - INTERVAL '%s hours'
+        ''', (hours,))
+        
+        deleted_count = cur.rowcount
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        if deleted_count > 0:
+            print(f"[🗑️] 오래된 데이터 {deleted_count}개 삭제 완료")
+    except Exception as e:
+        print(f"[❌ 오류] 오래된 데이터 삭제 실패: {str(e)[:200]}")
+        try:
+            conn.close()
+        except:
+            pass
 
 # init_socketio() 함수는 start_socketio_client() 함수 정의 후에 정의됨 (아래 참조)
 
@@ -1202,24 +1392,56 @@ def results_page():
 
 @app.route('/api/results', methods=['GET'])
 def get_results():
-    """경기 결과 API"""
+    """경기 결과 API - 데이터베이스에서 최근 5시간 데이터 조회"""
     try:
         global results_cache, last_update_time
         
         current_time = time.time() * 1000
-        if results_cache and (current_time - last_update_time) < CACHE_TTL:
-            return jsonify(results_cache)
         
-        results = load_results_data()
-        # 최소 30개 이상 반환 (비교를 위해 16번째 이후 카드 필요)
-        # result.json에 더 많은 데이터가 있을 수 있으므로 모두 반환
-        results_cache = {
-            'results': results,
-            'count': len(results),
-            'timestamp': datetime.now().isoformat()
-        }
-        last_update_time = current_time
-        return jsonify(results_cache)
+        # 데이터베이스가 있으면 DB에서 조회, 없으면 기존 방식 사용
+        if DB_AVAILABLE and DATABASE_URL:
+            # 캐시 사용 (1초)
+            if results_cache and (current_time - last_update_time) < CACHE_TTL:
+                return jsonify(results_cache)
+            
+                # 데이터베이스에서 최근 5시간 데이터 조회
+            results = get_recent_results(hours=5)
+            
+            # 최신 데이터도 가져와서 저장 (백그라운드)
+            try:
+                latest_results = load_results_data()
+                if latest_results:
+                    saved_count = 0
+                    for game_data in latest_results:
+                        if save_game_result(game_data):
+                            saved_count += 1
+                    if saved_count > 0:
+                        print(f"[💾] 최신 데이터 {saved_count}개 저장 완료")
+            except Exception as e:
+                print(f"[경고] 최신 데이터 저장 실패: {str(e)[:100]}")
+            
+            results_cache = {
+                'results': results,
+                'count': len(results),
+                'timestamp': datetime.now().isoformat(),
+                'source': 'database'
+            }
+            last_update_time = current_time
+            return jsonify(results_cache)
+        else:
+            # 데이터베이스가 없으면 기존 방식 (result.json에서 가져오기)
+            if results_cache and (current_time - last_update_time) < CACHE_TTL:
+                return jsonify(results_cache)
+            
+            results = load_results_data()
+            results_cache = {
+                'results': results,
+                'count': len(results),
+                'timestamp': datetime.now().isoformat(),
+                'source': 'json'
+            }
+            last_update_time = current_time
+            return jsonify(results_cache)
     except Exception as e:
         # 에러 발생 시 빈 결과 반환 (서버 크래시 방지)
         print(f"결과 로드 오류: {str(e)[:200]}")
