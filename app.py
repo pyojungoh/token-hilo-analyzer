@@ -3,12 +3,13 @@
 필요한 정보만 추출하여 새로 작성
 """
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, render_template_string
 from flask_cors import CORS
 import requests
 import os
 from datetime import datetime
 import time
+import json
 
 app = Flask(__name__)
 CORS(app)
@@ -22,6 +23,7 @@ MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))
 # 캐시
 game_data_cache = None
 streaks_cache = None
+results_cache = None
 last_update_time = 0
 CACHE_TTL = 5000  # 5초
 
@@ -67,6 +69,43 @@ def load_game_data():
         }
     except Exception as e:
         print(f"게임 데이터 로드 오류: {e}")
+        return None
+
+def load_results_data():
+    """경기 결과 데이터 로드 (result.json)"""
+    try:
+        url = f"{BASE_URL}{DATA_PATH}/result.json?t={int(time.time() * 1000)}"
+        response = fetch_with_retry(url)
+        
+        if not response:
+            raise Exception("결과 데이터 로드 실패")
+        
+        data = response.json()
+        
+        # 결과 파싱
+        results = []
+        for game in data:
+            try:
+                game_id = game.get('gameID', '')
+                result = game.get('result', '')
+                json_data = json.loads(game.get('json', '{}'))
+                
+                results.append({
+                    'gameID': game_id,
+                    'result': result,
+                    'hi': json_data.get('hi', ''),
+                    'lo': json_data.get('lo', ''),
+                    'red': json_data.get('red', ''),
+                    'black': json_data.get('black', ''),
+                    'jqka': json_data.get('jqka', ''),
+                    'joker': json_data.get('joker', '')
+                })
+            except:
+                continue
+        
+        return results
+    except Exception as e:
+        print(f"결과 데이터 로드 오류: {e}")
         return None
 
 def parse_csv_data(csv_text):
@@ -171,6 +210,172 @@ def load_streaks_data():
         print(f"연승 데이터 로드 오류: {e}")
         return None
 
+# HTML 템플릿
+RESULTS_HTML = '''
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎲 토큰하이로우 경기 결과</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a2e;
+            color: #fff;
+            font-family: 'Consolas', monospace;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #4caf50;
+        }
+        .status {
+            text-align: center;
+            margin-bottom: 20px;
+            padding: 10px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 5px;
+        }
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .result-card {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            padding: 15px;
+            text-align: center;
+        }
+        .result-card.recent {
+            border: 2px solid #4caf50;
+        }
+        .game-id {
+            font-size: 0.9em;
+            color: #aaa;
+            margin-bottom: 10px;
+        }
+        .result-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .result-red { color: #ff3333; }
+        .result-black { color: #888888; }
+        .result-hi { color: #4caf50; }
+        .result-lo { color: #00bfff; }
+        .result-joker { color: #8a2be2; }
+        .details {
+            font-size: 0.8em;
+            color: #aaa;
+            margin-top: 10px;
+        }
+        .refresh-info {
+            text-align: center;
+            margin-top: 20px;
+            color: #aaa;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎲 토큰하이로우 경기 결과</h1>
+        <div class="status" id="status">로딩 중...</div>
+        <div class="results-grid" id="results"></div>
+        <div class="refresh-info">5초마다 자동 새로고침</div>
+    </div>
+    <script>
+        async function loadResults() {
+            try {
+                const response = await fetch('/api/results');
+                const data = await response.json();
+                
+                if (data.error) {
+                    document.getElementById('status').textContent = '오류: ' + data.error;
+                    return;
+                }
+                
+                document.getElementById('status').textContent = `총 ${data.results.length}개 경기 결과`;
+                
+                const resultsDiv = document.getElementById('results');
+                resultsDiv.innerHTML = '';
+                
+                // 최신 30개만 표시
+                const recentResults = data.results.slice(0, 30);
+                
+                recentResults.forEach((result, index) => {
+                    const card = document.createElement('div');
+                    card.className = 'result-card' + (index < 5 ? ' recent' : '');
+                    
+                    let resultText = '';
+                    if (result.red) resultText += '<span class="result-red">R</span> ';
+                    if (result.black) resultText += '<span class="result-black">B</span> ';
+                    if (result.hi) resultText += '<span class="result-hi">HI</span> ';
+                    if (result.lo) resultText += '<span class="result-lo">LO</span> ';
+                    if (result.joker) resultText += '<span class="result-joker">J</span> ';
+                    
+                    card.innerHTML = `
+                        <div class="game-id">게임 #${result.gameID}</div>
+                        <div class="result-value">${result.result}</div>
+                        <div class="details">${resultText}</div>
+                    `;
+                    
+                    resultsDiv.appendChild(card);
+                });
+            } catch (error) {
+                document.getElementById('status').textContent = '오류: ' + error.message;
+            }
+        }
+        
+        // 초기 로드
+        loadResults();
+        
+        // 5초마다 자동 새로고침
+        setInterval(loadResults, 5000);
+    </script>
+</body>
+</html>
+'''
+
+@app.route('/results', methods=['GET'])
+def results_page():
+    """경기 결과 웹페이지"""
+    return render_template_string(RESULTS_HTML)
+
+@app.route('/api/results', methods=['GET'])
+def get_results():
+    """경기 결과 API"""
+    global results_cache, last_update_time
+    
+    current_time = time.time() * 1000
+    if results_cache and (current_time - last_update_time) < CACHE_TTL:
+        return jsonify(results_cache)
+    
+    results = load_results_data()
+    if results:
+        results_cache = {
+            'results': results,
+            'count': len(results),
+            'timestamp': datetime.now().isoformat()
+        }
+        last_update_time = current_time
+        return jsonify(results_cache)
+    else:
+        return jsonify({'error': '결과 데이터 로드 실패'}), 500
+
 @app.route('/api/current-status', methods=['GET'])
 def get_current_status():
     """현재 게임 상태"""
@@ -225,22 +430,30 @@ def get_user_streak(user_id):
 @app.route('/api/refresh', methods=['POST'])
 def refresh_data():
     """데이터 갱신"""
-    global game_data_cache, streaks_cache, last_update_time
+    global game_data_cache, streaks_cache, results_cache, last_update_time
     
     game_data = load_game_data()
     streaks_data = load_streaks_data()
+    results_data = load_results_data()
     
     if game_data:
         game_data_cache = game_data
-        last_update_time = time.time() * 1000
-    
     if streaks_data:
         streaks_cache = streaks_data
+    if results_data:
+        results_cache = {
+            'results': results_data,
+            'count': len(results_data),
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    last_update_time = time.time() * 1000
     
     return jsonify({
         'success': True,
         'gameData': game_data is not None,
         'streaksData': streaks_data is not None,
+        'resultsData': results_data is not None,
         'timestamp': datetime.now().isoformat()
     })
 
@@ -259,6 +472,8 @@ def index():
         'message': '토큰하이로우 분석기 API',
         'version': '1.0.0',
         'endpoints': {
+            'GET /results': '경기 결과 웹페이지',
+            'GET /api/results': '경기 결과 API',
             'GET /api/current-status': '현재 게임 상태',
             'GET /api/streaks': '연승 데이터',
             'GET /api/streaks/<user_id>': '특정 유저 연승',
