@@ -1334,9 +1334,9 @@ RESULTS_HTML = '''
             try {
                 isLoadingResults = true;
                 
-                // 타임아웃 설정 (5초로 단축 - 빠른 실패)
+                // 타임아웃 15초 (느린 연결 대비)
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 5000);
+                const timeoutId = setTimeout(() => controller.abort(), 15000);
                 
                 const response = await fetch('/api/results?t=' + Date.now(), {
                     signal: controller.signal,
@@ -1618,7 +1618,7 @@ RESULTS_HTML = '''
                 const statusEl = document.getElementById('status');
                 // AbortError는 조용히 처리 (타임아웃은 정상적인 상황)
                 if (error.name === 'AbortError') {
-                    if (statusEl && allResults.length === 0) statusEl.textContent = '연결 시간 초과 - 다시 시도 중...';
+                    if (statusEl) statusEl.textContent = allResults.length === 0 ? '연결 시간 초과(15초) - 자동 재시도 중...' : '갱신 대기 중...';
                     return;
                 }
                 
@@ -1653,9 +1653,9 @@ RESULTS_HTML = '''
                 // 0.5초마다 서버에서 데이터 가져오기 (10초 게임에 맞춰 빠른 업데이트)
                 if (now - timerData.lastFetch > 500) {
                     try {
-                    // 타임아웃 설정 (5초로 단축 - 빠른 실패)
+                    // 타임아웃 15초 (느린 연결 대비)
                     const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 5000);
+                    const timeoutId = setTimeout(() => controller.abort(), 15000);
                     
                     const response = await fetch('/api/current-status?t=' + now, {
                         signal: controller.signal,
