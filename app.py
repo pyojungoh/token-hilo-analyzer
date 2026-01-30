@@ -1539,21 +1539,15 @@ RESULTS_HTML = '''
                     }
                 });
                 
-                // 정/꺽 블록 그래프: 좌=최신, 같은 타입 세로로 쌓기, 새 열은 왼쪽에 추가
+                // 정/꺽 블록 그래프: 조커(null)는 무시하고 같은 타입끼리만 한 열에 쌓기
                 const graphDiv = document.getElementById('jung-kkuk-graph');
                 if (graphDiv) {
                     graphDiv.innerHTML = '';
+                    const filtered = graphValues.filter(v => v === true || v === false);
                     const segments = [];
                     let current = null;
                     let count = 0;
-                    graphValues.forEach(v => {
-                        if (v !== true && v !== false) {
-                            if (current !== null) {
-                                segments.push({ type: current, count: count });
-                                current = null;
-                            }
-                            return;
-                        }
+                    filtered.forEach(v => {
                         if (v === current) {
                             count++;
                         } else {
