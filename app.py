@@ -1031,14 +1031,12 @@ RESULTS_HTML = '''
             min-width: 0;
         }
         .card-wrapper .card {
-            width: 100% !important;
-            aspect-ratio: 2 / 1 !important;
-            max-height: 28px !important;
+            width: 54px !important;
+            height: 28px !important;
         }
         .card {
-            width: 100%;
-            aspect-ratio: 2 / 1;
-            max-height: 28px;
+            width: 54px;
+            height: 28px;
             background: #fff;
             border: 3px solid #000;
             border-radius: 10px;
