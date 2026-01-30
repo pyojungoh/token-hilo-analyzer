@@ -221,11 +221,6 @@ def calculate_and_save_color_matches(results):
             
             match_result = (current_color == compare_color)  # True = 정, False = 꺽
             
-            # 디버깅: 계산 과정 로그
-            current_result_str = current_result.get('result', '')
-            compare_result_str = compare_result.get('result', '')
-            print(f"[🔍 정/꺽 계산] {current_game_id}({current_result_str}) vs {compare_game_id}({compare_result_str}): {current_color} == {compare_color} = {match_result} ({'정' if match_result else '꺽'})")
-            
             # DB에 저장 (중복 시 업데이트)
             try:
                 cur.execute('''
@@ -1358,13 +1353,8 @@ RESULTS_HTML = '''
                 // 각 카드는 고정된 상대 위치의 카드와 비교 (1번째↔16번째, 2번째↔17번째, ...)
                 const colorMatchResults = [];
                 
-                console.log('=== 색상 비교 시작 ===');
-                console.log('전체 결과 개수:', results.length);
-                console.log('표시할 결과 개수:', displayResults.length);
-                
                 // 전체 results 배열이 16개 이상이어야 비교 가능
                 if (results.length < 16) {
-                    console.log(`경고: 전체 결과가 ${results.length}개밖에 없어 비교 불가능 (최소 16개 필요)`);
                     // 모든 카드에 null 할당
                     for (let i = 0; i < displayResults.length; i++) {
                         colorMatchResults[i] = null;
@@ -1378,27 +1368,23 @@ RESULTS_HTML = '''
                         // 조커 카드는 색상 비교 불가
                         if (currentResult.joker) {
                             colorMatchResults[i] = null;
-                            console.log(`카드 ${i + 1}: 조커 카드 - 비교 불가`);
                             continue;
                         }
                         
                         if (!currentGameID) {
                             colorMatchResults[i] = null;
-                            console.log(`카드 ${i + 1}: gameID 없음`);
                             continue;
                         }
                         
                         // 16번째 이후 카드가 있어야 비교 가능
                         if (results.length <= compareIndex) {
                             colorMatchResults[i] = null;
-                            console.log(`카드 ${i + 1}: 비교 대상 없음 (전체 ${results.length}개, 필요 ${compareIndex + 1}개)`);
                             continue;
                         }
                         
                         // 비교 대상도 조커가 아닌지 확인
                         if (results[compareIndex]?.joker) {
                             colorMatchResults[i] = null;
-                            console.log(`카드 ${i + 1}: 비교 대상이 조커`);
                             continue;
                         }
                         
@@ -1410,7 +1396,6 @@ RESULTS_HTML = '''
                         if (colorMatchCache[cacheKey] !== undefined) {
                             const cachedResult = colorMatchCache[cacheKey];
                             colorMatchResults[i] = cachedResult === true;  // 명확히 boolean으로 변환
-                            console.log(`카드 ${i + 1} (${currentGameID}): 캐시에서 가져옴 - ${cachedResult ? '정' : '꺽'}`);
                         } else {
                             // 새로운 비교 결과 계산
                             const currentCard = parseCardValue(currentResult.result || '');
@@ -1418,14 +1403,9 @@ RESULTS_HTML = '''
                             const matchResult = (currentCard.isRed === compareCard.isRed);
                             colorMatchCache[cacheKey] = matchResult;
                             colorMatchResults[i] = matchResult === true;  // 명확히 boolean으로 변환
-                            console.log(`카드 ${i + 1} (${currentGameID}): 새로 계산 - 현재(${currentCard.isRed ? '빨강' : '검정'}) vs 비교(${compareCard.isRed ? '빨강' : '검정'}) = ${matchResult ? '정' : '꺽'}`);
                         }
                     }
                 }
-                
-                console.log('=== 색상 비교 완료 ===');
-                console.log('결과 배열:', colorMatchResults);
-                console.log('결과 타입 확인:', colorMatchResults.map((r, idx) => `${idx + 1}: ${r} (${typeof r})`));
                 
                 // 오래된 캐시 정리 (현재 표시되지 않는 카드 제거)
                 const currentGameIDs = new Set(displayResults.map(r => r.gameID).filter(id => id));
@@ -1463,25 +1443,9 @@ RESULTS_HTML = '''
                     try {
                         // 서버에서 받은 colorMatch 값 우선 사용, 없으면 클라이언트 계산 결과 사용
                         let matchResult = result.colorMatch;
-                        
-                        // 디버깅: 서버에서 받은 colorMatch 확인
-                        console.log(`[카드 ${index + 1}] 서버 colorMatch:`, {
-                            gameID: result.gameID,
-                            hasColorMatch: 'colorMatch' in result,
-                            colorMatch: result.colorMatch,
-                            colorMatchType: typeof result.colorMatch,
-                            isNull: result.colorMatch === null,
-                            isUndefined: result.colorMatch === undefined
-                        });
-                        
                         if (matchResult === undefined || matchResult === null) {
                             matchResult = colorMatchResults[index];
-                            console.log(`[카드 ${index + 1}] 클라이언트 계산 결과 사용:`, matchResult);
-                        } else {
-                            console.log(`[카드 ${index + 1}] 서버 colorMatch 사용:`, matchResult);
                         }
-                        
-                        console.log(`카드 ${index + 1} (${result.gameID}) 생성: matchResult =`, matchResult, typeof matchResult, 'isBoolean:', typeof matchResult === 'boolean');
                         const card = createCard(result, index, matchResult);
                         cardsDiv.appendChild(card);
                     } catch (error) {
@@ -1731,33 +1695,18 @@ def get_results():
                                 
                                 if current_color is not None and compare_color is not None:
                                     match_result = (current_color == compare_color)
-                                    # 디버깅: 계산 과정 로그
-                                    current_result_str = results[i].get('result', '')
-                                    compare_result_str = results[i + 15].get('result', '')
-                                    print(f"[🔍 정/꺽 계산] {current_game_id}({current_result_str}) vs {compare_game_id}({compare_result_str}): {current_color} == {compare_color} = {match_result} ({'정' if match_result else '꺽'})")
                                     # 계산 결과를 DB에 저장 (업데이트 포함)
                                     save_color_match(current_game_id, compare_game_id, match_result)
-                                    print(f"[✅] 정/꺽 결과 계산 및 저장: {current_game_id} vs {compare_game_id} = {match_result}")
                                 else:
                                     match_result = None
-                                    print(f"[경고] 색상 파싱 실패: {current_game_id}({results[i].get('result', '')}) 또는 {compare_game_id}({results[i + 15].get('result', '')})")
                             
                             # 결과에 추가 (항상 추가, None이어도)
                             results[i]['colorMatch'] = match_result
-                            print(f"[API] 정/꺽 결과 추가: 카드 {i+1} ({current_game_id}) = {match_result}")
             else:
                 # 최신 데이터가 없으면 DB 데이터만 사용
                 results = db_results
                 print(f"[API] 최신 데이터 없음, DB 데이터만 사용: {len(results)}개")
             
-            # 최종 결과에 colorMatch가 제대로 포함되었는지 확인 (디버깅)
-            color_match_count = sum(1 for r in results[:15] if r.get('colorMatch') is not None)
-            print(f"[API] 최종 결과: 총 {len(results)}개, colorMatch 포함: {color_match_count}개 (최신 15개 중)")
-            if color_match_count < 15 and len(results) >= 16:
-                print(f"[경고] colorMatch가 부족합니다! 최신 15개 중 {color_match_count}개만 있음")
-                # 샘플 출력
-                for i in range(min(5, len(results))):
-                    print(f"  - 카드 {i+1}: gameID={results[i].get('gameID')}, colorMatch={results[i].get('colorMatch')}")
             
             results_cache = {
                 'results': results,
