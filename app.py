@@ -33,56 +33,10 @@ TIMEOUT = int(os.getenv('TIMEOUT', '10'))  # 타임아웃을 10초로 단축
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))  # 재시도 횟수 감소
 SOCKETIO_URL = os.getenv('SOCKETIO_URL', 'https://game.cmx258.com:8080')  # Socket.IO 서버 URL (실제 서버)
 
-# Gunicorn으로 실행될 때도 Socket.IO 연결 시작 (모듈 레벨에서 실행)
-# 주의: Gunicorn의 --preload 옵션을 사용하면 이 코드가 마스터 프로세스에서만 실행될 수 있음
-def init_socketio():
-    """Socket.IO 연결 초기화"""
-    print("=" * 50)
-    print("[서버 시작] 토큰하이로우 분석기")
-    print("=" * 50)
-    print(f"[환경 변수] SOCKETIO_URL: {SOCKETIO_URL}")
-    print(f"[환경 변수] BASE_URL: {BASE_URL}")
-    print(f"[라이브러리] python-socketio 사용 가능: {SOCKETIO_AVAILABLE}")
-
-    # Socket.IO 클라이언트 시작
-    if SOCKETIO_AVAILABLE:
-        if SOCKETIO_URL:
-            print(f"[✅ 정보] Socket.IO 연결 시작: {SOCKETIO_URL}")
-            start_socketio_client()
-        else:
-            print("[❌ 경고] SOCKETIO_URL 환경 변수가 설정되지 않았습니다")
-            print("[❌ 경고] Railway 환경 변수에 SOCKETIO_URL을 설정하세요")
-            print("[❌ 경고] 예: SOCKETIO_URL=https://game.cmx258.com:8080")
-    else:
-        print("[❌ 경고] python-socketio가 설치되지 않아 Socket.IO 연결을 사용하지 않습니다")
-        print("[❌ 경고] pip install python-socketio로 설치하세요")
-    print("=" * 50)
-
 # Socket.IO 초기화 플래그
 socketio_initialized = False
 
-# Socket.IO 초기화를 지연 실행 (서버 시작 후 별도 스레드에서 실행)
-def delayed_socketio_init():
-    """Socket.IO 초기화를 지연 실행 (서버 시작을 막지 않음)"""
-    global socketio_initialized
-    if socketio_initialized:
-        return
-    
-    # 서버가 완전히 시작될 때까지 약간 대기
-    import time
-    time.sleep(2)
-    
-    try:
-        init_socketio()
-        socketio_initialized = True
-    except Exception as e:
-        print(f"[❌ 오류] Socket.IO 초기화 실패: {e}")
-        import traceback
-        traceback.print_exc()
-
-# 별도 스레드에서 Socket.IO 초기화 시작 (서버 시작을 막지 않음)
-init_thread = threading.Thread(target=delayed_socketio_init, daemon=True)
-init_thread.start()
+# init_socketio() 함수는 start_socketio_client() 함수 정의 후에 정의됨 (아래 참조)
 
 # 캐시
 game_data_cache = None
@@ -325,6 +279,53 @@ def start_socketio_client():
     socketio_thread = threading.Thread(target=socketio_worker, daemon=True)
     socketio_thread.start()
     print("[✅ Socket.IO] 클라이언트 스레드 시작됨")
+
+# Socket.IO 초기화 함수 (start_socketio_client() 함수 정의 후에 정의)
+def init_socketio():
+    """Socket.IO 연결 초기화"""
+    print("=" * 50)
+    print("[서버 시작] 토큰하이로우 분석기")
+    print("=" * 50)
+    print(f"[환경 변수] SOCKETIO_URL: {SOCKETIO_URL}")
+    print(f"[환경 변수] BASE_URL: {BASE_URL}")
+    print(f"[라이브러리] python-socketio 사용 가능: {SOCKETIO_AVAILABLE}")
+
+    # Socket.IO 클라이언트 시작
+    if SOCKETIO_AVAILABLE:
+        if SOCKETIO_URL:
+            print(f"[✅ 정보] Socket.IO 연결 시작: {SOCKETIO_URL}")
+            start_socketio_client()
+        else:
+            print("[❌ 경고] SOCKETIO_URL 환경 변수가 설정되지 않았습니다")
+            print("[❌ 경고] Railway 환경 변수에 SOCKETIO_URL을 설정하세요")
+            print("[❌ 경고] 예: SOCKETIO_URL=https://game.cmx258.com:8080")
+    else:
+        print("[❌ 경고] python-socketio가 설치되지 않아 Socket.IO 연결을 사용하지 않습니다")
+        print("[❌ 경고] pip install python-socketio로 설치하세요")
+    print("=" * 50)
+
+# Socket.IO 초기화를 지연 실행 (서버 시작 후 별도 스레드에서 실행)
+def delayed_socketio_init():
+    """Socket.IO 초기화를 지연 실행 (서버 시작을 막지 않음)"""
+    global socketio_initialized
+    if socketio_initialized:
+        return
+    
+    # 서버가 완전히 시작될 때까지 약간 대기
+    import time
+    time.sleep(2)
+    
+    try:
+        init_socketio()
+        socketio_initialized = True
+    except Exception as e:
+        print(f"[❌ 오류] Socket.IO 초기화 실패: {e}")
+        import traceback
+        traceback.print_exc()
+
+# 별도 스레드에서 Socket.IO 초기화 시작 (서버 시작을 막지 않음)
+init_thread = threading.Thread(target=delayed_socketio_init, daemon=True)
+init_thread.start()
 
 def load_game_data():
     """게임 데이터 로드 - Socket.IO 데이터 우선 사용"""
