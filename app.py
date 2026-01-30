@@ -512,11 +512,17 @@ RESULTS_HTML = '''
         
         let timerData = { elapsed: 0, lastFetch: 0, round: 0 };
         let lastResultsUpdate = 0;
+        let lastTimerUpdate = Date.now();  // 초기화 추가
         
         async function updateTimer() {
             try {
                 const now = Date.now();
                 const timeElement = document.getElementById('remaining-time');
+                
+                if (!timeElement) {
+                    console.error('remaining-time 요소를 찾을 수 없습니다');
+                    return;
+                }
                 
                 // 0.5초마다 서버에서 데이터 가져오기 (더 빠른 동기화)
                 if (now - timerData.lastFetch > 500) {
@@ -552,16 +558,15 @@ RESULTS_HTML = '''
                 const currentElapsed = Math.max(0, timerData.elapsed + timeDiff);
                 const remaining = Math.max(0, 10 - currentElapsed);
                 
-                if (timeElement) {
-                    timeElement.textContent = `남은 시간: ${remaining.toFixed(2)} 초`;
-                    
-                    // 타이머 색상
-                    timeElement.className = 'remaining-time';
-                    if (remaining <= 1) {
-                        timeElement.classList.add('danger');
-                    } else if (remaining <= 3) {
-                        timeElement.classList.add('warning');
-                    }
+                // 항상 시간 표시 (데이터가 없어도 기본값 표시)
+                timeElement.textContent = `남은 시간: ${remaining.toFixed(2)} 초`;
+                
+                // 타이머 색상
+                timeElement.className = 'remaining-time';
+                if (remaining <= 1) {
+                    timeElement.classList.add('danger');
+                } else if (remaining <= 3) {
+                    timeElement.classList.add('warning');
                 }
                 
                 // 타이머가 거의 0이 되면 경기 결과 새로고침 (라운드 종료 직전)
@@ -571,6 +576,11 @@ RESULTS_HTML = '''
                 }
             } catch (error) {
                 console.error('타이머 업데이트 오류:', error);
+                // 에러 발생 시에도 기본값 표시
+                const timeElement = document.getElementById('remaining-time');
+                if (timeElement) {
+                    timeElement.textContent = '남은 시간: -- 초';
+                }
             }
         }
         
