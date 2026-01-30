@@ -401,6 +401,44 @@ RESULTS_HTML = '''
             color: #aaa;
             margin-left: 10px;
         }
+        .betting-info {
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 5px;
+            font-size: clamp(0.8em, 2vw, 0.9em);
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            gap: 15px;
+        }
+        .betting-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            flex: 1;
+        }
+        .betting-label {
+            font-size: clamp(0.7em, 1.5vw, 0.8em);
+            color: #aaa;
+            margin-bottom: 5px;
+        }
+        .betting-amount {
+            font-size: clamp(0.9em, 2.5vw, 1.1em);
+            font-weight: bold;
+        }
+        .betting-amount.red {
+            color: #f44336;
+        }
+        .betting-amount.black {
+            color: #424242;
+        }
+        .betting-winner {
+            margin-top: 5px;
+            font-size: clamp(0.7em, 1.5vw, 0.8em);
+            color: #4caf50;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -413,6 +451,17 @@ RESULTS_HTML = '''
             </div>
         </div>
         <div class="cards-container" id="cards"></div>
+        <div class="betting-info" id="betting-info" style="display: none;">
+            <div class="betting-item">
+                <div class="betting-label">🔴 RED</div>
+                <div class="betting-amount red" id="red-amount">0</div>
+            </div>
+            <div class="betting-item">
+                <div class="betting-label">⚫ BLACK</div>
+                <div class="betting-amount black" id="black-amount">0</div>
+            </div>
+            <div class="betting-winner" id="betting-winner"></div>
+        </div>
         <div class="status" id="status">로딩 중...</div>
     </div>
     <script>
@@ -810,6 +859,7 @@ RESULTS_HTML = '''
         // 초기 로드
         loadResults();
         updateTimer();
+        updateBettingInfo();
         
         // 1초마다 결과 새로고침 (더 빠른 동기화)
         setInterval(() => {
@@ -818,6 +868,14 @@ RESULTS_HTML = '''
                 lastResultsUpdate = Date.now();
             }
         }, 1000);
+        
+        // 2초마다 베팅 정보 업데이트
+        setInterval(() => {
+            if (Date.now() - lastBettingUpdate > 2000) {
+                updateBettingInfo();
+                lastBettingUpdate = Date.now();
+            }
+        }, 2000);
         
         // 0.1초마다 타이머 업데이트 (실시간 동기화)
         setInterval(updateTimer, 100);
