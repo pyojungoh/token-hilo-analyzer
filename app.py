@@ -71,92 +71,82 @@ def fetch_with_retry(url, max_retries=MAX_RETRIES, silent=False):
     return None
 
 def load_game_data():
-    """게임 데이터 로드 (current_status_frame.json) - 기존 파일과 동일한 방식"""
-    try:
-        # 기존 파일과 동일: 타임스탬프 추가로 캐시 방지
-        # railway_server_example.py를 보면 BASE_URL/current_status_frame.json 형식
-        url = f"{BASE_URL}/current_status_frame.json?t={int(time.time() * 1000)}"
-        print(f"[데이터 요청] {url}")
-        response = fetch_with_retry(url, silent=False)  # 디버깅을 위해 silent=False
-        
-        if not response:
-            print(f"[경고] 데이터를 가져올 수 없음: {url}")
-            # 파일이 없으면 기본값 반환
-            return {
-                'round': 0,
-                'elapsed': 0,
-                'currentBets': {
-                    'red': [],
-                    'black': []
-                },
-                'timestamp': datetime.now().isoformat()
-            }
-        
+    """게임 데이터 로드 (current_status_frame.json) - 여러 경로 시도"""
+    # 가능한 URL 경로들 (우선순위 순)
+    possible_paths = [
+        f"{BASE_URL}/frame/hilo/current_status_frame.json",
+        f"{BASE_URL}/current_status_frame.json",
+        f"{BASE_URL}/hilo/current_status_frame.json",
+        f"{BASE_URL}/frame/current_status_frame.json",
+    ]
+    
+    for url_path in possible_paths:
         try:
-            data = response.json()
-            print(f"[JSON 파싱 성공] round: {data.get('round', 0)}, red: {len(data.get('red', []))}개, black: {len(data.get('black', []))}개")
-            print(f"[원본 데이터 키] {list(data.keys())}")
-            print(f"[원본 데이터 샘플] round={data.get('round')}, red 길이={len(data.get('red', []))}, black 길이={len(data.get('black', []))}")
-            if len(data.get('red', [])) > 0:
-                print(f"[RED 샘플] {data.get('red', [])[0]}")
-            if len(data.get('black', [])) > 0:
-                print(f"[BLACK 샘플] {data.get('black', [])[0]}")
-        except (ValueError, json.JSONDecodeError) as e:
-            print(f"[JSON 파싱 오류] {str(e)[:200]}")
-            print(f"[응답 내용] {response.text[:500]}")
-            print(f"[응답 헤더] {dict(response.headers)}")
-            return {
-                'round': 0,
-                'elapsed': 0,
-                'currentBets': {
-                    'red': [],
-                    'black': []
-                },
-                'timestamp': datetime.now().isoformat()
-            }
-        
-        # 기존 파일과 동일하게: data.red, data.black 직접 사용
-        # 기존 파일: Array.isArray(data.red) ? data.red : []
-        red_bets = data.get('red', [])
-        black_bets = data.get('black', [])
-        
-        if not isinstance(red_bets, list):
-            print(f"[경고] red가 배열이 아님: {type(red_bets)}")
-            red_bets = []
-        if not isinstance(black_bets, list):
-            print(f"[경고] black이 배열이 아님: {type(black_bets)}")
-            black_bets = []
-        
-        # 디버깅: 베팅 데이터 확인
-        print(f"[베팅 데이터] RED: {len(red_bets)}명, BLACK: {len(black_bets)}명")
-        if len(red_bets) > 0:
-            print(f"[RED 첫 번째] {red_bets[0]}")
-        if len(black_bets) > 0:
-            print(f"[BLACK 첫 번째] {black_bets[0]}")
-        
-        return {
-            'round': data.get('round', 0),
-            'elapsed': data.get('elapsed', 0),
-            'currentBets': {
-                'red': red_bets,
-                'black': black_bets
-            },
-            'timestamp': datetime.now().isoformat()
-        }
-    except Exception as e:
-        # 에러 발생 시 기본값 반환 (서버 크래시 방지)
-        print(f"[예외 발생] load_game_data: {str(e)[:200]}")
-        import traceback
-        print(traceback.format_exc())
-        return {
-            'round': 0,
-            'elapsed': 0,
-            'currentBets': {
-                'red': [],
-                'black': []
-            },
-            'timestamp': datetime.now().isoformat()
-        }
+            url = f"{url_path}?t={int(time.time() * 1000)}"
+            print(f"[데이터 요청 시도] {url}")
+            response = fetch_with_retry(url, silent=True)  # 조용히 시도
+            
+            if response:
+                print(f"[✅ 성공] {url}")
+                try:
+                    data = response.json()
+                    print(f"[JSON 파싱 성공] round: {data.get('round', 0)}, red: {len(data.get('red', []))}개, black: {len(data.get('black', []))}개")
+                    print(f"[원본 데이터 키] {list(data.keys())}")
+                    print(f"[원본 데이터 샘플] round={data.get('round')}, red 길이={len(data.get('red', []))}, black 길이={len(data.get('black', []))}")
+                    if len(data.get('red', [])) > 0:
+                        print(f"[RED 샘플] {data.get('red', [])[0]}")
+                    if len(data.get('black', [])) > 0:
+                        print(f"[BLACK 샘플] {data.get('black', [])[0]}")
+                    
+                    # 기존 파일과 동일하게: data.red, data.black 직접 사용
+                    red_bets = data.get('red', [])
+                    black_bets = data.get('black', [])
+                    
+                    if not isinstance(red_bets, list):
+                        print(f"[경고] red가 배열이 아님: {type(red_bets)}")
+                        red_bets = []
+                    if not isinstance(black_bets, list):
+                        print(f"[경고] black이 배열이 아님: {type(black_bets)}")
+                        black_bets = []
+                    
+                    # 디버깅: 베팅 데이터 확인
+                    print(f"[베팅 데이터] RED: {len(red_bets)}명, BLACK: {len(black_bets)}명")
+                    if len(red_bets) > 0:
+                        print(f"[RED 첫 번째] {red_bets[0]}")
+                    if len(black_bets) > 0:
+                        print(f"[BLACK 첫 번째] {black_bets[0]}")
+                    
+                    return {
+                        'round': data.get('round', 0),
+                        'elapsed': data.get('elapsed', 0),
+                        'currentBets': {
+                            'red': red_bets,
+                            'black': black_bets
+                        },
+                        'timestamp': datetime.now().isoformat()
+                    }
+                except (ValueError, json.JSONDecodeError) as e:
+                    print(f"[JSON 파싱 오류] {str(e)[:200]}")
+                    print(f"[응답 내용] {response.text[:500]}")
+                    continue  # 다음 경로 시도
+            else:
+                print(f"[❌ 실패] {url} - 다음 경로 시도")
+                continue  # 다음 경로 시도
+        except Exception as e:
+            print(f"[오류] {url_path}: {str(e)[:100]}")
+            continue  # 다음 경로 시도
+    
+    # 모든 경로 실패
+    print(f"[경고] 모든 경로에서 데이터를 가져올 수 없음")
+    return {
+        'round': 0,
+        'elapsed': 0,
+        'currentBets': {
+            'red': [],
+            'black': []
+        },
+        'timestamp': datetime.now().isoformat()
+    }
 
 def load_results_data():
     """경기 결과 데이터 로드 (result.json)"""
