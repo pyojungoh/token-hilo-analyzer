@@ -737,9 +737,20 @@ def ensure_database_initialized():
         print(f"[❌ 오류] 트레이스백:\n{traceback.format_exc()}")
         return False
 
-# 모듈 로드 시 초기화 시도
-if DB_AVAILABLE and DATABASE_URL:
-    ensure_database_initialized()
+# 모듈 로드 시 즉시 초기화 시도 (강제 실행)
+print("[🔄] 모듈 로드 시 데이터베이스 초기화 시작...")
+if DB_AVAILABLE:
+    if DATABASE_URL:
+        print(f"[📋] DATABASE_URL 설정됨 (길이: {len(DATABASE_URL)} 문자)")
+        # 즉시 초기화 시도
+        try:
+            ensure_database_initialized()
+        except Exception as e:
+            print(f"[❌ 오류] 모듈 로드 시 초기화 실패: {str(e)}")
+    else:
+        print("[❌ 경고] DATABASE_URL이 None입니다. 환경 변수를 확인하세요.")
+else:
+    print("[❌ 경고] DB_AVAILABLE이 False입니다. psycopg2를 설치하세요.")
 
 # 별도 스레드에서 Socket.IO 초기화 시작 (서버 시작을 막지 않음)
 init_thread = threading.Thread(target=delayed_socketio_init, daemon=True)
