@@ -508,6 +508,8 @@ RESULTS_HTML = '''
         
         // 이전 15번째 카드 색상 저장 (새 결과 발표 전)
         let previous15thCardColor = null;
+        // 각 카드의 색상 비교 결과 저장 (gameID를 키로)
+        const colorMatchCache = {};
         
         async function loadResults() {
             try {
@@ -546,22 +548,42 @@ RESULTS_HTML = '''
                 // 최신 15개만 표시 (반응형으로 모두 보이도록)
                 const displayResults = results.slice(0, 15);
                 
-                // 모든 카드의 색상 비교 결과 계산
+                // 모든 카드의 색상 비교 결과 계산 (캐시 사용)
                 const colorMatchResults = [];
                 
                 // 1번째 카드: 이전 15번째 카드와 비교
-                if (displayResults.length >= 15 && previous15thCardColor !== null) {
-                    const card1 = parseCardValue(displayResults[0].result || '');
-                    colorMatchResults[0] = (previous15thCardColor === card1.isRed);
-                } else {
-                    colorMatchResults[0] = null;
+                const gameID1 = displayResults[0]?.gameID || '';
+                if (gameID1 && !colorMatchCache[gameID1]) {
+                    // 새로운 카드인 경우에만 계산
+                    if (displayResults.length >= 15 && previous15thCardColor !== null) {
+                        const card1 = parseCardValue(displayResults[0].result || '');
+                        colorMatchCache[gameID1] = (previous15thCardColor === card1.isRed);
+                    } else {
+                        colorMatchCache[gameID1] = null;
+                    }
+                }
+                colorMatchResults[0] = colorMatchCache[gameID1] !== undefined ? colorMatchCache[gameID1] : null;
+                
+                // 2번째부터 15번째 카드: 각각 이전 카드와 비교 (캐시 사용)
+                for (let i = 1; i < displayResults.length; i++) {
+                    const currentGameID = displayResults[i]?.gameID || '';
+                    const previousGameID = displayResults[i - 1]?.gameID || '';
+                    
+                    if (currentGameID && !colorMatchCache[currentGameID]) {
+                        // 새로운 카드인 경우에만 계산
+                        const currentCard = parseCardValue(displayResults[i].result || '');
+                        const previousCard = parseCardValue(displayResults[i - 1].result || '');
+                        colorMatchCache[currentGameID] = (currentCard.isRed === previousCard.isRed);
+                    }
+                    colorMatchResults[i] = colorMatchCache[currentGameID] !== undefined ? colorMatchCache[currentGameID] : null;
                 }
                 
-                // 2번째부터 15번째 카드: 각각 이전 카드와 비교
-                for (let i = 1; i < displayResults.length; i++) {
-                    const currentCard = parseCardValue(displayResults[i].result || '');
-                    const previousCard = parseCardValue(displayResults[i - 1].result || '');
-                    colorMatchResults[i] = (currentCard.isRed === previousCard.isRed);
+                // 오래된 캐시 정리 (현재 표시되지 않는 카드 제거)
+                const currentGameIDs = new Set(displayResults.map(r => r.gameID).filter(id => id));
+                for (const gameID in colorMatchCache) {
+                    if (!currentGameIDs.has(gameID)) {
+                        delete colorMatchCache[gameID];
+                    }
                 }
                 
                 // 현재 15번째 카드 색상 저장 (다음 비교를 위해)
