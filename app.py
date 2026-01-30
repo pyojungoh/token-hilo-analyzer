@@ -1698,6 +1698,7 @@ RESULTS_HTML = '''
                         pongPct = pl.pongPct; linePct = pl.linePct;
                     }
                     const flowStr = '최근 15회(정꺽): <span class="pong">퐁당 ' + pongPct + '%</span> / <span class="line">줄 ' + linePct + '%</span>';
+                    const last = graphValues[0];  // 직전 정/꺽 (아래 단기vs장기·전이 확률에서 사용)
                     
                     // 이전 15회 퐁당% (흐름 전환 감지용)
                     let pongPrev15 = 50;
@@ -1747,7 +1748,6 @@ RESULTS_HTML = '''
                     }
                     
                     // 전이 확률 (최근 30회): P(정), P(꺽)
-                    const last = graphValues[0];
                     let Pjung = 0.5, Pkkuk = 0.5;
                     if (last === true && recent30.jungDenom > 0) {
                         Pjung = recent30.jj / recent30.jungDenom;
