@@ -1507,17 +1507,14 @@ RESULTS_HTML = '''
         let betCalcRunning = false;  // 실행 눌렀을 때만 true, 정지/리셋 시 false
         
         async function loadResults() {
-            // 이미 로딩 중이면 스킵
-            if (isLoadingResults) {
-                return;
-            }
+            if (isLoadingResults) return;
+            const statusEl = document.getElementById('status');
+            if (statusEl) statusEl.textContent = '데이터 요청 중...';
             
             try {
                 isLoadingResults = true;
-                
-                // 10초 경기 룰: 8초 안에 응답 없으면 재시도 (한 라운드 안에 결과 봐야 함)
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 8000);
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
                 
                 const response = await fetch('/api/results?t=' + Date.now(), {
                     signal: controller.signal,
@@ -1525,36 +1522,29 @@ RESULTS_HTML = '''
                 });
                 
                 clearTimeout(timeoutId);
+                if (statusEl) statusEl.textContent = '결과 표시 중...';
                 
                 if (!response.ok) {
                     console.warn('결과 로드 실패:', response.status, response.statusText);
-                    const statusElement = document.getElementById('status');
-                    if (statusElement) {
-                        statusElement.textContent = `결과 로드 실패 (${response.status})`;
-                    }
+                    if (statusEl) statusEl.textContent = '결과 로드 실패 (' + response.status + ')';
                     return;
                 }
                 
                 const data = await response.json();
-                
                 if (data.error) {
-                    const statusElement = document.getElementById('status');
-                    if (statusElement) {
-                        statusElement.textContent = '오류: ' + data.error;
-                    }
+                    if (statusEl) statusEl.textContent = '오류: ' + data.error;
                     return;
                 }
                 
                 const newResults = data.results || [];
                 const statusElement = document.getElementById('status');
                 const cardsDiv = document.getElementById('cards');
-                
                 if (!statusElement || !cardsDiv) {
-                    console.error('DOM 요소를 찾을 수 없습니다');
-                    if (statusElement) statusElement.textContent = '화면 오류 - 새로고침 해 주세요';
+                    if (statusEl) statusEl.textContent = '화면 오류 - 새로고침 해 주세요';
                     return;
                 }
                 
+                try {
                 // 새로운 결과를 기존 결과와 병합 (중복 제거, 최신 150개 유지 - 그래프 쭉 표시용)
                 if (newResults.length > 0) {
                     // 새로운 결과의 gameID들
@@ -2058,19 +2048,23 @@ RESULTS_HTML = '''
                         prevRoundElement.textContent = `이전회차: ${gameID}`;
                     }
                 }
+                } catch (renderErr) {
+                    if (statusEl) statusEl.textContent = '표시 오류 - 새로고침 해 주세요';
+                    console.error('표시 오류:', renderErr);
+                }
             } catch (error) {
                 const statusEl = document.getElementById('status');
                 // AbortError는 조용히 처리 (타임아웃은 정상적인 상황)
                 if (error.name === 'AbortError') {
-                    if (statusEl) statusEl.textContent = allResults.length === 0 ? '8초 내 응답 없음 - 곧 다시 시도...' : '갱신 대기 중...';
-                    if (allResults.length === 0) setTimeout(() => loadResults(), 1500);
+                    if (statusEl) statusEl.textContent = allResults.length === 0 ? '5초 내 응답 없음 - 다시 시도 중...' : '갱신 대기 중...';
+                    if (allResults.length === 0) setTimeout(() => loadResults(), 1200);
                     return;
                 }
                 
                 // Failed to fetch는 네트워크 오류이므로 조용히 처리 (기존 결과 유지)
                 if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
-                    if (statusEl && allResults.length === 0) statusEl.textContent = '연결 실패 - 1.5초 후 재시도...';
-                    if (allResults.length === 0) setTimeout(() => loadResults(), 1500);
+                    if (statusEl && allResults.length === 0) statusEl.textContent = '연결 실패 - 1.2초 후 재시도...';
+                    if (allResults.length === 0) setTimeout(() => loadResults(), 1200);
                     return;
                 }
                 
