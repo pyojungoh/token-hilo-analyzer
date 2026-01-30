@@ -1089,11 +1089,17 @@ def get_current_status():
     """현재 게임 상태"""
     try:
         data = load_game_data()
+        # 디버깅: 반환 데이터 확인
+        red_count = len(data.get('currentBets', {}).get('red', []))
+        black_count = len(data.get('currentBets', {}).get('black', []))
+        print(f"[API 응답] RED: {red_count}개, BLACK: {black_count}개")
         # 항상 데이터 반환 (기본값 포함)
         return jsonify(data), 200
     except Exception as e:
         # 에러 발생 시 기본값 반환 (서버 크래시 방지)
         print(f"게임 상태 로드 오류: {str(e)[:200]}")
+        import traceback
+        print(traceback.format_exc())
         return jsonify({
             'round': 0,
             'elapsed': 0,
