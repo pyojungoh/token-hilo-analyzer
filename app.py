@@ -23,6 +23,34 @@ except ImportError as e:
     print("[❌ 경고] pip install python-socketio로 설치하세요")
 
 app = Flask(__name__)
+
+# Gunicorn으로 실행될 때도 Socket.IO 연결 시작 (모듈 레벨에서 실행)
+# 주의: Gunicorn의 --preload 옵션을 사용하면 이 코드가 마스터 프로세스에서만 실행될 수 있음
+def init_socketio():
+    """Socket.IO 연결 초기화"""
+    print("=" * 50)
+    print("[서버 시작] 토큰하이로우 분석기")
+    print("=" * 50)
+    print(f"[환경 변수] SOCKETIO_URL: {SOCKETIO_URL}")
+    print(f"[환경 변수] BASE_URL: {BASE_URL}")
+    print(f"[라이브러리] python-socketio 사용 가능: {SOCKETIO_AVAILABLE}")
+
+    # Socket.IO 클라이언트 시작
+    if SOCKETIO_AVAILABLE:
+        if SOCKETIO_URL:
+            print(f"[✅ 정보] Socket.IO 연결 시작: {SOCKETIO_URL}")
+            start_socketio_client()
+        else:
+            print("[❌ 경고] SOCKETIO_URL 환경 변수가 설정되지 않았습니다")
+            print("[❌ 경고] Railway 환경 변수에 SOCKETIO_URL을 설정하세요")
+            print("[❌ 경고] 예: SOCKETIO_URL=https://game.cmx258.com:8080")
+    else:
+        print("[❌ 경고] python-socketio가 설치되지 않아 Socket.IO 연결을 사용하지 않습니다")
+        print("[❌ 경고] pip install python-socketio로 설치하세요")
+    print("=" * 50)
+
+# 모듈 로드 시 Socket.IO 초기화
+init_socketio()
 CORS(app)
 
 # 환경 변수
