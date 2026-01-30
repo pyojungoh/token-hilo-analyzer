@@ -391,11 +391,13 @@ RESULTS_HTML = '''
             
             if (isNaN(numInt)) return numStr;
             
-            // 숫자 변환: 1→A, 10→J, 11→Q, 12→K, 13→K
+            // 숫자 변환: 1→A, 10→J, 11→Q, 12→Q, 13→K
+            // 실제 게임: A(1), 2~9, 10(J), 11(Q), 12(Q), 13(K)
             if (numInt === 1) return 'A';
             if (numInt === 10) return 'J';
             if (numInt === 11) return 'Q';
-            if (numInt === 12 || numInt === 13) return 'K';
+            if (numInt === 12) return 'Q';  // 12도 Q
+            if (numInt === 13) return 'K';  // 13은 K
             
             return numStr;
         }
