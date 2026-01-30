@@ -1177,14 +1177,15 @@ RESULTS_HTML = '''
         .graph-stats .jung-kkuk { color: #ffb74d; }
         .graph-stats .kkuk-jung { color: #64b5f6; }
         .graph-stats-note { margin-top: 6px; font-size: 0.85em; color: #aaa; text-align: center; }
-        .prediction-layout {
+        .prediction-table-row {
             display: flex;
-            justify-content: space-between;
             align-items: flex-start;
-            gap: 20px;
-            flex-wrap: wrap;
+            gap: 16px;
             margin-top: 12px;
         }
+        #prediction-pick-container { flex: 0 0 auto; }
+        #graph-stats { flex: 1 1 auto; min-width: 0; }
+        #prediction-alert-container { flex: 0 0 auto; }
         .prediction-pick {
             display: flex;
             flex-direction: column;
@@ -1252,8 +1253,12 @@ RESULTS_HTML = '''
             color: #aaa;
         }
         .prediction-stats-row strong { color: #fff; }
+        .prediction-streak-line { margin-top: 8px; font-size: 1em; color: #bbb; }
+        .prediction-streak-line .streak-win { color: #81c784; font-weight: bold; }
+        .prediction-streak-line .streak-lose { color: #e57373; font-weight: bold; }
+        .prediction-streak-line .streak-joker { color: #64b5f6; }
         .prediction-box {
-            margin-top: 12px;
+            margin-top: 10px;
             padding: 10px 14px;
             background: #333;
             border-radius: 8px;
@@ -1324,7 +1329,11 @@ RESULTS_HTML = '''
         </div>
         <div class="cards-container" id="cards"></div>
         <div id="jung-kkuk-graph" class="jung-kkuk-graph"></div>
-        <div id="graph-stats" class="graph-stats"></div>
+        <div class="prediction-table-row">
+            <div id="prediction-pick-container"></div>
+            <div id="graph-stats" class="graph-stats"></div>
+            <div id="prediction-alert-container"></div>
+        </div>
         <div id="prediction-box" class="prediction-box"></div>
         <div class="bet-calc">
             <h4>가상 배팅 계산기</h4>
@@ -1929,35 +1938,49 @@ RESULTS_HTML = '''
                     }
                     const streakNow = streakCount > 0 ? '현재 ' + streakCount + '연' + streakType : '';
                     
-                    // 예측 픽(왼쪽 카드) · 경고(오른쪽) · 적중률(전체 N회 승 N회 패 N회 조커 N회)
+                    // 예측 픽(표 왼쪽) · 경고(표 오른쪽) · 적중률·연승연패 기록(아래 박스)
+                    const pickContainer = document.getElementById('prediction-pick-container');
+                    const alertContainer = document.getElementById('prediction-alert-container');
                     const predDiv = document.getElementById('prediction-box');
+                    const hit = predictionHistory.filter(h => h.actual !== 'joker' && h.predicted === h.actual).length;
+                    const losses = predictionHistory.filter(h => h.actual !== 'joker' && h.predicted !== h.actual).length;
+                    const jokerCount = predictionHistory.filter(h => h.actual === 'joker').length;
+                    const total = predictionHistory.length;
+                    const countForPct = hit + losses;
+                    const hitPctNum = countForPct > 0 ? 100 * hit / countForPct : 0;
+                    const hitPct = countForPct > 0 ? hitPctNum.toFixed(1) : '-';
+                    const lowWinRate = countForPct > 0 && hitPctNum <= 50;
+                    const leftBlock = is15Joker ? ('<div class="prediction-pick">' +
+                        '<div class="prediction-card" style="background:#455a64;border-color:#78909c">' +
+                        '<span class="pred-value-big" style="color:#fff;font-size:1.2em">보류</span>' +
+                        '</div>' +
+                        '<div class="prediction-prob-under" style="color:#ffb74d">15번 카드 조커 · 배팅하지 마세요</div>' +
+                        '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + predictedRound + '회</div>' +
+                        '</div>') : ('<div class="prediction-pick">' +
+                        '<div class="prediction-card">' +
+                        '<span class="pred-value-big ' + colorClass + '">' + predict + '</span>' +
+                        '</div>' +
+                        '<div class="prediction-prob-under">나올 확률 ' + predProb.toFixed(1) + '%</div>' +
+                        '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + predictedRound + '회 · ' + colorToPick + '</div>' +
+                        '</div>');
+                    let rightBlock = flowAdvice ? ('<div class="prediction-alert">' +
+                        '<div class="prediction-alert-icon">!</div>' +
+                        '<div class="prediction-alert-text">' + flowAdvice + '</div>' +
+                        '</div>') : '';
+                    if (lowWinRate) {
+                        rightBlock += '<div class="prediction-alert" style="margin-top:8px">' +
+                            '<div class="prediction-alert-icon" style="font-size:2em;color:#e57373">!</div>' +
+                            '<div class="prediction-alert-text" style="color:#e57373">승률이 낮으니 배팅 주의</div>' +
+                            '</div>';
+                    }
+                    if (pickContainer) pickContainer.innerHTML = leftBlock;
+                    if (alertContainer) alertContainer.innerHTML = rightBlock;
                     if (predDiv) {
-                        const hit = predictionHistory.filter(h => h.actual !== 'joker' && h.predicted === h.actual).length;
-                        const losses = predictionHistory.filter(h => h.actual !== 'joker' && h.predicted !== h.actual).length;
-                        const jokerCount = predictionHistory.filter(h => h.actual === 'joker').length;
-                        const total = predictionHistory.length;
-                        const countForPct = hit + losses;
-                        const hitPct = countForPct > 0 ? (100 * hit / countForPct).toFixed(1) : '-';
-                        const leftBlock = is15Joker ? ('<div class="prediction-pick">' +
-                            '<div class="prediction-card" style="background:#455a64;border-color:#78909c">' +
-                            '<span class="pred-value-big" style="color:#fff;font-size:1.2em">보류</span>' +
-                            '</div>' +
-                            '<div class="prediction-prob-under" style="color:#ffb74d">15번 카드 조커 · 배팅하지 마세요</div>' +
-                            '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + predictedRound + '회</div>' +
-                            '</div>') : ('<div class="prediction-pick">' +
-                            '<div class="prediction-card">' +
-                            '<span class="pred-value-big ' + colorClass + '">' + predict + '</span>' +
-                            '</div>' +
-                            '<div class="prediction-prob-under">나올 확률 ' + predProb.toFixed(1) + '%</div>' +
-                            '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + predictedRound + '회 · ' + colorToPick + '</div>' +
-                            '</div>');
-                        const rightBlock = flowAdvice ? ('<div class="prediction-alert">' +
-                            '<div class="prediction-alert-icon">!</div>' +
-                            '<div class="prediction-alert-text">' + flowAdvice + '</div>' +
-                            '</div>') : '';
-                        const statsBlock = '<div class="prediction-stats-row">전체 <strong>' + total + '</strong>회 &nbsp; 승 <strong>' + hit + '</strong>회 &nbsp; 패 <strong>' + losses + '</strong>회' + (jokerCount > 0 ? ' &nbsp; 조커 <strong>' + jokerCount + '</strong>회' : '') + (countForPct > 0 ? ' (' + hitPct + '%)' : '') + '</div>';
+                        const statsBlock = '<div class="prediction-stats-row">전체 <strong>' + total + '</strong>회 &nbsp; 승 <strong>' + hit + '</strong>회 &nbsp; 패 <strong>' + losses + '</strong>회' + (jokerCount > 0 ? ' &nbsp; 조커 <strong>' + jokerCount + '</strong>회' : '') + (countForPct > 0 ? ' &nbsp; 승률 <strong>' + hitPct + '%</strong>' : '') + '</div>';
+                        const streakDisplay = streakArr.map(s => s === '승' ? '<span class="streak-win">승</span>' : (s === '패' ? '<span class="streak-lose">패</span>' : '<span class="streak-joker">조커</span>')).join(' ');
+                        const streakLineBlock = '<div class="prediction-streak-line">연승/연패 기록: ' + (streakDisplay || '-') + (streakNow ? ' &nbsp; <span class="streak-now">' + streakNow + '</span>' : '') + '</div>';
                         const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:0.8em">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
-                        predDiv.innerHTML = '<div class="prediction-layout">' + leftBlock + rightBlock + '</div>' + statsBlock + extraLine;
+                        predDiv.innerHTML = statsBlock + streakLineBlock + extraLine;
                     }
                     
                     // 가상 배팅 계산: 실행 눌렀을 때만 갱신. 리셋 이후 예측만 사용(리셋 시 누적 합산 방지).
@@ -2001,8 +2024,14 @@ RESULTS_HTML = '''
                 } else if (statsDiv) {
                     statsDiv.innerHTML = '';
                 }
-                const predDivEmpty = document.getElementById('prediction-box');
-                if (predDivEmpty && graphValues.length < 2) predDivEmpty.innerHTML = '';
+                if (graphValues.length < 2) {
+                    const pickEmpty = document.getElementById('prediction-pick-container');
+                    const alertEmpty = document.getElementById('prediction-alert-container');
+                    const predDivEmpty = document.getElementById('prediction-box');
+                    if (pickEmpty) pickEmpty.innerHTML = '';
+                    if (alertEmpty) alertEmpty.innerHTML = '';
+                    if (predDivEmpty) predDivEmpty.innerHTML = '';
+                }
                 
                 // 헤더 정보 업데이트
                 if (displayResults.length > 0) {
