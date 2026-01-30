@@ -88,43 +88,31 @@ def load_game_data():
                 'timestamp': datetime.now().isoformat()
             }
         
-        # red, black 배열 가져오기
+        # 기존 파일과 동일하게: data.red, data.black 직접 사용
+        # 리스트가 아닌 경우 빈 배열로 처리
         red_bets = data.get('red', [])
         black_bets = data.get('black', [])
         
-        # 리스트가 아닌 경우 빈 배열로 처리
         if not isinstance(red_bets, list):
             red_bets = []
         if not isinstance(black_bets, list):
             black_bets = []
         
-        # 디버깅: 베팅 데이터 확인 (안전하게)
+        # 디버깅: 베팅 데이터 확인 (기존 파일과 동일한 방식)
         try:
             print(f"[베팅 데이터] RED: {len(red_bets)}개, BLACK: {len(black_bets)}개")
-            if len(red_bets) > 0 and isinstance(red_bets[0], dict):
-                print(f"[베팅 데이터] RED 첫 번째: {str(red_bets[0])[:100]}")
-            if len(black_bets) > 0 and isinstance(black_bets[0], dict):
-                print(f"[베팅 데이터] BLACK 첫 번째: {str(black_bets[0])[:100]}")
+            if len(red_bets) > 0:
+                first_red = red_bets[0]
+                if isinstance(first_red, dict):
+                    print(f"[베팅 데이터] RED 첫 번째: account={first_red.get('account', 'N/A')}, cash={first_red.get('cash', 0)}")
+            if len(black_bets) > 0:
+                first_black = black_bets[0]
+                if isinstance(first_black, dict):
+                    print(f"[베팅 데이터] BLACK 첫 번째: account={first_black.get('account', 'N/A')}, cash={first_black.get('cash', 0)}")
             
-            # 총액 계산 (서버 측에서도 확인, 안전하게)
-            red_total = 0
-            for bet in red_bets:
-                if isinstance(bet, dict):
-                    try:
-                        cash = bet.get('cash') or bet.get('amount') or 0
-                        red_total += int(cash) if cash else 0
-                    except (ValueError, TypeError):
-                        continue
-            
-            black_total = 0
-            for bet in black_bets:
-                if isinstance(bet, dict):
-                    try:
-                        cash = bet.get('cash') or bet.get('amount') or 0
-                        black_total += int(cash) if cash else 0
-                    except (ValueError, TypeError):
-                        continue
-            
+            # 기존 파일과 동일하게: bet.cash로 금액 계산
+            red_total = sum((bet.get('cash') or 0) for bet in red_bets if isinstance(bet, dict))
+            black_total = sum((bet.get('cash') or 0) for bet in black_bets if isinstance(bet, dict))
             print(f"[베팅 데이터] RED 총액: {red_total}, BLACK 총액: {black_total}")
         except Exception as debug_error:
             print(f"디버깅 로그 오류 (무시): {str(debug_error)[:100]}")
@@ -857,17 +845,14 @@ RESULTS_HTML = '''
                     return;
                 }
                 
-                // currentBets가 없어도 red, black을 직접 확인
+                // 기존 파일과 동일하게: currentBets.red, currentBets.black 사용
+                // 기존 파일: gameData.currentBets.red, gameData.currentBets.black
                 let redBets = [];
                 let blackBets = [];
                 
                 if (data.currentBets) {
-                    redBets = data.currentBets.red || [];
-                    blackBets = data.currentBets.black || [];
-                } else if (data.red && data.black) {
-                    // currentBets가 없으면 직접 red, black 확인
-                    redBets = Array.isArray(data.red) ? data.red : [];
-                    blackBets = Array.isArray(data.black) ? data.black : [];
+                    redBets = Array.isArray(data.currentBets.red) ? data.currentBets.red : [];
+                    blackBets = Array.isArray(data.currentBets.black) ? data.currentBets.black : [];
                 }
                 
                 console.log('RED 베팅 배열:', redBets);
@@ -875,35 +860,32 @@ RESULTS_HTML = '''
                 console.log('RED 베팅 개수:', redBets.length);
                 console.log('BLACK 베팅 개수:', blackBets.length);
                 
-                // 총 베팅 금액 계산
+                // 기존 파일과 동일하게: bet.cash로 금액 계산
+                // 기존 파일: const amount = (bet.cash || 0).toLocaleString();
                 const redTotal = redBets.reduce((sum, bet) => {
                     if (!bet || typeof bet !== 'object') {
-                        console.warn('잘못된 RED 베팅 데이터:', bet);
                         return sum;
                     }
-                    const cash = Number(bet.cash) || Number(bet.amount) || 0;
-                    if (isNaN(cash)) {
-                        console.warn('잘못된 RED 베팅 금액:', bet);
-                        return sum;
-                    }
-                    return sum + cash;
+                    // 기존 파일: bet.cash 사용
+                    const cash = bet.cash || 0;
+                    return sum + (Number(cash) || 0);
                 }, 0);
                 const blackTotal = blackBets.reduce((sum, bet) => {
                     if (!bet || typeof bet !== 'object') {
-                        console.warn('잘못된 BLACK 베팅 데이터:', bet);
                         return sum;
                     }
-                    const cash = Number(bet.cash) || Number(bet.amount) || 0;
-                    if (isNaN(cash)) {
-                        console.warn('잘못된 BLACK 베팅 금액:', bet);
-                        return sum;
-                    }
-                    return sum + cash;
+                    // 기존 파일: bet.cash 사용
+                    const cash = bet.cash || 0;
+                    return sum + (Number(cash) || 0);
                 }, 0);
                 
                 console.log('RED 총액:', redTotal, 'BLACK 총액:', blackTotal);
-                console.log('RED 베팅 상세:', redBets.slice(0, 3)); // 처음 3개만
-                console.log('BLACK 베팅 상세:', blackBets.slice(0, 3)); // 처음 3개만
+                if (redBets.length > 0) {
+                    console.log('RED 첫 번째 베팅:', redBets[0]);
+                }
+                if (blackBets.length > 0) {
+                    console.log('BLACK 첫 번째 베팅:', blackBets[0]);
+                }
                 
                 // 금액 표시 (천 단위 콤마)
                 const formatAmount = (amount) => {
@@ -1238,6 +1220,11 @@ def index():
         'message': '토큰하이로우 분석기 API',
         'version': '1.0.0'
     }), 200
+
+@app.route('/favicon.ico', methods=['GET'])
+def favicon():
+    """favicon 404 에러 방지"""
+    return '', 204  # No Content
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
