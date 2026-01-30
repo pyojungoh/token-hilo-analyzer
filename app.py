@@ -256,13 +256,22 @@ def start_socketio_client():
                 socketio_client.on('result', on_socketio_result)
                 
                 # 연결 시도 (SSL 검증 비활성화)
-                # python-socketio 5.x에서는 기본적으로 SSL 검증을 시도하지만,
-                # 환경 변수나 다른 방법으로 비활성화할 수 있습니다
                 print(f"🔵 [연결 정보] URL: {SOCKETIO_URL}")
                 
-                # SSL 검증 경고 무시를 위한 환경 변수 설정
+                # SSL 검증 비활성화를 위한 환경 변수 설정
                 import os
+                import ssl
                 os.environ['PYTHONHTTPSVERIFY'] = '0'
+                # urllib3의 SSL 경고 비활성화
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                
+                # python-socketio는 내부적으로 requests를 사용하므로
+                # requests의 SSL 검증을 비활성화
+                import requests
+                requests.packages.urllib3.disable_warnings()
+                
+                print(f"🔵 [연결 시도] SSL 검증 비활성화됨")
                 
                 socketio_client.connect(
                     SOCKETIO_URL, 
@@ -270,13 +279,17 @@ def start_socketio_client():
                     transports=['websocket', 'polling']  # WebSocket 우선, 실패시 polling
                 )
                 
+                print(f"🔵 [연결 성공] connect() 메서드 완료")
+                
                 # 연결 유지
                 socketio_client.wait()
                 
             except Exception as e:
                 error_msg = str(e)
-                print(f"🔵 [Socket.IO 연결 오류] {error_msg[:200]}")
+                print(f"🔵 [Socket.IO 연결 오류] {error_msg[:300]}")
                 print(f"🔵 [오류 상세] {type(e).__name__}: {error_msg}")
+                import traceback
+                print(f"🔵 [오류 스택] {traceback.format_exc()[:500]}")
                 socketio_connected = False
                 if socketio_client:
                     try:
