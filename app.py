@@ -61,6 +61,7 @@ def load_game_data():
         
         return {
             'round': data.get('round', 0),
+            'elapsed': data.get('elapsed', 0),
             'currentBets': {
                 'red': data.get('red', []) if isinstance(data.get('red'), list) else [],
                 'black': data.get('black', []) if isinstance(data.get('black'), list) else []
@@ -240,9 +241,22 @@ RESULTS_HTML = '''
             background: rgba(255,255,255,0.05);
             border-radius: 5px;
             font-size: clamp(0.8em, 2vw, 0.9em);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         .header-info div {
-            margin: 3px 0;
+            margin: 0 10px;
+        }
+        .remaining-time {
+            font-weight: bold;
+            color: #4caf50;
+        }
+        .remaining-time.warning {
+            color: #ffaa00;
+        }
+        .remaining-time.danger {
+            color: #f44336;
         }
         .cards-container {
             display: flex;
@@ -334,13 +348,27 @@ RESULTS_HTML = '''
     <div class="container">
         <div class="header-info">
             <div id="prev-round">이전회차: --</div>
-            <div id="hash">Hash: --</div>
-            <div id="remaining-time">남은 시간: -- 초</div>
+            <div id="remaining-time" class="remaining-time">남은 시간: -- 초</div>
         </div>
         <div class="cards-container" id="cards"></div>
         <div class="status" id="status">로딩 중...</div>
     </div>
     <script>
+        function convertCardNumber(num) {
+            const numStr = String(num).trim();
+            const numInt = parseInt(numStr);
+            
+            if (isNaN(numInt)) return numStr;
+            
+            // 숫자 변환: 1→A, 10→J, 11→Q, 12→K
+            if (numInt === 1) return 'A';
+            if (numInt === 10) return 'J';
+            if (numInt === 11) return 'Q';
+            if (numInt === 12) return 'K';
+            
+            return numStr;
+        }
+        
         function parseCardValue(value) {
             if (!value) return { number: '', suit: '♥', isRed: true };
             
@@ -355,15 +383,16 @@ RESULTS_HTML = '''
             // 첫 글자가 문양인지 확인
             const firstChar = value.charAt(0).toUpperCase();
             if (suitMap[firstChar]) {
+                const numberStr = value.substring(1).trim();
                 return {
-                    number: value.substring(1),
+                    number: convertCardNumber(numberStr),
                     suit: suitMap[firstChar].icon,
                     isRed: suitMap[firstChar].isRed
                 };
             }
             
             // 기본값
-            return { number: value, suit: '♥', isRed: true };
+            return { number: convertCardNumber(value), suit: '♥', isRed: true };
         }
         
         function getCategory(result) {
@@ -411,6 +440,9 @@ RESULTS_HTML = '''
             return cardWrapper;
         }
         
+        let lastTimerUpdate = Date.now();
+        let localTimer = 0;
+        
         async function loadResults() {
             try {
                 const response = await fetch('/api/results');
@@ -441,18 +473,56 @@ RESULTS_HTML = '''
                     const latest = displayResults[0];
                     const gameID = latest.gameID || '';
                     document.getElementById('prev-round').textContent = `이전회차: ${gameID}`;
-                    document.getElementById('hash').textContent = `Hash: ${typeof gameID === 'string' && gameID.length > 8 ? gameID.slice(-8) : '--'}`;
                 }
             } catch (error) {
                 document.getElementById('status').textContent = '오류: ' + error.message;
             }
         }
         
+        async function updateTimer() {
+            try {
+                const response = await fetch('/api/current-status');
+                const data = await response.json();
+                
+                if (data.error) return;
+                
+                const elapsed = data.elapsed || 0;
+                const now = Date.now();
+                
+                // elapsed 값이 변경되면 타이머 리셋
+                if (elapsed !== localTimer) {
+                    lastTimerUpdate = now;
+                    localTimer = elapsed;
+                }
+                
+                const timeDiff = (now - lastTimerUpdate) / 1000;
+                const currentElapsed = Math.max(0, elapsed + timeDiff);
+                const remaining = Math.max(0, 10 - currentElapsed);
+                
+                const timeElement = document.getElementById('remaining-time');
+                timeElement.textContent = `남은 시간: ${remaining.toFixed(2)} 초`;
+                
+                // 타이머 색상
+                timeElement.className = 'remaining-time';
+                if (remaining <= 1) {
+                    timeElement.classList.add('danger');
+                } else if (remaining <= 3) {
+                    timeElement.classList.add('warning');
+                }
+            } catch (error) {
+                console.error('타이머 업데이트 오류:', error);
+            }
+        }
+        
         // 초기 로드
         loadResults();
+        updateTimer();
         
-        // 5초마다 자동 새로고침
+        // 5초마다 결과 새로고침
         setInterval(loadResults, 5000);
+        
+        // 0.1초마다 타이머 업데이트 (실시간)
+        setInterval(updateTimer, 100);
     </script>
 </body>
 </html>
@@ -487,16 +557,8 @@ def get_results():
 @app.route('/api/current-status', methods=['GET'])
 def get_current_status():
     """현재 게임 상태"""
-    global game_data_cache, last_update_time
-    
-    current_time = time.time() * 1000
-    if game_data_cache and (current_time - last_update_time) < CACHE_TTL:
-        return jsonify(game_data_cache)
-    
     data = load_game_data()
     if data:
-        game_data_cache = data
-        last_update_time = current_time
         return jsonify(data)
     else:
         return jsonify({'error': '데이터 로드 실패'}), 500
