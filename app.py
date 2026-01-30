@@ -1659,14 +1659,14 @@ RESULTS_HTML = '''
                 if (statsDiv && graphValues.length >= 2) {
                     const full = calcTransitions(graphValues);
                     const recent30 = calcTransitions(graphValues.slice(0, 30));
-                    const short10 = graphValues.length >= 10 ? calcTransitions(graphValues.slice(0, 10)) : null;
+                    const short15 = graphValues.length >= 15 ? calcTransitions(graphValues.slice(0, 15)) : null;
                     const fmt = (p, n, d) => d > 0 ? p + '% (' + n + '/' + d + ')' : '-';
-                    statsDiv.innerHTML = '<table><thead><tr><th></th><th>최근 10회</th><th>최근 30회</th><th>전체</th></tr></thead><tbody>' +
-                        '<tr><td><span class="jung-next">정 ↑</span></td><td>' + (short10 ? fmt(short10.pJung, short10.jj, short10.jungDenom) : '-') + '</td><td>' + fmt(recent30.pJung, recent30.jj, recent30.jungDenom) + '</td><td>' + fmt(full.pJung, full.jj, full.jungDenom) + '</td></tr>' +
-                        '<tr><td><span class="kkuk-next">꺽 ↑</span></td><td>' + (short10 ? fmt(short10.pKkuk, short10.kk, short10.kkukDenom) : '-') + '</td><td>' + fmt(recent30.pKkuk, recent30.kk, recent30.kkukDenom) + '</td><td>' + fmt(full.pKkuk, full.kk, full.kkukDenom) + '</td></tr>' +
-                        '<tr><td><span class="jung-kkuk">← 꺽</span></td><td>' + (short10 ? fmt(short10.pJungToKkuk, short10.jk, short10.jungDenom) : '-') + '</td><td>' + fmt(recent30.pJungToKkuk, recent30.jk, recent30.jungDenom) + '</td><td>' + fmt(full.pJungToKkuk, full.jk, full.jungDenom) + '</td></tr>' +
-                        '<tr><td><span class="kkuk-jung">← 정</span></td><td>' + (short10 ? fmt(short10.pKkukToJung, short10.kj, short10.kkukDenom) : '-') + '</td><td>' + fmt(recent30.pKkukToJung, recent30.kj, recent30.kkukDenom) + '</td><td>' + fmt(full.pKkukToJung, full.kj, full.kkukDenom) + '</td></tr>' +
-                        '</tbody></table><p class="graph-stats-note">※ 단기(10회) vs 장기(30회) 비교로 흐름 전환 감지</p>';
+                    statsDiv.innerHTML = '<table><thead><tr><th></th><th>최근 15회</th><th>최근 30회</th><th>전체</th></tr></thead><tbody>' +
+                        '<tr><td><span class="jung-next">정 ↑</span></td><td>' + (short15 ? fmt(short15.pJung, short15.jj, short15.jungDenom) : '-') + '</td><td>' + fmt(recent30.pJung, recent30.jj, recent30.jungDenom) + '</td><td>' + fmt(full.pJung, full.jj, full.jungDenom) + '</td></tr>' +
+                        '<tr><td><span class="kkuk-next">꺽 ↑</span></td><td>' + (short15 ? fmt(short15.pKkuk, short15.kk, short15.kkukDenom) : '-') + '</td><td>' + fmt(recent30.pKkuk, recent30.kk, recent30.kkukDenom) + '</td><td>' + fmt(full.pKkuk, full.kk, full.kkukDenom) + '</td></tr>' +
+                        '<tr><td><span class="jung-kkuk">← 꺽</span></td><td>' + (short15 ? fmt(short15.pJungToKkuk, short15.jk, short15.jungDenom) : '-') + '</td><td>' + fmt(recent30.pJungToKkuk, recent30.jk, recent30.jungDenom) + '</td><td>' + fmt(full.pJungToKkuk, full.jk, full.jungDenom) + '</td></tr>' +
+                        '<tr><td><span class="kkuk-jung">← 정</span></td><td>' + (short15 ? fmt(short15.pKkukToJung, short15.kj, short15.kkukDenom) : '-') + '</td><td>' + fmt(recent30.pKkukToJung, recent30.kj, recent30.kkukDenom) + '</td><td>' + fmt(full.pKkukToJung, full.kj, full.kkukDenom) + '</td></tr>' +
+                        '</tbody></table><p class="graph-stats-note">※ 단기(15회) vs 장기(30회) 비교로 흐름 전환 감지</p>';
                     
                     // 회차: gameID 뒤 3자리 = 현재 회차, 다음 회차 예측
                     const latestGameID = String(displayResults[0]?.gameID || '0');
@@ -1700,21 +1700,64 @@ RESULTS_HTML = '''
                     const flowStr = '최근 15회(정꺽): <span class="pong">퐁당 ' + pongPct + '%</span> / <span class="line">줄 ' + linePct + '%</span>';
                     const last = graphValues[0];  // 직전 정/꺽 (아래 단기vs장기·전이 확률에서 사용)
                     
+                    // 줄 패턴: 덩어리(연속2+ 다수) vs 띄엄띄엄(1-1) vs 두줄한개(2-1)
+                    function getLinePongRuns(arr) {
+                        const pairs = [];
+                        for (let i = 0; i < arr.length - 1; i++) {
+                            const a = arr[i], b = arr[i + 1];
+                            if (a !== true && a !== false || b !== true && b !== false) continue;
+                            pairs.push(a === b ? 1 : 0);  // 1=줄, 0=퐁당
+                        }
+                        const lineRuns = [], pongRuns = [];
+                        let i = 0;
+                        while (i < pairs.length) {
+                            if (pairs[i] === 1) {
+                                let c = 0;
+                                while (i < pairs.length && pairs[i] === 1) { c++; i++; }
+                                lineRuns.push(c);
+                            } else {
+                                let c = 0;
+                                while (i < pairs.length && pairs[i] === 0) { c++; i++; }
+                                pongRuns.push(c);
+                            }
+                        }
+                        return { lineRuns, pongRuns };
+                    }
+                    const useForPattern = graphValues.slice(0, 31);
+                    const { lineRuns, pongRuns } = getLinePongRuns(useForPattern);
+                    let linePatternStr = '';
+                    if (lineRuns.length >= 1 || pongRuns.length >= 1) {
+                        const lineTwoPlus = lineRuns.filter(l => l >= 2).length;
+                        const lineOne = lineRuns.filter(l => l === 1).length;
+                        const pongOne = pongRuns.filter(p => p === 1).length;
+                        const totalLineRuns = lineRuns.length;
+                        const totalPongRuns = pongRuns.length;
+                        if (totalLineRuns >= 2 && lineTwoPlus / totalLineRuns >= 0.5) {
+                            linePatternStr = '줄 패턴: <span class="line">덩어리</span> (연속줄 2개 이상 다수)';
+                        } else if (totalLineRuns >= 2 && lineOne / totalLineRuns >= 0.7 && totalPongRuns >= 1 && pongOne / totalPongRuns >= 0.7) {
+                            linePatternStr = '줄 패턴: <span class="pong">띄엄띄엄</span> (한줄-한퐁당 반복)';
+                        } else if (totalLineRuns >= 2 && lineRuns.filter(l => l === 2).length >= Math.ceil(totalLineRuns / 2) && totalPongRuns >= 1 && pongOne / totalPongRuns >= 0.6) {
+                            linePatternStr = '줄 패턴: <span class="line">두줄한개</span> (2줄-1퐁당 식)';
+                        } else if (totalLineRuns >= 1) {
+                            linePatternStr = '줄 패턴: 혼합 (줄 연속 ' + lineRuns.join(',') + (pongRuns.length ? ' / 퐁당 연속 ' + pongRuns.join(',') : '') + ')';
+                        }
+                    }
+                    
                     // 이전 15회 퐁당% (흐름 전환 감지용)
                     let pongPrev15 = 50;
                     if (graphValues.length >= 30) {
                         const plPrev = pongLinePct(graphValues.slice(15, 30));
                         pongPrev15 = plPrev.pongPct;
                     }
-                    // 단기(10회) vs 장기(30회) 유지 확률 비교: 15~20%p 이상 차이면 "줄이 강해졌다"
+                    // 단기(15회) vs 장기(30회) 유지 확률 비교: 15~20%p 이상 차이면 "줄이 강해졌다"
                     let lineStrongByTransition = false, pongStrongByTransition = false;
-                    if (short10) {
+                    if (short15) {
                         const longSamePct = last === true
                             ? (recent30.jungDenom > 0 ? 100 * recent30.jj / recent30.jungDenom : 50)
                             : (recent30.kkukDenom > 0 ? 100 * recent30.kk / recent30.kkukDenom : 50);
                         const shortSamePct = last === true
-                            ? (short10.jungDenom > 0 ? 100 * short10.jj / short10.jungDenom : 50)
-                            : (short10.kkukDenom > 0 ? 100 * short10.kk / short10.kkukDenom : 50);
+                            ? (short15.jungDenom > 0 ? 100 * short15.jj / short15.jungDenom : 50)
+                            : (short15.kkukDenom > 0 ? 100 * short15.kk / short15.kkukDenom : 50);
                         if (shortSamePct - longSamePct >= 15) lineStrongByTransition = true;
                         if (longSamePct - shortSamePct >= 15) pongStrongByTransition = true;
                     }
@@ -1802,6 +1845,7 @@ RESULTS_HTML = '''
                             '<div class="pred-prob">나올 확률: ' + predProb.toFixed(1) + '%</div>' +
                             '<div class="streak-line">' + streakStr + (streakNow ? ' <span class="streak-now">' + streakNow + '</span>' : '') + '</div>' +
                             '<div class="flow-type">' + flowStr + '</div>' +
+                            (linePatternStr ? '<div class="flow-type line-pattern">' + linePatternStr + '</div>' : '') +
                             (flowAdvice ? '<div class="flow-advice">' + flowAdvice + '</div>' : '') +
                             '<div class="hit-rate">적중률: ' + hit + '/' + total + ' (' + hitPct + '%)</div>';
                     }
