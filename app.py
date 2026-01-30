@@ -85,6 +85,18 @@ def load_game_data():
         if not isinstance(black_bets, list):
             black_bets = []
         
+        # 디버깅: 베팅 데이터 확인
+        print(f"[베팅 데이터] RED: {len(red_bets)}개, BLACK: {len(black_bets)}개")
+        if len(red_bets) > 0:
+            print(f"[베팅 데이터] RED 첫 번째: {red_bets[0]}")
+        if len(black_bets) > 0:
+            print(f"[베팅 데이터] BLACK 첫 번째: {black_bets[0]}")
+        
+        # 총액 계산 (서버 측에서도 확인)
+        red_total = sum(bet.get('cash', bet.get('amount', 0)) for bet in red_bets if isinstance(bet, dict))
+        black_total = sum(bet.get('cash', bet.get('amount', 0)) for bet in black_bets if isinstance(bet, dict))
+        print(f"[베팅 데이터] RED 총액: {red_total}, BLACK 총액: {black_total}")
+        
         return {
             'round': data.get('round', 0),
             'elapsed': data.get('elapsed', 0),
@@ -833,15 +845,33 @@ RESULTS_HTML = '''
                 
                 // 총 베팅 금액 계산
                 const redTotal = redBets.reduce((sum, bet) => {
-                    const cash = bet.cash || bet.amount || 0;
+                    if (!bet || typeof bet !== 'object') {
+                        console.warn('잘못된 RED 베팅 데이터:', bet);
+                        return sum;
+                    }
+                    const cash = Number(bet.cash) || Number(bet.amount) || 0;
+                    if (isNaN(cash)) {
+                        console.warn('잘못된 RED 베팅 금액:', bet);
+                        return sum;
+                    }
                     return sum + cash;
                 }, 0);
                 const blackTotal = blackBets.reduce((sum, bet) => {
-                    const cash = bet.cash || bet.amount || 0;
+                    if (!bet || typeof bet !== 'object') {
+                        console.warn('잘못된 BLACK 베팅 데이터:', bet);
+                        return sum;
+                    }
+                    const cash = Number(bet.cash) || Number(bet.amount) || 0;
+                    if (isNaN(cash)) {
+                        console.warn('잘못된 BLACK 베팅 금액:', bet);
+                        return sum;
+                    }
                     return sum + cash;
                 }, 0);
                 
                 console.log('RED 총액:', redTotal, 'BLACK 총액:', blackTotal);
+                console.log('RED 베팅 상세:', redBets.slice(0, 3)); // 처음 3개만
+                console.log('BLACK 베팅 상세:', blackBets.slice(0, 3)); // 처음 3개만
                 
                 // 금액 표시 (천 단위 콤마)
                 const formatAmount = (amount) => {
