@@ -1177,6 +1177,18 @@ RESULTS_HTML = '''
         .graph-stats .jung-kkuk { color: #ffb74d; }
         .graph-stats .kkuk-jung { color: #64b5f6; }
         .graph-stats-note { margin-top: 6px; font-size: 0.85em; color: #aaa; text-align: center; }
+        .prediction-box {
+            margin-top: 12px;
+            padding: 10px 14px;
+            background: #333;
+            border-radius: 8px;
+            color: #fff;
+            font-size: clamp(13px, 2vw, 15px);
+            text-align: center;
+        }
+        .prediction-box .pred-round { font-weight: bold; color: #81c784; }
+        .prediction-box .pred-value { font-weight: bold; font-size: 1.1em; }
+        .prediction-box .hit-rate { margin-top: 6px; font-size: 0.9em; color: #aaa; }
         .status {
             text-align: center;
             margin-top: 15px;
@@ -1202,6 +1214,7 @@ RESULTS_HTML = '''
         <div class="cards-container" id="cards"></div>
         <div id="jung-kkuk-graph" class="jung-kkuk-graph"></div>
         <div id="graph-stats" class="graph-stats"></div>
+        <div id="prediction-box" class="prediction-box"></div>
         <div class="status" id="status">로딩 중...</div>
     </div>
     <script>
@@ -1325,6 +1338,9 @@ RESULTS_HTML = '''
         // 최근 150개 결과 저장 (카드 15개, 그래프는 전부 쭉 표시)
         let allResults = [];
         let isLoadingResults = false;  // 중복 요청 방지
+        // 예측 기록 (최근 30회): { round, predicted, actual }
+        let predictionHistory = [];
+        let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         
         async function loadResults() {
             // 이미 로딩 중이면 스킵
@@ -1591,9 +1607,43 @@ RESULTS_HTML = '''
                         '<tr><td><span class="jung-kkuk">← 꺽</span></td><td>' + fmt(recent30.pJungToKkuk, recent30.jk, recent30.jungDenom) + '</td><td>' + fmt(full.pJungToKkuk, full.jk, full.jungDenom) + '</td></tr>' +
                         '<tr><td><span class="kkuk-jung">← 정</span></td><td>' + fmt(recent30.pKkukToJung, recent30.kj, recent30.kkukDenom) + '</td><td>' + fmt(full.pKkukToJung, full.kj, full.kkukDenom) + '</td></tr>' +
                         '</tbody></table><p class="graph-stats-note">※ 다음 회차 예측 시 최근 30회 확률 우선 참고</p>';
+                    
+                    // 회차: gameID 뒤 3자리 = 현재 회차, 다음 회차 예측
+                    const latestGameID = String(displayResults[0]?.gameID || '0');
+                    const currentRound = parseInt(latestGameID.slice(-3), 10) || 0;
+                    const predictedRound = currentRound + 1;
+                    
+                    // 직전 예측의 실제 결과 반영: 예측했던 회차(currentRound)가 지금 데이터에 있으면 graphValues[0]이 그 결과
+                    if (lastPrediction && graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false) && currentRound === lastPrediction.round) {
+                        const actual = graphValues[0] ? '정' : '꺽';
+                        predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: actual });
+                        predictionHistory = predictionHistory.slice(-30);
+                    }
+                    
+                    // 예측 공식: 최근 30회 전이 확률 + 직전 결과. 직전이 정이면 정→정 vs 정→꺽 중 높은 쪽, 꺽이면 꺽→꺽 vs 꺽→정 중 높은 쪽
+                    const last = graphValues[0];
+                    let predict = '정';
+                    if (last === true) {
+                        predict = (recent30.jungDenom && recent30.jj >= recent30.jk) ? '정' : '꺽';
+                    } else if (last === false) {
+                        predict = (recent30.kkukDenom && recent30.kk >= recent30.kj) ? '꺽' : '정';
+                    }
+                    lastPrediction = { value: predict, round: predictedRound };
+                    
+                    // 예측·적중률 UI
+                    const predDiv = document.getElementById('prediction-box');
+                    if (predDiv) {
+                        const hit = predictionHistory.filter(h => h.predicted === h.actual).length;
+                        const total = predictionHistory.length;
+                        const hitPct = total > 0 ? (100 * hit / total).toFixed(1) : '-';
+                        predDiv.innerHTML = '<span class="pred-round">' + predictedRound + '회 예측</span>: <span class="pred-value">' + predict + '</span>' +
+                            '<div class="hit-rate">적중률: ' + hit + '/' + total + ' (' + hitPct + '%)</div>';
+                    }
                 } else if (statsDiv) {
                     statsDiv.innerHTML = '';
                 }
+                const predDivEmpty = document.getElementById('prediction-box');
+                if (predDivEmpty && graphValues.length < 2) predDivEmpty.innerHTML = '';
                 
                 // 헤더 정보 업데이트
                 if (displayResults.length > 0) {
