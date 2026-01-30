@@ -1629,14 +1629,42 @@ RESULTS_HTML = '''
                         predictionHistory = predictionHistory.slice(-30);
                     }
                     
-                    // 예측 공식: 최근 30회 전이 확률 + 직전 결과. 직전이 정이면 정→정 vs 정→꺽 중 높은 쪽, 꺽이면 꺽→꺽 vs 꺽→정 중 높은 쪽
-                    const last = graphValues[0];
-                    let predict = '정';
-                    if (last === true) {
-                        predict = (recent30.jungDenom && recent30.jj >= recent30.jk) ? '정' : '꺽';
-                    } else if (last === false) {
-                        predict = (recent30.kkukDenom && recent30.kk >= recent30.kj) ? '꺽' : '정';
+                    // 최근 15회 정/꺽 흐름으로 퐁당·줄 계산 (승패 아님)
+                    const last15JungKkuk = graphValues.slice(0, 15).filter(v => v === true || v === false);
+                    let pongPct = 50, linePct = 50;
+                    if (last15JungKkuk.length >= 2) {
+                        let altPairs = 0, samePairs = 0;
+                        for (let i = 0; i < last15JungKkuk.length - 1; i++) {
+                            if (last15JungKkuk[i] !== last15JungKkuk[i + 1]) altPairs++; else samePairs++;
+                        }
+                        const pairs = altPairs + samePairs;
+                        pongPct = pairs > 0 ? parseFloat((100 * altPairs / pairs).toFixed(1)) : 50;
+                        linePct = pairs > 0 ? parseFloat((100 * samePairs / pairs).toFixed(1)) : 50;
                     }
+                    const flowStr = '최근 15회(정꺽): <span class="pong">퐁당 ' + pongPct + '%</span> / <span class="line">줄 ' + linePct + '%</span>';
+                    
+                    // 전이 확률 (최근 30회): P(정), P(꺽)
+                    const last = graphValues[0];
+                    let Pjung = 0.5, Pkkuk = 0.5;
+                    if (last === true && recent30.jungDenom > 0) {
+                        Pjung = recent30.jj / recent30.jungDenom;
+                        Pkkuk = recent30.jk / recent30.jungDenom;
+                    } else if (last === false && recent30.kkukDenom > 0) {
+                        Pjung = recent30.kj / recent30.kkukDenom;
+                        Pkkuk = recent30.kk / recent30.kkukDenom;
+                    }
+                    // 퐁당=바뀜, 줄=유지. 유지 쪽에 정(직전이 정일 때) 또는 꺽(직전이 꺽일 때), 바뀜은 그 반대
+                    const probSame = last === true ? Pjung : Pkkuk;
+                    const probChange = last === true ? Pkkuk : Pjung;
+                    const lineW = linePct / 100, pongW = pongPct / 100;
+                    const adjSame = probSame * lineW;
+                    const adjChange = probChange * pongW;
+                    const sum = adjSame + adjChange || 1;
+                    const adjSameN = adjSame / sum;
+                    const adjChangeN = adjChange / sum;
+                    // 예측: 유지 vs 바뀜 중 확률 높은 쪽. 유지=정(직전 정)/꺽(직전 꺽), 바뀜=꺽/정
+                    const predict = adjSameN >= adjChangeN ? (last === true ? '정' : '꺽') : (last === true ? '꺽' : '정');
+                    const predProb = (predict === (last === true ? '정' : '꺽') ? adjSameN : adjChangeN) * 100;
                     lastPrediction = { value: predict, round: predictedRound };
                     
                     // 15번째 카드 색상 기준 → 고를 카드: 정이면 같은 색, 꺽이면 반대 색
@@ -1644,14 +1672,6 @@ RESULTS_HTML = '''
                     const is15Red = card15 ? card15.isRed : false;
                     const colorToPick = predict === '정' ? (is15Red ? '빨강' : '검정') : (is15Red ? '검정' : '빨강');
                     const colorClass = colorToPick === '빨강' ? 'red' : 'black';
-                    
-                    // 예측한 픽이 나올 확률 (최근 30회 기준)
-                    let predProb = 0;
-                    if (predict === '정') {
-                        predProb = last === true && recent30.jungDenom > 0 ? (100 * recent30.jj / recent30.jungDenom) : (last === false && recent30.kkukDenom > 0 ? (100 * recent30.kj / recent30.kkukDenom) : 50);
-                    } else {
-                        predProb = last === true && recent30.jungDenom > 0 ? (100 * recent30.jk / recent30.jungDenom) : (last === false && recent30.kkukDenom > 0 ? (100 * recent30.kk / recent30.kkukDenom) : 50);
-                    }
                     
                     // 연승/연패: 예측 적중=승, 예측 실패=패. 최근이 왼쪽으로 (reverse)
                     const last15 = predictionHistory.slice(-15).map(h => h.predicted === h.actual ? '승' : '패');
@@ -1666,19 +1686,6 @@ RESULTS_HTML = '''
                         else break;
                     }
                     const streakNow = streakCount > 0 ? '현재 ' + streakCount + '연' + streakType : '';
-                    
-                    // 최근 15회 흐름: 퐁당(연속 바뀜) vs 줄(연속 같은 것). 14쌍 중 번갈아 나온 쌍 비율 = 퐁당, 같은 쌍 비율 = 줄
-                    let pongPct = 50, linePct = 50;
-                    if (last15.length >= 2) {
-                        let altPairs = 0, samePairs = 0;
-                        for (let i = 0; i < last15.length - 1; i++) {
-                            if (last15[i] !== last15[i + 1]) altPairs++; else samePairs++;
-                        }
-                        const pairs = altPairs + samePairs;
-                        pongPct = pairs > 0 ? (100 * altPairs / pairs).toFixed(1) : 50;
-                        linePct = pairs > 0 ? (100 * samePairs / pairs).toFixed(1) : 50;
-                    }
-                    const flowStr = '최근 15회: <span class="pong">퐁당 ' + pongPct + '%</span> / <span class="line">줄 ' + linePct + '%</span>';
                     
                     // 예측·적중률·연승연패 UI
                     const predDiv = document.getElementById('prediction-box');
