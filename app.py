@@ -512,14 +512,22 @@ RESULTS_HTML = '''
         async function loadResults() {
             try {
                 const response = await fetch('/api/results');
+                
                 if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
+                    const statusElement = document.getElementById('status');
+                    if (statusElement) {
+                        statusElement.textContent = `서버 오류: HTTP ${response.status}`;
+                    }
+                    return;
                 }
                 
                 const data = await response.json();
                 
                 if (data.error) {
-                    document.getElementById('status').textContent = '오류: ' + data.error;
+                    const statusElement = document.getElementById('status');
+                    if (statusElement) {
+                        statusElement.textContent = '오류: ' + data.error;
+                    }
                     return;
                 }
                 
@@ -598,7 +606,11 @@ RESULTS_HTML = '''
                 console.error('loadResults 오류:', error);
                 const statusElement = document.getElementById('status');
                 if (statusElement) {
-                    statusElement.textContent = '오류: ' + error.message;
+                    if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
+                        statusElement.textContent = '연결 오류: 서버에 연결할 수 없습니다';
+                    } else {
+                        statusElement.textContent = '오류: ' + error.message;
+                    }
                 }
             }
         }
