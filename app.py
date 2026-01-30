@@ -23,6 +23,15 @@ except ImportError as e:
     print("[❌ 경고] pip install python-socketio로 설치하세요")
 
 app = Flask(__name__)
+CORS(app)
+
+# 환경 변수 (init_socketio() 호출 전에 정의되어야 함)
+BASE_URL = os.getenv('BASE_URL', 'http://tgame365.com')
+# 기존 파일 예제를 보면 루트 경로에 파일이 있음
+DATA_PATH = ''  # 데이터 파일 경로 (루트)
+TIMEOUT = int(os.getenv('TIMEOUT', '10'))  # 타임아웃을 10초로 단축
+MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))  # 재시도 횟수 감소
+SOCKETIO_URL = os.getenv('SOCKETIO_URL', 'https://game.cmx258.com:8080')  # Socket.IO 서버 URL (실제 서버)
 
 # Gunicorn으로 실행될 때도 Socket.IO 연결 시작 (모듈 레벨에서 실행)
 # 주의: Gunicorn의 --preload 옵션을 사용하면 이 코드가 마스터 프로세스에서만 실행될 수 있음
@@ -51,15 +60,6 @@ def init_socketio():
 
 # 모듈 로드 시 Socket.IO 초기화
 init_socketio()
-CORS(app)
-
-# 환경 변수
-BASE_URL = os.getenv('BASE_URL', 'http://tgame365.com')
-# 기존 파일 예제를 보면 루트 경로에 파일이 있음
-DATA_PATH = ''  # 데이터 파일 경로 (루트)
-TIMEOUT = int(os.getenv('TIMEOUT', '10'))  # 타임아웃을 10초로 단축
-MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))  # 재시도 횟수 감소
-SOCKETIO_URL = os.getenv('SOCKETIO_URL', 'https://game.cmx258.com:8080')  # Socket.IO 서버 URL (실제 서버)
 
 # 캐시
 game_data_cache = None
