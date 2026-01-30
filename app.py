@@ -1693,6 +1693,34 @@ def get_results():
             results = latest_results if latest_results else []
             print(f"[API] DB 없음, 최신 데이터만 사용: {len(results)}개")
             
+            # DB가 없어도 정/꺽 결과 계산 (클라이언트 측 계산을 위해)
+            if len(results) >= 16:
+                # 각 결과에 정/꺽 정보 추가 (최신 15개만)
+                for i in range(min(15, len(results))):
+                    if i + 15 < len(results):
+                        current_game_id = str(results[i].get('gameID', ''))
+                        compare_game_id = str(results[i + 15].get('gameID', ''))
+                        
+                        if not current_game_id or not compare_game_id:
+                            results[i]['colorMatch'] = None
+                            continue
+                        
+                        # 조커 카드는 비교 불가
+                        if results[i].get('joker') or results[i + 15].get('joker'):
+                            results[i]['colorMatch'] = None
+                            continue
+                        
+                        # 즉시 계산 (DB 없음)
+                        current_color = parse_card_color(results[i].get('result', ''))
+                        compare_color = parse_card_color(results[i + 15].get('result', ''))
+                        
+                        if current_color is not None and compare_color is not None:
+                            match_result = (current_color == compare_color)
+                            results[i]['colorMatch'] = match_result
+                            print(f"[API] 정/꺽 결과 계산 (DB 없음): 카드 {i+1} ({current_game_id}) = {match_result}")
+                        else:
+                            results[i]['colorMatch'] = None
+            
             results_cache = {
                 'results': results,
                 'count': len(results),
