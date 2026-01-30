@@ -273,7 +273,7 @@ def start_socketio_client():
     
     socketio_thread = threading.Thread(target=socketio_worker, daemon=True)
     socketio_thread.start()
-    print("[Socket.IO] 클라이언트 스레드 시작됨")
+    print("[✅ Socket.IO] 클라이언트 스레드 시작됨")
 
 def load_game_data():
     """게임 데이터 로드 - Socket.IO 데이터 우선 사용"""
