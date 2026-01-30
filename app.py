@@ -1153,6 +1153,18 @@ RESULTS_HTML = '''
         .jung-kkuk-graph .graph-block.kkuk {
             background: #f44336;
         }
+        .graph-stats {
+            margin-top: 8px;
+            font-size: clamp(12px, 2vw, 14px);
+            color: #666;
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .graph-stats span { font-weight: bold; }
+        .graph-stats .jung-next { color: #4caf50; }
+        .graph-stats .kkuk-next { color: #f44336; }
         .status {
             text-align: center;
             margin-top: 15px;
@@ -1177,6 +1189,7 @@ RESULTS_HTML = '''
         </div>
         <div class="cards-container" id="cards"></div>
         <div id="jung-kkuk-graph" class="jung-kkuk-graph"></div>
+        <div id="graph-stats" class="graph-stats"></div>
         <div class="status" id="status">로딩 중...</div>
     </div>
     <script>
@@ -1550,6 +1563,26 @@ RESULTS_HTML = '''
                         }
                         graphDiv.appendChild(col);
                     });
+                }
+                
+                // 전이 확률: 정 다음 정, 꺽 다음 꺽 (연속된 비-null 쌍만 사용)
+                const statsDiv = document.getElementById('graph-stats');
+                if (statsDiv && graphValues.length >= 2) {
+                    let jj = 0, jk = 0, kj = 0, kk = 0;
+                    for (let i = 0; i < graphValues.length - 1; i++) {
+                        const a = graphValues[i], b = graphValues[i + 1];
+                        if (a !== true && a !== false || b !== true && b !== false) continue;
+                        if (a === true && b === true) jj++;
+                        else if (a === true && b === false) jk++;
+                        else if (a === false && b === true) kj++;
+                        else kk++;
+                    }
+                    const jungDenom = jj + jk, kkukDenom = kk + kj;
+                    const pJung = jungDenom > 0 ? (100 * jj / jungDenom).toFixed(1) : '-';
+                    const pKkuk = kkukDenom > 0 ? (100 * kk / kkukDenom).toFixed(1) : '-';
+                    statsDiv.innerHTML = '<span class="jung-next">정→정</span> ' + pJung + '% (' + jj + '/' + jungDenom + ') &nbsp; <span class="kkuk-next">꺽→꺽</span> ' + pKkuk + '% (' + kk + '/' + kkukDenom + ')';
+                } else if (statsDiv) {
+                    statsDiv.innerHTML = '';
                 }
                 
                 // 헤더 정보 업데이트
