@@ -944,9 +944,17 @@ RESULTS_HTML = '''
                 }
                 
                 // 타이머가 거의 0이 되면 경기 결과 새로고침 (라운드 종료 직전)
-                if (remaining <= 0.3 && now - lastResultsUpdate > 500) {
+                if (remaining <= 0.5 && now - lastResultsUpdate > 500) {
                     loadResults();
                     lastResultsUpdate = now;
+                }
+                
+                // 타이머가 0이 되면 즉시 결과 새로고침
+                if (remaining <= 0 && now - lastResultsUpdate > 200) {
+                    setTimeout(() => {
+                        loadResults();
+                        lastResultsUpdate = Date.now();
+                    }, 300);
                 }
             } catch (error) {
                 console.error('타이머 업데이트 오류:', error);
