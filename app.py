@@ -1206,8 +1206,8 @@ RESULTS_HTML = '''
             color: #fff;
             font-size: clamp(12px, 2vw, 14px);
         }
-        .bet-calc h4 { margin: 0 0 10px 0; font-size: 1em; color: #81c784; }
-        .bet-calc .bet-inputs { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-bottom: 10px; }
+        .bet-calc h4 { margin: 0 0 6px 0; font-size: 0.95em; color: #81c784; }
+        .bet-calc .bet-inputs { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin-bottom: 6px; }
         .bet-calc .bet-inputs label { display: flex; align-items: center; gap: 6px; }
         .bet-calc .bet-inputs input { width: 90px; padding: 4px 8px; border-radius: 4px; border: 1px solid #555; background: #1a1a1a; color: #fff; }
         .bet-calc .bet-result { margin-top: 10px; padding-top: 10px; border-top: 1px solid #444; color: #bbb; font-size: 0.9em; }
@@ -1215,13 +1215,15 @@ RESULTS_HTML = '''
         .bet-calc .bet-result .profit.plus { color: #81c784; }
         .bet-calc .bet-result .profit.minus { color: #e57373; }
         .bet-calc .bet-result .bust { color: #e57373; font-weight: bold; }
-        .bet-calc .bet-status { margin-top: 6px; font-size: 0.9em; color: #bbb; }
-        .bet-calc .bet-buttons { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
-        .bet-calc .bet-buttons button { padding: 6px 14px; border-radius: 6px; border: 1px solid #555; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 0.9em; }
+        .bet-calc .bet-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 6px; font-size: 0.8em; color: #bbb; }
+        .bet-calc .bet-status { flex: 1; min-width: 180px; }
+        .bet-calc .bet-buttons { display: flex; gap: 4px; }
+        .bet-calc .bet-buttons button { padding: 3px 8px; border-radius: 4px; border: 1px solid #555; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 0.75em; }
         .bet-calc .bet-buttons button:hover { background: #333; }
         .bet-calc .bet-buttons button.run { background: #2e7d32; border-color: #4caf50; }
         .bet-calc .bet-buttons button.stop { background: #c62828; border-color: #e57373; }
         .bet-calc .bet-buttons button.reset { background: #455a64; border-color: #78909c; }
+        .bet-calc .bet-result { margin-top: 8px; padding-top: 8px; }
         .status {
             text-align: center;
             margin-top: 15px;
@@ -1255,12 +1257,14 @@ RESULTS_HTML = '''
                 <label>배팅금액 <input type="number" id="bet-base" min="1" value="1000" placeholder="원"></label>
                 <label>배당 <input type="number" id="bet-odds" min="1" step="0.01" value="1.95" placeholder="배"></label>
             </div>
-            <div class="bet-buttons">
-                <button type="button" id="bet-run" class="run">실행</button>
-                <button type="button" id="bet-stop" class="stop">정지</button>
-                <button type="button" id="bet-reset-btn" class="reset">리셋</button>
+            <div class="bet-row">
+                <div id="bet-status" class="bet-status">상태: 정지 | 현재 배팅: - | 경과: 00:00</div>
+                <div class="bet-buttons">
+                    <button type="button" id="bet-run" class="run">실행</button>
+                    <button type="button" id="bet-stop" class="stop">정지</button>
+                    <button type="button" id="bet-reset-btn" class="reset">리셋</button>
+                </div>
             </div>
-            <div id="bet-status" class="bet-status">현재 배팅 금액: - | 경과 시간: 00:00</div>
             <div id="bet-result" class="bet-result">예측 기록이 쌓이면 자동 계산됩니다.</div>
         </div>
         <div class="status" id="status">로딩 중...</div>
@@ -1393,6 +1397,7 @@ RESULTS_HTML = '''
         let lastCurrentBetAmount = 0;  // 현재 배팅 금액 (표시용)
         let betElapsedSeconds = 0;
         let betTimerIntervalId = null;
+        let betCalcPaused = false;  // 리셋 후 계산 일시정지, 실행 시 재개
         
         async function loadResults() {
             // 이미 로딩 중이면 스킵
@@ -1743,9 +1748,9 @@ RESULTS_HTML = '''
                             '<div class="hit-rate">적중률: ' + hit + '/' + total + ' (' + hitPct + '%)</div>';
                     }
                     
-                    // 가상 배팅 계산: 승=동일금액, 패=마틴(2배). 자본금·배당 반영
+                    // 가상 배팅 계산: 승=동일금액, 패=마틴(2배). 리셋 후에는 갱신 안 함(실행 시 재개)
                     const betResultDiv = document.getElementById('bet-result');
-                    if (betResultDiv && predictionHistory.length > 0) {
+                    if (betResultDiv && predictionHistory.length > 0 && !betCalcPaused) {
                         const capitalInput = parseFloat(document.getElementById('bet-capital')?.value) || 100000;
                         const baseBetInput = parseFloat(document.getElementById('bet-base')?.value) || 1000;
                         const oddsInput = parseFloat(document.getElementById('bet-odds')?.value) || 1.95;
@@ -1826,7 +1831,8 @@ RESULTS_HTML = '''
             if (!betResultDiv) return;
             if (lastPredictionHistoryForBet.length === 0) {
                 betResultDiv.textContent = '예측 기록이 쌓이면 자동 계산됩니다.';
-                lastCurrentBetAmount = 0;
+                const baseInput = parseFloat(document.getElementById('bet-base')?.value) || 1000;
+                lastCurrentBetAmount = baseInput;
                 updateBetStatusDisplay();
                 return;
             }
@@ -1871,22 +1877,34 @@ RESULTS_HTML = '''
         function updateBetStatusDisplay() {
             const el = document.getElementById('bet-status');
             if (!el) return;
-            const betStr = lastCurrentBetAmount > 0 ? lastCurrentBetAmount.toLocaleString() + '원' : '-';
-            el.textContent = '현재 배팅 금액: ' + betStr + ' | 경과 시간: ' + formatMmSs(betElapsedSeconds);
+            const running = betTimerIntervalId !== null;
+            const stateStr = running ? '실행 중' : '정지';
+            const baseInput = parseFloat(document.getElementById('bet-base')?.value) || 1000;
+            const betStr = lastCurrentBetAmount > 0 ? lastCurrentBetAmount.toLocaleString() + '원' : baseInput.toLocaleString() + '원';
+            el.textContent = '상태: ' + stateStr + ' | 현재 배팅: ' + betStr + ' | 경과: ' + formatMmSs(betElapsedSeconds);
         }
         document.getElementById('bet-run')?.addEventListener('click', function() {
+            betCalcPaused = false;
             if (betTimerIntervalId) return;
             betTimerIntervalId = setInterval(function() {
                 betElapsedSeconds++;
                 updateBetStatusDisplay();
             }, 1000);
+            updateBetStatusDisplay();
         });
         document.getElementById('bet-stop')?.addEventListener('click', function() {
             if (betTimerIntervalId) { clearInterval(betTimerIntervalId); betTimerIntervalId = null; }
+            updateBetStatusDisplay();
         });
         document.getElementById('bet-reset-btn')?.addEventListener('click', function() {
             if (betTimerIntervalId) { clearInterval(betTimerIntervalId); betTimerIntervalId = null; }
             betElapsedSeconds = 0;
+            betCalcPaused = true;
+            lastPredictionHistoryForBet = [];
+            const baseInput = parseFloat(document.getElementById('bet-base')?.value) || 1000;
+            lastCurrentBetAmount = baseInput;
+            const betResultDiv = document.getElementById('bet-result');
+            if (betResultDiv) betResultDiv.textContent = '예측 기록이 쌓이면 자동 계산됩니다.';
             updateBetStatusDisplay();
         });
         ['bet-capital', 'bet-base', 'bet-odds'].forEach(id => {
