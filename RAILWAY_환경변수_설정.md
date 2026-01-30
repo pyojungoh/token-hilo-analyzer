@@ -1,30 +1,46 @@
 # Railway 환경 변수 설정 가이드
 
-## 필수 환경 변수
+## ⚠️ 중요: 설정 순서
 
-Railway에서 다음 환경 변수를 설정해야 합니다:
+**반드시 다음 순서대로 설정하세요:**
 
-### 1. Socket.IO 서버 URL (필수)
+1. **먼저**: PostgreSQL 데이터베이스 서비스 추가 및 연결
+2. **그 다음**: 환경 변수 설정
+
+## 1단계: PostgreSQL 데이터베이스 추가 (가장 먼저!)
+
+### Railway에서 PostgreSQL 추가
+1. Railway 대시보드 → 프로젝트 선택
+2. **"+ New"** 클릭 → **"Database"** → **"Add PostgreSQL"**
+3. PostgreSQL 서비스가 생성됩니다
+
+### DATABASE_URL 확인 및 설정
+1. PostgreSQL 서비스 선택 → **"Variables"** 탭
+2. `DATABASE_URL` 또는 `POSTGRES_URL` 값 복사 (전체 연결 URL)
+3. 메인 서비스(웹 서비스) 선택 → **"Variables"** 탭
+4. `DATABASE_URL` 변수가 없으면:
+   - **"+ New Variable"** 클릭
+   - 변수명: `DATABASE_URL`
+   - 값: PostgreSQL에서 복사한 전체 URL 붙여넣기
+   - **"Add"** 클릭
+
+**⚠️ 이 단계를 먼저 하지 않으면 데이터베이스 테이블이 생성되지 않습니다!**
+
+## 2단계: 필수 환경 변수 설정
+
+### 1. DATABASE_URL (1단계에서 설정 완료)
+
+### 2. SOCKETIO_URL (필수)
 
 **변수명**: `SOCKETIO_URL`  
 **값**: `https://game.cmx258.com:8080`
 
-이 환경 변수가 없으면 Socket.IO 연결이 시작되지 않아 베팅 데이터를 받을 수 없습니다.
-
-### 2. 기본 URL (선택)
+### 3. BASE_URL (선택)
 
 **변수명**: `BASE_URL`  
 **값**: `http://tgame365.com` (기본값)
 
-결과 JSON 파일을 가져올 때 사용합니다.
-
-### 3. 기타 설정 (선택)
-
-**변수명**: `TIMEOUT`  
-**값**: `10` (기본값, 초)
-
-**변수명**: `MAX_RETRIES`  
-**값**: `2` (기본값)
+## ⚠️ 주의사항
 
 **변수명**: `PORT`  
 **값**: Railway가 자동으로 설정 (절대 수동으로 설정하지 마세요!)
@@ -45,36 +61,14 @@ Railway에서 다음 환경 변수를 설정해야 합니다:
 6. **Add** 클릭
 7. 서버가 자동으로 재배포됩니다
 
-## 확인 방법
-
-Railway 로그에서 다음 메시지를 확인하세요:
-
-- ✅ 성공: `[정보] Socket.IO 연결 시작: https://game.cmx258.com:8080`
-- ✅ 성공: `[Socket.IO] 연결됨`
-- ✅ 성공: `[Socket.IO] total 이벤트: RED X명, BLACK Y명`
-- ❌ 실패: `[경고] SOCKETIO_URL 환경 변수가 설정되지 않았습니다`
-
 ## 문제 해결
 
-### 빌드 실패: "PORT variable must be integer between 0 and 65535"
+### 데이터베이스 테이블이 생성되지 않을 때
+1. **1단계를 먼저 했는지 확인** (PostgreSQL 서비스 추가 및 DATABASE_URL 설정)
+2. Railway 로그에서 `[❌ 경고] DATABASE_URL 환경 변수가 설정되지 않았습니다` 확인
+3. 메인 서비스 Variables 탭에서 `DATABASE_URL` 확인
+4. 없으면 PostgreSQL 서비스 Variables에서 복사하여 추가
 
-**원인**: Railway가 자동으로 PORT를 설정하는데, 수동으로 PORT 환경 변수를 설정했을 때 발생합니다.
-
-**해결 방법**:
-1. Railway 대시보드 → Variables 탭
-2. `PORT` 환경 변수가 있는지 확인
-3. **있다면 삭제** (Railway가 자동으로 설정합니다)
-4. 서버가 자동으로 재배포됩니다
-
-### Socket.IO 연결이 안 될 때
-
-1. 환경 변수 `SOCKETIO_URL`이 올바르게 설정되었는지 확인
-2. Railway 로그에서 연결 오류 메시지 확인
-3. `https://game.cmx258.com:8080`이 접근 가능한지 확인
-4. 빌드가 성공했는지 확인 (빌드 실패 시 서버가 실행되지 않음)
-
-### 베팅 데이터가 0명으로 표시될 때
-
-1. Socket.IO 연결 상태 확인 (로그에서 `[Socket.IO] 연결됨` 메시지)
-2. `total` 이벤트가 수신되는지 확인 (로그에서 `[Socket.IO] total 이벤트` 메시지)
-3. 게임이 진행 중인지 확인 (베팅이 없으면 0명이 정상)
+### PORT 오류: "PORT variable must be integer between 0 and 65535"
+- Railway 대시보드 → Variables 탭
+- `PORT` 환경 변수가 있으면 **삭제** (Railway가 자동 설정)
