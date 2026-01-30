@@ -27,7 +27,7 @@ results_cache = None
 last_update_time = 0
 CACHE_TTL = 5000  # 5초
 
-def fetch_with_retry(url, max_retries=MAX_RETRIES):
+def fetch_with_retry(url, max_retries=MAX_RETRIES, silent=False):
     """재시도 로직 포함 fetch"""
     for attempt in range(max_retries):
         try:
@@ -41,21 +41,37 @@ def fetch_with_retry(url, max_retries=MAX_RETRIES):
             )
             response.raise_for_status()
             return response
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                # 404는 조용히 처리 (파일이 없을 수 있음)
+                return None
+            if not silent and attempt == max_retries - 1:
+                print(f"HTTP 오류 {e.response.status_code}: {url}")
         except requests.exceptions.RequestException as e:
             if attempt < max_retries - 1:
                 time.sleep(1)
                 continue
-            raise e
+            if not silent:
+                print(f"요청 오류: {url} - {str(e)[:100]}")
     return None
 
 def load_game_data():
     """게임 데이터 로드 (current_status_frame.json)"""
     try:
         url = f"{BASE_URL}{DATA_PATH}/current_status_frame.json?t={int(time.time() * 1000)}"
-        response = fetch_with_retry(url)
+        response = fetch_with_retry(url, silent=True)  # 404 에러는 조용히 처리
         
         if not response:
-            return None
+            # 파일이 없으면 기본값 반환 (타이머는 클라이언트 측에서만 계산)
+            return {
+                'round': 0,
+                'elapsed': 0,
+                'currentBets': {
+                    'red': [],
+                    'black': []
+                },
+                'timestamp': datetime.now().isoformat()
+            }
         
         data = response.json()
         
@@ -69,17 +85,25 @@ def load_game_data():
             'timestamp': datetime.now().isoformat()
         }
     except Exception as e:
-        print(f"게임 데이터 로드 오류: {e}")
-        return None
+        # 에러 발생 시 기본값 반환 (서버 크래시 방지)
+        return {
+            'round': 0,
+            'elapsed': 0,
+            'currentBets': {
+                'red': [],
+                'black': []
+            },
+            'timestamp': datetime.now().isoformat()
+        }
 
 def load_results_data():
     """경기 결과 데이터 로드 (result.json)"""
     try:
         url = f"{BASE_URL}{DATA_PATH}/result.json?t={int(time.time() * 1000)}"
-        response = fetch_with_retry(url)
+        response = fetch_with_retry(url, silent=True)
         
         if not response:
-            return None
+            return []
         
         data = response.json()
         
@@ -107,14 +131,14 @@ def load_results_data():
                     'jqka': json_data.get('jqka', ''),
                     'joker': json_data.get('joker', '')
                 })
-            except Exception as e:
-                print(f"게임 데이터 파싱 오류: {e}")
+            except Exception:
+                # 개별 게임 파싱 오류는 무시
                 continue
         
         return results
-    except Exception as e:
-        print(f"결과 데이터 로드 오류: {e}")
-        return None
+    except Exception:
+        # 전체 오류 시 빈 배열 반환
+        return []
 
 def parse_csv_data(csv_text):
     """CSV 데이터 파싱 (bet_result_log.csv)"""
@@ -562,32 +586,37 @@ def get_results():
             return jsonify(results_cache)
         
         results = load_results_data()
-        if results:
-            results_cache = {
-                'results': results,
-                'count': len(results),
-                'timestamp': datetime.now().isoformat()
-            }
-            last_update_time = current_time
-            return jsonify(results_cache)
-        else:
-            return jsonify({'error': '결과 데이터 로드 실패'}), 500
-    except Exception as e:
-        print(f"results API 오류: {e}")
-        return jsonify({'error': str(e)}), 500
+        # 항상 결과 반환 (빈 배열 포함)
+        results_cache = {
+            'results': results,
+            'count': len(results),
+            'timestamp': datetime.now().isoformat()
+        }
+        last_update_time = current_time
+        return jsonify(results_cache)
+    except Exception:
+        # 에러 발생 시 빈 결과 반환
+        return jsonify({
+            'results': [],
+            'count': 0,
+            'timestamp': datetime.now().isoformat()
+        })
 
 @app.route('/api/current-status', methods=['GET'])
 def get_current_status():
     """현재 게임 상태"""
     try:
         data = load_game_data()
-        if data:
-            return jsonify(data)
-        else:
-            return jsonify({'error': '데이터 로드 실패'}), 500
+        # 항상 데이터 반환 (기본값 포함)
+        return jsonify(data)
     except Exception as e:
-        print(f"current-status API 오류: {e}")
-        return jsonify({'error': str(e)}), 500
+        # 에러 발생 시 기본값 반환
+        return jsonify({
+            'round': 0,
+            'elapsed': 0,
+            'currentBets': {'red': [], 'black': []},
+            'timestamp': datetime.now().isoformat()
+        })
 
 @app.route('/api/streaks', methods=['GET'])
 def get_streaks():
