@@ -1280,6 +1280,17 @@ RESULTS_HTML = '''
                     return;
                 }
                 
+                // 서버에서 받은 데이터에 colorMatch가 있는지 확인 (디버깅)
+                console.log('[클라이언트] 서버에서 받은 데이터:', {
+                    total: newResults.length,
+                    firstFew: newResults.slice(0, 3).map(r => ({
+                        gameID: r.gameID,
+                        hasColorMatch: 'colorMatch' in r,
+                        colorMatch: r.colorMatch,
+                        colorMatchType: typeof r.colorMatch
+                    }))
+                });
+                
                 // 새로운 결과를 기존 결과와 병합 (중복 제거, 최신 30개 유지)
                 if (newResults.length > 0) {
                     // 새로운 결과의 gameID들
@@ -1413,9 +1424,24 @@ RESULTS_HTML = '''
                     try {
                         // 서버에서 받은 colorMatch 값 우선 사용, 없으면 클라이언트 계산 결과 사용
                         let matchResult = result.colorMatch;
+                        
+                        // 디버깅: 서버에서 받은 colorMatch 확인
+                        console.log(`[카드 ${index + 1}] 서버 colorMatch:`, {
+                            gameID: result.gameID,
+                            hasColorMatch: 'colorMatch' in result,
+                            colorMatch: result.colorMatch,
+                            colorMatchType: typeof result.colorMatch,
+                            isNull: result.colorMatch === null,
+                            isUndefined: result.colorMatch === undefined
+                        });
+                        
                         if (matchResult === undefined || matchResult === null) {
                             matchResult = colorMatchResults[index];
+                            console.log(`[카드 ${index + 1}] 클라이언트 계산 결과 사용:`, matchResult);
+                        } else {
+                            console.log(`[카드 ${index + 1}] 서버 colorMatch 사용:`, matchResult);
                         }
+                        
                         console.log(`카드 ${index + 1} (${result.gameID}) 생성: matchResult =`, matchResult, typeof matchResult, 'isBoolean:', typeof matchResult === 'boolean');
                         const card = createCard(result, index, matchResult);
                         cardsDiv.appendChild(card);
