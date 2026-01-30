@@ -1668,7 +1668,10 @@ def get_results():
                     # 정/꺽 결과 계산 및 저장
                     calculate_and_save_color_matches(results)
                     
-                    # 각 결과에 정/꺽 정보 추가 (최신 15개만)
+                    # 각 결과에 정/꺽 정보 추가 (최신 15개만) - 일괄 조회로 최적화
+                    pairs_to_lookup = []
+                    pairs_index_map = {}
+                    
                     for i in range(min(15, len(results))):
                         if i + 15 < len(results):
                             current_game_id = str(results[i].get('gameID', ''))
@@ -1683,23 +1686,56 @@ def get_results():
                                 results[i]['colorMatch'] = None
                                 continue
                             
-                            # DB에서 정/꺽 결과 조회
-                            match_result = get_color_match(current_game_id, compare_game_id)
-                            
-                            if match_result is None:
-                                # DB에 없으면 즉시 계산
-                                current_color = parse_card_color(results[i].get('result', ''))
-                                compare_color = parse_card_color(results[i + 15].get('result', ''))
+                            pairs_to_lookup.append((current_game_id, compare_game_id))
+                            pairs_index_map[(current_game_id, compare_game_id)] = i
+                    
+                    # 일괄 조회 (성능 최적화)
+                    batch_results = {}
+                    if pairs_to_lookup and DB_AVAILABLE and DATABASE_URL:
+                        try:
+                            conn = get_db_connection()
+                            if conn:
+                                cur = conn.cursor()
+                                # PostgreSQL에서 튜플 비교는 = ANY(ARRAY[...]) 형식 사용
+                                cur.execute('''
+                                    SELECT game_id, compare_game_id, match_result
+                                    FROM color_matches
+                                    WHERE (game_id, compare_game_id) = ANY(%s)
+                                ''', (pairs_to_lookup,))
                                 
-                                if current_color is not None and compare_color is not None:
-                                    match_result = (current_color == compare_color)
-                                    # 계산 결과를 DB에 저장 (업데이트 포함)
-                                    save_color_match(current_game_id, compare_game_id, match_result)
-                                else:
-                                    match_result = None
+                                for row in cur.fetchall():
+                                    key = (str(row[0]), str(row[1]))
+                                    batch_results[key] = row[2]
+                                
+                                cur.close()
+                                conn.close()
+                        except Exception as e:
+                            # 일괄 조회 실패 시 개별 조회로 전환
+                            print(f"[경고] 일괄 조회 실패: {str(e)[:100]}")
+                            try:
+                                conn.close()
+                            except:
+                                pass
+                    
+                    # 조회 결과 적용 및 없는 것 계산
+                    for current_game_id, compare_game_id in pairs_to_lookup:
+                        i = pairs_index_map[(current_game_id, compare_game_id)]
+                        match_result = batch_results.get((current_game_id, compare_game_id))
+                        
+                        if match_result is None:
+                            # DB에 없으면 즉시 계산
+                            current_color = parse_card_color(results[i].get('result', ''))
+                            compare_color = parse_card_color(results[i + 15].get('result', ''))
                             
-                            # 결과에 추가 (항상 추가, None이어도)
-                            results[i]['colorMatch'] = match_result
+                            if current_color is not None and compare_color is not None:
+                                match_result = (current_color == compare_color)
+                                # 계산 결과를 DB에 저장
+                                save_color_match(current_game_id, compare_game_id, match_result)
+                            else:
+                                match_result = None
+                        
+                        # 결과에 추가 (항상 추가, None이어도)
+                        results[i]['colorMatch'] = match_result
             else:
                 # 최신 데이터가 없으면 DB 데이터만 사용
                 results = db_results
