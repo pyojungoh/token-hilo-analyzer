@@ -1197,6 +1197,7 @@ RESULTS_HTML = '''
         .prediction-box .flow-type { margin-top: 4px; font-size: 0.85em; color: #aaa; }
         .prediction-box .flow-type .pong { color: #64b5f6; }
         .prediction-box .flow-type .line { color: #ffb74d; }
+        .prediction-box .flow-advice { margin-top: 6px; font-size: 0.85em; padding: 4px 6px; border-radius: 4px; background: rgba(255,193,7,0.15); color: #ffc107; border: 1px solid rgba(255,193,7,0.4); }
         .prediction-box .hit-rate { margin-top: 6px; font-size: 0.9em; color: #aaa; }
         .bet-calc {
             margin-top: 16px;
@@ -1393,7 +1394,8 @@ RESULTS_HTML = '''
         // 예측 기록 (최근 30회): { round, predicted, actual }
         let predictionHistory = [];
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
-        let lastPredictionHistoryForBet = [];  // 가상 배팅 계산용 복사
+        let lastPredictionHistoryForBet = [];  // 가상 배팅 계산용 복사 (리셋 이후 기록만)
+        let predictionHistoryLengthAtBetReset = 0;  // 리셋 시점의 예측 개수 → 이후 기록만 배팅에 사용
         let lastCurrentBetAmount = 0;  // 현재 배팅 금액 (표시용)
         let betElapsedSeconds = 0;
         let betTimerIntervalId = null;
@@ -1657,13 +1659,14 @@ RESULTS_HTML = '''
                 if (statsDiv && graphValues.length >= 2) {
                     const full = calcTransitions(graphValues);
                     const recent30 = calcTransitions(graphValues.slice(0, 30));
+                    const short10 = graphValues.length >= 10 ? calcTransitions(graphValues.slice(0, 10)) : null;
                     const fmt = (p, n, d) => d > 0 ? p + '% (' + n + '/' + d + ')' : '-';
-                    statsDiv.innerHTML = '<table><thead><tr><th></th><th>최근 30회</th><th>전체</th></tr></thead><tbody>' +
-                        '<tr><td><span class="jung-next">정 ↑</span></td><td>' + fmt(recent30.pJung, recent30.jj, recent30.jungDenom) + '</td><td>' + fmt(full.pJung, full.jj, full.jungDenom) + '</td></tr>' +
-                        '<tr><td><span class="kkuk-next">꺽 ↑</span></td><td>' + fmt(recent30.pKkuk, recent30.kk, recent30.kkukDenom) + '</td><td>' + fmt(full.pKkuk, full.kk, full.kkukDenom) + '</td></tr>' +
-                        '<tr><td><span class="jung-kkuk">← 꺽</span></td><td>' + fmt(recent30.pJungToKkuk, recent30.jk, recent30.jungDenom) + '</td><td>' + fmt(full.pJungToKkuk, full.jk, full.jungDenom) + '</td></tr>' +
-                        '<tr><td><span class="kkuk-jung">← 정</span></td><td>' + fmt(recent30.pKkukToJung, recent30.kj, recent30.kkukDenom) + '</td><td>' + fmt(full.pKkukToJung, full.kj, full.kkukDenom) + '</td></tr>' +
-                        '</tbody></table><p class="graph-stats-note">※ 다음 회차 예측 시 최근 30회 확률 우선 참고</p>';
+                    statsDiv.innerHTML = '<table><thead><tr><th></th><th>최근 10회</th><th>최근 30회</th><th>전체</th></tr></thead><tbody>' +
+                        '<tr><td><span class="jung-next">정 ↑</span></td><td>' + (short10 ? fmt(short10.pJung, short10.jj, short10.jungDenom) : '-') + '</td><td>' + fmt(recent30.pJung, recent30.jj, recent30.jungDenom) + '</td><td>' + fmt(full.pJung, full.jj, full.jungDenom) + '</td></tr>' +
+                        '<tr><td><span class="kkuk-next">꺽 ↑</span></td><td>' + (short10 ? fmt(short10.pKkuk, short10.kk, short10.kkukDenom) : '-') + '</td><td>' + fmt(recent30.pKkuk, recent30.kk, recent30.kkukDenom) + '</td><td>' + fmt(full.pKkuk, full.kk, full.kkukDenom) + '</td></tr>' +
+                        '<tr><td><span class="jung-kkuk">← 꺽</span></td><td>' + (short10 ? fmt(short10.pJungToKkuk, short10.jk, short10.jungDenom) : '-') + '</td><td>' + fmt(recent30.pJungToKkuk, recent30.jk, recent30.jungDenom) + '</td><td>' + fmt(full.pJungToKkuk, full.jk, full.jungDenom) + '</td></tr>' +
+                        '<tr><td><span class="kkuk-jung">← 정</span></td><td>' + (short10 ? fmt(short10.pKkukToJung, short10.kj, short10.kkukDenom) : '-') + '</td><td>' + fmt(recent30.pKkukToJung, recent30.kj, recent30.kkukDenom) + '</td><td>' + fmt(full.pKkukToJung, full.kj, full.kkukDenom) + '</td></tr>' +
+                        '</tbody></table><p class="graph-stats-note">※ 단기(10회) vs 장기(30회) 비교로 흐름 전환 감지</p>';
                     
                     // 회차: gameID 뒤 3자리 = 현재 회차, 다음 회차 예측
                     const latestGameID = String(displayResults[0]?.gameID || '0');
@@ -1678,18 +1681,70 @@ RESULTS_HTML = '''
                     }
                     
                     // 최근 15회 정/꺽 흐름으로 퐁당·줄 계산 (승패 아님)
+                    function pongLinePct(arr) {
+                        const v = arr.filter(x => x === true || x === false);
+                        if (v.length < 2) return { pongPct: 50, linePct: 50 };
+                        let alt = 0, same = 0;
+                        for (let i = 0; i < v.length - 1; i++) {
+                            if (v[i] !== v[i + 1]) alt++; else same++;
+                        }
+                        const tot = alt + same;
+                        return { pongPct: tot ? parseFloat((100 * alt / tot).toFixed(1)) : 50, linePct: tot ? parseFloat((100 * same / tot).toFixed(1)) : 50 };
+                    }
                     const last15JungKkuk = graphValues.slice(0, 15).filter(v => v === true || v === false);
                     let pongPct = 50, linePct = 50;
                     if (last15JungKkuk.length >= 2) {
-                        let altPairs = 0, samePairs = 0;
-                        for (let i = 0; i < last15JungKkuk.length - 1; i++) {
-                            if (last15JungKkuk[i] !== last15JungKkuk[i + 1]) altPairs++; else samePairs++;
-                        }
-                        const pairs = altPairs + samePairs;
-                        pongPct = pairs > 0 ? parseFloat((100 * altPairs / pairs).toFixed(1)) : 50;
-                        linePct = pairs > 0 ? parseFloat((100 * samePairs / pairs).toFixed(1)) : 50;
+                        const pl = pongLinePct(graphValues.slice(0, 15));
+                        pongPct = pl.pongPct; linePct = pl.linePct;
                     }
                     const flowStr = '최근 15회(정꺽): <span class="pong">퐁당 ' + pongPct + '%</span> / <span class="line">줄 ' + linePct + '%</span>';
+                    
+                    // 이전 15회 퐁당% (흐름 전환 감지용)
+                    let pongPrev15 = 50;
+                    if (graphValues.length >= 30) {
+                        const plPrev = pongLinePct(graphValues.slice(15, 30));
+                        pongPrev15 = plPrev.pongPct;
+                    }
+                    // 단기(10회) vs 장기(30회) 유지 확률 비교: 15~20%p 이상 차이면 "줄이 강해졌다"
+                    let lineStrongByTransition = false, pongStrongByTransition = false;
+                    if (short10) {
+                        const longSamePct = last === true
+                            ? (recent30.jungDenom > 0 ? 100 * recent30.jj / recent30.jungDenom : 50)
+                            : (recent30.kkukDenom > 0 ? 100 * recent30.kk / recent30.kkukDenom : 50);
+                        const shortSamePct = last === true
+                            ? (short10.jungDenom > 0 ? 100 * short10.jj / short10.jungDenom : 50)
+                            : (short10.kkukDenom > 0 ? 100 * short10.kk / short10.kkukDenom : 50);
+                        if (shortSamePct - longSamePct >= 15) lineStrongByTransition = true;
+                        if (longSamePct - shortSamePct >= 15) pongStrongByTransition = true;
+                    }
+                    // 퐁당% 추이: 이전 15회 대비 최근 15회 퐁당이 크게 떨어지면 줄 강함, 크게 올라가면 퐁당 강함
+                    const lineStrongByPong = (pongPrev15 - pongPct >= 20);
+                    const pongStrongByPong = (graphValues.length >= 30 && pongPct - pongPrev15 >= 20);
+                    const lineStrong = lineStrongByTransition || lineStrongByPong;
+                    const pongStrong = pongStrongByTransition || pongStrongByPong;
+                    
+                    // 연패 후 연승 2~3회: "확률 급상승" 구간 (방향 불명 → 보수적 배팅 권장)
+                    let surgeUnknown = false;
+                    if (predictionHistory.length >= 5) {
+                        const rev = predictionHistory.slice().reverse();
+                        let i = 0, winRun = 0, loseRun = 0;
+                        while (i < rev.length && (rev[i].predicted === rev[i].actual ? '승' : '패') === '승') { winRun++; i++; }
+                        while (i < rev.length && (rev[i].predicted === rev[i].actual ? '승' : '패') === '패') { loseRun++; i++; }
+                        if (winRun >= 2 && loseRun >= 3) surgeUnknown = true;
+                    }
+                    
+                    // 흐름 상태 및 배팅 전환 안내
+                    let flowState = ''; let flowAdvice = '';
+                    if (lineStrong) {
+                        flowState = 'line_strong';
+                        flowAdvice = '줄 강함 → 유지 예측 비중↑, 동일금/마틴 줄이기 권장';
+                    } else if (pongStrong) {
+                        flowState = 'pong_strong';
+                        flowAdvice = '퐁당 강함 → 바뀜 예측 비중↑, 기존 전략 유지';
+                    } else if (surgeUnknown) {
+                        flowState = 'surge_unknown';
+                        flowAdvice = '확률 급상승 구간(방향 불명) → 보수적 배팅 권장';
+                    }
                     
                     // 전이 확률 (최근 30회): P(정), P(꺽)
                     const last = graphValues[0];
@@ -1701,10 +1756,12 @@ RESULTS_HTML = '''
                         Pjung = recent30.kj / recent30.kkukDenom;
                         Pkkuk = recent30.kk / recent30.kkukDenom;
                     }
-                    // 퐁당=바뀜, 줄=유지. 유지 쪽에 정(직전이 정일 때) 또는 꺽(직전이 꺽일 때), 바뀜은 그 반대
+                    // 퐁당=바뀜, 줄=유지. 흐름 감지 시 가중치 반영: 줄 강함→유지 비중↑, 퐁당 강함→바뀜 비중↑
                     const probSame = last === true ? Pjung : Pkkuk;
                     const probChange = last === true ? Pkkuk : Pjung;
-                    const lineW = linePct / 100, pongW = pongPct / 100;
+                    let lineW = linePct / 100, pongW = pongPct / 100;
+                    if (flowState === 'line_strong') { lineW = Math.min(1, lineW + 0.25); pongW = Math.max(0, 1 - lineW); }
+                    else if (flowState === 'pong_strong') { pongW = Math.min(1, pongW + 0.25); lineW = Math.max(0, 1 - pongW); }
                     const adjSame = probSame * lineW;
                     const adjChange = probChange * pongW;
                     const sum = adjSame + adjChange || 1;
@@ -1745,12 +1802,14 @@ RESULTS_HTML = '''
                             '<div class="pred-prob">나올 확률: ' + predProb.toFixed(1) + '%</div>' +
                             '<div class="streak-line">' + streakStr + (streakNow ? ' <span class="streak-now">' + streakNow + '</span>' : '') + '</div>' +
                             '<div class="flow-type">' + flowStr + '</div>' +
+                            (flowAdvice ? '<div class="flow-advice">' + flowAdvice + '</div>' : '') +
                             '<div class="hit-rate">적중률: ' + hit + '/' + total + ' (' + hitPct + '%)</div>';
                     }
                     
-                    // 가상 배팅 계산: 실행 눌렀을 때만 갱신. 승=배당(설정값)만큼 수익, 패=걸은 금액 전액 손실. 마틴 2배.
+                    // 가상 배팅 계산: 실행 눌렀을 때만 갱신. 리셋 이후 예측만 사용(리셋 시 누적 합산 방지).
                     const betResultDiv = document.getElementById('bet-result');
-                    if (betResultDiv && predictionHistory.length > 0 && betCalcRunning) {
+                    const historyForBet = predictionHistory.slice(predictionHistoryLengthAtBetReset);
+                    if (betResultDiv && historyForBet.length > 0 && betCalcRunning) {
                         const capitalInput = parseFloat(document.getElementById('bet-capital')?.value) || 1000000;
                         const baseBetInput = parseFloat(document.getElementById('bet-base')?.value) || 1000;
                         const oddsInput = parseFloat(document.getElementById('bet-odds')?.value) || 1.97;
@@ -1759,8 +1818,8 @@ RESULTS_HTML = '''
                         let totalRolling = 0;
                         let wins = 0, losses = 0;
                         let bust = false;
-                        for (let i = 0; i < predictionHistory.length; i++) {
-                            const isWin = predictionHistory[i].predicted === predictionHistory[i].actual;
+                        for (let i = 0; i < historyForBet.length; i++) {
+                            const isWin = historyForBet[i].predicted === historyForBet[i].actual;
                             const bet = Math.min(currentBet, Math.floor(cap));
                             if (cap < bet || cap <= 0) { bust = true; break; }
                             totalRolling += bet;
@@ -1782,7 +1841,7 @@ RESULTS_HTML = '''
                         if (bust) msg += ' <span class="bust">(자본 소진)</span>';
                         else msg += ' | 승 시 배당 ' + oddsInput + '배 수익 +' + Math.floor(baseBetInput * (oddsInput - 1)).toLocaleString() + '원/회';
                         betResultDiv.innerHTML = msg;
-                        lastPredictionHistoryForBet = predictionHistory.slice();
+                        lastPredictionHistoryForBet = historyForBet.slice();
                         updateBetStatusDisplay();
                     }
                 } else if (statsDiv) {
@@ -1902,6 +1961,7 @@ RESULTS_HTML = '''
             if (betTimerIntervalId) { clearInterval(betTimerIntervalId); betTimerIntervalId = null; }
             betElapsedSeconds = 0;
             lastPredictionHistoryForBet = [];
+            predictionHistoryLengthAtBetReset = predictionHistory.length;  // 이 시점 이후 예측만 배팅에 사용
             const baseInput = parseFloat(document.getElementById('bet-base')?.value) || 1000;
             lastCurrentBetAmount = baseInput;
             const betResultDiv = document.getElementById('bet-result');
