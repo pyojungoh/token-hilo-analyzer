@@ -843,12 +843,18 @@ def health_check():
 
 @app.route('/', methods=['GET'])
 def index():
-    """루트 - 빠른 헬스체크용"""
+    """루트 - 빠른 헬스체크용 (외부 API 호출 없음)"""
+    # Railway 헬스체크를 위해 즉시 응답
     return jsonify({
         'status': 'ok',
         'message': '토큰하이로우 분석기 API',
         'version': '1.0.0'
     }), 200
+
+@app.before_first_request
+def initialize_app():
+    """애플리케이션 초기화 (더 이상 사용되지 않지만 호환성을 위해 유지)"""
+    pass
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
