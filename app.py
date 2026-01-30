@@ -29,41 +29,57 @@ last_update_time = 0
 CACHE_TTL = 5000  # 5초
 
 def fetch_with_retry(url, max_retries=MAX_RETRIES, silent=False):
-    """재시도 로직 포함 fetch"""
+    """재시도 로직 포함 fetch (기존 파일과 동일한 방식)"""
     for attempt in range(max_retries):
         try:
+            # 기존 파일과 동일하게: 캐시 방지 헤더 추가
             response = requests.get(
                 url,
                 timeout=TIMEOUT,
                 headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Cache-Control': 'no-cache'
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache',
+                    'Accept': 'application/json, text/plain, */*',
+                    'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Referer': BASE_URL
                 }
             )
             response.raise_for_status()
+            
+            # 응답 내용 확인 (디버깅)
+            if not silent:
+                print(f"[요청 성공] {url} - 상태: {response.status_code}, 크기: {len(response.content)} bytes")
+            
             return response
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
                 # 404는 조용히 처리 (파일이 없을 수 있음)
+                if not silent:
+                    print(f"[404] 파일 없음: {url}")
                 return None
             if not silent and attempt == max_retries - 1:
-                print(f"HTTP 오류 {e.response.status_code}: {url}")
+                print(f"[HTTP 오류] {e.response.status_code}: {url}")
+                print(f"[응답 내용] {e.response.text[:200]}")
         except requests.exceptions.RequestException as e:
             if attempt < max_retries - 1:
                 time.sleep(1)
                 continue
             if not silent:
-                print(f"요청 오류: {url} - {str(e)[:100]}")
+                print(f"[요청 오류] {url} - {str(e)[:200]}")
     return None
 
 def load_game_data():
-    """게임 데이터 로드 (current_status_frame.json)"""
+    """게임 데이터 로드 (current_status_frame.json) - 기존 파일과 동일한 방식"""
     try:
+        # 기존 파일과 동일: 타임스탬프 추가로 캐시 방지
         url = f"{BASE_URL}{DATA_PATH}/current_status_frame.json?t={int(time.time() * 1000)}"
-        response = fetch_with_retry(url, silent=True)  # 404 에러는 조용히 처리
+        print(f"[데이터 요청] {url}")
+        response = fetch_with_retry(url, silent=False)  # 디버깅을 위해 silent=False
         
         if not response:
-            # 파일이 없으면 기본값 반환 (타이머는 클라이언트 측에서만 계산)
+            print(f"[경고] 데이터를 가져올 수 없음: {url}")
+            # 파일이 없으면 기본값 반환
             return {
                 'round': 0,
                 'elapsed': 0,
@@ -76,8 +92,10 @@ def load_game_data():
         
         try:
             data = response.json()
+            print(f"[JSON 파싱 성공] round: {data.get('round', 0)}, red: {len(data.get('red', []))}개, black: {len(data.get('black', []))}개")
         except (ValueError, json.JSONDecodeError) as e:
-            print(f"JSON 파싱 오류: {str(e)[:100]}")
+            print(f"[JSON 파싱 오류] {str(e)[:200]}")
+            print(f"[응답 내용] {response.text[:500]}")
             return {
                 'round': 0,
                 'elapsed': 0,
@@ -89,20 +107,23 @@ def load_game_data():
             }
         
         # 기존 파일과 동일하게: data.red, data.black 직접 사용
-        # 리스트가 아닌 경우 빈 배열로 처리
+        # 기존 파일: Array.isArray(data.red) ? data.red : []
         red_bets = data.get('red', [])
         black_bets = data.get('black', [])
         
         if not isinstance(red_bets, list):
+            print(f"[경고] red가 배열이 아님: {type(red_bets)}")
             red_bets = []
         if not isinstance(black_bets, list):
+            print(f"[경고] black이 배열이 아님: {type(black_bets)}")
             black_bets = []
         
-        # 디버깅: 베팅 데이터 확인 (인원 수만)
-        try:
-            print(f"[베팅 데이터] RED: {len(red_bets)}명, BLACK: {len(black_bets)}명")
-        except Exception as debug_error:
-            print(f"디버깅 로그 오류 (무시): {str(debug_error)[:100]}")
+        # 디버깅: 베팅 데이터 확인
+        print(f"[베팅 데이터] RED: {len(red_bets)}명, BLACK: {len(black_bets)}명")
+        if len(red_bets) > 0:
+            print(f"[RED 첫 번째] {red_bets[0]}")
+        if len(black_bets) > 0:
+            print(f"[BLACK 첫 번째] {black_bets[0]}")
         
         return {
             'round': data.get('round', 0),
@@ -115,6 +136,9 @@ def load_game_data():
         }
     except Exception as e:
         # 에러 발생 시 기본값 반환 (서버 크래시 방지)
+        print(f"[예외 발생] load_game_data: {str(e)[:200]}")
+        import traceback
+        print(traceback.format_exc())
         return {
             'round': 0,
             'elapsed': 0,
