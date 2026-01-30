@@ -129,15 +129,15 @@ def on_socketio_disconnect():
     print(f"[Socket.IO] 연결 종료됨")
 
 def on_socketio_total(data):
-    """total 이벤트 수신 (베팅 데이터) - 기존 파일과 동일한 로직"""
+    """total 이벤트 수신 (베팅 데이터) - 배열의 첫 번째 요소 사용"""
     global current_status_data
     
     try:
-        print(f"[Socket.IO] total 이벤트 수신")
+        # 데이터가 배열로 전달되므로 첫 번째 요소 추출
+        if isinstance(data, list) and len(data) > 0:
+            data = data[0]
+        
         if isinstance(data, dict):
-            if data.get("round") is not None:
-                current_status_data['round'] = data.get("round")
-            
             # 베팅 데이터 업데이트
             red_bets = data.get('red', [])
             black_bets = data.get('black', [])
@@ -151,36 +151,45 @@ def on_socketio_total(data):
                 'red': red_bets,
                 'black': black_bets
             }
-            current_status_data['elapsed'] = data.get('elapsed', 0)
             current_status_data['timestamp'] = datetime.now().isoformat()
             
-            print(f"[Socket.IO] 베팅 데이터 업데이트: RED {len(red_bets)}명, BLACK {len(black_bets)}명")
+            print(f"[Socket.IO] total 이벤트: RED {len(red_bets)}명, BLACK {len(black_bets)}명")
         else:
             print(f"[Socket.IO] total 이벤트 데이터 형식 오류: {type(data)}")
     except Exception as e:
         print(f"[Socket.IO total 이벤트 처리 오류] {str(e)[:200]}")
 
 def on_socketio_status(data):
-    """status 이벤트 수신 (경기 상태)"""
+    """status 이벤트 수신 (경기 상태) - 배열의 첫 번째 요소 사용"""
     global current_status_data
     
     try:
-        print(f"[Socket.IO] status 이벤트 수신")
+        # 데이터가 배열로 전달되므로 첫 번째 요소 추출
+        if isinstance(data, list) and len(data) > 0:
+            data = data[0]
+        
         if isinstance(data, dict):
             if data.get("round") is not None:
                 current_status_data['round'] = data.get("round")
             current_status_data['elapsed'] = data.get('elapsed', 0)
+            current_status_data['timestamp'] = datetime.now().isoformat()
+            
+            status_type = data.get('status', 'unknown')
+            print(f"[Socket.IO] status 이벤트: {status_type}, round={data.get('round')}, elapsed={data.get('elapsed')}")
         else:
             print(f"[Socket.IO] status 이벤트 데이터 형식 오류: {type(data)}")
     except Exception as e:
         print(f"[Socket.IO status 이벤트 처리 오류] {str(e)[:200]}")
 
 def on_socketio_betting(data):
-    """betting 이벤트 수신 (베팅 정보)"""
+    """betting 이벤트 수신 (베팅 정보) - 배열의 첫 번째 요소 사용"""
     global current_status_data
     
     try:
-        print(f"[Socket.IO] betting 이벤트 수신")
+        # 데이터가 배열로 전달되므로 첫 번째 요소 추출
+        if isinstance(data, list) and len(data) > 0:
+            data = data[0]
+        
         if isinstance(data, dict):
             # betting 이벤트도 베팅 데이터를 포함할 수 있음
             red_bets = data.get('red', [])
@@ -192,15 +201,21 @@ def on_socketio_betting(data):
                     'black': black_bets
                 }
                 current_status_data['timestamp'] = datetime.now().isoformat()
-                print(f"[Socket.IO] 베팅 데이터 업데이트: RED {len(red_bets)}명, BLACK {len(black_bets)}명")
+                print(f"[Socket.IO] betting 이벤트: RED {len(red_bets)}명, BLACK {len(black_bets)}명")
     except Exception as e:
         print(f"[Socket.IO betting 이벤트 처리 오류] {str(e)[:200]}")
 
 def on_socketio_result(data):
-    """result 이벤트 수신 (경기 결과)"""
+    """result 이벤트 수신 (경기 결과) - 배열의 첫 번째 요소 사용"""
     try:
-        print(f"[Socket.IO] result 이벤트 수신: {type(data)}")
-        # result 이벤트는 경기 결과이므로 필요시 처리
+        # 데이터가 배열로 전달되므로 첫 번째 요소 추출
+        if isinstance(data, list) and len(data) > 0:
+            data = data[0]
+        
+        if isinstance(data, dict):
+            print(f"[Socket.IO] result 이벤트: round={data.get('round')}, result={data.get('result')}, number={data.get('number')}")
+        else:
+            print(f"[Socket.IO] result 이벤트 데이터 형식: {type(data)}")
     except Exception as e:
         print(f"[Socket.IO result 이벤트 처리 오류] {str(e)[:200]}")
 
