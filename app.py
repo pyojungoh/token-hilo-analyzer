@@ -1156,7 +1156,7 @@ RESULTS_HTML = '''
         .graph-stats {
             margin-top: 12px;
             font-size: clamp(12px, 2vw, 14px);
-            color: #333;
+            color: #fff;
             overflow-x: auto;
         }
         .graph-stats table {
@@ -1165,14 +1165,15 @@ RESULTS_HTML = '''
             min-width: 260px;
         }
         .graph-stats th, .graph-stats td {
-            border: 1px solid #ddd;
+            border: 1px solid #666;
             padding: 8px 12px;
             text-align: center;
+            color: #fff;
         }
-        .graph-stats th { background: #f5f5f5; font-weight: bold; }
-        .graph-stats td:first-child { text-align: left; font-weight: bold; }
-        .graph-stats .jung-next { color: #4caf50; }
-        .graph-stats .kkuk-next { color: #f44336; }
+        .graph-stats th { background: #444; font-weight: bold; color: #fff; }
+        .graph-stats td:first-child { text-align: left; font-weight: bold; color: #fff; }
+        .graph-stats .jung-next { color: #81c784; }
+        .graph-stats .kkuk-next { color: #e57373; }
         .status {
             text-align: center;
             margin-top: 15px;
