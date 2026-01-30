@@ -29,7 +29,7 @@ BASE_URL = os.getenv('BASE_URL', 'http://tgame365.com')
 DATA_PATH = ''  # 데이터 파일 경로 (루트)
 TIMEOUT = int(os.getenv('TIMEOUT', '10'))  # 타임아웃을 10초로 단축
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))  # 재시도 횟수 감소
-SOCKETIO_URL = os.getenv('SOCKETIO_URL', 'http://tgame365.com')  # Socket.IO 서버 URL (환경 변수로 설정)
+SOCKETIO_URL = os.getenv('SOCKETIO_URL', 'https://game.cmx258.com:8080')  # Socket.IO 서버 URL (실제 서버)
 
 # 캐시
 game_data_cache = None
@@ -196,8 +196,13 @@ def start_socketio_client():
                 socketio_client.on('total', on_socketio_total)
                 socketio_client.on('status', on_socketio_status)
                 
-                # 연결 시도
-                socketio_client.connect(SOCKETIO_URL, wait_timeout=10)
+                # 연결 시도 (SSL 검증 비활성화 - 필요시)
+                socketio_client.connect(
+                    SOCKETIO_URL, 
+                    wait_timeout=10,
+                    transports=['websocket', 'polling'],  # WebSocket 우선, 실패시 polling
+                    verify=False  # SSL 인증서 검증 비활성화 (필요시)
+                )
                 
                 # 연결 유지
                 socketio_client.wait()
