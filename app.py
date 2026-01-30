@@ -785,6 +785,67 @@ RESULTS_HTML = '''
         let timerData = { elapsed: 0, lastFetch: 0, round: 0, serverTime: 0 };
         let lastResultsUpdate = 0;
         let lastTimerUpdate = Date.now();
+        let lastBettingUpdate = 0;
+        
+        async function updateBettingInfo() {
+            try {
+                const response = await fetch('/api/current-status?t=' + Date.now());
+                if (!response.ok) return;
+                
+                const data = await response.json();
+                if (data.error || !data.currentBets) return;
+                
+                const redBets = data.currentBets.red || [];
+                const blackBets = data.currentBets.black || [];
+                
+                // 총 베팅 금액 계산
+                const redTotal = redBets.reduce((sum, bet) => sum + (bet.cash || 0), 0);
+                const blackTotal = blackBets.reduce((sum, bet) => sum + (bet.cash || 0), 0);
+                
+                // 금액 표시 (천 단위 콤마)
+                const formatAmount = (amount) => {
+                    if (amount >= 1000000) {
+                        return (amount / 1000000).toFixed(1) + 'M';
+                    } else if (amount >= 1000) {
+                        return (amount / 1000).toFixed(0) + 'K';
+                    }
+                    return amount.toLocaleString();
+                };
+                
+                const redAmountElement = document.getElementById('red-amount');
+                const blackAmountElement = document.getElementById('black-amount');
+                const bettingInfoElement = document.getElementById('betting-info');
+                const bettingWinnerElement = document.getElementById('betting-winner');
+                
+                if (redAmountElement) redAmountElement.textContent = formatAmount(redTotal);
+                if (blackAmountElement) blackAmountElement.textContent = formatAmount(blackTotal);
+                
+                // 더 많이 베팅한 쪽 표시
+                if (bettingWinnerElement) {
+                    if (redTotal > blackTotal) {
+                        bettingWinnerElement.textContent = '🔴 RED가 더 많음';
+                        bettingWinnerElement.style.color = '#f44336';
+                    } else if (blackTotal > redTotal) {
+                        bettingWinnerElement.textContent = '⚫ BLACK이 더 많음';
+                        bettingWinnerElement.style.color = '#424242';
+                    } else if (redTotal > 0 || blackTotal > 0) {
+                        bettingWinnerElement.textContent = '동일';
+                        bettingWinnerElement.style.color = '#4caf50';
+                    } else {
+                        bettingWinnerElement.textContent = '';
+                    }
+                }
+                
+                // 베팅 정보 표시
+                if (bettingInfoElement && (redTotal > 0 || blackTotal > 0)) {
+                    bettingInfoElement.style.display = 'flex';
+                } else if (bettingInfoElement) {
+                    bettingInfoElement.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('베팅 정보 업데이트 오류:', error);
+            }
+        }
         
         async function updateTimer() {
             try {
