@@ -127,7 +127,7 @@ def on_socketio_connect():
     """Socket.IO 연결 성공"""
     global socketio_connected
     socketio_connected = True
-        print("🔵 [Socket.IO] ✅ 연결됨!")
+    print("🔵 [Socket.IO] ✅ 연결됨!")
 
 def on_socketio_disconnect():
     """Socket.IO 연결 종료"""
