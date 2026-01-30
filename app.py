@@ -706,44 +706,6 @@ RESULTS_HTML = '''
             color: #aaa;
             margin-left: 10px;
         }
-        .betting-info {
-            margin-top: 10px;
-            padding: 10px;
-            background: rgba(255,255,255,0.05);
-            border-radius: 5px;
-            font-size: clamp(0.8em, 2vw, 0.9em);
-            display: flex;
-            justify-content: space-around;
-            align-items: center;
-            gap: 15px;
-        }
-        .betting-item {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            flex: 1;
-        }
-        .betting-label {
-            font-size: clamp(0.7em, 1.5vw, 0.8em);
-            color: #aaa;
-            margin-bottom: 5px;
-        }
-        .betting-amount {
-            font-size: clamp(0.9em, 2.5vw, 1.1em);
-            font-weight: bold;
-        }
-        .betting-amount.red {
-            color: #f44336;
-        }
-        .betting-amount.black {
-            color: #424242;
-        }
-        .betting-winner {
-            margin-top: 5px;
-            font-size: clamp(0.7em, 1.5vw, 0.8em);
-            color: #4caf50;
-            font-weight: bold;
-        }
     </style>
 </head>
 <body>
@@ -756,17 +718,6 @@ RESULTS_HTML = '''
             </div>
         </div>
         <div class="cards-container" id="cards"></div>
-        <div class="betting-info" id="betting-info" style="display: flex;">
-            <div class="betting-item">
-                <div class="betting-label">🔴 RED</div>
-                <div class="betting-amount red" id="red-count">0명</div>
-            </div>
-            <div class="betting-item">
-                <div class="betting-label">⚫ BLACK</div>
-                <div class="betting-amount black" id="black-count">0명</div>
-            </div>
-            <div class="betting-winner" id="betting-winner"></div>
-        </div>
         <div class="status" id="status">로딩 중...</div>
     </div>
     <script>
@@ -1119,123 +1070,6 @@ RESULTS_HTML = '''
         let timerData = { elapsed: 0, lastFetch: 0, round: 0, serverTime: 0 };
         let lastResultsUpdate = 0;
         let lastTimerUpdate = Date.now();
-        let lastBettingUpdate = 0;
-        let isUpdatingBetting = false;  // 중복 요청 방지
-        
-        async function updateBettingInfo() {
-            // 이미 업데이트 중이면 스킵
-            if (isUpdatingBetting) {
-                return;
-            }
-            
-            try {
-                isUpdatingBetting = true;
-                
-                // 타임아웃 설정 (5초로 단축 - 빠른 실패)
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 5000);
-                
-                const response = await fetch('/api/current-status?t=' + Date.now(), {
-                    signal: controller.signal,
-                    cache: 'no-cache'
-                });
-                
-                clearTimeout(timeoutId);
-                
-                if (!response.ok) {
-                    // HTTP 오류는 조용히 처리 (기존 정보 유지)
-                    return;
-                }
-                
-                const data = await response.json();
-                console.log('=== 베팅 데이터 수신 ===');
-                console.log('전체 데이터:', JSON.stringify(data, null, 2));
-                console.log('데이터 타입:', typeof data);
-                console.log('currentBets 존재:', !!data.currentBets);
-                console.log('currentBets 내용:', data.currentBets);
-                console.log('데이터 키들:', Object.keys(data));
-                
-                if (data.error) {
-                    console.error('베팅 데이터 오류:', data.error);
-                    return;
-                }
-                
-                // 기존 파일과 동일하게: currentBets.red, currentBets.black 사용
-                // 기존 파일: gameData.currentBets.red, gameData.currentBets.black
-                let redBets = [];
-                let blackBets = [];
-                
-                if (data.currentBets) {
-                    console.log('currentBets.red 타입:', typeof data.currentBets.red, 'isArray:', Array.isArray(data.currentBets.red));
-                    console.log('currentBets.black 타입:', typeof data.currentBets.black, 'isArray:', Array.isArray(data.currentBets.black));
-                    redBets = Array.isArray(data.currentBets.red) ? data.currentBets.red : [];
-                    blackBets = Array.isArray(data.currentBets.black) ? data.currentBets.black : [];
-                } else {
-                    console.warn('⚠️ currentBets가 없습니다!');
-                    console.warn('데이터 키들:', Object.keys(data));
-                }
-                
-                // 베팅 인원 수만 계산 (금액 계산 제거)
-                const redCount = redBets.length;
-                const blackCount = blackBets.length;
-                
-                console.log('=== 베팅 인원 계산 ===');
-                console.log('RED 베팅 인원:', redCount, '명');
-                console.log('BLACK 베팅 인원:', blackCount, '명');
-                console.log('RED 베팅 배열:', redBets);
-                console.log('BLACK 베팅 배열:', blackBets);
-                
-                const redCountElement = document.getElementById('red-count');
-                const blackCountElement = document.getElementById('black-count');
-                const bettingInfoElement = document.getElementById('betting-info');
-                const bettingWinnerElement = document.getElementById('betting-winner');
-                
-                if (redCountElement) {
-                    redCountElement.textContent = redCount + '명';
-                    console.log('RED 인원 표시:', redCount + '명');
-                } else {
-                    console.error('red-count 요소를 찾을 수 없음');
-                }
-                
-                if (blackCountElement) {
-                    blackCountElement.textContent = blackCount + '명';
-                    console.log('BLACK 인원 표시:', blackCount + '명');
-                } else {
-                    console.error('black-count 요소를 찾을 수 없음');
-                }
-                
-                // 더 많이 베팅한 쪽 표시 (인원 수 기준)
-                if (bettingWinnerElement) {
-                    if (redCount > blackCount) {
-                        bettingWinnerElement.textContent = '🔴 RED가 더 많음';
-                        bettingWinnerElement.style.color = '#f44336';
-                    } else if (blackCount > redCount) {
-                        bettingWinnerElement.textContent = '⚫ BLACK이 더 많음';
-                        bettingWinnerElement.style.color = '#424242';
-                    } else if (redCount > 0 || blackCount > 0) {
-                        bettingWinnerElement.textContent = '동일';
-                        bettingWinnerElement.style.color = '#4caf50';
-                    } else {
-                        bettingWinnerElement.textContent = '';
-                    }
-                }
-                
-                // 베팅 정보 표시 (항상 표시, 0이어도)
-                if (bettingInfoElement) {
-                    bettingInfoElement.style.display = 'flex';
-                    console.log('베팅 정보 박스 표시');
-                } else {
-                    console.error('betting-info 요소를 찾을 수 없음');
-                }
-            } catch (error) {
-                // 모든 오류는 조용히 처리 (기존 정보 유지)
-                // AbortError, Failed to fetch 등은 네트워크 문제이므로 조용히 처리
-                // 에러 발생 시에도 기존 정보는 유지
-            } finally {
-                isUpdatingBetting = false;  // 업데이트 완료
-            }
-        }
-        
         async function updateTimer() {
             try {
                 const now = Date.now();
@@ -1337,10 +1171,7 @@ RESULTS_HTML = '''
         // 초기 로드 (에러 발생 시에도 계속 시도)
         async function initialLoad() {
             try {
-                await Promise.all([
-                    loadResults().catch(e => console.warn('초기 결과 로드 실패:', e)),
-                    updateBettingInfo().catch(e => console.warn('초기 베팅 정보 로드 실패:', e))
-                ]);
+                await loadResults().catch(e => console.warn('초기 결과 로드 실패:', e));
             } catch (e) {
                 console.warn('초기 로드 오류:', e);
             }
@@ -1354,14 +1185,6 @@ RESULTS_HTML = '''
             if (Date.now() - lastResultsUpdate > 1000) {
                 loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
                 lastResultsUpdate = Date.now();
-            }
-        }, 1000);
-        
-        // 1초마다 베팅 정보 업데이트 (10초 게임에 맞춰 빠른 업데이트)
-        setInterval(() => {
-            if (Date.now() - lastBettingUpdate > 1000) {
-                updateBettingInfo().catch(e => console.warn('베팅 정보 새로고침 실패:', e));
-                lastBettingUpdate = Date.now();
             }
         }, 1000);
         
