@@ -1706,6 +1706,15 @@ def get_results():
                 results = db_results
                 print(f"[API] 최신 데이터 없음, DB 데이터만 사용: {len(results)}개")
             
+            # 최종 결과에 colorMatch가 제대로 포함되었는지 확인 (디버깅)
+            color_match_count = sum(1 for r in results[:15] if r.get('colorMatch') is not None)
+            print(f"[API] 최종 결과: 총 {len(results)}개, colorMatch 포함: {color_match_count}개 (최신 15개 중)")
+            if color_match_count < 15 and len(results) >= 16:
+                print(f"[경고] colorMatch가 부족합니다! 최신 15개 중 {color_match_count}개만 있음")
+                # 샘플 출력
+                for i in range(min(5, len(results))):
+                    print(f"  - 카드 {i+1}: gameID={results[i].get('gameID')}, colorMatch={results[i].get('colorMatch')}")
+            
             results_cache = {
                 'results': results,
                 'count': len(results),
