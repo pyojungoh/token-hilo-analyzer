@@ -134,26 +134,29 @@ def on_socketio_total(data):
     
     try:
         print(f"[Socket.IO] total 이벤트 수신")
-        if data.get("round") is not None:
-            current_status_data['round'] = data.get("round")
-        
-        # 베팅 데이터 업데이트
-        red_bets = data.get('red', [])
-        black_bets = data.get('black', [])
-        
-        if not isinstance(red_bets, list):
-            red_bets = []
-        if not isinstance(black_bets, list):
-            black_bets = []
-        
-        current_status_data['currentBets'] = {
-            'red': red_bets,
-            'black': black_bets
-        }
-        current_status_data['elapsed'] = data.get('elapsed', 0)
-        current_status_data['timestamp'] = datetime.now().isoformat()
-        
-        print(f"[Socket.IO] 베팅 데이터 업데이트: RED {len(red_bets)}명, BLACK {len(black_bets)}명")
+        if isinstance(data, dict):
+            if data.get("round") is not None:
+                current_status_data['round'] = data.get("round")
+            
+            # 베팅 데이터 업데이트
+            red_bets = data.get('red', [])
+            black_bets = data.get('black', [])
+            
+            if not isinstance(red_bets, list):
+                red_bets = []
+            if not isinstance(black_bets, list):
+                black_bets = []
+            
+            current_status_data['currentBets'] = {
+                'red': red_bets,
+                'black': black_bets
+            }
+            current_status_data['elapsed'] = data.get('elapsed', 0)
+            current_status_data['timestamp'] = datetime.now().isoformat()
+            
+            print(f"[Socket.IO] 베팅 데이터 업데이트: RED {len(red_bets)}명, BLACK {len(black_bets)}명")
+        else:
+            print(f"[Socket.IO] total 이벤트 데이터 형식 오류: {type(data)}")
     except Exception as e:
         print(f"[Socket.IO total 이벤트 처리 오류] {str(e)[:200]}")
 
@@ -163,11 +166,43 @@ def on_socketio_status(data):
     
     try:
         print(f"[Socket.IO] status 이벤트 수신")
-        if data.get("round") is not None:
-            current_status_data['round'] = data.get("round")
-        current_status_data['elapsed'] = data.get('elapsed', 0)
+        if isinstance(data, dict):
+            if data.get("round") is not None:
+                current_status_data['round'] = data.get("round")
+            current_status_data['elapsed'] = data.get('elapsed', 0)
+        else:
+            print(f"[Socket.IO] status 이벤트 데이터 형식 오류: {type(data)}")
     except Exception as e:
         print(f"[Socket.IO status 이벤트 처리 오류] {str(e)[:200]}")
+
+def on_socketio_betting(data):
+    """betting 이벤트 수신 (베팅 정보)"""
+    global current_status_data
+    
+    try:
+        print(f"[Socket.IO] betting 이벤트 수신")
+        if isinstance(data, dict):
+            # betting 이벤트도 베팅 데이터를 포함할 수 있음
+            red_bets = data.get('red', [])
+            black_bets = data.get('black', [])
+            
+            if isinstance(red_bets, list) and isinstance(black_bets, list):
+                current_status_data['currentBets'] = {
+                    'red': red_bets,
+                    'black': black_bets
+                }
+                current_status_data['timestamp'] = datetime.now().isoformat()
+                print(f"[Socket.IO] 베팅 데이터 업데이트: RED {len(red_bets)}명, BLACK {len(black_bets)}명")
+    except Exception as e:
+        print(f"[Socket.IO betting 이벤트 처리 오류] {str(e)[:200]}")
+
+def on_socketio_result(data):
+    """result 이벤트 수신 (경기 결과)"""
+    try:
+        print(f"[Socket.IO] result 이벤트 수신: {type(data)}")
+        # result 이벤트는 경기 결과이므로 필요시 처리
+    except Exception as e:
+        print(f"[Socket.IO result 이벤트 처리 오류] {str(e)[:200]}")
 
 def start_socketio_client():
     """Socket.IO 클라이언트 시작 (별도 스레드에서 실행)"""
@@ -190,11 +225,13 @@ def start_socketio_client():
                 # Socket.IO 클라이언트 생성
                 socketio_client = socketio.Client()
                 
-                # 이벤트 핸들러 등록
+                # 이벤트 핸들러 등록 (실제 이벤트 이름 사용)
                 socketio_client.on('connect', on_socketio_connect)
                 socketio_client.on('disconnect', on_socketio_disconnect)
                 socketio_client.on('total', on_socketio_total)
                 socketio_client.on('status', on_socketio_status)
+                socketio_client.on('betting', on_socketio_betting)
+                socketio_client.on('result', on_socketio_result)
                 
                 # 연결 시도 (SSL 검증 비활성화 - 필요시)
                 socketio_client.connect(
