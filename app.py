@@ -133,7 +133,7 @@ def on_socketio_disconnect():
     """Socket.IO 연결 종료"""
     global socketio_connected
     socketio_connected = False
-    print(f"[Socket.IO] 연결 종료됨")
+    print("🔵 [Socket.IO] ❌ 연결 종료됨")
 
 def on_socketio_total(data):
     """total 이벤트 수신 (베팅 데이터) - 배열의 첫 번째 요소 사용"""
@@ -160,7 +160,7 @@ def on_socketio_total(data):
             }
             current_status_data['timestamp'] = datetime.now().isoformat()
             
-            print(f"[Socket.IO] total 이벤트: RED {len(red_bets)}명, BLACK {len(black_bets)}명")
+            print(f"🔵 [Socket.IO total] RED {len(red_bets)}명, BLACK {len(black_bets)}명")
         else:
             print(f"[Socket.IO] total 이벤트 데이터 형식 오류: {type(data)}")
     except Exception as e:
@@ -208,7 +208,7 @@ def on_socketio_betting(data):
                     'black': black_bets
                 }
                 current_status_data['timestamp'] = datetime.now().isoformat()
-                print(f"[Socket.IO] betting 이벤트: RED {len(red_bets)}명, BLACK {len(black_bets)}명")
+                print(f"🔵 [Socket.IO betting] RED {len(red_bets)}명, BLACK {len(black_bets)}명")
     except Exception as e:
         print(f"[Socket.IO betting 이벤트 처리 오류] {str(e)[:200]}")
 
