@@ -520,11 +520,15 @@ RESULTS_HTML = '''
             }
             
             // 색상 비교 결과 표시 (모든 카드, 하이로우 박스 아래)
-            if (colorMatchResult !== null) {
+            // null이나 undefined가 아니고, boolean 값일 때만 표시
+            if (colorMatchResult !== null && colorMatchResult !== undefined && typeof colorMatchResult === 'boolean') {
                 const colorMatchDiv = document.createElement('div');
-                colorMatchDiv.className = 'color-match ' + (colorMatchResult ? 'jung' : 'kkuk');
-                colorMatchDiv.textContent = colorMatchResult ? '정' : '꺽';
+                colorMatchDiv.className = 'color-match ' + (colorMatchResult === true ? 'jung' : 'kkuk');
+                colorMatchDiv.textContent = colorMatchResult === true ? '정' : '꺽';
                 cardWrapper.appendChild(colorMatchDiv);
+            } else {
+                // 디버깅: 왜 표시되지 않는지 확인
+                console.log(`카드 ${index + 1} 정/꺽 미표시: colorMatchResult =`, colorMatchResult, typeof colorMatchResult);
             }
             
             return cardWrapper;
@@ -616,21 +620,23 @@ RESULTS_HTML = '''
                     
                     // 캐시에 이미 있는지 확인
                     if (colorMatchCache[cacheKey] !== undefined) {
-                        colorMatchResults[i] = colorMatchCache[cacheKey];
-                        console.log(`카드 ${i + 1} (${currentGameID}): 캐시에서 가져옴 - ${colorMatchCache[cacheKey] ? '정' : '꺽'}`);
+                        const cachedResult = colorMatchCache[cacheKey];
+                        colorMatchResults[i] = cachedResult === true;  // 명확히 boolean으로 변환
+                        console.log(`카드 ${i + 1} (${currentGameID}): 캐시에서 가져옴 - ${cachedResult ? '정' : '꺽'} (${typeof cachedResult})`);
                     } else {
                         // 새로운 비교 결과 계산
                         const currentCard = parseCardValue(currentResult.result || '');
                         const compareCard = parseCardValue(results[compareIndex].result || '');
                         const matchResult = (currentCard.isRed === compareCard.isRed);
                         colorMatchCache[cacheKey] = matchResult;
-                        colorMatchResults[i] = matchResult;
-                        console.log(`카드 ${i + 1} (${currentGameID}): 새로 계산 - 현재(${currentCard.isRed ? '빨강' : '검정'}) vs 비교(${compareCard.isRed ? '빨강' : '검정'}) = ${matchResult ? '정' : '꺽'}`);
+                        colorMatchResults[i] = matchResult === true;  // 명확히 boolean으로 변환
+                        console.log(`카드 ${i + 1} (${currentGameID}): 새로 계산 - 현재(${currentCard.isRed ? '빨강' : '검정'}) vs 비교(${compareCard.isRed ? '빨강' : '검정'}) = ${matchResult ? '정' : '꺽'} (${typeof matchResult})`);
                     }
                 }
                 
                 console.log('=== 색상 비교 완료 ===');
-                console.log('결과:', colorMatchResults);
+                console.log('결과 배열:', colorMatchResults);
+                console.log('결과 타입 확인:', colorMatchResults.map((r, idx) => `${idx + 1}: ${r} (${typeof r})`));
                 
                 // 오래된 캐시 정리 (현재 표시되지 않는 카드 제거)
                 const currentGameIDs = new Set(displayResults.map(r => r.gameID).filter(id => id));
@@ -668,7 +674,7 @@ RESULTS_HTML = '''
                     try {
                         // 모든 카드에 색상 비교 결과 전달
                         const matchResult = colorMatchResults[index];
-                        console.log(`카드 ${index + 1} 생성: matchResult =`, matchResult, typeof matchResult);
+                        console.log(`카드 ${index + 1} (${result.gameID}) 생성: matchResult =`, matchResult, typeof matchResult, 'isBoolean:', typeof matchResult === 'boolean');
                         const card = createCard(result, index, matchResult);
                         cardsDiv.appendChild(card);
                     } catch (error) {
