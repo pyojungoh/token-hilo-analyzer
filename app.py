@@ -1048,7 +1048,8 @@ RESULTS_HTML = '''
             box-shadow: 0 4px 12px rgba(0,0,0,0.4);
         }
         .card.red {
-            color: #d32f2f;
+            background: #d32f2f;
+            color: #fff;
         }
         .card.black {
             color: #000;
