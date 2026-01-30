@@ -536,6 +536,8 @@ RESULTS_HTML = '''
         
         // 각 카드의 색상 비교 결과 저장 (gameID를 키로, 비교 대상 gameID도 함께 저장)
         const colorMatchCache = {};
+        // 최근 30개 결과 저장 (비교를 위해)
+        let allResults = [];
         
         async function loadResults() {
             try {
@@ -559,7 +561,7 @@ RESULTS_HTML = '''
                     return;
                 }
                 
-                const results = data.results || [];
+                const newResults = data.results || [];
                 const statusElement = document.getElementById('status');
                 const cardsDiv = document.getElementById('cards');
                 
@@ -568,11 +570,29 @@ RESULTS_HTML = '''
                     return;
                 }
                 
-                statusElement.textContent = `총 ${results.length}개 경기 결과`;
+                // 새로운 결과를 기존 결과와 병합 (중복 제거, 최신 30개 유지)
+                if (newResults.length > 0) {
+                    // 새로운 결과의 gameID들
+                    const newGameIDs = new Set(newResults.map(r => r.gameID).filter(id => id));
+                    
+                    // 기존 결과에서 새로운 결과에 없는 것만 유지
+                    const oldResults = allResults.filter(r => !newGameIDs.has(r.gameID));
+                    
+                    // 새로운 결과 + 기존 결과 (최신 30개만)
+                    allResults = [...newResults, ...oldResults].slice(0, 30);
+                } else {
+                    // 새로운 결과가 없으면 기존 결과 유지
+                    if (allResults.length === 0) {
+                        allResults = newResults;
+                    }
+                }
+                
+                statusElement.textContent = `총 ${allResults.length}개 경기 결과 (표시: ${newResults.length}개)`;
                 
                 // 최신 결과가 왼쪽에 오도록 (원본 데이터가 최신이 앞에 있음)
                 // 최신 15개만 표시 (반응형으로 모두 보이도록)
-                const displayResults = results.slice(0, 15);
+                const displayResults = allResults.slice(0, 15);
+                const results = allResults;  // 비교를 위해 전체 결과 사용
                 
                 // 모든 카드의 색상 비교 결과 계산 (캐시 사용)
                 // 각 카드는 고정된 상대 위치의 카드와 비교 (1번째↔16번째, 2번째↔17번째, ...)
