@@ -14,11 +14,11 @@ import traceback
 import threading
 import re
 try:
-    import websocket
-    WEBSOCKET_AVAILABLE = True
+    import socketio
+    SOCKETIO_AVAILABLE = True
 except ImportError:
-    WEBSOCKET_AVAILABLE = False
-    print("[경고] websocket-client가 설치되지 않았습니다. pip install websocket-client")
+    SOCKETIO_AVAILABLE = False
+    print("[경고] python-socketio가 설치되지 않았습니다. pip install python-socketio")
 
 app = Flask(__name__)
 CORS(app)
@@ -29,7 +29,7 @@ BASE_URL = os.getenv('BASE_URL', 'http://tgame365.com')
 DATA_PATH = ''  # 데이터 파일 경로 (루트)
 TIMEOUT = int(os.getenv('TIMEOUT', '10'))  # 타임아웃을 10초로 단축
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))  # 재시도 횟수 감소
-WEBSOCKET_URL = os.getenv('WEBSOCKET_URL', '')  # WebSocket URL (환경 변수로 설정)
+SOCKETIO_URL = os.getenv('SOCKETIO_URL', 'http://tgame365.com')  # Socket.IO 서버 URL (환경 변수로 설정)
 
 # 캐시
 game_data_cache = None
@@ -38,9 +38,10 @@ results_cache = None
 last_update_time = 0
 CACHE_TTL = 5000  # 5초
 
-# WebSocket 관련
-websocket_thread = None
-websocket_connected = False
+# Socket.IO 관련
+socketio_client = None
+socketio_thread = None
+socketio_connected = False
 current_status_data = {
     'round': 0,
     'elapsed': 0,
@@ -50,9 +51,6 @@ current_status_data = {
     },
     'timestamp': datetime.now().isoformat()
 }
-
-# WebSocket 프레임 패턴 (기존 파일과 동일)
-frame_pattern = re.compile(r'^42(\[.*\])$')
 
 def fetch_with_retry(url, max_retries=MAX_RETRIES, silent=False):
     """재시도 로직 포함 fetch (기존 파일과 동일한 방식)"""
@@ -117,12 +115,117 @@ def fetch_with_retry(url, max_retries=MAX_RETRIES, silent=False):
                 print(f"   오류 내용: {str(e)[:200]}")
     return None
 
+# Socket.IO 이벤트 핸들러
+def on_socketio_connect():
+    """Socket.IO 연결 성공"""
+    global socketio_connected
+    socketio_connected = True
+    print(f"[Socket.IO] 연결됨")
+
+def on_socketio_disconnect():
+    """Socket.IO 연결 종료"""
+    global socketio_connected
+    socketio_connected = False
+    print(f"[Socket.IO] 연결 종료됨")
+
+def on_socketio_total(data):
+    """total 이벤트 수신 (베팅 데이터) - 기존 파일과 동일한 로직"""
+    global current_status_data
+    
+    try:
+        print(f"[Socket.IO] total 이벤트 수신")
+        if data.get("round") is not None:
+            current_status_data['round'] = data.get("round")
+        
+        # 베팅 데이터 업데이트
+        red_bets = data.get('red', [])
+        black_bets = data.get('black', [])
+        
+        if not isinstance(red_bets, list):
+            red_bets = []
+        if not isinstance(black_bets, list):
+            black_bets = []
+        
+        current_status_data['currentBets'] = {
+            'red': red_bets,
+            'black': black_bets
+        }
+        current_status_data['elapsed'] = data.get('elapsed', 0)
+        current_status_data['timestamp'] = datetime.now().isoformat()
+        
+        print(f"[Socket.IO] 베팅 데이터 업데이트: RED {len(red_bets)}명, BLACK {len(black_bets)}명")
+    except Exception as e:
+        print(f"[Socket.IO total 이벤트 처리 오류] {str(e)[:200]}")
+
+def on_socketio_status(data):
+    """status 이벤트 수신 (경기 상태)"""
+    global current_status_data
+    
+    try:
+        print(f"[Socket.IO] status 이벤트 수신")
+        if data.get("round") is not None:
+            current_status_data['round'] = data.get("round")
+        current_status_data['elapsed'] = data.get('elapsed', 0)
+    except Exception as e:
+        print(f"[Socket.IO status 이벤트 처리 오류] {str(e)[:200]}")
+
+def start_socketio_client():
+    """Socket.IO 클라이언트 시작 (별도 스레드에서 실행)"""
+    global socketio_client, socketio_thread, socketio_connected
+    
+    if not SOCKETIO_AVAILABLE:
+        print("[경고] python-socketio가 설치되지 않아 Socket.IO 연결을 사용할 수 없습니다")
+        return
+    
+    if socketio_client and socketio_connected:
+        print("[경고] Socket.IO 클라이언트가 이미 실행 중입니다")
+        return
+    
+    def socketio_worker():
+        global socketio_client, socketio_connected
+        
+        while True:
+            try:
+                print(f"[Socket.IO] 연결 시도: {SOCKETIO_URL}")
+                # Socket.IO 클라이언트 생성
+                socketio_client = socketio.Client()
+                
+                # 이벤트 핸들러 등록
+                socketio_client.on('connect', on_socketio_connect)
+                socketio_client.on('disconnect', on_socketio_disconnect)
+                socketio_client.on('total', on_socketio_total)
+                socketio_client.on('status', on_socketio_status)
+                
+                # 연결 시도
+                socketio_client.connect(SOCKETIO_URL, wait_timeout=10)
+                
+                # 연결 유지
+                socketio_client.wait()
+                
+            except Exception as e:
+                print(f"[Socket.IO 연결 오류] {str(e)[:200]}")
+                socketio_connected = False
+                if socketio_client:
+                    try:
+                        socketio_client.disconnect()
+                    except:
+                        pass
+                time.sleep(5)  # 5초 후 재연결 시도
+    
+    socketio_thread = threading.Thread(target=socketio_worker, daemon=True)
+    socketio_thread.start()
+    print("[Socket.IO] 클라이언트 스레드 시작됨")
+
 def load_game_data():
-    """게임 데이터 로드 (current_status_frame.json) - WebSocket으로만 받을 수 있음"""
-    # 주의: 베팅 데이터는 WebSocket을 통해서만 받을 수 있습니다
-    # 공개 URL이 없으므로 빈 데이터 반환
-    # 실제 베팅 데이터를 받으려면 WebSocket 연결이 필요합니다
-    print(f"[경고] 베팅 데이터는 WebSocket으로만 받을 수 있습니다. 공개 URL이 없습니다.")
+    """게임 데이터 로드 - Socket.IO 데이터 우선 사용"""
+    global current_status_data
+    
+    # Socket.IO가 연결되어 있고 데이터가 있으면 사용
+    if socketio_connected and current_status_data.get('currentBets', {}).get('red') is not None:
+        return current_status_data
+    
+    # Socket.IO가 없으면 기존 방식으로 시도 (하지만 공개 URL이 없으므로 빈 데이터 반환)
+    print(f"[경고] Socket.IO가 연결되지 않았거나 데이터가 없습니다. Socket.IO 연결이 필요합니다.")
     
     # 여러 경로 시도 (혹시 모를 경우를 위해)
     possible_paths = [
@@ -188,13 +291,13 @@ def load_game_data():
             print(f"[오류] {url_path}: {str(e)[:100]}")
             continue  # 다음 경로 시도
     
-    # 모든 경로 실패 - WebSocket 데이터 반환 (연결되어 있으면)
-    if websocket_connected:
-        print(f"[정보] WebSocket 데이터 사용")
+    # 모든 경로 실패 - Socket.IO 데이터 반환 (연결되어 있으면)
+    if socketio_connected:
+        print(f"[정보] Socket.IO 데이터 사용")
         return current_status_data
     
-    # WebSocket도 없으면 빈 데이터 반환
-    print(f"[경고] 모든 경로에서 데이터를 가져올 수 없음 (WebSocket 연결 필요)")
+    # Socket.IO도 없으면 빈 데이터 반환
+    print(f"[경고] 모든 경로에서 데이터를 가져올 수 없음 (Socket.IO 연결 필요)")
     return {
         'round': 0,
         'elapsed': 0,
