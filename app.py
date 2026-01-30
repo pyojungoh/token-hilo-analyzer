@@ -246,26 +246,21 @@ RESULTS_HTML = '''
         }
         .cards-container {
             display: flex;
-            overflow-x: auto;
-            gap: clamp(8px, 2vw, 15px);
+            gap: clamp(5px, 1.5vw, 12px);
             padding: 15px 0;
-            -webkit-overflow-scrolling: touch;
+            flex-wrap: nowrap;
+            width: 100%;
         }
-        .cards-container::-webkit-scrollbar {
-            height: 6px;
-        }
-        .cards-container::-webkit-scrollbar-track {
-            background: rgba(255,255,255,0.1);
-            border-radius: 3px;
-        }
-        .cards-container::-webkit-scrollbar-thumb {
-            background: rgba(255,255,255,0.3);
-            border-radius: 3px;
+        .card-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            flex: 0 0 calc((100% - (14 * clamp(5px, 1.5vw, 12px))) / 15);
+            min-width: 0;
         }
         .card {
-            position: relative;
-            width: clamp(70px, 12vw, 120px);
-            height: clamp(100px, 18vw, 180px);
+            width: 100%;
+            aspect-ratio: 2 / 3;
             background: #fff;
             border: 3px solid #000;
             border-radius: 10px;
@@ -273,8 +268,7 @@ RESULTS_HTML = '''
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            padding: clamp(8px, 1.5vw, 15px);
-            flex-shrink: 0;
+            padding: clamp(5px, 1vw, 10px);
             box-shadow: 0 4px 12px rgba(0,0,0,0.4);
         }
         .card.red {
@@ -284,27 +278,25 @@ RESULTS_HTML = '''
             color: #000;
         }
         .card-suit-icon {
-            font-size: clamp(40px, 8vw, 80px);
+            font-size: clamp(30px, 6vw, 60px);
             line-height: 1;
             margin-bottom: 5px;
         }
         .card-value {
-            font-size: clamp(32px, 6vw, 64px);
+            font-size: clamp(24px, 5vw, 48px);
             font-weight: bold;
             text-align: center;
             line-height: 1;
-            margin: 5px 0;
         }
         .card-category {
-            position: absolute;
-            bottom: 5px;
-            left: 50%;
-            transform: translateX(-50%);
-            font-size: clamp(14px, 2.5vw, 20px);
+            margin-top: 5px;
+            font-size: clamp(10px, 2vw, 16px);
             font-weight: bold;
-            padding: 3px 8px;
+            padding: 4px 8px;
             border-radius: 5px;
             white-space: nowrap;
+            width: 100%;
+            text-align: center;
         }
         .card-category.hi {
             background: #4caf50;
@@ -352,39 +344,26 @@ RESULTS_HTML = '''
         function parseCardValue(value) {
             if (!value) return { number: '', suit: '♥', isRed: true };
             
-            // 문양 추출
-            const suits = {
-                '♥': { icon: '♥', isRed: true },
-                '♦': { icon: '♦', isRed: true },
-                '♠': { icon: '♠', isRed: false },
-                '♣': { icon: '♣', isRed: false }
+            // 문양 매핑: H=하트, D=다이아몬드, S=스페이드, C=클럽
+            const suitMap = {
+                'H': { icon: '♥', isRed: true },
+                'D': { icon: '♦', isRed: true },
+                'S': { icon: '♠', isRed: false },
+                'C': { icon: '♣', isRed: false }
             };
             
-            // result 값에서 문양 찾기
-            let suit = '♥';
-            let number = value;
-            let isRed = true;
-            
-            for (const [suitChar, suitInfo] of Object.entries(suits)) {
-                if (value.includes(suitChar)) {
-                    suit = suitChar;
-                    number = value.replace(suitChar, '').trim();
-                    isRed = suitInfo.isRed;
-                    break;
-                }
+            // 첫 글자가 문양인지 확인
+            const firstChar = value.charAt(0).toUpperCase();
+            if (suitMap[firstChar]) {
+                return {
+                    number: value.substring(1),
+                    suit: suitMap[firstChar].icon,
+                    isRed: suitMap[firstChar].isRed
+                };
             }
             
-            // 문양이 없으면 기본값
-            if (number === value) {
-                suit = '♥';
-                isRed = true;
-            }
-            
-            return {
-                number: number,
-                suit: suits[suit].icon,
-                isRed: isRed
-            };
+            // 기본값
+            return { number: value, suit: '♥', isRed: true };
         }
         
         function getCategory(result) {
@@ -398,9 +377,11 @@ RESULTS_HTML = '''
         }
         
         function createCard(result, index) {
+            const cardWrapper = document.createElement('div');
+            cardWrapper.className = 'card-wrapper';
+            
             const card = document.createElement('div');
             const cardInfo = parseCardValue(result.result || '');
-            const category = getCategory(result);
             
             card.className = 'card ' + (cardInfo.isRed ? 'red' : 'black');
             
@@ -416,15 +397,18 @@ RESULTS_HTML = '''
             valueDiv.textContent = cardInfo.number;
             card.appendChild(valueDiv);
             
-            // 카테고리 표시 (하단)
+            cardWrapper.appendChild(card);
+            
+            // 카테고리 표시 (별도 박스, 카드 아래)
+            const category = getCategory(result);
             if (category) {
                 const categoryDiv = document.createElement('div');
                 categoryDiv.className = 'card-category ' + category.class;
                 categoryDiv.textContent = category.text;
-                card.appendChild(categoryDiv);
+                cardWrapper.appendChild(categoryDiv);
             }
             
-            return card;
+            return cardWrapper;
         }
         
         async function loadResults() {
@@ -441,8 +425,8 @@ RESULTS_HTML = '''
                 document.getElementById('status').textContent = `총 ${results.length}개 경기 결과`;
                 
                 // 최신 결과가 왼쪽에 오도록 (원본 데이터가 최신이 앞에 있음)
-                // 최신 50개만 표시
-                const displayResults = results.slice(0, 50);
+                // 최신 15개만 표시 (반응형으로 모두 보이도록)
+                const displayResults = results.slice(0, 15);
                 
                 const cardsDiv = document.getElementById('cards');
                 cardsDiv.innerHTML = '';
@@ -455,8 +439,9 @@ RESULTS_HTML = '''
                 // 헤더 정보 업데이트
                 if (displayResults.length > 0) {
                     const latest = displayResults[0];
-                    document.getElementById('prev-round').textContent = `이전회차: ${latest.gameID || '--'}`;
-                    document.getElementById('hash').textContent = `Hash: ${latest.gameID ? latest.gameID.slice(-8) : '--'}`;
+                    const gameID = latest.gameID || '';
+                    document.getElementById('prev-round').textContent = `이전회차: ${gameID}`;
+                    document.getElementById('hash').textContent = `Hash: ${typeof gameID === 'string' && gameID.length > 8 ? gameID.slice(-8) : '--'}`;
                 }
             } catch (error) {
                 document.getElementById('status').textContent = '오류: ' + error.message;
