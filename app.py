@@ -1032,11 +1032,11 @@ RESULTS_HTML = '''
         }
         .card-wrapper .card {
             width: 54px !important;
-            height: 28px !important;
+            height: 48px !important;
         }
         .card {
             width: 54px;
-            height: 28px;
+            height: 48px;
             background: #fff;
             border: 3px solid #000;
             border-radius: 10px;
@@ -1044,7 +1044,7 @@ RESULTS_HTML = '''
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            padding: clamp(3px, 0.5vw, 6px);
+            padding: clamp(2px, 0.5vw, 4px);
             box-shadow: 0 4px 12px rgba(0,0,0,0.4);
         }
         .card.red {
@@ -1054,12 +1054,12 @@ RESULTS_HTML = '''
             color: #000;
         }
         .card-suit-icon {
-            font-size: clamp(30px, 6vw, 60px);
+            font-size: clamp(10px, 2vw, 14px);
             line-height: 1;
-            margin-bottom: 5px;
+            margin-bottom: 2px;
         }
         .card-value {
-            font-size: clamp(24px, 5vw, 48px);
+            font-size: clamp(12px, 2.5vw, 18px);
             font-weight: bold;
             text-align: center;
             line-height: 1;
