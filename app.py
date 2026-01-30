@@ -731,13 +731,14 @@ def get_results():
         }
         last_update_time = current_time
         return jsonify(results_cache)
-    except Exception:
-        # 에러 발생 시 빈 결과 반환
+    except Exception as e:
+        # 에러 발생 시 빈 결과 반환 (서버 크래시 방지)
+        print(f"결과 로드 오류: {str(e)[:200]}")
         return jsonify({
             'results': [],
             'count': 0,
             'timestamp': datetime.now().isoformat()
-        })
+        }), 200
 
 @app.route('/api/current-status', methods=['GET'])
 def get_current_status():
@@ -745,24 +746,37 @@ def get_current_status():
     try:
         data = load_game_data()
         # 항상 데이터 반환 (기본값 포함)
-        return jsonify(data)
+        return jsonify(data), 200
     except Exception as e:
-        # 에러 발생 시 기본값 반환
+        # 에러 발생 시 기본값 반환 (서버 크래시 방지)
+        print(f"게임 상태 로드 오류: {str(e)[:200]}")
         return jsonify({
             'round': 0,
             'elapsed': 0,
             'currentBets': {'red': [], 'black': []},
             'timestamp': datetime.now().isoformat()
-        })
+        }), 200
 
 @app.route('/api/streaks', methods=['GET'])
 def get_streaks():
     """연승 데이터"""
-    data = load_streaks_data()
-    if data:
-        return jsonify(data)
-    else:
-        return jsonify({'error': '연승 데이터 로드 실패'}), 500
+    try:
+        data = load_streaks_data()
+        if data:
+            return jsonify(data), 200
+        else:
+            return jsonify({
+                'userStreaks': {},
+                'validGames': 0,
+                'timestamp': datetime.now().isoformat()
+            }), 200
+    except Exception as e:
+        print(f"연승 데이터 로드 오류: {str(e)[:200]}")
+        return jsonify({
+            'userStreaks': {},
+            'validGames': 0,
+            'timestamp': datetime.now().isoformat()
+        }), 200
 
 @app.route('/api/streaks/<user_id>', methods=['GET'])
 def get_user_streak(user_id):
@@ -825,24 +839,16 @@ def health_check():
     return jsonify({
         'status': 'ok',
         'timestamp': datetime.now().isoformat()
-    })
+    }), 200
 
 @app.route('/', methods=['GET'])
 def index():
-    """루트"""
+    """루트 - 빠른 헬스체크용"""
     return jsonify({
+        'status': 'ok',
         'message': '토큰하이로우 분석기 API',
-        'version': '1.0.0',
-        'endpoints': {
-            'GET /results': '경기 결과 웹페이지',
-            'GET /api/results': '경기 결과 API',
-            'GET /api/current-status': '현재 게임 상태',
-            'GET /api/streaks': '연승 데이터',
-            'GET /api/streaks/<user_id>': '특정 유저 연승',
-            'POST /api/refresh': '데이터 갱신',
-            'GET /health': '헬스 체크'
-        }
-    })
+        'version': '1.0.0'
+    }), 200
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
