@@ -616,9 +616,16 @@ RESULTS_HTML = '''
         const colorMatchCache = {};
         // 최근 30개 결과 저장 (비교를 위해)
         let allResults = [];
+        let isLoadingResults = false;  // 중복 요청 방지
         
         async function loadResults() {
+            // 이미 로딩 중이면 스킵
+            if (isLoadingResults) {
+                return;
+            }
+            
             try {
+                isLoadingResults = true;
                 const response = await fetch('/api/results');
                 
                 if (!response.ok) {
