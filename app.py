@@ -367,11 +367,34 @@ RESULTS_HTML = '''
             background: #424242;
             color: #fff;
         }
+        .color-match {
+            margin-top: 5px;
+            font-size: clamp(10px, 2vw, 16px);
+            font-weight: bold;
+            padding: 4px 8px;
+            border-radius: 5px;
+            white-space: nowrap;
+            width: 100%;
+            text-align: center;
+        }
+        .color-match.jung {
+            background: #4caf50;
+            color: #fff;
+        }
+        .color-match.kkuk {
+            background: #f44336;
+            color: #fff;
+        }
         .status {
             text-align: center;
             margin-top: 15px;
             color: #aaa;
             font-size: clamp(0.8em, 2vw, 0.9em);
+        }
+        .reference-color {
+            font-size: clamp(0.7em, 1.5vw, 0.8em);
+            color: #aaa;
+            margin-left: 10px;
         }
     </style>
 </head>
@@ -379,7 +402,10 @@ RESULTS_HTML = '''
     <div class="container">
         <div class="header-info">
             <div id="prev-round">이전회차: --</div>
-            <div id="remaining-time" class="remaining-time">남은 시간: -- 초</div>
+            <div>
+                <span id="remaining-time" class="remaining-time">남은 시간: -- 초</span>
+                <span id="reference-color" class="reference-color"></span>
+            </div>
         </div>
         <div class="cards-container" id="cards"></div>
         <div class="status" id="status">로딩 중...</div>
@@ -437,7 +463,7 @@ RESULTS_HTML = '''
             return null;
         }
         
-        function createCard(result, index) {
+        function createCard(result, index, colorMatchResult) {
             const cardWrapper = document.createElement('div');
             cardWrapper.className = 'card-wrapper';
             
@@ -469,8 +495,19 @@ RESULTS_HTML = '''
                 cardWrapper.appendChild(categoryDiv);
             }
             
+            // 색상 비교 결과 표시 (1번째 카드만, 하이로우 박스 아래)
+            if (index === 0 && colorMatchResult !== null) {
+                const colorMatchDiv = document.createElement('div');
+                colorMatchDiv.className = 'color-match ' + (colorMatchResult ? 'jung' : 'kkuk');
+                colorMatchDiv.textContent = colorMatchResult ? '정' : '꺽';
+                cardWrapper.appendChild(colorMatchDiv);
+            }
+            
             return cardWrapper;
         }
+        
+        // 이전 15번째 카드 색상 저장 (새 결과 발표 전)
+        let previous15thCardColor = null;
         
         async function loadResults() {
             try {
@@ -501,6 +538,36 @@ RESULTS_HTML = '''
                 // 최신 15개만 표시 (반응형으로 모두 보이도록)
                 const displayResults = results.slice(0, 15);
                 
+                // 색상 비교 결과 계산
+                let colorMatchResult = null;
+                if (displayResults.length >= 15 && previous15thCardColor !== null) {
+                    // 새로운 1번째 카드 색상
+                    const newCard1 = parseCardValue(displayResults[0].result || '');
+                    const newColor = newCard1.isRed;
+                    
+                    // 이전 15번째 카드 색상과 비교
+                    colorMatchResult = (previous15thCardColor === newColor);
+                }
+                
+                // 현재 15번째 카드 색상 저장 (다음 비교를 위해)
+                if (displayResults.length >= 15) {
+                    const card15 = parseCardValue(displayResults[14].result || '');
+                    previous15thCardColor = card15.isRed;
+                    
+                    // 헤더에 기준 색상 표시
+                    const referenceColorElement = document.getElementById('reference-color');
+                    if (referenceColorElement) {
+                        const colorText = card15.isRed ? '🔴 빨간색' : '⚫ 검은색';
+                        referenceColorElement.textContent = `기준: ${colorText}`;
+                    }
+                } else {
+                    // 15개 미만이면 기준 색상 표시 제거
+                    const referenceColorElement = document.getElementById('reference-color');
+                    if (referenceColorElement) {
+                        referenceColorElement.textContent = '';
+                    }
+                }
+                
                 cardsDiv.innerHTML = '';
                 
                 if (displayResults.length === 0) {
@@ -510,7 +577,8 @@ RESULTS_HTML = '''
                 
                 displayResults.forEach((result, index) => {
                     try {
-                        const card = createCard(result, index);
+                        // 1번째 카드만 색상 비교 결과 전달
+                        const card = createCard(result, index, index === 0 ? colorMatchResult : null);
                         cardsDiv.appendChild(card);
                     } catch (error) {
                         console.error('카드 생성 오류:', error, result);
