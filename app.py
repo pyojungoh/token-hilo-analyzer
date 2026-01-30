@@ -17,7 +17,8 @@ CORS(app)
 
 # 환경 변수
 BASE_URL = os.getenv('BASE_URL', 'http://tgame365.com')
-DATA_PATH = '/frame/hilo'  # 데이터 파일 경로
+# 기존 파일 예제를 보면 루트 경로에 파일이 있음
+DATA_PATH = ''  # 데이터 파일 경로 (루트)
 TIMEOUT = int(os.getenv('TIMEOUT', '10'))  # 타임아웃을 10초로 단축
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))  # 재시도 횟수 감소
 
@@ -73,7 +74,8 @@ def load_game_data():
     """게임 데이터 로드 (current_status_frame.json) - 기존 파일과 동일한 방식"""
     try:
         # 기존 파일과 동일: 타임스탬프 추가로 캐시 방지
-        url = f"{BASE_URL}{DATA_PATH}/current_status_frame.json?t={int(time.time() * 1000)}"
+        # railway_server_example.py를 보면 BASE_URL/current_status_frame.json 형식
+        url = f"{BASE_URL}/current_status_frame.json?t={int(time.time() * 1000)}"
         print(f"[데이터 요청] {url}")
         response = fetch_with_retry(url, silent=False)  # 디버깅을 위해 silent=False
         
@@ -280,7 +282,7 @@ def calculate_streaks(valid_games):
 def load_streaks_data():
     """연승 데이터 로드"""
     try:
-        url = f"{BASE_URL}{DATA_PATH}/bet_result_log.csv?t={int(time.time() * 1000)}"
+        url = f"{BASE_URL}/bet_result_log.csv?t={int(time.time() * 1000)}"
         response = fetch_with_retry(url)
         
         if not response:
