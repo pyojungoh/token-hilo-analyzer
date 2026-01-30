@@ -495,8 +495,8 @@ RESULTS_HTML = '''
                 cardWrapper.appendChild(categoryDiv);
             }
             
-            // 색상 비교 결과 표시 (1번째 카드만, 하이로우 박스 아래)
-            if (index === 0 && colorMatchResult !== null) {
+            // 색상 비교 결과 표시 (모든 카드, 하이로우 박스 아래)
+            if (colorMatchResult !== null) {
                 const colorMatchDiv = document.createElement('div');
                 colorMatchDiv.className = 'color-match ' + (colorMatchResult ? 'jung' : 'kkuk');
                 colorMatchDiv.textContent = colorMatchResult ? '정' : '꺽';
@@ -546,15 +546,22 @@ RESULTS_HTML = '''
                 // 최신 15개만 표시 (반응형으로 모두 보이도록)
                 const displayResults = results.slice(0, 15);
                 
-                // 색상 비교 결과 계산
-                let colorMatchResult = null;
+                // 모든 카드의 색상 비교 결과 계산
+                const colorMatchResults = [];
+                
+                // 1번째 카드: 이전 15번째 카드와 비교
                 if (displayResults.length >= 15 && previous15thCardColor !== null) {
-                    // 새로운 1번째 카드 색상
-                    const newCard1 = parseCardValue(displayResults[0].result || '');
-                    const newColor = newCard1.isRed;
-                    
-                    // 이전 15번째 카드 색상과 비교
-                    colorMatchResult = (previous15thCardColor === newColor);
+                    const card1 = parseCardValue(displayResults[0].result || '');
+                    colorMatchResults[0] = (previous15thCardColor === card1.isRed);
+                } else {
+                    colorMatchResults[0] = null;
+                }
+                
+                // 2번째부터 15번째 카드: 각각 이전 카드와 비교
+                for (let i = 1; i < displayResults.length; i++) {
+                    const currentCard = parseCardValue(displayResults[i].result || '');
+                    const previousCard = parseCardValue(displayResults[i - 1].result || '');
+                    colorMatchResults[i] = (currentCard.isRed === previousCard.isRed);
                 }
                 
                 // 현재 15번째 카드 색상 저장 (다음 비교를 위해)
@@ -585,8 +592,8 @@ RESULTS_HTML = '''
                 
                 displayResults.forEach((result, index) => {
                     try {
-                        // 1번째 카드만 색상 비교 결과 전달
-                        const card = createCard(result, index, index === 0 ? colorMatchResult : null);
+                        // 모든 카드에 색상 비교 결과 전달
+                        const card = createCard(result, index, colorMatchResults[index]);
                         cardsDiv.appendChild(card);
                     } catch (error) {
                         console.error('카드 생성 오류:', error, result);
