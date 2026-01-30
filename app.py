@@ -1118,6 +1118,28 @@ RESULTS_HTML = '''
             background: #f44336;
             color: #fff;
         }
+        .jung-kkuk-graph {
+            margin-top: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: clamp(11px, 2vw, 14px);
+            font-weight: bold;
+            min-height: 2.2em;
+        }
+        .jung-kkuk-graph .graph-row {
+            display: flex;
+            justify-content: center;
+            gap: 2px;
+            line-height: 1.3;
+        }
+        .jung-kkuk-graph .graph-cell {
+            min-width: 1.1em;
+            text-align: center;
+        }
+        .jung-kkuk-graph .graph-row.graph-top .graph-cell { color: #f44336; }
+        .jung-kkuk-graph .graph-row.graph-bottom .graph-cell { color: #4caf50; }
         .status {
             text-align: center;
             margin-top: 15px;
@@ -1141,6 +1163,7 @@ RESULTS_HTML = '''
             </div>
         </div>
         <div class="cards-container" id="cards"></div>
+        <div id="jung-kkuk-graph" class="jung-kkuk-graph"></div>
         <div class="status" id="status">로딩 중...</div>
     </div>
     <script>
@@ -1438,19 +1461,50 @@ RESULTS_HTML = '''
                     return;
                 }
                 
+                // 정/꺽 최종 값 수집 (그래프용)
+                const graphValues = [];
+                displayResults.forEach((result, index) => {
+                    let matchResult = result.colorMatch;
+                    if (matchResult === undefined || matchResult === null) {
+                        matchResult = colorMatchResults[index];
+                    }
+                    graphValues.push(matchResult);  // true=정, false=꺽, null
+                });
+                
                 displayResults.forEach((result, index) => {
                     try {
-                        // 서버에서 받은 colorMatch 값 우선 사용, 없으면 클라이언트 계산 결과 사용
-                        let matchResult = result.colorMatch;
-                        if (matchResult === undefined || matchResult === null) {
-                            matchResult = colorMatchResults[index];
-                        }
+                        const matchResult = graphValues[index];
                         const card = createCard(result, index, matchResult);
                         cardsDiv.appendChild(card);
                     } catch (error) {
                         console.error('카드 생성 오류:', error, result);
                     }
                 });
+                
+                // 정/꺽 그래프 갱신 (위: 꺽, 아래: 정)
+                const graphDiv = document.getElementById('jung-kkuk-graph');
+                if (graphDiv) {
+                    graphDiv.innerHTML = '';
+                    const hasAny = graphValues.some(v => v === true || v === false);
+                    if (hasAny) {
+                        const topRow = document.createElement('div');
+                        topRow.className = 'graph-row graph-top';
+                        const bottomRow = document.createElement('div');
+                        bottomRow.className = 'graph-row graph-bottom';
+                        graphValues.forEach(v => {
+                            const topCell = document.createElement('span');
+                            topCell.className = 'graph-cell';
+                            topCell.textContent = (v === false) ? '꺽' : ' ';
+                            topRow.appendChild(topCell);
+                            const bottomCell = document.createElement('span');
+                            bottomCell.className = 'graph-cell';
+                            bottomCell.textContent = (v === true) ? '정' : ' ';
+                            bottomRow.appendChild(bottomCell);
+                        });
+                        graphDiv.appendChild(topRow);
+                        graphDiv.appendChild(bottomRow);
+                    }
+                }
                 
                 // 헤더 정보 업데이트
                 if (displayResults.length > 0) {
