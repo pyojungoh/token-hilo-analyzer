@@ -319,9 +319,12 @@ def delayed_socketio_init():
         init_socketio()
         socketio_initialized = True
     except Exception as e:
-                print(f"🔵 [❌ 오류] Socket.IO 초기화 실패: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"🔵 [❌ 오류] Socket.IO 초기화 실패: {e}")
+        try:
+            import traceback
+            traceback.print_exc()
+        except:
+            pass
 
 # 별도 스레드에서 Socket.IO 초기화 시작 (서버 시작을 막지 않음)
 init_thread = threading.Thread(target=delayed_socketio_init, daemon=True)
