@@ -1118,29 +1118,37 @@ RESULTS_HTML = '''
             background: #f44336;
             color: #fff;
         }
+        /* 정/꺽 블록 그래프: 좌=최신, 같은 타입 세로로 쌓기, 배경 있는 글씨 */
         .jung-kkuk-graph {
             margin-top: 12px;
             display: flex;
-            flex-direction: column;
-            align-items: center;
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: clamp(11px, 2vw, 14px);
-            font-weight: bold;
-            min-height: 2.2em;
-        }
-        .jung-kkuk-graph .graph-row {
-            display: flex;
+            flex-direction: row;
             justify-content: center;
-            gap: 2px;
-            line-height: 1.3;
+            align-items: flex-end;
+            gap: 6px;
+            flex-wrap: wrap;
         }
-        .jung-kkuk-graph .graph-cell {
-            min-width: 1.1em;
+        .jung-kkuk-graph .graph-column {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            align-items: center;
+        }
+        .jung-kkuk-graph .graph-block {
+            font-size: clamp(10px, 2vw, 14px);
+            font-weight: bold;
+            padding: 4px 10px;
+            border-radius: 5px;
+            white-space: nowrap;
             text-align: center;
+            color: #fff;
         }
-        /* 위: 정(초록), 아래: 꺽(빨강) */
-        .jung-kkuk-graph .graph-row.graph-top .graph-cell { color: #4caf50; }
-        .jung-kkuk-graph .graph-row.graph-bottom .graph-cell { color: #f44336; }
+        .jung-kkuk-graph .graph-block.jung {
+            background: #4caf50;
+        }
+        .jung-kkuk-graph .graph-block.kkuk {
+            background: #f44336;
+        }
         .status {
             text-align: center;
             margin-top: 15px;
@@ -1482,30 +1490,41 @@ RESULTS_HTML = '''
                     }
                 });
                 
-                // 정/꺽 그래프: 위=정, 아래=꺽 / 왼쪽=과거, 오른쪽=최신(우측으로 늘어남)
+                // 정/꺽 블록 그래프: 좌=최신, 같은 타입 세로로 쌓기, 새 열은 왼쪽에 추가
                 const graphDiv = document.getElementById('jung-kkuk-graph');
                 if (graphDiv) {
                     graphDiv.innerHTML = '';
-                    const hasAny = graphValues.some(v => v === true || v === false);
-                    if (hasAny) {
-                        const reversed = graphValues.slice().reverse();
-                        const topRow = document.createElement('div');
-                        topRow.className = 'graph-row graph-top';
-                        const bottomRow = document.createElement('div');
-                        bottomRow.className = 'graph-row graph-bottom';
-                        reversed.forEach(v => {
-                            const topCell = document.createElement('span');
-                            topCell.className = 'graph-cell';
-                            topCell.textContent = (v === true) ? '정' : ' ';
-                            topRow.appendChild(topCell);
-                            const bottomCell = document.createElement('span');
-                            bottomCell.className = 'graph-cell';
-                            bottomCell.textContent = (v === false) ? '꺽' : ' ';
-                            bottomRow.appendChild(bottomCell);
-                        });
-                        graphDiv.appendChild(topRow);
-                        graphDiv.appendChild(bottomRow);
-                    }
+                    const segments = [];
+                    let current = null;
+                    let count = 0;
+                    graphValues.forEach(v => {
+                        if (v !== true && v !== false) {
+                            if (current !== null) {
+                                segments.push({ type: current, count: count });
+                                current = null;
+                            }
+                            return;
+                        }
+                        if (v === current) {
+                            count++;
+                        } else {
+                            if (current !== null) segments.push({ type: current, count: count });
+                            current = v;
+                            count = 1;
+                        }
+                    });
+                    if (current !== null) segments.push({ type: current, count: count });
+                    segments.forEach(seg => {
+                        const col = document.createElement('div');
+                        col.className = 'graph-column';
+                        for (let i = 0; i < seg.count; i++) {
+                            const block = document.createElement('div');
+                            block.className = 'graph-block ' + (seg.type === true ? 'jung' : 'kkuk');
+                            block.textContent = seg.type === true ? '정' : '꺽';
+                            col.appendChild(block);
+                        }
+                        graphDiv.appendChild(col);
+                    });
                 }
                 
                 // 헤더 정보 업데이트
