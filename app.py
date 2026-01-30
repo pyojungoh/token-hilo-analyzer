@@ -525,7 +525,7 @@ RESULTS_HTML = '''
             return cardWrapper;
         }
         
-        // 각 카드의 색상 비교 결과 저장 (gameID를 키로)
+        // 각 카드의 색상 비교 결과 저장 (gameID를 키로, 비교 대상 gameID도 함께 저장)
         const colorMatchCache = {};
         
         async function loadResults() {
@@ -579,29 +579,42 @@ RESULTS_HTML = '''
                         continue;
                     }
                     
-                    if (currentGameID && !colorMatchCache[currentGameID]) {
-                        // 새로운 카드인 경우에만 계산
-                        if (results.length > compareIndex) {
+                    if (currentGameID) {
+                        // 캐시에 없거나, 비교 대상이 변경된 경우 재계산
+                        const compareGameID = results[compareIndex]?.gameID || '';
+                        const cacheKey = `${currentGameID}_${compareGameID}`;
+                        
+                        if (!colorMatchCache[cacheKey] && results.length > compareIndex) {
                             // 비교 대상도 조커가 아닌지 확인
                             if (results[compareIndex]?.joker) {
-                                colorMatchCache[currentGameID] = null;
+                                colorMatchCache[cacheKey] = null;
                             } else {
                                 const currentCard = parseCardValue(displayResults[i].result || '');
                                 const compareCard = parseCardValue(results[compareIndex].result || '');
-                                colorMatchCache[currentGameID] = (currentCard.isRed === compareCard.isRed);
+                                colorMatchCache[cacheKey] = (currentCard.isRed === compareCard.isRed);
                             }
-                        } else {
-                            colorMatchCache[currentGameID] = null;
                         }
+                        
+                        // 캐시에서 결과 가져오기 (gameID로도 찾기)
+                        let matchResult = null;
+                        for (const key in colorMatchCache) {
+                            if (key.startsWith(currentGameID + '_')) {
+                                matchResult = colorMatchCache[key];
+                                break;
+                            }
+                        }
+                        colorMatchResults[i] = matchResult;
+                    } else {
+                        colorMatchResults[i] = null;
                     }
-                    colorMatchResults[i] = colorMatchCache[currentGameID] !== undefined ? colorMatchCache[currentGameID] : null;
                 }
                 
                 // 오래된 캐시 정리 (현재 표시되지 않는 카드 제거)
                 const currentGameIDs = new Set(displayResults.map(r => r.gameID).filter(id => id));
-                for (const gameID in colorMatchCache) {
+                for (const key in colorMatchCache) {
+                    const gameID = key.split('_')[0];
                     if (!currentGameIDs.has(gameID)) {
-                        delete colorMatchCache[gameID];
+                        delete colorMatchCache[key];
                     }
                 }
                 
