@@ -244,8 +244,17 @@ def start_socketio_client():
         while True:
             try:
                 print(f"🔵 [Socket.IO] 연결 시도: {SOCKETIO_URL}")
-                # Socket.IO 클라이언트 생성
-                socketio_client = socketio.Client()
+                
+                # 기존 파일 방식: engineio.Client를 먼저 생성하고 ssl_verify=False 설정
+                import engineio
+                eio_client = engineio.Client(ssl_verify=False, logger=False)
+                
+                # Socket.IO 클라이언트 생성 (engineio_client 전달)
+                socketio_client = socketio.Client(
+                    engineio_logger=False,
+                    logger=False,
+                    engineio_client=eio_client
+                )
                 
                 # 이벤트 핸들러 등록 (실제 이벤트 이름 사용)
                 socketio_client.on('connect', on_socketio_connect)
@@ -255,49 +264,21 @@ def start_socketio_client():
                 socketio_client.on('betting', on_socketio_betting)
                 socketio_client.on('result', on_socketio_result)
                 
-                # 연결 시도 (SSL 검증 비활성화)
+                # 연결 시도 (기존 파일 방식 사용)
                 print(f"🔵 [연결 정보] URL: {SOCKETIO_URL}")
                 
-                # SSL 검증 비활성화를 위한 환경 변수 설정
-                import os
-                import ssl
-                os.environ['PYTHONHTTPSVERIFY'] = '0'
-                # urllib3의 SSL 경고 비활성화
-                import urllib3
-                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                # 기존 파일과 동일한 방식으로 연결
+                socketio_client.connect(
+                    SOCKETIO_URL,
+                    transports=['polling', 'websocket'],
+                    socketio_path='/socket.io/',
+                    headers={
+                        "Origin": "http://tgame365.com",
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+                    }
+                )
                 
-                # python-socketio는 내부적으로 requests를 사용하므로
-                # requests의 SSL 검증을 비활성화
-                import requests
-                requests.packages.urllib3.disable_warnings()
-                
-                print(f"🔵 [연결 시도] SSL 검증 비활성화됨")
-                
-                # 네임스페이스를 명시적으로 지정 (루트 네임스페이스 '/')
-                # wait_timeout을 늘려서 연결 시간을 더 줌
-                try:
-                    socketio_client.connect(
-                        SOCKETIO_URL, 
-                        wait_timeout=15,  # 타임아웃 증가
-                        transports=['polling', 'websocket'],  # polling을 먼저 시도 (더 안정적)
-                        namespaces=['/']  # 루트 네임스페이스 명시
-                    )
-                    print(f"🔵 [연결 성공] connect() 메서드 완료")
-                except Exception as connect_error:
-                    print(f"🔵 [연결 실패 상세] {type(connect_error).__name__}: {str(connect_error)[:300]}")
-                    # polling만 시도
-                    try:
-                        print(f"🔵 [재시도] polling 전송만 사용")
-                        socketio_client.connect(
-                            SOCKETIO_URL, 
-                            wait_timeout=15,
-                            transports=['polling'],  # polling만 사용
-                            namespaces=['/']
-                        )
-                        print(f"🔵 [연결 성공] polling 전송으로 연결됨")
-                    except Exception as polling_error:
-                        print(f"🔵 [polling 연결 실패] {type(polling_error).__name__}: {str(polling_error)[:300]}")
-                        raise
+                print(f"🔵 [연결 성공] connect() 메서드 완료")
                 
                 # 연결 유지
                 socketio_client.wait()
