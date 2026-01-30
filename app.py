@@ -470,11 +470,22 @@ RESULTS_HTML = '''
             const card = document.createElement('div');
             const isJoker = result.joker;
             
-            // 조커 카드는 파란색 배경
+            // 조커 카드는 파란색 배경 (일반 카드와 같은 사이즈)
             if (isJoker) {
                 card.className = 'card';
                 card.style.background = '#2196f3';
                 card.style.color = '#fff';
+                
+                // 조커 텍스트 (일반 카드와 같은 구조 유지)
+                const jokerIcon = document.createElement('div');
+                jokerIcon.className = 'card-suit-icon';
+                jokerIcon.textContent = '🃏';
+                card.appendChild(jokerIcon);
+                
+                const jokerText = document.createElement('div');
+                jokerText.className = 'card-value';
+                jokerText.textContent = '';
+                card.appendChild(jokerText);
             } else {
                 const cardInfo = parseCardValue(result.result || '');
                 card.className = 'card ' + (cardInfo.isRed ? 'red' : 'black');
@@ -562,12 +573,23 @@ RESULTS_HTML = '''
                     const currentGameID = displayResults[i]?.gameID || '';
                     const compareIndex = i + 15;  // 1번째는 16번째와, 2번째는 17번째와 비교
                     
+                    // 조커 카드는 색상 비교 불가
+                    if (displayResults[i].joker) {
+                        colorMatchResults[i] = null;
+                        continue;
+                    }
+                    
                     if (currentGameID && !colorMatchCache[currentGameID]) {
                         // 새로운 카드인 경우에만 계산
                         if (results.length > compareIndex) {
-                            const currentCard = parseCardValue(displayResults[i].result || '');
-                            const compareCard = parseCardValue(results[compareIndex].result || '');
-                            colorMatchCache[currentGameID] = (currentCard.isRed === compareCard.isRed);
+                            // 비교 대상도 조커가 아닌지 확인
+                            if (results[compareIndex]?.joker) {
+                                colorMatchCache[currentGameID] = null;
+                            } else {
+                                const currentCard = parseCardValue(displayResults[i].result || '');
+                                const compareCard = parseCardValue(results[compareIndex].result || '');
+                                colorMatchCache[currentGameID] = (currentCard.isRed === compareCard.isRed);
+                            }
                         } else {
                             colorMatchCache[currentGameID] = null;
                         }
