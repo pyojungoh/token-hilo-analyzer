@@ -1252,9 +1252,6 @@ RESULTS_HTML = '''
                 colorMatchDiv.className = 'color-match ' + (colorMatchResult === true ? 'jung' : 'kkuk');
                 colorMatchDiv.textContent = colorMatchResult === true ? '정' : '꺽';
                 cardWrapper.appendChild(colorMatchDiv);
-            } else {
-                // 디버깅: 왜 표시되지 않는지 확인
-                console.log(`카드 ${index + 1} 정/꺽 미표시: colorMatchResult =`, colorMatchResult, typeof colorMatchResult);
             }
             
             return cardWrapper;
