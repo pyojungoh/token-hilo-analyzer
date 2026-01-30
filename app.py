@@ -272,7 +272,9 @@ def start_socketio_client():
                 socketio_client.wait()
                 
             except Exception as e:
-                print(f"[Socket.IO 연결 오류] {str(e)[:200]}")
+                error_msg = str(e)
+                print(f"🔵 [Socket.IO 연결 오류] {error_msg[:200]}")
+                print(f"🔵 [오류 상세] {type(e).__name__}: {error_msg}")
                 socketio_connected = False
                 if socketio_client:
                     try:
