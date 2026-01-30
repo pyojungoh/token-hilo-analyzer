@@ -473,18 +473,19 @@ RESULTS_HTML = '''
             // 조커 카드는 파란색 배경 (일반 카드와 같은 사이즈)
             if (isJoker) {
                 card.className = 'card';
-                card.style.background = '#2196f3';
-                card.style.color = '#fff';
+                card.style.cssText = 'background: #2196f3 !important; color: #fff !important; width: 100% !important; aspect-ratio: 2 / 3 !important;';
                 
                 // 조커 텍스트 (일반 카드와 같은 구조 유지)
                 const jokerIcon = document.createElement('div');
                 jokerIcon.className = 'card-suit-icon';
                 jokerIcon.textContent = '🃏';
+                jokerIcon.style.cssText = 'font-size: clamp(30px, 6vw, 60px) !important; line-height: 1 !important; margin-bottom: 5px !important;';
                 card.appendChild(jokerIcon);
                 
                 const jokerText = document.createElement('div');
                 jokerText.className = 'card-value';
                 jokerText.textContent = '';
+                jokerText.style.cssText = 'font-size: clamp(24px, 5vw, 48px) !important; font-weight: bold !important; text-align: center !important; line-height: 1 !important;';
                 card.appendChild(jokerText);
             } else {
                 const cardInfo = parseCardValue(result.result || '');
@@ -584,26 +585,24 @@ RESULTS_HTML = '''
                         const compareGameID = results[compareIndex]?.gameID || '';
                         const cacheKey = `${currentGameID}_${compareGameID}`;
                         
-                        if (!colorMatchCache[cacheKey] && results.length > compareIndex) {
+                        // 캐시에 이미 있는지 확인
+                        if (colorMatchCache[cacheKey] !== undefined) {
+                            colorMatchResults[i] = colorMatchCache[cacheKey];
+                        } else if (results.length > compareIndex) {
                             // 비교 대상도 조커가 아닌지 확인
                             if (results[compareIndex]?.joker) {
                                 colorMatchCache[cacheKey] = null;
+                                colorMatchResults[i] = null;
                             } else {
                                 const currentCard = parseCardValue(displayResults[i].result || '');
                                 const compareCard = parseCardValue(results[compareIndex].result || '');
-                                colorMatchCache[cacheKey] = (currentCard.isRed === compareCard.isRed);
+                                const matchResult = (currentCard.isRed === compareCard.isRed);
+                                colorMatchCache[cacheKey] = matchResult;
+                                colorMatchResults[i] = matchResult;
                             }
+                        } else {
+                            colorMatchResults[i] = null;
                         }
-                        
-                        // 캐시에서 결과 가져오기 (gameID로도 찾기)
-                        let matchResult = null;
-                        for (const key in colorMatchCache) {
-                            if (key.startsWith(currentGameID + '_')) {
-                                matchResult = colorMatchCache[key];
-                                break;
-                            }
-                        }
-                        colorMatchResults[i] = matchResult;
                     } else {
                         colorMatchResults[i] = null;
                     }
