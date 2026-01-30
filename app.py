@@ -221,12 +221,18 @@ def calculate_and_save_color_matches(results):
             
             match_result = (current_color == compare_color)  # True = 정, False = 꺽
             
-            # DB에 저장 (중복 체크)
+            # 디버깅: 계산 과정 로그
+            current_result_str = current_result.get('result', '')
+            compare_result_str = compare_result.get('result', '')
+            print(f"[🔍 정/꺽 계산] {current_game_id}({current_result_str}) vs {compare_game_id}({compare_result_str}): {current_color} == {compare_color} = {match_result} ({'정' if match_result else '꺽'})")
+            
+            # DB에 저장 (중복 시 업데이트)
             try:
                 cur.execute('''
                     INSERT INTO color_matches (game_id, compare_game_id, match_result)
                     VALUES (%s, %s, %s)
-                    ON CONFLICT (game_id, compare_game_id) DO NOTHING
+                    ON CONFLICT (game_id, compare_game_id) 
+                    DO UPDATE SET match_result = EXCLUDED.match_result
                 ''', (current_game_id, compare_game_id, match_result))
                 saved_count += 1
             except Exception as e:
@@ -291,7 +297,8 @@ def save_color_match(game_id, compare_game_id, match_result):
         cur.execute('''
             INSERT INTO color_matches (game_id, compare_game_id, match_result)
             VALUES (%s, %s, %s)
-            ON CONFLICT (game_id, compare_game_id) DO NOTHING
+            ON CONFLICT (game_id, compare_game_id) 
+            DO UPDATE SET match_result = EXCLUDED.match_result
         ''', (str(game_id), str(compare_game_id), match_result))
         
         conn.commit()
@@ -1724,11 +1731,16 @@ def get_results():
                                 
                                 if current_color is not None and compare_color is not None:
                                     match_result = (current_color == compare_color)
-                                    # 계산 결과를 DB에 저장
+                                    # 디버깅: 계산 과정 로그
+                                    current_result_str = results[i].get('result', '')
+                                    compare_result_str = results[i + 15].get('result', '')
+                                    print(f"[🔍 정/꺽 계산] {current_game_id}({current_result_str}) vs {compare_game_id}({compare_result_str}): {current_color} == {compare_color} = {match_result} ({'정' if match_result else '꺽'})")
+                                    # 계산 결과를 DB에 저장 (업데이트 포함)
                                     save_color_match(current_game_id, compare_game_id, match_result)
                                     print(f"[✅] 정/꺽 결과 계산 및 저장: {current_game_id} vs {compare_game_id} = {match_result}")
                                 else:
                                     match_result = None
+                                    print(f"[경고] 색상 파싱 실패: {current_game_id}({results[i].get('result', '')}) 또는 {compare_game_id}({results[i + 15].get('result', '')})")
                             
                             # 결과에 추가 (항상 추가, None이어도)
                             results[i]['colorMatch'] = match_result
