@@ -1,9 +1,9 @@
 """
 토큰하이로우 분석기 - Railway 서버
-데이터 수집 및 연승 분석 API
+필요한 정보만 추출하여 새로 작성
 """
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify
 from flask_cors import CORS
 import requests
 import os
@@ -15,7 +15,7 @@ CORS(app)
 
 # 환경 변수
 BASE_URL = os.getenv('BASE_URL', 'http://tgame365.com')
-UPDATE_INTERVAL = int(os.getenv('UPDATE_INTERVAL', '5000'))
+DATA_PATH = '/frame/hilo'  # 데이터 파일 경로
 TIMEOUT = int(os.getenv('TIMEOUT', '30'))
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))
 
@@ -23,6 +23,7 @@ MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))
 game_data_cache = None
 streaks_cache = None
 last_update_time = 0
+CACHE_TTL = 5000  # 5초
 
 def fetch_with_retry(url, max_retries=MAX_RETRIES):
     """재시도 로직 포함 fetch"""
@@ -48,7 +49,7 @@ def fetch_with_retry(url, max_retries=MAX_RETRIES):
 def load_game_data():
     """게임 데이터 로드 (current_status_frame.json)"""
     try:
-        url = f"{BASE_URL}/current_status_frame.json?t={int(time.time() * 1000)}"
+        url = f"{BASE_URL}{DATA_PATH}/current_status_frame.json?t={int(time.time() * 1000)}"
         response = fetch_with_retry(url)
         
         if not response:
@@ -73,6 +74,7 @@ def parse_csv_data(csv_text):
     valid_games = []
     lines = csv_text.split('\n')
     
+    # 헤더 제외하고 파싱
     for i in range(1, len(lines)):
         line = lines[i].strip()
         if not line:
@@ -88,6 +90,7 @@ def parse_csv_data(csv_text):
             category = parts[3].strip().lower() if len(parts) > 3 else None
             result = parts[5].strip().lower() if len(parts) > 5 else None
             
+            # 유효성 검증
             if not account or not category or not result:
                 continue
             if category not in ['red', 'black', 'hi', 'lo']:
@@ -106,6 +109,7 @@ def parse_csv_data(csv_text):
         except (ValueError, IndexError):
             continue
     
+    # 라운드 순으로 정렬
     valid_games.sort(key=lambda x: x['round'])
     return valid_games
 
@@ -124,6 +128,7 @@ def calculate_streaks(valid_games):
         else:
             streaks[key] = 0
     
+    # userStreaks 형태로 변환
     user_streaks = {}
     for key, streak_value in streaks.items():
         parts = key.split('_')
@@ -144,7 +149,7 @@ def calculate_streaks(valid_games):
 def load_streaks_data():
     """연승 데이터 로드"""
     try:
-        url = f"{BASE_URL}/bet_result_log.csv?t={int(time.time() * 1000)}"
+        url = f"{BASE_URL}{DATA_PATH}/bet_result_log.csv?t={int(time.time() * 1000)}"
         response = fetch_with_retry(url)
         
         if not response:
@@ -172,7 +177,7 @@ def get_current_status():
     global game_data_cache, last_update_time
     
     current_time = time.time() * 1000
-    if game_data_cache and (current_time - last_update_time) < UPDATE_INTERVAL:
+    if game_data_cache and (current_time - last_update_time) < CACHE_TTL:
         return jsonify(game_data_cache)
     
     data = load_game_data()
