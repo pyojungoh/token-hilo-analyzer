@@ -730,13 +730,13 @@ RESULTS_HTML = '''
         loadResults();
         updateTimer();
         
-        // 2초마다 결과 새로고침
+        // 1초마다 결과 새로고침 (더 빠른 동기화)
         setInterval(() => {
-            if (Date.now() - lastResultsUpdate > 2000) {
+            if (Date.now() - lastResultsUpdate > 1000) {
                 loadResults();
                 lastResultsUpdate = Date.now();
             }
-        }, 2000);
+        }, 1000);
         
         // 0.1초마다 타이머 업데이트 (실시간 동기화)
         setInterval(updateTimer, 100);
