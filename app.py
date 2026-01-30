@@ -127,7 +127,7 @@ def on_socketio_connect():
     """Socket.IO 연결 성공"""
     global socketio_connected
     socketio_connected = True
-    print(f"[Socket.IO] 연결됨")
+        print("🔵 [Socket.IO] ✅ 연결됨!")
 
 def on_socketio_disconnect():
     """Socket.IO 연결 종료"""
@@ -243,7 +243,7 @@ def start_socketio_client():
         
         while True:
             try:
-                print(f"[Socket.IO] 연결 시도: {SOCKETIO_URL}")
+                print(f"🔵 [Socket.IO] 연결 시도: {SOCKETIO_URL}")
                 # Socket.IO 클라이언트 생성
                 socketio_client = socketio.Client()
                 
@@ -278,31 +278,31 @@ def start_socketio_client():
     
     socketio_thread = threading.Thread(target=socketio_worker, daemon=True)
     socketio_thread.start()
-    print("[✅ Socket.IO] 클라이언트 스레드 시작됨")
+    print("🔵 [✅ Socket.IO] 클라이언트 스레드 시작됨")
 
 # Socket.IO 초기화 함수 (start_socketio_client() 함수 정의 후에 정의)
 def init_socketio():
     """Socket.IO 연결 초기화"""
+    print("\n" + "=" * 50)
+    print("🔵 [SOCKET.IO 초기화 시작]")
     print("=" * 50)
-    print("[서버 시작] 토큰하이로우 분석기")
-    print("=" * 50)
-    print(f"[환경 변수] SOCKETIO_URL: {SOCKETIO_URL}")
-    print(f"[환경 변수] BASE_URL: {BASE_URL}")
-    print(f"[라이브러리] python-socketio 사용 가능: {SOCKETIO_AVAILABLE}")
+    print(f"🔵 SOCKETIO_URL: {SOCKETIO_URL}")
+    print(f"🔵 BASE_URL: {BASE_URL}")
+    print(f"🔵 python-socketio 사용 가능: {SOCKETIO_AVAILABLE}")
 
     # Socket.IO 클라이언트 시작
     if SOCKETIO_AVAILABLE:
         if SOCKETIO_URL:
-            print(f"[✅ 정보] Socket.IO 연결 시작: {SOCKETIO_URL}")
+            print(f"🔵 [✅] Socket.IO 연결 시작: {SOCKETIO_URL}")
             start_socketio_client()
         else:
-            print("[❌ 경고] SOCKETIO_URL 환경 변수가 설정되지 않았습니다")
-            print("[❌ 경고] Railway 환경 변수에 SOCKETIO_URL을 설정하세요")
-            print("[❌ 경고] 예: SOCKETIO_URL=https://game.cmx258.com:8080")
+            print("🔵 [❌] SOCKETIO_URL 환경 변수가 설정되지 않았습니다")
+            print("🔵 [❌] Railway 환경 변수에 SOCKETIO_URL을 설정하세요")
+            print("🔵 [❌] 예: SOCKETIO_URL=https://game.cmx258.com:8080")
     else:
-        print("[❌ 경고] python-socketio가 설치되지 않아 Socket.IO 연결을 사용하지 않습니다")
-        print("[❌ 경고] pip install python-socketio로 설치하세요")
-    print("=" * 50)
+        print("🔵 [❌] python-socketio가 설치되지 않아 Socket.IO 연결을 사용하지 않습니다")
+        print("🔵 [❌] pip install python-socketio로 설치하세요")
+    print("=" * 50 + "\n")
 
 # Socket.IO 초기화를 지연 실행 (서버 시작 후 별도 스레드에서 실행)
 def delayed_socketio_init():
@@ -319,7 +319,7 @@ def delayed_socketio_init():
         init_socketio()
         socketio_initialized = True
     except Exception as e:
-        print(f"[❌ 오류] Socket.IO 초기화 실패: {e}")
+                print(f"🔵 [❌ 오류] Socket.IO 초기화 실패: {e}")
         import traceback
         traceback.print_exc()
 
