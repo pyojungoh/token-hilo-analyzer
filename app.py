@@ -496,11 +496,11 @@ RESULTS_HTML = '''
         <div class="betting-info" id="betting-info" style="display: flex;">
             <div class="betting-item">
                 <div class="betting-label">🔴 RED</div>
-                <div class="betting-amount red" id="red-amount">0</div>
+                <div class="betting-amount red" id="red-count">0명</div>
             </div>
             <div class="betting-item">
                 <div class="betting-label">⚫ BLACK</div>
-                <div class="betting-amount black" id="black-amount">0</div>
+                <div class="betting-amount black" id="black-count">0명</div>
             </div>
             <div class="betting-winner" id="betting-winner"></div>
         </div>
@@ -855,83 +855,41 @@ RESULTS_HTML = '''
                     blackBets = Array.isArray(data.currentBets.black) ? data.currentBets.black : [];
                 }
                 
-                console.log('RED 베팅 배열:', redBets);
-                console.log('BLACK 베팅 배열:', blackBets);
-                console.log('RED 베팅 개수:', redBets.length);
-                console.log('BLACK 베팅 개수:', blackBets.length);
+                // 베팅 인원 수만 계산 (금액 계산 제거)
+                const redCount = redBets.length;
+                const blackCount = blackBets.length;
                 
-                // 기존 파일과 동일하게: bet.cash로 금액 계산
-                // 기존 파일: const amount = (bet.cash || 0).toLocaleString();
-                const redTotal = redBets.reduce((sum, bet) => {
-                    if (!bet || typeof bet !== 'object') {
-                        return sum;
-                    }
-                    // 기존 파일: bet.cash 사용
-                    const cash = bet.cash || 0;
-                    return sum + (Number(cash) || 0);
-                }, 0);
-                const blackTotal = blackBets.reduce((sum, bet) => {
-                    if (!bet || typeof bet !== 'object') {
-                        return sum;
-                    }
-                    // 기존 파일: bet.cash 사용
-                    const cash = bet.cash || 0;
-                    return sum + (Number(cash) || 0);
-                }, 0);
+                console.log('RED 베팅 인원:', redCount, '명');
+                console.log('BLACK 베팅 인원:', blackCount, '명');
                 
-                console.log('RED 총액:', redTotal, 'BLACK 총액:', blackTotal);
-                if (redBets.length > 0) {
-                    console.log('RED 첫 번째 베팅:', redBets[0]);
-                }
-                if (blackBets.length > 0) {
-                    console.log('BLACK 첫 번째 베팅:', blackBets[0]);
-                }
-                
-                // 금액 표시 (천 단위 콤마)
-                const formatAmount = (amount) => {
-                    if (amount >= 1000000) {
-                        return (amount / 1000000).toFixed(1) + 'M';
-                    } else if (amount >= 1000) {
-                        return (amount / 1000).toFixed(0) + 'K';
-                    }
-                    return amount.toLocaleString();
-                };
-                
-                const redAmountElement = document.getElementById('red-amount');
-                const blackAmountElement = document.getElementById('black-amount');
+                const redCountElement = document.getElementById('red-count');
+                const blackCountElement = document.getElementById('black-count');
                 const bettingInfoElement = document.getElementById('betting-info');
                 const bettingWinnerElement = document.getElementById('betting-winner');
                 
-                console.log('DOM 요소 확인:', {
-                    redAmountElement: !!redAmountElement,
-                    blackAmountElement: !!blackAmountElement,
-                    bettingInfoElement: !!bettingInfoElement,
-                    bettingWinnerElement: !!bettingWinnerElement
-                });
-                
-                if (redAmountElement) {
-                    redAmountElement.textContent = formatAmount(redTotal);
-                    console.log('RED 금액 표시:', formatAmount(redTotal));
+                if (redCountElement) {
+                    redCountElement.textContent = redCount + '명';
+                    console.log('RED 인원 표시:', redCount + '명');
                 } else {
-                    console.error('red-amount 요소를 찾을 수 없음');
+                    console.error('red-count 요소를 찾을 수 없음');
                 }
                 
-                if (blackAmountElement) {
-                    blackAmountElement.textContent = formatAmount(blackTotal);
-                    console.log('BLACK 금액 표시:', formatAmount(blackTotal));
+                if (blackCountElement) {
+                    blackCountElement.textContent = blackCount + '명';
+                    console.log('BLACK 인원 표시:', blackCount + '명');
                 } else {
-                    console.error('black-amount 요소를 찾을 수 없음');
+                    console.error('black-count 요소를 찾을 수 없음');
                 }
                 
-                // 더 많이 베팅한 쪽 표시
+                // 더 많이 베팅한 쪽 표시 (인원 수 기준)
                 if (bettingWinnerElement) {
-                    if (redTotal > blackTotal) {
+                    if (redCount > blackCount) {
                         bettingWinnerElement.textContent = '🔴 RED가 더 많음';
                         bettingWinnerElement.style.color = '#f44336';
-                    } else if (blackTotal > redTotal) {
+                    } else if (blackCount > redCount) {
                         bettingWinnerElement.textContent = '⚫ BLACK이 더 많음';
                         bettingWinnerElement.style.color = '#424242';
-                    } else if (redTotal > 0 || blackTotal > 0) {
+                    } else if (redCount > 0 || blackCount > 0) {
                         bettingWinnerElement.textContent = '동일';
                         bettingWinnerElement.style.color = '#4caf50';
                     } else {
@@ -1107,7 +1065,7 @@ def get_current_status():
         try:
             red_count = len(data.get('currentBets', {}).get('red', []))
             black_count = len(data.get('currentBets', {}).get('black', []))
-            print(f"[API 응답] RED: {red_count}개, BLACK: {black_count}개")
+            print(f"[API 응답] RED: {red_count}명, BLACK: {black_count}명")
         except:
             pass
         # 항상 데이터 반환 (기본값 포함)
