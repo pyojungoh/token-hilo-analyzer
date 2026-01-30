@@ -835,7 +835,8 @@ def refresh_data():
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """헬스 체크"""
+    """헬스 체크 - Railway 헬스체크용 (외부 API 호출 없음)"""
+    # Railway 헬스체크를 위해 즉시 응답 (외부 API 호출 없음)
     return jsonify({
         'status': 'ok',
         'timestamp': datetime.now().isoformat()
