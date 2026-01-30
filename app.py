@@ -1404,7 +1404,7 @@ def get_results():
             if results_cache and (current_time - last_update_time) < CACHE_TTL:
                 return jsonify(results_cache)
             
-                # 데이터베이스에서 최근 5시간 데이터 조회
+            # 데이터베이스에서 최근 5시간 데이터 조회
             results = get_recent_results(hours=5)
             
             # 최신 데이터도 가져와서 저장 (백그라운드)
