@@ -85,6 +85,26 @@ def init_database():
             CREATE INDEX IF NOT EXISTS idx_created_at ON game_results(created_at)
         ''')
         
+        # color_matches 테이블 생성 (정/꺽 결과 저장)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS color_matches (
+                id SERIAL PRIMARY KEY,
+                game_id VARCHAR(50) NOT NULL,
+                compare_game_id VARCHAR(50) NOT NULL,
+                match_result BOOLEAN NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(game_id, compare_game_id)
+            )
+        ''')
+        
+        # color_matches 인덱스 생성
+        cur.execute('''
+            CREATE INDEX IF NOT EXISTS idx_color_matches_game_id ON color_matches(game_id)
+        ''')
+        cur.execute('''
+            CREATE INDEX IF NOT EXISTS idx_color_matches_compare_game_id ON color_matches(compare_game_id)
+        ''')
+        
         conn.commit()
         cur.close()
         conn.close()
@@ -1214,8 +1234,11 @@ RESULTS_HTML = '''
                 
                 displayResults.forEach((result, index) => {
                     try {
-                        // 모든 카드에 색상 비교 결과 전달
-                        const matchResult = colorMatchResults[index];
+                        // 서버에서 받은 colorMatch 값 우선 사용, 없으면 클라이언트 계산 결과 사용
+                        let matchResult = result.colorMatch;
+                        if (matchResult === undefined || matchResult === null) {
+                            matchResult = colorMatchResults[index];
+                        }
                         console.log(`카드 ${index + 1} (${result.gameID}) 생성: matchResult =`, matchResult, typeof matchResult, 'isBoolean:', typeof matchResult === 'boolean');
                         const card = createCard(result, index, matchResult);
                         cardsDiv.appendChild(card);
