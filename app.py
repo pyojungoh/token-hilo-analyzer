@@ -893,15 +893,19 @@ RESULTS_HTML = '''
                     }
                 }
             } catch (error) {
-                console.error('loadResults 오류:', error);
-                const statusElement = document.getElementById('status');
-                if (statusElement) {
-                    if (error.name === 'AbortError') {
-                        statusElement.textContent = '요청 시간 초과';
-                    } else if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
-                        statusElement.textContent = '서버 연결 실패 - 잠시 후 다시 시도';
-                    } else {
-                        statusElement.textContent = '결과 로드 오류: ' + error.message;
+                // AbortError는 조용히 처리 (타임아웃은 정상적인 상황)
+                if (error.name === 'AbortError') {
+                    console.warn('결과 로드 타임아웃 (정상)');
+                    // 타임아웃은 조용히 처리, 기존 결과 유지
+                } else {
+                    console.error('loadResults 오류:', error);
+                    const statusElement = document.getElementById('status');
+                    if (statusElement) {
+                        if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
+                            statusElement.textContent = '서버 연결 실패 - 잠시 후 다시 시도';
+                        } else {
+                            statusElement.textContent = '결과 로드 오류: ' + error.message;
+                        }
                     }
                 }
                 // 에러 발생 시에도 기존 결과는 유지
