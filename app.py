@@ -161,7 +161,7 @@ def load_game_data():
 def load_results_data():
     """경기 결과 데이터 로드 (result.json)"""
     try:
-        url = f"{BASE_URL}{DATA_PATH}/result.json?t={int(time.time() * 1000)}"
+        url = f"{BASE_URL}/result.json?t={int(time.time() * 1000)}"
         response = fetch_with_retry(url, silent=True)
         
         if not response:
