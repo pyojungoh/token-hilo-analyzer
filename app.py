@@ -391,13 +391,12 @@ RESULTS_HTML = '''
             
             if (isNaN(numInt)) return numStr;
             
-            // 숫자 변환: 1→A, 10→J, 11→Q, 12→Q, 13→K
-            // 실제 게임: A(1), 2~9, 10(J), 11(Q), 12(Q), 13(K)
+            // 숫자 변환: A(1), 2~9, 10(J), 11(Q), 12(Q), 13(K)
             if (numInt === 1) return 'A';
             if (numInt === 10) return 'J';
             if (numInt === 11) return 'Q';
-            if (numInt === 12) return 'Q';  // 12도 Q
-            if (numInt === 13) return 'K';  // 13은 K
+            if (numInt === 12) return 'Q';
+            if (numInt === 13) return 'K';
             
             return numStr;
         }
@@ -536,9 +535,9 @@ RESULTS_HTML = '''
             }
         }
         
-        let timerData = { elapsed: 0, lastFetch: 0, round: 0 };
+        let timerData = { elapsed: 0, lastFetch: 0, round: 0, serverTime: 0 };
         let lastResultsUpdate = 0;
-        let lastTimerUpdate = Date.now();  // 초기화 추가
+        let lastTimerUpdate = Date.now();
         
         async function updateTimer() {
             try {
@@ -549,10 +548,10 @@ RESULTS_HTML = '''
                     return;
                 }
                 
-                // 0.5초마다 서버에서 데이터 가져오기 (더 빠른 동기화)
-                if (now - timerData.lastFetch > 500) {
+                // 0.3초마다 서버에서 데이터 가져오기 (더 빠른 동기화)
+                if (now - timerData.lastFetch > 300) {
                     try {
-                        const response = await fetch('/api/current-status');
+                        const response = await fetch('/api/current-status?t=' + now);
                         if (!response.ok) throw new Error('Network error');
                         const data = await response.json();
                         
@@ -560,13 +559,11 @@ RESULTS_HTML = '''
                             const prevElapsed = timerData.elapsed;
                             const prevRound = timerData.round;
                             
-                            // elapsed 값이 변경되면 타이머 리셋
-                            if (Math.abs(data.elapsed - timerData.elapsed) > 0.1) {
-                                timerData.elapsed = data.elapsed;
-                                timerData.round = data.round || 0;
-                                lastTimerUpdate = now;
-                            }
-                            
+                            // elapsed 값 업데이트 (항상 서버 값 사용)
+                            timerData.elapsed = data.elapsed;
+                            timerData.round = data.round || 0;
+                            timerData.serverTime = now;  // 서버에서 데이터를 가져온 시점
+                            lastTimerUpdate = now;
                             timerData.lastFetch = now;
                             
                             // 라운드가 변경되거나 elapsed가 리셋되면 경기 결과 즉시 새로고침
@@ -581,8 +578,8 @@ RESULTS_HTML = '''
                     }
                 }
                 
-                // 클라이언트 측에서 시간 계산 (더 정확한 실시간 업데이트)
-                const timeDiff = (now - lastTimerUpdate) / 1000;
+                // 클라이언트 측에서 시간 계산 (서버 elapsed + 경과 시간)
+                const timeDiff = (now - timerData.serverTime) / 1000;
                 const currentElapsed = Math.max(0, timerData.elapsed + timeDiff);
                 const remaining = Math.max(0, 10 - currentElapsed);
                 
@@ -604,7 +601,6 @@ RESULTS_HTML = '''
                 }
             } catch (error) {
                 console.error('타이머 업데이트 오류:', error);
-                // 에러 발생 시에도 기본값 표시
                 const timeElement = document.getElementById('remaining-time');
                 if (timeElement) {
                     timeElement.textContent = '남은 시간: -- 초';
@@ -616,16 +612,16 @@ RESULTS_HTML = '''
         loadResults();
         updateTimer();
         
-        // 3초마다 결과 새로고침 (더 자주)
+        // 2초마다 결과 새로고침
         setInterval(() => {
-            if (Date.now() - lastResultsUpdate > 3000) {
+            if (Date.now() - lastResultsUpdate > 2000) {
                 loadResults();
                 lastResultsUpdate = Date.now();
             }
-        }, 3000);
+        }, 2000);
         
-        // 0.2초마다 타이머 업데이트 (더 빠른 동기화)
-        setInterval(updateTimer, 200);
+        // 0.1초마다 타이머 업데이트 (실시간 동기화)
+        setInterval(updateTimer, 100);
     </script>
 </body>
 </html>
