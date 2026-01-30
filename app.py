@@ -474,22 +474,22 @@ RESULTS_HTML = '''
             const card = document.createElement('div');
             const isJoker = result.joker;
             
-            // 조커 카드는 파란색 배경 (일반 카드와 같은 사이즈)
+            // 조커 카드는 파란색 배경 (일반 카드와 같은 사이즈, 텍스트로 맞춤)
             if (isJoker) {
                 card.className = 'card';
-                card.style.cssText = 'background: #2196f3 !important; color: #fff !important; width: 100% !important; aspect-ratio: 2 / 3 !important;';
+                card.style.background = '#2196f3';
+                card.style.color = '#fff';
                 
-                // 조커 텍스트 (일반 카드와 같은 구조 유지)
+                // 문양 아이콘 자리에 "J" 텍스트 (일반 카드와 같은 구조)
                 const jokerIcon = document.createElement('div');
                 jokerIcon.className = 'card-suit-icon';
-                jokerIcon.textContent = '🃏';
-                jokerIcon.style.cssText = 'font-size: clamp(30px, 6vw, 60px) !important; line-height: 1 !important; margin-bottom: 5px !important;';
+                jokerIcon.textContent = 'J';
                 card.appendChild(jokerIcon);
                 
+                // 숫자 자리에 "K" 텍스트 (일반 카드와 같은 구조)
                 const jokerText = document.createElement('div');
                 jokerText.className = 'card-value';
-                jokerText.textContent = '';
-                jokerText.style.cssText = 'font-size: clamp(24px, 5vw, 48px) !important; font-weight: bold !important; text-align: center !important; line-height: 1 !important;';
+                jokerText.textContent = 'K';
                 card.appendChild(jokerText);
             } else {
                 const cardInfo = parseCardValue(result.result || '');
@@ -574,30 +574,39 @@ RESULTS_HTML = '''
                 // 각 카드는 고정된 상대 위치의 카드와 비교 (1번째↔16번째, 2번째↔17번째, ...)
                 const colorMatchResults = [];
                 
+                console.log('=== 색상 비교 시작 ===');
+                console.log('전체 결과 개수:', results.length);
+                console.log('표시할 결과 개수:', displayResults.length);
+                
                 for (let i = 0; i < displayResults.length; i++) {
-                    const currentGameID = displayResults[i]?.gameID || '';
+                    const currentResult = displayResults[i];
+                    const currentGameID = currentResult?.gameID || '';
                     const compareIndex = i + 15;  // 1번째는 16번째와, 2번째는 17번째와 비교
                     
                     // 조커 카드는 색상 비교 불가
-                    if (displayResults[i].joker) {
+                    if (currentResult.joker) {
                         colorMatchResults[i] = null;
+                        console.log(`카드 ${i + 1}: 조커 카드 - 비교 불가`);
                         continue;
                     }
                     
                     if (!currentGameID) {
                         colorMatchResults[i] = null;
+                        console.log(`카드 ${i + 1}: gameID 없음`);
                         continue;
                     }
                     
                     // 16번째 이후 카드가 있어야 비교 가능
                     if (results.length <= compareIndex) {
                         colorMatchResults[i] = null;
+                        console.log(`카드 ${i + 1}: 비교 대상 없음 (전체 ${results.length}개, 필요 ${compareIndex + 1}개)`);
                         continue;
                     }
                     
                     // 비교 대상도 조커가 아닌지 확인
                     if (results[compareIndex]?.joker) {
                         colorMatchResults[i] = null;
+                        console.log(`카드 ${i + 1}: 비교 대상이 조커`);
                         continue;
                     }
                     
@@ -608,15 +617,20 @@ RESULTS_HTML = '''
                     // 캐시에 이미 있는지 확인
                     if (colorMatchCache[cacheKey] !== undefined) {
                         colorMatchResults[i] = colorMatchCache[cacheKey];
+                        console.log(`카드 ${i + 1} (${currentGameID}): 캐시에서 가져옴 - ${colorMatchCache[cacheKey] ? '정' : '꺽'}`);
                     } else {
                         // 새로운 비교 결과 계산
-                        const currentCard = parseCardValue(displayResults[i].result || '');
+                        const currentCard = parseCardValue(currentResult.result || '');
                         const compareCard = parseCardValue(results[compareIndex].result || '');
                         const matchResult = (currentCard.isRed === compareCard.isRed);
                         colorMatchCache[cacheKey] = matchResult;
                         colorMatchResults[i] = matchResult;
+                        console.log(`카드 ${i + 1} (${currentGameID}): 새로 계산 - 현재(${currentCard.isRed ? '빨강' : '검정'}) vs 비교(${compareCard.isRed ? '빨강' : '검정'}) = ${matchResult ? '정' : '꺽'}`);
                     }
                 }
+                
+                console.log('=== 색상 비교 완료 ===');
+                console.log('결과:', colorMatchResults);
                 
                 // 오래된 캐시 정리 (현재 표시되지 않는 카드 제거)
                 const currentGameIDs = new Set(displayResults.map(r => r.gameID).filter(id => id));
@@ -653,7 +667,9 @@ RESULTS_HTML = '''
                 displayResults.forEach((result, index) => {
                     try {
                         // 모든 카드에 색상 비교 결과 전달
-                        const card = createCard(result, index, colorMatchResults[index]);
+                        const matchResult = colorMatchResults[index];
+                        console.log(`카드 ${index + 1} 생성: matchResult =`, matchResult, typeof matchResult);
+                        const card = createCard(result, index, matchResult);
                         cardsDiv.appendChild(card);
                     } catch (error) {
                         console.error('카드 생성 오류:', error, result);
