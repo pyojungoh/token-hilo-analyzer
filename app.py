@@ -303,6 +303,10 @@ RESULTS_HTML = '''
             flex: 0 0 calc((100% - (14 * clamp(5px, 1.5vw, 12px))) / 15);
             min-width: 0;
         }
+        .card-wrapper .card {
+            width: 100% !important;
+            aspect-ratio: 2 / 3 !important;
+        }
         .card {
             width: 100%;
             aspect-ratio: 2 / 3;
@@ -580,31 +584,37 @@ RESULTS_HTML = '''
                         continue;
                     }
                     
-                    if (currentGameID) {
-                        // 캐시에 없거나, 비교 대상이 변경된 경우 재계산
-                        const compareGameID = results[compareIndex]?.gameID || '';
-                        const cacheKey = `${currentGameID}_${compareGameID}`;
-                        
-                        // 캐시에 이미 있는지 확인
-                        if (colorMatchCache[cacheKey] !== undefined) {
-                            colorMatchResults[i] = colorMatchCache[cacheKey];
-                        } else if (results.length > compareIndex) {
-                            // 비교 대상도 조커가 아닌지 확인
-                            if (results[compareIndex]?.joker) {
-                                colorMatchCache[cacheKey] = null;
-                                colorMatchResults[i] = null;
-                            } else {
-                                const currentCard = parseCardValue(displayResults[i].result || '');
-                                const compareCard = parseCardValue(results[compareIndex].result || '');
-                                const matchResult = (currentCard.isRed === compareCard.isRed);
-                                colorMatchCache[cacheKey] = matchResult;
-                                colorMatchResults[i] = matchResult;
-                            }
-                        } else {
-                            colorMatchResults[i] = null;
-                        }
-                    } else {
+                    if (!currentGameID) {
                         colorMatchResults[i] = null;
+                        continue;
+                    }
+                    
+                    // 16번째 이후 카드가 있어야 비교 가능
+                    if (results.length <= compareIndex) {
+                        colorMatchResults[i] = null;
+                        continue;
+                    }
+                    
+                    // 비교 대상도 조커가 아닌지 확인
+                    if (results[compareIndex]?.joker) {
+                        colorMatchResults[i] = null;
+                        continue;
+                    }
+                    
+                    // 캐시 키 생성
+                    const compareGameID = results[compareIndex]?.gameID || '';
+                    const cacheKey = `${currentGameID}_${compareGameID}`;
+                    
+                    // 캐시에 이미 있는지 확인
+                    if (colorMatchCache[cacheKey] !== undefined) {
+                        colorMatchResults[i] = colorMatchCache[cacheKey];
+                    } else {
+                        // 새로운 비교 결과 계산
+                        const currentCard = parseCardValue(displayResults[i].result || '');
+                        const compareCard = parseCardValue(results[compareIndex].result || '');
+                        const matchResult = (currentCard.isRed === compareCard.isRed);
+                        colorMatchCache[cacheKey] = matchResult;
+                        colorMatchResults[i] = matchResult;
                     }
                 }
                 
