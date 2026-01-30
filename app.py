@@ -352,8 +352,9 @@ RESULTS_HTML = '''
             color: #fff;
         }
         .card-category.joker {
-            background: #9c27b0;
+            background: #2196f3;
             color: #fff;
+            font-size: clamp(8px, 1.5vw, 12px);
         }
         .card-category.draw {
             background: #ff9800;
@@ -417,10 +418,9 @@ RESULTS_HTML = '''
             
             if (isNaN(numInt)) return numStr;
             
-            // 숫자 변환: A(1), 2~9, 10(J), 11(Q), 12(Q), 13(K)
+            // 숫자 변환: A(1), 2~9, 10(J), 11(J), 12(Q), 13(K)
             if (numInt === 1) return 'A';
-            if (numInt === 10) return 'J';
-            if (numInt === 11) return 'Q';
+            if (numInt === 10 || numInt === 11) return 'J';  // 10과 11 모두 J
             if (numInt === 12) return 'Q';
             if (numInt === 13) return 'K';
             
@@ -454,7 +454,7 @@ RESULTS_HTML = '''
         }
         
         function getCategory(result) {
-            if (result.joker) return { text: 'JOKER', class: 'joker' };
+            if (result.joker) return { text: '조커', class: 'joker' };
             if (result.hi && result.lo) return { text: '비김', class: 'draw' };
             if (result.hi) return { text: 'HI ↑', class: 'hi' };
             if (result.lo) return { text: 'LO ↓', class: 'lo' };
@@ -468,21 +468,29 @@ RESULTS_HTML = '''
             cardWrapper.className = 'card-wrapper';
             
             const card = document.createElement('div');
-            const cardInfo = parseCardValue(result.result || '');
+            const isJoker = result.joker;
             
-            card.className = 'card ' + (cardInfo.isRed ? 'red' : 'black');
-            
-            // 문양 아이콘 (크게)
-            const suitIcon = document.createElement('div');
-            suitIcon.className = 'card-suit-icon';
-            suitIcon.textContent = cardInfo.suit;
-            card.appendChild(suitIcon);
-            
-            // 카드 숫자 (크게)
-            const valueDiv = document.createElement('div');
-            valueDiv.className = 'card-value';
-            valueDiv.textContent = cardInfo.number;
-            card.appendChild(valueDiv);
+            // 조커 카드는 파란색 배경
+            if (isJoker) {
+                card.className = 'card';
+                card.style.background = '#2196f3';
+                card.style.color = '#fff';
+            } else {
+                const cardInfo = parseCardValue(result.result || '');
+                card.className = 'card ' + (cardInfo.isRed ? 'red' : 'black');
+                
+                // 문양 아이콘 (크게)
+                const suitIcon = document.createElement('div');
+                suitIcon.className = 'card-suit-icon';
+                suitIcon.textContent = cardInfo.suit;
+                card.appendChild(suitIcon);
+                
+                // 카드 숫자 (크게)
+                const valueDiv = document.createElement('div');
+                valueDiv.className = 'card-value';
+                valueDiv.textContent = cardInfo.number;
+                card.appendChild(valueDiv);
+            }
             
             cardWrapper.appendChild(card);
             
@@ -657,8 +665,8 @@ RESULTS_HTML = '''
                     return;
                 }
                 
-                // 0.3초마다 서버에서 데이터 가져오기 (더 빠른 동기화)
-                if (now - timerData.lastFetch > 300) {
+                // 0.2초마다 서버에서 데이터 가져오기 (더 빠른 동기화)
+                if (now - timerData.lastFetch > 200) {
                     try {
                         const response = await fetch('/api/current-status?t=' + now);
                         if (!response.ok) throw new Error('Network error');
@@ -677,7 +685,8 @@ RESULTS_HTML = '''
                             
                             // 라운드가 변경되거나 elapsed가 리셋되면 경기 결과 즉시 새로고침
                             if (timerData.round !== prevRound || 
-                                (prevElapsed > 8 && data.elapsed < 2)) {
+                                (prevElapsed > 8 && data.elapsed < 2) ||
+                                (prevElapsed < 1 && data.elapsed > 9)) {  // 새 라운드 시작 감지
                                 loadResults();
                                 lastResultsUpdate = now;
                             }
@@ -704,7 +713,7 @@ RESULTS_HTML = '''
                 }
                 
                 // 타이머가 거의 0이 되면 경기 결과 새로고침 (라운드 종료 직전)
-                if (remaining <= 0.5 && now - lastResultsUpdate > 1000) {
+                if (remaining <= 0.3 && now - lastResultsUpdate > 500) {
                     loadResults();
                     lastResultsUpdate = now;
                 }
