@@ -1181,41 +1181,51 @@ RESULTS_HTML = '''
         .graph-stats-note { margin-top: 6px; font-size: 0.85em; color: #aaa; text-align: center; }
         .prediction-table-row {
             display: flex;
-            align-items: flex-start;
+            align-items: stretch;
             gap: clamp(12px, 3vw, 20px);
             margin-top: 12px;
             flex-wrap: wrap;
         }
         @media (max-width: 768px) {
             .prediction-table-row { flex-direction: column; align-items: center; }
-            #prediction-pick-container { width: 100%; display: flex; justify-content: center; }
+            #prediction-pick-container { width: 100%; max-width: 320px; display: flex; justify-content: center; }
         }
         #prediction-pick-container {
-            flex: 0 0 auto;
-            padding: clamp(10px, 2vw, 16px);
+            flex: 1 1 260px;
+            min-width: 200px;
+            max-width: 420px;
+            padding: clamp(12px, 2.5vw, 20px);
             background: rgba(255,255,255,0.04);
             border: 1px solid #444;
             border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
-        #graph-stats { flex: 1 1 auto; min-width: 0; overflow-x: auto; }
+        #graph-stats {
+            flex: 1 1 260px;
+            min-width: 200px;
+            overflow-x: auto;
+        }
         .prediction-pick {
             display: flex;
             flex-direction: column;
             align-items: center;
             text-align: center;
+            width: 100%;
         }
         .prediction-pick-title {
             font-size: clamp(0.85em, 2vw, 0.95em);
             font-weight: bold;
             color: #81c784;
-            margin-bottom: 6px;
+            margin-bottom: clamp(6px, 1.5vw, 10px);
         }
         .prediction-card {
-            width: clamp(70px, 18vw, 80px);
-            height: clamp(70px, 18vw, 80px);
+            width: clamp(64px, 22vw, 140px);
+            height: clamp(64px, 22vw, 140px);
             background: #1a1a1a;
-            border: 3px solid #424242;
-            border-radius: 12px;
+            border: clamp(2px, 0.4vw, 4px) solid #424242;
+            border-radius: clamp(10px, 2vw, 14px);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -1231,7 +1241,7 @@ RESULTS_HTML = '''
             border-color: #424242;
         }
         .prediction-card .pred-value-big {
-            font-size: clamp(1.8em, 5vw, 2.2em);
+            font-size: clamp(1.6em, 5.5vw, 3.2em);
             font-weight: 900;
             color: #fff;
             text-shadow: 0 0 12px rgba(255,255,255,0.4);
