@@ -33,7 +33,8 @@ def fetch_with_retry(url, max_retries=MAX_RETRIES, silent=False):
     """재시도 로직 포함 fetch (기존 파일과 동일한 방식)"""
     for attempt in range(max_retries):
         try:
-            # 기존 파일과 동일하게: 캐시 방지 헤더 추가
+            # 기존 railway_server_example.py와 동일한 헤더 사용
+            # 하지만 더 완전한 브라우저 헤더 추가
             response = requests.get(
                 url,
                 timeout=TIMEOUT,
@@ -43,31 +44,52 @@ def fetch_with_retry(url, max_retries=MAX_RETRIES, silent=False):
                     'Pragma': 'no-cache',
                     'Accept': 'application/json, text/plain, */*',
                     'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-                    'Referer': BASE_URL
-                }
+                    'Referer': f'{BASE_URL}/',
+                    'Origin': BASE_URL,
+                    'Connection': 'keep-alive',
+                    'Sec-Fetch-Dest': 'empty',
+                    'Sec-Fetch-Mode': 'cors',
+                    'Sec-Fetch-Site': 'same-origin'
+                },
+                allow_redirects=True  # 리다이렉트 허용
             )
             response.raise_for_status()
             
             # 응답 내용 확인 (디버깅)
             if not silent:
-                print(f"[요청 성공] {url} - 상태: {response.status_code}, 크기: {len(response.content)} bytes")
+                print(f"[✅ 요청 성공] {url}")
+                print(f"   상태: {response.status_code}, 크기: {len(response.content)} bytes")
+                print(f"   Content-Type: {response.headers.get('Content-Type', 'unknown')}")
+                # JSON인 경우 샘플 출력
+                if 'application/json' in response.headers.get('Content-Type', ''):
+                    try:
+                        sample = response.json()
+                        if isinstance(sample, dict):
+                            print(f"   JSON 키: {list(sample.keys())[:10]}")
+                        elif isinstance(sample, list):
+                            print(f"   JSON 배열 길이: {len(sample)}")
+                    except:
+                        pass
             
             return response
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
+            status_code = e.response.status_code if e.response else 0
+            if status_code == 404:
                 # 404는 조용히 처리 (파일이 없을 수 있음)
                 if not silent:
-                    print(f"[404] 파일 없음: {url}")
+                    print(f"[❌ 404] 파일 없음: {url}")
                 return None
             if not silent and attempt == max_retries - 1:
-                print(f"[HTTP 오류] {e.response.status_code}: {url}")
-                print(f"[응답 내용] {e.response.text[:200]}")
+                print(f"[❌ HTTP 오류] {status_code}: {url}")
+                if e.response:
+                    print(f"   응답 내용: {e.response.text[:300]}")
         except requests.exceptions.RequestException as e:
             if attempt < max_retries - 1:
                 time.sleep(1)
                 continue
             if not silent:
-                print(f"[요청 오류] {url} - {str(e)[:200]}")
+                print(f"[❌ 요청 오류] {url}")
+                print(f"   오류 내용: {str(e)[:200]}")
     return None
 
 def load_game_data():
