@@ -42,6 +42,7 @@ DATA_PATH = ''  # 데이터 파일 경로 (루트)
 TIMEOUT = int(os.getenv('TIMEOUT', '10'))  # 타임아웃을 10초로 단축
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))  # 재시도 횟수 감소
 SOCKETIO_URL = os.getenv('SOCKETIO_URL', 'https://game.cmx258.com:8080')  # Socket.IO 서버 URL (실제 서버)
+DATABASE_URL = os.getenv('DATABASE_URL', None)  # PostgreSQL 데이터베이스 URL
 
 # Socket.IO 초기화 플래그
 socketio_initialized = False
@@ -682,6 +683,13 @@ def delayed_socketio_init():
             traceback.print_exc()
         except:
             pass
+
+# 데이터베이스 초기화 (모듈 레벨에서 실행)
+if DB_AVAILABLE and DATABASE_URL:
+    try:
+        init_database()
+    except Exception as e:
+        print(f"[❌ 경고] 데이터베이스 초기화 실패: {str(e)[:200]}")
 
 # 별도 스레드에서 Socket.IO 초기화 시작 (서버 시작을 막지 않음)
 init_thread = threading.Thread(target=delayed_socketio_init, daemon=True)
@@ -1561,17 +1569,19 @@ def get_results():
         
         current_time = time.time() * 1000
         
+        # 캐시 사용 (1초) - DB 여부와 관계없이 캐시 먼저 확인
+        if results_cache and (current_time - last_update_time) < CACHE_TTL:
+            return jsonify(results_cache)
+        
         # 최신 데이터 먼저 가져오기 (항상 최신 데이터 우선)
         latest_results = load_results_data()
+        print(f"[API] 최신 데이터 로드: {len(latest_results) if latest_results else 0}개")
         
         # 데이터베이스가 있으면 DB에서 조회하고 최신 데이터와 병합
         if DB_AVAILABLE and DATABASE_URL:
-            # 캐시 사용 (1초)
-            if results_cache and (current_time - last_update_time) < CACHE_TTL:
-                return jsonify(results_cache)
-            
             # 데이터베이스에서 최근 5시간 데이터 조회
             db_results = get_recent_results(hours=5)
+            print(f"[API] DB 데이터 조회: {len(db_results)}개")
             
             # 최신 데이터 저장 (백그라운드)
             if latest_results:
@@ -1595,9 +1605,11 @@ def get_results():
                 
                 # 최신 데이터 + DB 데이터 (최신순)
                 results = latest_results + db_results_filtered
+                print(f"[API] 병합 결과: 최신 {len(latest_results)}개 + DB {len(db_results_filtered)}개 = 총 {len(results)}개")
             else:
                 # 최신 데이터가 없으면 DB 데이터만 사용
                 results = db_results
+                print(f"[API] 최신 데이터 없음, DB 데이터만 사용: {len(results)}개")
             
             results_cache = {
                 'results': results,
@@ -1609,10 +1621,9 @@ def get_results():
             return jsonify(results_cache)
         else:
             # 데이터베이스가 없으면 기존 방식 (result.json에서 가져오기)
-            if results_cache and (current_time - last_update_time) < CACHE_TTL:
-                return jsonify(results_cache)
-            
             results = latest_results if latest_results else []
+            print(f"[API] DB 없음, 최신 데이터만 사용: {len(results)}개")
+            
             results_cache = {
                 'results': results,
                 'count': len(results),
@@ -1622,12 +1633,18 @@ def get_results():
             last_update_time = current_time
             return jsonify(results_cache)
     except Exception as e:
-        # 에러 발생 시 빈 결과 반환 (서버 크래시 방지)
-        print(f"결과 로드 오류: {str(e)[:200]}")
+        # 에러 발생 시 상세 로그 출력
+        import traceback
+        error_msg = str(e)[:200]
+        print(f"[❌ 오류] 결과 로드 실패: {error_msg}")
+        print(f"[❌ 오류] 트레이스백:\n{traceback.format_exc()[:500]}")
+        
+        # 에러 발생 시에도 빈 결과 반환 (서버 크래시 방지)
         return jsonify({
             'results': [],
             'count': 0,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'error': error_msg
         }), 200
 
 @app.route('/api/current-status', methods=['GET'])
