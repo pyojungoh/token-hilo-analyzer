@@ -277,84 +277,16 @@ def load_game_data():
     """게임 데이터 로드 - Socket.IO 데이터 우선 사용"""
     global current_status_data
     
-    # Socket.IO가 연결되어 있고 데이터가 있으면 사용
-    if socketio_connected and current_status_data.get('currentBets', {}).get('red') is not None:
-        return current_status_data
-    
-    # Socket.IO가 없으면 기존 방식으로 시도 (하지만 공개 URL이 없으므로 빈 데이터 반환)
-    print(f"[경고] Socket.IO가 연결되지 않았거나 데이터가 없습니다. Socket.IO 연결이 필요합니다.")
-    
-    # 여러 경로 시도 (혹시 모를 경우를 위해)
-    possible_paths = [
-        f"{BASE_URL}/frame/hilo/current_status_frame.json",
-        f"{BASE_URL}/current_status_frame.json",
-        f"{BASE_URL}/hilo/current_status_frame.json",
-        f"{BASE_URL}/frame/current_status_frame.json",
-    ]
-    
-    for url_path in possible_paths:
-        try:
-            url = f"{url_path}?t={int(time.time() * 1000)}"
-            print(f"[데이터 요청 시도] {url}")
-            response = fetch_with_retry(url, silent=True)  # 조용히 시도
-            
-            if response:
-                print(f"[✅ 성공] {url}")
-                try:
-                    data = response.json()
-                    print(f"[JSON 파싱 성공] round: {data.get('round', 0)}, red: {len(data.get('red', []))}개, black: {len(data.get('black', []))}개")
-                    print(f"[원본 데이터 키] {list(data.keys())}")
-                    print(f"[원본 데이터 샘플] round={data.get('round')}, red 길이={len(data.get('red', []))}, black 길이={len(data.get('black', []))}")
-                    if len(data.get('red', [])) > 0:
-                        print(f"[RED 샘플] {data.get('red', [])[0]}")
-                    if len(data.get('black', [])) > 0:
-                        print(f"[BLACK 샘플] {data.get('black', [])[0]}")
-                    
-                    # 기존 파일과 동일하게: data.red, data.black 직접 사용
-                    red_bets = data.get('red', [])
-                    black_bets = data.get('black', [])
-                    
-                    if not isinstance(red_bets, list):
-                        print(f"[경고] red가 배열이 아님: {type(red_bets)}")
-                        red_bets = []
-                    if not isinstance(black_bets, list):
-                        print(f"[경고] black이 배열이 아님: {type(black_bets)}")
-                        black_bets = []
-                    
-                    # 디버깅: 베팅 데이터 확인
-                    print(f"[베팅 데이터] RED: {len(red_bets)}명, BLACK: {len(black_bets)}명")
-                    if len(red_bets) > 0:
-                        print(f"[RED 첫 번째] {red_bets[0]}")
-                    if len(black_bets) > 0:
-                        print(f"[BLACK 첫 번째] {black_bets[0]}")
-                    
-                    return {
-                        'round': data.get('round', 0),
-                        'elapsed': data.get('elapsed', 0),
-                        'currentBets': {
-                            'red': red_bets,
-                            'black': black_bets
-                        },
-                        'timestamp': datetime.now().isoformat()
-                    }
-                except (ValueError, json.JSONDecodeError) as e:
-                    print(f"[JSON 파싱 오류] {str(e)[:200]}")
-                    print(f"[응답 내용] {response.text[:500]}")
-                    continue  # 다음 경로 시도
-            else:
-                print(f"[❌ 실패] {url} - 다음 경로 시도")
-                continue  # 다음 경로 시도
-        except Exception as e:
-            print(f"[오류] {url_path}: {str(e)[:100]}")
-            continue  # 다음 경로 시도
-    
-    # 모든 경로 실패 - Socket.IO 데이터 반환 (연결되어 있으면)
+    # Socket.IO가 연결되어 있으면 Socket.IO 데이터 사용 (HTTP 요청 불필요)
     if socketio_connected:
-        print(f"[정보] Socket.IO 데이터 사용")
+        # Socket.IO 데이터가 있으면 사용
+        if current_status_data.get('currentBets', {}).get('red') is not None:
+            return current_status_data
+        # Socket.IO는 연결되었지만 아직 데이터가 없으면 기본값 반환
         return current_status_data
     
-    # Socket.IO도 없으면 빈 데이터 반환
-    print(f"[경고] 모든 경로에서 데이터를 가져올 수 없음 (Socket.IO 연결 필요)")
+    # Socket.IO가 연결되지 않았으면 빈 데이터 반환 (HTTP 요청 제거 - 공개 URL 없음)
+    # HTTP 요청은 실패하므로 불필요한 로그 스팸 방지
     return {
         'round': 0,
         'elapsed': 0,
