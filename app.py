@@ -55,7 +55,7 @@ def load_game_data():
         response = fetch_with_retry(url)
         
         if not response:
-            raise Exception("데이터 로드 실패")
+            return None
         
         data = response.json()
         
@@ -79,7 +79,7 @@ def load_results_data():
         response = fetch_with_retry(url)
         
         if not response:
-            raise Exception("결과 데이터 로드 실패")
+            return None
         
         data = response.json()
         
@@ -89,7 +89,13 @@ def load_results_data():
             try:
                 game_id = game.get('gameID', '')
                 result = game.get('result', '')
-                json_data = json.loads(game.get('json', '{}'))
+                json_str = game.get('json', '{}')
+                
+                # JSON 파싱
+                if isinstance(json_str, str):
+                    json_data = json.loads(json_str)
+                else:
+                    json_data = json_str
                 
                 results.append({
                     'gameID': game_id,
@@ -101,7 +107,8 @@ def load_results_data():
                     'jqka': json_data.get('jqka', ''),
                     'joker': json_data.get('joker', '')
                 })
-            except:
+            except Exception as e:
+                print(f"게임 데이터 파싱 오류: {e}")
                 continue
         
         return results
@@ -479,35 +486,46 @@ RESULTS_HTML = '''
             }
         }
         
+        let timerData = { elapsed: 0, lastFetch: 0 };
+        
         async function updateTimer() {
             try {
-                const response = await fetch('/api/current-status');
-                const data = await response.json();
-                
-                if (data.error) return;
-                
-                const elapsed = data.elapsed || 0;
                 const now = Date.now();
+                const timeElement = document.getElementById('remaining-time');
                 
-                // elapsed 값이 변경되면 타이머 리셋
-                if (elapsed !== localTimer) {
-                    lastTimerUpdate = now;
-                    localTimer = elapsed;
+                // 1초마다 서버에서 데이터 가져오기
+                if (now - timerData.lastFetch > 1000) {
+                    try {
+                        const response = await fetch('/api/current-status');
+                        if (!response.ok) throw new Error('Network error');
+                        const data = await response.json();
+                        
+                        if (!data.error && data.elapsed !== undefined) {
+                            timerData.elapsed = data.elapsed;
+                            timerData.lastFetch = now;
+                            lastTimerUpdate = now;
+                        }
+                    } catch (error) {
+                        console.error('타이머 데이터 가져오기 오류:', error);
+                        // 에러가 나도 클라이언트 측 계산 계속
+                    }
                 }
                 
+                // 클라이언트 측에서 시간 계산
                 const timeDiff = (now - lastTimerUpdate) / 1000;
-                const currentElapsed = Math.max(0, elapsed + timeDiff);
+                const currentElapsed = Math.max(0, timerData.elapsed + timeDiff);
                 const remaining = Math.max(0, 10 - currentElapsed);
                 
-                const timeElement = document.getElementById('remaining-time');
-                timeElement.textContent = `남은 시간: ${remaining.toFixed(2)} 초`;
-                
-                // 타이머 색상
-                timeElement.className = 'remaining-time';
-                if (remaining <= 1) {
-                    timeElement.classList.add('danger');
-                } else if (remaining <= 3) {
-                    timeElement.classList.add('warning');
+                if (timeElement) {
+                    timeElement.textContent = `남은 시간: ${remaining.toFixed(2)} 초`;
+                    
+                    // 타이머 색상
+                    timeElement.className = 'remaining-time';
+                    if (remaining <= 1) {
+                        timeElement.classList.add('danger');
+                    } else if (remaining <= 3) {
+                        timeElement.classList.add('warning');
+                    }
                 }
             } catch (error) {
                 console.error('타이머 업데이트 오류:', error);
@@ -521,8 +539,8 @@ RESULTS_HTML = '''
         // 5초마다 결과 새로고침
         setInterval(loadResults, 5000);
         
-        // 0.1초마다 타이머 업데이트 (실시간)
-        setInterval(updateTimer, 100);
+        // 0.5초마다 타이머 업데이트 (클라이언트 측 계산, 서버는 1초마다)
+        setInterval(updateTimer, 500);
     </script>
 </body>
 </html>
@@ -536,32 +554,40 @@ def results_page():
 @app.route('/api/results', methods=['GET'])
 def get_results():
     """경기 결과 API"""
-    global results_cache, last_update_time
-    
-    current_time = time.time() * 1000
-    if results_cache and (current_time - last_update_time) < CACHE_TTL:
-        return jsonify(results_cache)
-    
-    results = load_results_data()
-    if results:
-        results_cache = {
-            'results': results,
-            'count': len(results),
-            'timestamp': datetime.now().isoformat()
-        }
-        last_update_time = current_time
-        return jsonify(results_cache)
-    else:
-        return jsonify({'error': '결과 데이터 로드 실패'}), 500
+    try:
+        global results_cache, last_update_time
+        
+        current_time = time.time() * 1000
+        if results_cache and (current_time - last_update_time) < CACHE_TTL:
+            return jsonify(results_cache)
+        
+        results = load_results_data()
+        if results:
+            results_cache = {
+                'results': results,
+                'count': len(results),
+                'timestamp': datetime.now().isoformat()
+            }
+            last_update_time = current_time
+            return jsonify(results_cache)
+        else:
+            return jsonify({'error': '결과 데이터 로드 실패'}), 500
+    except Exception as e:
+        print(f"results API 오류: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/current-status', methods=['GET'])
 def get_current_status():
     """현재 게임 상태"""
-    data = load_game_data()
-    if data:
-        return jsonify(data)
-    else:
-        return jsonify({'error': '데이터 로드 실패'}), 500
+    try:
+        data = load_game_data()
+        if data:
+            return jsonify(data)
+        else:
+            return jsonify({'error': '데이터 로드 실패'}), 500
+    except Exception as e:
+        print(f"current-status API 오류: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/streaks', methods=['GET'])
 def get_streaks():
