@@ -98,22 +98,9 @@ def load_game_data():
         if not isinstance(black_bets, list):
             black_bets = []
         
-        # 디버깅: 베팅 데이터 확인 (기존 파일과 동일한 방식)
+        # 디버깅: 베팅 데이터 확인 (인원 수만)
         try:
-            print(f"[베팅 데이터] RED: {len(red_bets)}개, BLACK: {len(black_bets)}개")
-            if len(red_bets) > 0:
-                first_red = red_bets[0]
-                if isinstance(first_red, dict):
-                    print(f"[베팅 데이터] RED 첫 번째: account={first_red.get('account', 'N/A')}, cash={first_red.get('cash', 0)}")
-            if len(black_bets) > 0:
-                first_black = black_bets[0]
-                if isinstance(first_black, dict):
-                    print(f"[베팅 데이터] BLACK 첫 번째: account={first_black.get('account', 'N/A')}, cash={first_black.get('cash', 0)}")
-            
-            # 기존 파일과 동일하게: bet.cash로 금액 계산
-            red_total = sum((bet.get('cash') or 0) for bet in red_bets if isinstance(bet, dict))
-            black_total = sum((bet.get('cash') or 0) for bet in black_bets if isinstance(bet, dict))
-            print(f"[베팅 데이터] RED 총액: {red_total}, BLACK 총액: {black_total}")
+            print(f"[베팅 데이터] RED: {len(red_bets)}명, BLACK: {len(black_bets)}명")
         except Exception as debug_error:
             print(f"디버깅 로그 오류 (무시): {str(debug_error)[:100]}")
         
