@@ -510,24 +510,36 @@ RESULTS_HTML = '''
             }
         }
         
-        let timerData = { elapsed: 0, lastFetch: 0 };
+        let timerData = { elapsed: 0, lastFetch: 0, round: 0 };
+        let lastResultsUpdate = 0;
         
         async function updateTimer() {
             try {
                 const now = Date.now();
                 const timeElement = document.getElementById('remaining-time');
                 
-                // 1초마다 서버에서 데이터 가져오기
-                if (now - timerData.lastFetch > 1000) {
+                // 0.5초마다 서버에서 데이터 가져오기 (더 빠른 동기화)
+                if (now - timerData.lastFetch > 500) {
                     try {
                         const response = await fetch('/api/current-status');
                         if (!response.ok) throw new Error('Network error');
                         const data = await response.json();
                         
                         if (!data.error && data.elapsed !== undefined) {
+                            const prevElapsed = timerData.elapsed;
+                            const prevRound = timerData.round;
+                            
                             timerData.elapsed = data.elapsed;
+                            timerData.round = data.round || 0;
                             timerData.lastFetch = now;
                             lastTimerUpdate = now;
+                            
+                            // 라운드가 변경되거나 elapsed가 리셋되면 경기 결과 즉시 새로고침
+                            if (timerData.round !== prevRound || 
+                                (prevElapsed > 8 && data.elapsed < 2)) {
+                                loadResults();
+                                lastResultsUpdate = now;
+                            }
                         }
                     } catch (error) {
                         console.error('타이머 데이터 가져오기 오류:', error);
@@ -535,7 +547,7 @@ RESULTS_HTML = '''
                     }
                 }
                 
-                // 클라이언트 측에서 시간 계산
+                // 클라이언트 측에서 시간 계산 (더 정확한 실시간 업데이트)
                 const timeDiff = (now - lastTimerUpdate) / 1000;
                 const currentElapsed = Math.max(0, timerData.elapsed + timeDiff);
                 const remaining = Math.max(0, 10 - currentElapsed);
@@ -551,6 +563,12 @@ RESULTS_HTML = '''
                         timeElement.classList.add('warning');
                     }
                 }
+                
+                // 타이머가 거의 0이 되면 경기 결과 새로고침 (라운드 종료 직전)
+                if (remaining <= 0.5 && now - lastResultsUpdate > 1000) {
+                    loadResults();
+                    lastResultsUpdate = now;
+                }
             } catch (error) {
                 console.error('타이머 업데이트 오류:', error);
             }
@@ -560,11 +578,16 @@ RESULTS_HTML = '''
         loadResults();
         updateTimer();
         
-        // 5초마다 결과 새로고침
-        setInterval(loadResults, 5000);
+        // 3초마다 결과 새로고침 (더 자주)
+        setInterval(() => {
+            if (Date.now() - lastResultsUpdate > 3000) {
+                loadResults();
+                lastResultsUpdate = Date.now();
+            }
+        }, 3000);
         
-        // 0.5초마다 타이머 업데이트 (클라이언트 측 계산, 서버는 1초마다)
-        setInterval(updateTimer, 500);
+        // 0.2초마다 타이머 업데이트 (더 빠른 동기화)
+        setInterval(updateTimer, 200);
     </script>
 </body>
 </html>
