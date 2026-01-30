@@ -1174,6 +1174,8 @@ RESULTS_HTML = '''
         .graph-stats td:first-child { text-align: left; font-weight: bold; color: #fff; }
         .graph-stats .jung-next { color: #81c784; }
         .graph-stats .kkuk-next { color: #e57373; }
+        .graph-stats .jung-kkuk { color: #ffb74d; }
+        .graph-stats .kkuk-jung { color: #64b5f6; }
         .status {
             text-align: center;
             margin-top: 15px;
@@ -1589,6 +1591,8 @@ RESULTS_HTML = '''
                     return {
                         pJung: jungDenom > 0 ? (100 * jj / jungDenom).toFixed(1) : '-',
                         pKkuk: kkukDenom > 0 ? (100 * kk / kkukDenom).toFixed(1) : '-',
+                        pJungToKkuk: jungDenom > 0 ? (100 * jk / jungDenom).toFixed(1) : '-',
+                        pKkukToJung: kkukDenom > 0 ? (100 * kj / kkukDenom).toFixed(1) : '-',
                         jj, jk, kj, kk, jungDenom, kkukDenom
                     };
                 }
@@ -1599,6 +1603,8 @@ RESULTS_HTML = '''
                     const fmt = (p, n, d) => d > 0 ? p + '% (' + n + '/' + d + ')' : '-';
                     statsDiv.innerHTML = '<table><thead><tr><th></th><th>전체</th><th>최근 30회</th></tr></thead><tbody>' +
                         '<tr><td><span class="jung-next">정→정</span></td><td>' + fmt(full.pJung, full.jj, full.jungDenom) + '</td><td>' + fmt(recent30.pJung, recent30.jj, recent30.jungDenom) + '</td></tr>' +
+                        '<tr><td><span class="jung-kkuk">정→꺽</span></td><td>' + fmt(full.pJungToKkuk, full.jk, full.jungDenom) + '</td><td>' + fmt(recent30.pJungToKkuk, recent30.jk, recent30.jungDenom) + '</td></tr>' +
+                        '<tr><td><span class="kkuk-jung">꺽→정</span></td><td>' + fmt(full.pKkukToJung, full.kj, full.kkukDenom) + '</td><td>' + fmt(recent30.pKkukToJung, recent30.kj, recent30.kkukDenom) + '</td></tr>' +
                         '<tr><td><span class="kkuk-next">꺽→꺽</span></td><td>' + fmt(full.pKkuk, full.kk, full.kkukDenom) + '</td><td>' + fmt(recent30.pKkuk, recent30.kk, recent30.kkukDenom) + '</td></tr>' +
                         '</tbody></table>';
                 } else if (statsDiv) {
