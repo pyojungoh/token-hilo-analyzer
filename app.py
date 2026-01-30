@@ -1696,12 +1696,19 @@ def get_results():
                             conn = get_db_connection()
                             if conn:
                                 cur = conn.cursor()
-                                # PostgreSQL에서 튜플 비교는 = ANY(ARRAY[...]) 형식 사용
-                                cur.execute('''
+                                # PostgreSQL에서 튜플 비교는 여러 방법이 있지만, 간단하게 OR 조건 사용
+                                conditions = []
+                                params = []
+                                for gid, cgid in pairs_to_lookup:
+                                    conditions.append('(game_id = %s AND compare_game_id = %s)')
+                                    params.extend([gid, cgid])
+                                
+                                query = f'''
                                     SELECT game_id, compare_game_id, match_result
                                     FROM color_matches
-                                    WHERE (game_id, compare_game_id) = ANY(%s)
-                                ''', (pairs_to_lookup,))
+                                    WHERE {' OR '.join(conditions)}
+                                '''
+                                cur.execute(query, params)
                                 
                                 for row in cur.fetchall():
                                     key = (str(row[0]), str(row[1]))
@@ -1711,7 +1718,7 @@ def get_results():
                                 conn.close()
                         except Exception as e:
                             # 일괄 조회 실패 시 개별 조회로 전환
-                            print(f"[경고] 일괄 조회 실패: {str(e)[:100]}")
+                            print(f"[경고] 일괄 조회 실패, 개별 조회로 전환: {str(e)[:100]}")
                             try:
                                 conn.close()
                             except:
