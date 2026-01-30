@@ -2030,8 +2030,6 @@ RESULTS_HTML = '''
                     }
                 } else if (statsDiv) {
                     statsDiv.innerHTML = '';
-                }
-                if (graphValues.length < 2) {
                     const pickEmpty = document.getElementById('prediction-pick-container');
                     const predDivEmpty = document.getElementById('prediction-box');
                     if (pickEmpty) pickEmpty.innerHTML = '';
