@@ -893,9 +893,9 @@ RESULTS_HTML = '''
             try {
                 isLoadingResults = true;
                 
-                // 타임아웃 설정 (30초로 증가)
+                // 타임아웃 설정 (5초로 단축 - 빠른 실패)
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 30000);
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
                 
                 const response = await fetch('/api/results?t=' + Date.now(), {
                     signal: controller.signal,
@@ -1085,20 +1085,22 @@ RESULTS_HTML = '''
             } catch (error) {
                 // AbortError는 조용히 처리 (타임아웃은 정상적인 상황)
                 if (error.name === 'AbortError') {
-                    console.warn('결과 로드 타임아웃 (정상)');
                     // 타임아웃은 조용히 처리, 기존 결과 유지
-                } else {
-                    console.error('loadResults 오류:', error);
-                    const statusElement = document.getElementById('status');
-                    if (statusElement) {
-                        if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
-                            statusElement.textContent = '서버 연결 실패 - 잠시 후 다시 시도';
-                        } else {
-                            statusElement.textContent = '결과 로드 오류: ' + error.message;
-                        }
-                    }
+                    return;
                 }
-                // 에러 발생 시에도 기존 결과는 유지
+                
+                // Failed to fetch는 네트워크 오류이므로 조용히 처리 (기존 결과 유지)
+                if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
+                    // 네트워크 오류는 조용히 처리, 기존 결과 유지
+                    return;
+                }
+                
+                // 기타 오류만 로그
+                console.error('loadResults 오류:', error);
+                const statusElement = document.getElementById('status');
+                if (statusElement) {
+                    statusElement.textContent = '결과 로드 오류: ' + error.message;
+                }
             } finally {
                 isLoadingResults = false;  // 로딩 완료
             }
@@ -1119,9 +1121,9 @@ RESULTS_HTML = '''
             try {
                 isUpdatingBetting = true;
                 
-                // 타임아웃 설정 (15초로 증가)
+                // 타임아웃 설정 (5초로 단축 - 빠른 실패)
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 15000);
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
                 
                 const response = await fetch('/api/current-status?t=' + Date.now(), {
                     signal: controller.signal,
@@ -1131,7 +1133,7 @@ RESULTS_HTML = '''
                 clearTimeout(timeoutId);
                 
                 if (!response.ok) {
-                    console.warn('베팅 정보 API 오류:', response.status, response.statusText);
+                    // HTTP 오류는 조용히 처리 (기존 정보 유지)
                     return;
                 }
                 
@@ -1216,12 +1218,8 @@ RESULTS_HTML = '''
                     console.error('betting-info 요소를 찾을 수 없음');
                 }
             } catch (error) {
-                // AbortError는 조용히 처리 (타임아웃은 정상적인 상황)
-                if (error.name === 'AbortError') {
-                    console.warn('베팅 정보 요청 타임아웃 (정상)');
-                } else {
-                    console.error('베팅 정보 업데이트 오류:', error);
-                }
+                // 모든 오류는 조용히 처리 (기존 정보 유지)
+                // AbortError, Failed to fetch 등은 네트워크 문제이므로 조용히 처리
                 // 에러 발생 시에도 기존 정보는 유지
             } finally {
                 isUpdatingBetting = false;  // 업데이트 완료
@@ -1240,9 +1238,9 @@ RESULTS_HTML = '''
                 // 0.5초마다 서버에서 데이터 가져오기 (10초 게임에 맞춰 빠른 업데이트)
                 if (now - timerData.lastFetch > 500) {
                     try {
-                    // 타임아웃 설정 (15초로 증가)
+                    // 타임아웃 설정 (5초로 단축 - 빠른 실패)
                     const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 15000);
+                    const timeoutId = setTimeout(() => controller.abort(), 5000);
                     
                     const response = await fetch('/api/current-status?t=' + now, {
                         signal: controller.signal,
@@ -1283,7 +1281,8 @@ RESULTS_HTML = '''
                             // updateBettingInfo는 별도로 실행하므로 여기서 제거
                         }
                     } catch (error) {
-                        // 에러가 나도 클라이언트 측 계산 계속
+                        // 네트워크 오류는 조용히 처리 (클라이언트 측 계산 계속)
+                        // AbortError, Failed to fetch 등은 조용히 처리
                     }
                 }
                 
