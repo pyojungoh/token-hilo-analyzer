@@ -1032,11 +1032,13 @@ RESULTS_HTML = '''
         }
         .card-wrapper .card {
             width: 100% !important;
-            aspect-ratio: 2 / 3 !important;
+            aspect-ratio: 2 / 1 !important;
+            max-height: 28px !important;
         }
         .card {
             width: 100%;
-            aspect-ratio: 2 / 3;
+            aspect-ratio: 2 / 1;
+            max-height: 28px;
             background: #fff;
             border: 3px solid #000;
             border-radius: 10px;
@@ -1044,7 +1046,7 @@ RESULTS_HTML = '''
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            padding: clamp(5px, 1vw, 10px);
+            padding: clamp(3px, 0.5vw, 6px);
             box-shadow: 0 4px 12px rgba(0,0,0,0.4);
         }
         .card.red {
