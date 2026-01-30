@@ -273,13 +273,31 @@ def start_socketio_client():
                 
                 print(f"🔵 [연결 시도] SSL 검증 비활성화됨")
                 
-                socketio_client.connect(
-                    SOCKETIO_URL, 
-                    wait_timeout=10,
-                    transports=['websocket', 'polling']  # WebSocket 우선, 실패시 polling
-                )
-                
-                print(f"🔵 [연결 성공] connect() 메서드 완료")
+                # 네임스페이스를 명시적으로 지정 (루트 네임스페이스 '/')
+                # wait_timeout을 늘려서 연결 시간을 더 줌
+                try:
+                    socketio_client.connect(
+                        SOCKETIO_URL, 
+                        wait_timeout=15,  # 타임아웃 증가
+                        transports=['polling', 'websocket'],  # polling을 먼저 시도 (더 안정적)
+                        namespaces=['/']  # 루트 네임스페이스 명시
+                    )
+                    print(f"🔵 [연결 성공] connect() 메서드 완료")
+                except Exception as connect_error:
+                    print(f"🔵 [연결 실패 상세] {type(connect_error).__name__}: {str(connect_error)[:300]}")
+                    # polling만 시도
+                    try:
+                        print(f"🔵 [재시도] polling 전송만 사용")
+                        socketio_client.connect(
+                            SOCKETIO_URL, 
+                            wait_timeout=15,
+                            transports=['polling'],  # polling만 사용
+                            namespaces=['/']
+                        )
+                        print(f"🔵 [연결 성공] polling 전송으로 연결됨")
+                    except Exception as polling_error:
+                        print(f"🔵 [polling 연결 실패] {type(polling_error).__name__}: {str(polling_error)[:300]}")
+                        raise
                 
                 # 연결 유지
                 socketio_client.wait()
