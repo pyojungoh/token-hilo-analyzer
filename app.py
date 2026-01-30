@@ -1342,6 +1342,7 @@ RESULTS_HTML = '''
                 
                 if (!statusElement || !cardsDiv) {
                     console.error('DOM 요소를 찾을 수 없습니다');
+                    if (statusElement) statusElement.textContent = '화면 오류 - 새로고침 해 주세요';
                     return;
                 }
                 
@@ -1537,23 +1538,23 @@ RESULTS_HTML = '''
                     }
                 }
             } catch (error) {
+                const statusEl = document.getElementById('status');
                 // AbortError는 조용히 처리 (타임아웃은 정상적인 상황)
                 if (error.name === 'AbortError') {
-                    // 타임아웃은 조용히 처리, 기존 결과 유지
+                    if (statusEl && allResults.length === 0) statusEl.textContent = '연결 시간 초과 - 다시 시도 중...';
                     return;
                 }
                 
                 // Failed to fetch는 네트워크 오류이므로 조용히 처리 (기존 결과 유지)
                 if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
-                    // 네트워크 오류는 조용히 처리, 기존 결과 유지
+                    if (statusEl && allResults.length === 0) statusEl.textContent = '연결 실패 - 다시 시도 중...';
                     return;
                 }
                 
                 // 기타 오류만 로그
                 console.error('loadResults 오류:', error);
-                const statusElement = document.getElementById('status');
-                if (statusElement) {
-                    statusElement.textContent = '결과 로드 오류: ' + error.message;
+                if (statusEl) {
+                    statusEl.textContent = '결과 로드 오류: ' + error.message;
                 }
             } finally {
                 isLoadingResults = false;  // 로딩 완료
