@@ -391,11 +391,11 @@ RESULTS_HTML = '''
             
             if (isNaN(numInt)) return numStr;
             
-            // 숫자 변환: 1→A, 10→J, 11→Q, 12→K
+            // 숫자 변환: 1→A, 10→J, 11→Q, 12→K, 13→K
             if (numInt === 1) return 'A';
             if (numInt === 10) return 'J';
             if (numInt === 11) return 'Q';
-            if (numInt === 12) return 'K';
+            if (numInt === 12 || numInt === 13) return 'K';
             
             return numStr;
         }
@@ -544,7 +544,6 @@ RESULTS_HTML = '''
                 const timeElement = document.getElementById('remaining-time');
                 
                 if (!timeElement) {
-                    console.error('remaining-time 요소를 찾을 수 없습니다');
                     return;
                 }
                 
@@ -559,10 +558,14 @@ RESULTS_HTML = '''
                             const prevElapsed = timerData.elapsed;
                             const prevRound = timerData.round;
                             
-                            timerData.elapsed = data.elapsed;
-                            timerData.round = data.round || 0;
+                            // elapsed 값이 변경되면 타이머 리셋
+                            if (Math.abs(data.elapsed - timerData.elapsed) > 0.1) {
+                                timerData.elapsed = data.elapsed;
+                                timerData.round = data.round || 0;
+                                lastTimerUpdate = now;
+                            }
+                            
                             timerData.lastFetch = now;
-                            lastTimerUpdate = now;
                             
                             // 라운드가 변경되거나 elapsed가 리셋되면 경기 결과 즉시 새로고침
                             if (timerData.round !== prevRound || 
@@ -572,7 +575,6 @@ RESULTS_HTML = '''
                             }
                         }
                     } catch (error) {
-                        console.error('타이머 데이터 가져오기 오류:', error);
                         // 에러가 나도 클라이언트 측 계산 계속
                     }
                 }
@@ -582,7 +584,7 @@ RESULTS_HTML = '''
                 const currentElapsed = Math.max(0, timerData.elapsed + timeDiff);
                 const remaining = Math.max(0, 10 - currentElapsed);
                 
-                // 항상 시간 표시 (데이터가 없어도 기본값 표시)
+                // 항상 시간 표시 (실시간 카운팅)
                 timeElement.textContent = `남은 시간: ${remaining.toFixed(2)} 초`;
                 
                 // 타이머 색상
