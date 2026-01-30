@@ -1650,15 +1650,15 @@ RESULTS_HTML = '''
                         predProb = last === true && recent30.jungDenom > 0 ? (100 * recent30.jk / recent30.jungDenom) : (last === false && recent30.kkukDenom > 0 ? (100 * recent30.kk / recent30.kkukDenom) : 50);
                     }
                     
-                    // 연승/연패: 정=승, 꺽=패. 최근 15개를 "패 패 패 승 패 승 승" 형식, 현재 연승/연패
-                    const streakArr = graphValues.slice(0, 15).map(v => v === true ? '승' : (v === false ? '패' : '·')).filter(x => x !== '·');
+                    // 연승/연패: 예측 적중=승, 예측 실패=패 (predictionHistory 기준)
+                    const streakArr = predictionHistory.slice(-15).map(h => h.predicted === h.actual ? '승' : '패');
                     const streakStr = streakArr.join(' ') || '-';
                     let streakCount = 0;
                     let streakType = '';
-                    for (let i = 0; i < graphValues.length; i++) {
-                        if (graphValues[i] !== true && graphValues[i] !== false) break;
-                        if (i === 0) { streakType = graphValues[i] ? '승' : '패'; streakCount = 1; }
-                        else if ((graphValues[i] ? '승' : '패') === streakType) streakCount++;
+                    for (let i = predictionHistory.length - 1; i >= 0; i--) {
+                        const s = predictionHistory[i].predicted === predictionHistory[i].actual ? '승' : '패';
+                        if (i === predictionHistory.length - 1) { streakType = s; streakCount = 1; }
+                        else if (s === streakType) streakCount++;
                         else break;
                     }
                     const streakNow = streakCount > 0 ? '현재 ' + streakCount + '연' + streakType : '';
