@@ -255,12 +255,17 @@ def start_socketio_client():
                 socketio_client.on('betting', on_socketio_betting)
                 socketio_client.on('result', on_socketio_result)
                 
-                # 연결 시도 (SSL 검증 비활성화 - 필요시)
+                # 연결 시도 (SSL 검증 비활성화)
+                import ssl
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+                
                 socketio_client.connect(
                     SOCKETIO_URL, 
                     wait_timeout=10,
                     transports=['websocket', 'polling'],  # WebSocket 우선, 실패시 polling
-                    verify=False  # SSL 인증서 검증 비활성화 (필요시)
+                    ssl_context=ssl_context  # SSL 검증 비활성화
                 )
                 
                 # 연결 유지
