@@ -1499,8 +1499,7 @@ RESULTS_HTML = '''
         // 예측 기록 (최근 30회): { round, predicted, actual }
         let predictionHistory = [];
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
-        let lastPredictionHistoryForBet = [];  // 가상 배팅 계산용 복사 (리셋 이후 기록만)
-        let predictionHistoryLengthAtBetReset = 0;  // 리셋 시점의 예측 개수 → 이후 기록만 배팅에 사용
+        let betCalcHistory = [];  // 계산기 전용: 실행 누른 시점부터만 쌓는 승/패 기록 { predicted, actual }
         let lastCurrentBetAmount = 0;  // 현재 배팅 금액 (표시용)
         let betElapsedSeconds = 0;
         let betTimerIntervalId = null;
@@ -1778,9 +1777,11 @@ RESULTS_HTML = '''
                         const isActualJoker = displayResults.length > 0 && !!displayResults[0].joker;
                         if (isActualJoker) {
                             predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: 'joker' });
+                            if (betCalcRunning) betCalcHistory.push({ predicted: lastPrediction.value, actual: 'joker' });
                         } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
                             const actual = graphValues[0] ? '정' : '꺽';
                             predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: actual });
+                            if (betCalcRunning) betCalcHistory.push({ predicted: lastPrediction.value, actual: actual });
                         }
                         predictionHistory = predictionHistory.slice(-30);
                     }
@@ -1991,10 +1992,9 @@ RESULTS_HTML = '''
                         predDiv.innerHTML = statsBlock + streakLineBlock + noticeBlock + extraLine;
                     }
                     
-                    // 가상 배팅 계산: 실행 눌렀을 때만 갱신. 리셋 이후 예측만 사용(리셋 시 누적 합산 방지).
+                    // 가상 배팅 계산: 계산기 전용 기록(betCalcHistory)만 사용. 실행 누른 시점부터만 쌓인 승/패로 계산.
                     const betResultDiv = document.getElementById('bet-result');
-                    const historyForBet = predictionHistory.slice(predictionHistoryLengthAtBetReset);
-                    if (betResultDiv && historyForBet.length > 0 && betCalcRunning) {
+                    if (betResultDiv && betCalcHistory.length > 0 && betCalcRunning) {
                         const capitalInput = parseFloat(document.getElementById('bet-capital')?.value) || 1000000;
                         const baseBetInput = parseFloat(document.getElementById('bet-base')?.value) || 1000;
                         const oddsInput = parseFloat(document.getElementById('bet-odds')?.value) || 1.97;
@@ -2003,8 +2003,8 @@ RESULTS_HTML = '''
                         let totalRolling = 0;
                         let wins = 0, losses = 0;
                         let bust = false;
-                        for (let i = 0; i < historyForBet.length; i++) {
-                            const isWin = historyForBet[i].actual !== 'joker' && historyForBet[i].predicted === historyForBet[i].actual;  // 조커=패, 마틴 진행
+                        for (let i = 0; i < betCalcHistory.length; i++) {
+                            const isWin = betCalcHistory[i].actual !== 'joker' && betCalcHistory[i].predicted === betCalcHistory[i].actual;  // 조커=패, 마틴 진행
                             const bet = Math.min(currentBet, Math.floor(cap));
                             if (cap < bet || cap <= 0) { bust = true; break; }
                             totalRolling += bet;
@@ -2026,7 +2026,6 @@ RESULTS_HTML = '''
                         if (bust) msg += ' <span class="bust">(자본 소진)</span>';
                         else msg += ' | 승 시 배당 ' + oddsInput + '배 수익 +' + Math.floor(baseBetInput * (oddsInput - 1)).toLocaleString() + '원/회';
                         betResultDiv.innerHTML = msg;
-                        lastPredictionHistoryForBet = historyForBet.slice();
                         updateBetStatusDisplay();
                     }
                 } else if (statsDiv) {
@@ -2081,8 +2080,8 @@ RESULTS_HTML = '''
         function updateBetResult() {
             const betResultDiv = document.getElementById('bet-result');
             if (!betResultDiv) return;
-            if (lastPredictionHistoryForBet.length === 0) {
-                betResultDiv.textContent = '예측 기록이 쌓이면 자동 계산됩니다.';
+            if (betCalcHistory.length === 0) {
+                betResultDiv.textContent = '실행을 누른 뒤 나오는 승/패로 계산됩니다.';
                 const baseInput = parseFloat(document.getElementById('bet-base')?.value) || 1000;
                 lastCurrentBetAmount = baseInput;
                 updateBetStatusDisplay();
@@ -2096,8 +2095,8 @@ RESULTS_HTML = '''
             let totalRolling = 0;
             let wins = 0, losses = 0;
             let bust = false;
-            for (let i = 0; i < lastPredictionHistoryForBet.length; i++) {
-                const isWin = lastPredictionHistoryForBet[i].actual !== 'joker' && lastPredictionHistoryForBet[i].predicted === lastPredictionHistoryForBet[i].actual;
+            for (let i = 0; i < betCalcHistory.length; i++) {
+                const isWin = betCalcHistory[i].actual !== 'joker' && betCalcHistory[i].predicted === betCalcHistory[i].actual;
                 const bet = Math.min(currentBet, Math.floor(cap));
                 if (cap < bet || cap <= 0) { bust = true; break; }
                 totalRolling += bet;
@@ -2137,6 +2136,9 @@ RESULTS_HTML = '''
         }
         document.getElementById('bet-run')?.addEventListener('click', function() {
             betCalcRunning = true;
+            betCalcHistory = [];  // 실행 누른 시점부터만 계산 → 이 시점부터 쌓이는 승/패만 사용
+            const betResultDiv = document.getElementById('bet-result');
+            if (betResultDiv) betResultDiv.textContent = '실행 중 - 다음 결과부터 계산됩니다.';
             if (betTimerIntervalId) return;
             betTimerIntervalId = setInterval(function() {
                 betElapsedSeconds++;
@@ -2153,12 +2155,11 @@ RESULTS_HTML = '''
             betCalcRunning = false;
             if (betTimerIntervalId) { clearInterval(betTimerIntervalId); betTimerIntervalId = null; }
             betElapsedSeconds = 0;
-            lastPredictionHistoryForBet = [];
-            predictionHistoryLengthAtBetReset = predictionHistory.length;  // 이 시점 이후 예측만 배팅에 사용
+            betCalcHistory = [];
             const baseInput = parseFloat(document.getElementById('bet-base')?.value) || 1000;
             lastCurrentBetAmount = baseInput;
             const betResultDiv = document.getElementById('bet-result');
-            if (betResultDiv) betResultDiv.textContent = '예측 기록이 쌓이면 자동 계산됩니다.';
+            if (betResultDiv) betResultDiv.textContent = '실행을 누른 뒤 나오는 승/패로 계산됩니다.';
             updateBetStatusDisplay();
         });
         ['bet-capital', 'bet-base', 'bet-odds'].forEach(id => {
