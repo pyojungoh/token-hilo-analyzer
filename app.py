@@ -1561,33 +1561,49 @@ def get_results():
         
         current_time = time.time() * 1000
         
-        # 데이터베이스가 있으면 DB에서 조회, 없으면 기존 방식 사용
+        # 최신 데이터 먼저 가져오기 (항상 최신 데이터 우선)
+        latest_results = load_results_data()
+        
+        # 데이터베이스가 있으면 DB에서 조회하고 최신 데이터와 병합
         if DB_AVAILABLE and DATABASE_URL:
             # 캐시 사용 (1초)
             if results_cache and (current_time - last_update_time) < CACHE_TTL:
                 return jsonify(results_cache)
             
             # 데이터베이스에서 최근 5시간 데이터 조회
-            results = get_recent_results(hours=5)
+            db_results = get_recent_results(hours=5)
             
-            # 최신 데이터도 가져와서 저장 (백그라운드)
-            try:
-                latest_results = load_results_data()
-                if latest_results:
+            # 최신 데이터 저장 (백그라운드)
+            if latest_results:
+                try:
                     saved_count = 0
                     for game_data in latest_results:
                         if save_game_result(game_data):
                             saved_count += 1
                     if saved_count > 0:
                         print(f"[💾] 최신 데이터 {saved_count}개 저장 완료")
-            except Exception as e:
-                print(f"[경고] 최신 데이터 저장 실패: {str(e)[:100]}")
+                except Exception as e:
+                    print(f"[경고] 최신 데이터 저장 실패: {str(e)[:100]}")
+            
+            # 최신 데이터와 DB 데이터 병합 (최신 데이터 우선)
+            if latest_results:
+                # 최신 데이터의 gameID들
+                latest_game_ids = {str(r.get('gameID', '')) for r in latest_results if r.get('gameID')}
+                
+                # DB 결과에서 최신 데이터에 없는 것만 유지
+                db_results_filtered = [r for r in db_results if str(r.get('gameID', '')) not in latest_game_ids]
+                
+                # 최신 데이터 + DB 데이터 (최신순)
+                results = latest_results + db_results_filtered
+            else:
+                # 최신 데이터가 없으면 DB 데이터만 사용
+                results = db_results
             
             results_cache = {
                 'results': results,
                 'count': len(results),
                 'timestamp': datetime.now().isoformat(),
-                'source': 'database'
+                'source': 'database+json'
             }
             last_update_time = current_time
             return jsonify(results_cache)
@@ -1596,7 +1612,7 @@ def get_results():
             if results_cache and (current_time - last_update_time) < CACHE_TTL:
                 return jsonify(results_cache)
             
-            results = load_results_data()
+            results = latest_results if latest_results else []
             results_cache = {
                 'results': results,
                 'count': len(results),
