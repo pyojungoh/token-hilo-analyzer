@@ -246,8 +246,53 @@ def calculate_and_save_color_matches(results):
         except:
             pass
 
+def get_color_matches_batch(game_ids_pairs):
+    """정/꺽 결과 일괄 조회 (성능 최적화)"""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return {}
+    
+    if not game_ids_pairs:
+        return {}
+    
+    conn = get_db_connection()
+    if not conn:
+        return {}
+    
+    try:
+        cur = conn.cursor()
+        # IN 절로 일괄 조회
+        placeholders = ','.join(['%s'] * len(game_ids_pairs))
+        query = f'''
+            SELECT game_id, compare_game_id, match_result
+            FROM color_matches
+            WHERE (game_id, compare_game_id) IN ({placeholders})
+        '''
+        params = [f"{gid}_{cgid}" for gid, cgid in game_ids_pairs]
+        # PostgreSQL의 경우 튜플 비교를 위해 다른 방식 사용
+        cur.execute('''
+            SELECT game_id, compare_game_id, match_result
+            FROM color_matches
+            WHERE (game_id, compare_game_id) = ANY(%s)
+        ''', (game_ids_pairs,))
+        
+        results = {}
+        for row in cur.fetchall():
+            key = f"{row[0]}_{row[1]}"
+            results[key] = row[2]
+        
+        cur.close()
+        conn.close()
+        return results
+    except Exception as e:
+        print(f"[❌ 오류] 정/꺽 결과 일괄 조회 실패: {str(e)[:200]}")
+        try:
+            conn.close()
+        except:
+            pass
+        return {}
+
 def get_color_match(game_id, compare_game_id):
-    """정/꺽 결과 조회"""
+    """정/꺽 결과 조회 (단일)"""
     if not DB_AVAILABLE or not DATABASE_URL:
         return None
     
