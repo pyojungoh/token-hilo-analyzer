@@ -419,11 +419,9 @@ RESULTS_HTML = '''
                 const results = data.results || [];
                 document.getElementById('status').textContent = `총 ${results.length}개 경기 결과`;
                 
-                // 최신 결과가 왼쪽에 오도록 역순 정렬
-                const reversedResults = [...results].reverse();
-                
+                // 최신 결과가 왼쪽에 오도록 (원본 데이터가 최신이 앞에 있음)
                 // 최신 50개만 표시
-                const displayResults = reversedResults.slice(0, 50);
+                const displayResults = results.slice(0, 50);
                 
                 const cardsDiv = document.getElementById('cards');
                 cardsDiv.innerHTML = '';
