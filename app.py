@@ -1177,6 +1177,81 @@ RESULTS_HTML = '''
         .graph-stats .jung-kkuk { color: #ffb74d; }
         .graph-stats .kkuk-jung { color: #64b5f6; }
         .graph-stats-note { margin-top: 6px; font-size: 0.85em; color: #aaa; text-align: center; }
+        .prediction-layout {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin-top: 12px;
+        }
+        .prediction-pick {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        .prediction-card {
+            width: 80px;
+            height: 80px;
+            background: #1a1a1a;
+            border: 3px solid #424242;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+        }
+        .prediction-card .pred-value-big {
+            font-size: 2.2em;
+            font-weight: 900;
+            color: #fff;
+            text-shadow: 0 0 12px rgba(255,255,255,0.4);
+        }
+        .prediction-card .pred-value-big.red { color: #e57373; text-shadow: 0 0 12px rgba(229,115,115,0.6); }
+        .prediction-card .pred-value-big.black { color: #e0e0e0; }
+        .prediction-prob-under {
+            margin-top: 8px;
+            font-size: 0.95em;
+            color: #81c784;
+            font-weight: bold;
+        }
+        .prediction-alert {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            text-align: right;
+            min-width: 180px;
+        }
+        .prediction-alert-icon {
+            font-size: 3.5em;
+            line-height: 1;
+            color: #ffc107;
+            text-shadow: 0 0 20px rgba(255,193,7,0.6);
+            width: 56px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255,193,7,0.15);
+            border: 2px solid rgba(255,193,7,0.5);
+            border-radius: 50%;
+            margin-left: auto;
+        }
+        .prediction-alert-text {
+            margin-top: 6px;
+            font-size: 0.85em;
+            color: #ffc107;
+            line-height: 1.3;
+        }
+        .prediction-stats-row {
+            width: 100%;
+            margin-top: 10px;
+            padding-top: 8px;
+            border-top: 1px solid #333;
+            font-size: 0.9em;
+            color: #aaa;
+        }
+        .prediction-stats-row strong { color: #fff; }
         .prediction-box {
             margin-top: 12px;
             padding: 10px 14px;
@@ -1845,19 +1920,27 @@ RESULTS_HTML = '''
                     }
                     const streakNow = streakCount > 0 ? '현재 ' + streakCount + '연' + streakType : '';
                     
-                    // 예측·적중률·연승연패 UI
+                    // 예측 픽(왼쪽 카드) · 경고(오른쪽) · 적중률(전체 N회 승 N회 패 N회)
                     const predDiv = document.getElementById('prediction-box');
                     if (predDiv) {
                         const hit = predictionHistory.filter(h => h.predicted === h.actual).length;
                         const total = predictionHistory.length;
+                        const losses = total - hit;
                         const hitPct = total > 0 ? (100 * hit / total).toFixed(1) : '-';
-                        predDiv.innerHTML = '<span class="pred-round">' + predictedRound + '회 예측</span>: <span class="pred-value">' + predict + '</span> <span class="pred-color ' + colorClass + '">(' + colorToPick + ')</span>' +
-                            '<div class="pred-prob">나올 확률: ' + predProb.toFixed(1) + '%</div>' +
-                            '<div class="streak-line">' + streakStr + (streakNow ? ' <span class="streak-now">' + streakNow + '</span>' : '') + '</div>' +
-                            '<div class="flow-type">' + flowStr + '</div>' +
-                            (linePatternStr ? '<div class="flow-type line-pattern">' + linePatternStr + '</div>' : '') +
-                            (flowAdvice ? '<div class="flow-advice">' + flowAdvice + '</div>' : '') +
-                            '<div class="hit-rate">적중률: ' + hit + '/' + total + ' (' + hitPct + '%)</div>';
+                        const leftBlock = '<div class="prediction-pick">' +
+                            '<div class="prediction-card">' +
+                            '<span class="pred-value-big ' + colorClass + '">' + predict + '</span>' +
+                            '</div>' +
+                            '<div class="prediction-prob-under">나올 확률 ' + predProb.toFixed(1) + '%</div>' +
+                            '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + predictedRound + '회 · ' + colorToPick + '</div>' +
+                            '</div>';
+                        const rightBlock = flowAdvice ? ('<div class="prediction-alert">' +
+                            '<div class="prediction-alert-icon">!</div>' +
+                            '<div class="prediction-alert-text">' + flowAdvice + '</div>' +
+                            '</div>') : '';
+                        const statsBlock = '<div class="prediction-stats-row">전체 <strong>' + total + '</strong>회 &nbsp; 승 <strong>' + hit + '</strong>회 &nbsp; 패 <strong>' + losses + '</strong>회' + (total > 0 ? ' (' + hitPct + '%)' : '') + '</div>';
+                        const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:0.8em">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
+                        predDiv.innerHTML = '<div class="prediction-layout">' + leftBlock + rightBlock + '</div>' + statsBlock + extraLine;
                     }
                     
                     // 가상 배팅 계산: 실행 눌렀을 때만 갱신. 리셋 이후 예측만 사용(리셋 시 누적 합산 방지).
