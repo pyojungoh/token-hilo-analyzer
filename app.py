@@ -1194,6 +1194,9 @@ RESULTS_HTML = '''
         .prediction-box .pred-prob { font-size: 0.95em; color: #aaa; }
         .prediction-box .streak-line { margin-top: 6px; font-size: 0.9em; color: #bbb; }
         .prediction-box .streak-now { font-weight: bold; }
+        .prediction-box .flow-type { margin-top: 4px; font-size: 0.85em; color: #aaa; }
+        .prediction-box .flow-type .pong { color: #64b5f6; }
+        .prediction-box .flow-type .line { color: #ffb74d; }
         .prediction-box .hit-rate { margin-top: 6px; font-size: 0.9em; color: #aaa; }
         .status {
             text-align: center;
@@ -1650,8 +1653,9 @@ RESULTS_HTML = '''
                         predProb = last === true && recent30.jungDenom > 0 ? (100 * recent30.jk / recent30.jungDenom) : (last === false && recent30.kkukDenom > 0 ? (100 * recent30.kk / recent30.kkukDenom) : 50);
                     }
                     
-                    // 연승/연패: 예측 적중=승, 예측 실패=패 (predictionHistory 기준)
-                    const streakArr = predictionHistory.slice(-15).map(h => h.predicted === h.actual ? '승' : '패');
+                    // 연승/연패: 예측 적중=승, 예측 실패=패. 최근이 왼쪽으로 (reverse)
+                    const last15 = predictionHistory.slice(-15).map(h => h.predicted === h.actual ? '승' : '패');
+                    const streakArr = last15.slice().reverse();
                     const streakStr = streakArr.join(' ') || '-';
                     let streakCount = 0;
                     let streakType = '';
@@ -1663,6 +1667,19 @@ RESULTS_HTML = '''
                     }
                     const streakNow = streakCount > 0 ? '현재 ' + streakCount + '연' + streakType : '';
                     
+                    // 최근 15회 흐름: 퐁당(연속 바뀜) vs 줄(연속 같은 것). 14쌍 중 번갈아 나온 쌍 비율 = 퐁당, 같은 쌍 비율 = 줄
+                    let pongPct = 50, linePct = 50;
+                    if (last15.length >= 2) {
+                        let altPairs = 0, samePairs = 0;
+                        for (let i = 0; i < last15.length - 1; i++) {
+                            if (last15[i] !== last15[i + 1]) altPairs++; else samePairs++;
+                        }
+                        const pairs = altPairs + samePairs;
+                        pongPct = pairs > 0 ? (100 * altPairs / pairs).toFixed(1) : 50;
+                        linePct = pairs > 0 ? (100 * samePairs / pairs).toFixed(1) : 50;
+                    }
+                    const flowStr = '최근 15회: <span class="pong">퐁당 ' + pongPct + '%</span> / <span class="line">줄 ' + linePct + '%</span>';
+                    
                     // 예측·적중률·연승연패 UI
                     const predDiv = document.getElementById('prediction-box');
                     if (predDiv) {
@@ -1672,6 +1689,7 @@ RESULTS_HTML = '''
                         predDiv.innerHTML = '<span class="pred-round">' + predictedRound + '회 예측</span>: <span class="pred-value">' + predict + '</span> <span class="pred-color ' + colorClass + '">(' + colorToPick + ')</span>' +
                             '<div class="pred-prob">나올 확률: ' + predProb.toFixed(1) + '%</div>' +
                             '<div class="streak-line">' + streakStr + (streakNow ? ' <span class="streak-now">' + streakNow + '</span>' : '') + '</div>' +
+                            '<div class="flow-type">' + flowStr + '</div>' +
                             '<div class="hit-rate">적중률: ' + hit + '/' + total + ' (' + hitPct + '%)</div>';
                     }
                 } else if (statsDiv) {
