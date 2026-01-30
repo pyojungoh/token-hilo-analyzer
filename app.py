@@ -865,10 +865,15 @@ RESULTS_HTML = '''
                 }
                 
                 const data = await response.json();
-                console.log('베팅 데이터 전체:', JSON.stringify(data, null, 2));
+                console.log('=== 베팅 데이터 수신 ===');
+                console.log('전체 데이터:', JSON.stringify(data, null, 2));
+                console.log('데이터 타입:', typeof data);
+                console.log('currentBets 존재:', !!data.currentBets);
+                console.log('currentBets 내용:', data.currentBets);
+                console.log('데이터 키들:', Object.keys(data));
                 
                 if (data.error) {
-                    console.log('베팅 데이터 오류:', data.error);
+                    console.error('베팅 데이터 오류:', data.error);
                     return;
                 }
                 
@@ -878,16 +883,24 @@ RESULTS_HTML = '''
                 let blackBets = [];
                 
                 if (data.currentBets) {
+                    console.log('currentBets.red 타입:', typeof data.currentBets.red, 'isArray:', Array.isArray(data.currentBets.red));
+                    console.log('currentBets.black 타입:', typeof data.currentBets.black, 'isArray:', Array.isArray(data.currentBets.black));
                     redBets = Array.isArray(data.currentBets.red) ? data.currentBets.red : [];
                     blackBets = Array.isArray(data.currentBets.black) ? data.currentBets.black : [];
+                } else {
+                    console.warn('⚠️ currentBets가 없습니다!');
+                    console.warn('데이터 키들:', Object.keys(data));
                 }
                 
                 // 베팅 인원 수만 계산 (금액 계산 제거)
                 const redCount = redBets.length;
                 const blackCount = blackBets.length;
                 
+                console.log('=== 베팅 인원 계산 ===');
                 console.log('RED 베팅 인원:', redCount, '명');
                 console.log('BLACK 베팅 인원:', blackCount, '명');
+                console.log('RED 베팅 배열:', redBets);
+                console.log('BLACK 베팅 배열:', blackBets);
                 
                 const redCountElement = document.getElementById('red-count');
                 const blackCountElement = document.getElementById('black-count');
