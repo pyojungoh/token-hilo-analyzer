@@ -1050,9 +1050,9 @@ RESULTS_HTML = '''
                 // 1초마다 서버에서 데이터 가져오기 (요청 빈도 감소)
                 if (now - timerData.lastFetch > 1000) {
                     try {
-                    // 타임아웃 설정 (5초)
+                    // 타임아웃 설정 (15초로 증가)
                     const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 5000);
+                    const timeoutId = setTimeout(() => controller.abort(), 15000);
                     
                     const response = await fetch('/api/current-status?t=' + now, {
                         signal: controller.signal,
