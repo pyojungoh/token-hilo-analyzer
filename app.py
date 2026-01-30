@@ -1633,13 +1633,17 @@ RESULTS_HTML = '''
                     }
                 }
                 
-                // 헤더에 기준 색상 표시 (15번째 카드)
+                // 헤더에 기준 색상 표시 (15번째 카드, 조커면 표시)
                 if (displayResults.length >= 15) {
-                    const card15 = parseCardValue(displayResults[14].result || '');
+                    const refCard = displayResults[14];
                     const referenceColorElement = document.getElementById('reference-color');
                     if (referenceColorElement) {
-                        const colorText = card15.isRed ? '🔴 빨간색' : '⚫ 검은색';
-                        referenceColorElement.textContent = `기준: ${colorText}`;
+                        if (refCard.joker) referenceColorElement.textContent = '기준: 조커 (배팅 보류)';
+                        else {
+                            const card15 = parseCardValue(refCard.result || '');
+                            const colorText = card15.isRed ? '🔴 빨간색' : '⚫ 검은색';
+                            referenceColorElement.textContent = `기준: ${colorText}`;
+                        }
                     }
                 } else {
                     // 15개 미만이면 기준 색상 표시 제거
@@ -1747,11 +1751,17 @@ RESULTS_HTML = '''
                     const latestGameID = String(displayResults[0]?.gameID || '0');
                     const currentRound = parseInt(latestGameID.slice(-3), 10) || 0;
                     const predictedRound = currentRound + 1;
+                    const is15Joker = displayResults.length >= 15 && !!displayResults[14].joker;  // 15번 카드 조커면 픽/배팅 보류
                     
-                    // 직전 예측의 실제 결과 반영: 예측했던 회차(currentRound)가 지금 데이터에 있으면 graphValues[0]이 그 결과
-                    if (lastPrediction && graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false) && currentRound === lastPrediction.round) {
-                        const actual = graphValues[0] ? '정' : '꺽';
-                        predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: actual });
+                    // 직전 예측의 실제 결과 반영: 예측했던 회차가 지금 나왔으면 기록. 결과가 조커면 actual='joker'(승패 제외, 배팅은 마틴)
+                    if (lastPrediction && currentRound === lastPrediction.round) {
+                        const isActualJoker = displayResults.length > 0 && !!displayResults[0].joker;
+                        if (isActualJoker) {
+                            predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: 'joker' });
+                        } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
+                            const actual = graphValues[0] ? '정' : '꺽';
+                            predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: actual });
+                        }
                         predictionHistory = predictionHistory.slice(-30);
                     }
                     
@@ -1870,49 +1880,48 @@ RESULTS_HTML = '''
                         flowAdvice = '확률 급상승 구간(방향 불명) → 보수적 배팅 권장';
                     }
                     
-                    // 전이 확률 (최근 30회): P(정), P(꺽)
-                    let Pjung = 0.5, Pkkuk = 0.5;
-                    if (last === true && recent30.jungDenom > 0) {
-                        Pjung = recent30.jj / recent30.jungDenom;
-                        Pkkuk = recent30.jk / recent30.jungDenom;
-                    } else if (last === false && recent30.kkukDenom > 0) {
-                        Pjung = recent30.kj / recent30.kkukDenom;
-                        Pkkuk = recent30.kk / recent30.kkukDenom;
+                    // 전이 확률·예측·lastPrediction: 15번 카드가 조커가 아닐 때만
+                    let predict = '-', predProb = 0, colorToPick = '-', colorClass = 'black';
+                    if (!is15Joker) {
+                        let Pjung = 0.5, Pkkuk = 0.5;
+                        if (last === true && recent30.jungDenom > 0) {
+                            Pjung = recent30.jj / recent30.jungDenom;
+                            Pkkuk = recent30.jk / recent30.jungDenom;
+                        } else if (last === false && recent30.kkukDenom > 0) {
+                            Pjung = recent30.kj / recent30.kkukDenom;
+                            Pkkuk = recent30.kk / recent30.kkukDenom;
+                        }
+                        const probSame = last === true ? Pjung : Pkkuk;
+                        const probChange = last === true ? Pkkuk : Pjung;
+                        let lineW = linePct / 100, pongW = pongPct / 100;
+                        if (flowState === 'line_strong') { lineW = Math.min(1, lineW + 0.25); pongW = Math.max(0, 1 - lineW); }
+                        else if (flowState === 'pong_strong') { pongW = Math.min(1, pongW + 0.25); lineW = Math.max(0, 1 - pongW); }
+                        lineW += chunkIdx * 0.2 + twoOneIdx * 0.1;
+                        pongW += scatterIdx * 0.2;
+                        const totalW = lineW + pongW;
+                        if (totalW > 0) { lineW = lineW / totalW; pongW = pongW / totalW; }
+                        const adjSame = probSame * lineW;
+                        const adjChange = probChange * pongW;
+                        const sum = adjSame + adjChange || 1;
+                        const adjSameN = adjSame / sum;
+                        const adjChangeN = adjChange / sum;
+                        predict = adjSameN >= adjChangeN ? (last === true ? '정' : '꺽') : (last === true ? '꺽' : '정');
+                        predProb = (predict === (last === true ? '정' : '꺽') ? adjSameN : adjChangeN) * 100;
+                        lastPrediction = { value: predict, round: predictedRound };
+                        const card15 = displayResults.length >= 15 ? parseCardValue(displayResults[14].result || '') : null;
+                        const is15Red = card15 ? card15.isRed : false;
+                        colorToPick = predict === '정' ? (is15Red ? '빨강' : '검정') : (is15Red ? '검정' : '빨강');
+                        colorClass = colorToPick === '빨강' ? 'red' : 'black';
                     }
-                    // 퐁당=바뀜, 줄=유지. 흐름 감지 + 줄 패턴(30회) 지수로 유지/바뀜 가중치 반영
-                    const probSame = last === true ? Pjung : Pkkuk;
-                    const probChange = last === true ? Pkkuk : Pjung;
-                    let lineW = linePct / 100, pongW = pongPct / 100;
-                    if (flowState === 'line_strong') { lineW = Math.min(1, lineW + 0.25); pongW = Math.max(0, 1 - lineW); }
-                    else if (flowState === 'pong_strong') { pongW = Math.min(1, pongW + 0.25); lineW = Math.max(0, 1 - pongW); }
-                    // 줄 패턴 지수(최근 30회): 덩어리·두줄한개 → 유지 가산, 띄엄띄엄 → 바뀜 가산
-                    lineW += chunkIdx * 0.2 + twoOneIdx * 0.1;
-                    pongW += scatterIdx * 0.2;
-                    const totalW = lineW + pongW;
-                    if (totalW > 0) { lineW = lineW / totalW; pongW = pongW / totalW; }
-                    const adjSame = probSame * lineW;
-                    const adjChange = probChange * pongW;
-                    const sum = adjSame + adjChange || 1;
-                    const adjSameN = adjSame / sum;
-                    const adjChangeN = adjChange / sum;
-                    // 예측: 유지 vs 바뀜 중 확률 높은 쪽. 유지=정(직전 정)/꺽(직전 꺽), 바뀜=꺽/정
-                    const predict = adjSameN >= adjChangeN ? (last === true ? '정' : '꺽') : (last === true ? '꺽' : '정');
-                    const predProb = (predict === (last === true ? '정' : '꺽') ? adjSameN : adjChangeN) * 100;
-                    lastPrediction = { value: predict, round: predictedRound };
                     
-                    // 15번째 카드 색상 기준 → 고를 카드: 정이면 같은 색, 꺽이면 반대 색
-                    const card15 = displayResults.length >= 15 ? parseCardValue(displayResults[14].result || '') : null;
-                    const is15Red = card15 ? card15.isRed : false;
-                    const colorToPick = predict === '정' ? (is15Red ? '빨강' : '검정') : (is15Red ? '검정' : '빨강');
-                    const colorClass = colorToPick === '빨강' ? 'red' : 'black';
-                    
-                    // 연승/연패: 예측 적중=승, 예측 실패=패. 최근이 왼쪽으로 (reverse)
-                    const last15 = predictionHistory.slice(-15).map(h => h.predicted === h.actual ? '승' : '패');
+                    // 연승/연패: 승/패/조커(조커는 승패에 넣지 않음). 최근이 왼쪽으로 (reverse)
+                    const last15 = predictionHistory.slice(-15).map(h => h.actual === 'joker' ? '조커' : (h.predicted === h.actual ? '승' : '패'));
                     const streakArr = last15.slice().reverse();
                     const streakStr = streakArr.join(' ') || '-';
                     let streakCount = 0;
                     let streakType = '';
                     for (let i = predictionHistory.length - 1; i >= 0; i--) {
+                        if (predictionHistory[i].actual === 'joker') break;  // 조커 나오면 연승/연패 끊김
                         const s = predictionHistory[i].predicted === predictionHistory[i].actual ? '승' : '패';
                         if (i === predictionHistory.length - 1) { streakType = s; streakCount = 1; }
                         else if (s === streakType) streakCount++;
@@ -1920,25 +1929,33 @@ RESULTS_HTML = '''
                     }
                     const streakNow = streakCount > 0 ? '현재 ' + streakCount + '연' + streakType : '';
                     
-                    // 예측 픽(왼쪽 카드) · 경고(오른쪽) · 적중률(전체 N회 승 N회 패 N회)
+                    // 예측 픽(왼쪽 카드) · 경고(오른쪽) · 적중률(전체 N회 승 N회 패 N회 조커 N회)
                     const predDiv = document.getElementById('prediction-box');
                     if (predDiv) {
-                        const hit = predictionHistory.filter(h => h.predicted === h.actual).length;
+                        const hit = predictionHistory.filter(h => h.actual !== 'joker' && h.predicted === h.actual).length;
+                        const losses = predictionHistory.filter(h => h.actual !== 'joker' && h.predicted !== h.actual).length;
+                        const jokerCount = predictionHistory.filter(h => h.actual === 'joker').length;
                         const total = predictionHistory.length;
-                        const losses = total - hit;
-                        const hitPct = total > 0 ? (100 * hit / total).toFixed(1) : '-';
-                        const leftBlock = '<div class="prediction-pick">' +
+                        const countForPct = hit + losses;
+                        const hitPct = countForPct > 0 ? (100 * hit / countForPct).toFixed(1) : '-';
+                        const leftBlock = is15Joker ? ('<div class="prediction-pick">' +
+                            '<div class="prediction-card" style="background:#455a64;border-color:#78909c">' +
+                            '<span class="pred-value-big" style="color:#fff;font-size:1.2em">보류</span>' +
+                            '</div>' +
+                            '<div class="prediction-prob-under" style="color:#ffb74d">15번 카드 조커 · 배팅하지 마세요</div>' +
+                            '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + predictedRound + '회</div>' +
+                            '</div>') : ('<div class="prediction-pick">' +
                             '<div class="prediction-card">' +
                             '<span class="pred-value-big ' + colorClass + '">' + predict + '</span>' +
                             '</div>' +
                             '<div class="prediction-prob-under">나올 확률 ' + predProb.toFixed(1) + '%</div>' +
                             '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + predictedRound + '회 · ' + colorToPick + '</div>' +
-                            '</div>';
+                            '</div>');
                         const rightBlock = flowAdvice ? ('<div class="prediction-alert">' +
                             '<div class="prediction-alert-icon">!</div>' +
                             '<div class="prediction-alert-text">' + flowAdvice + '</div>' +
                             '</div>') : '';
-                        const statsBlock = '<div class="prediction-stats-row">전체 <strong>' + total + '</strong>회 &nbsp; 승 <strong>' + hit + '</strong>회 &nbsp; 패 <strong>' + losses + '</strong>회' + (total > 0 ? ' (' + hitPct + '%)' : '') + '</div>';
+                        const statsBlock = '<div class="prediction-stats-row">전체 <strong>' + total + '</strong>회 &nbsp; 승 <strong>' + hit + '</strong>회 &nbsp; 패 <strong>' + losses + '</strong>회' + (jokerCount > 0 ? ' &nbsp; 조커 <strong>' + jokerCount + '</strong>회' : '') + (countForPct > 0 ? ' (' + hitPct + '%)' : '') + '</div>';
                         const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:0.8em">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
                         predDiv.innerHTML = '<div class="prediction-layout">' + leftBlock + rightBlock + '</div>' + statsBlock + extraLine;
                     }
@@ -1956,7 +1973,7 @@ RESULTS_HTML = '''
                         let wins = 0, losses = 0;
                         let bust = false;
                         for (let i = 0; i < historyForBet.length; i++) {
-                            const isWin = historyForBet[i].predicted === historyForBet[i].actual;
+                            const isWin = historyForBet[i].actual !== 'joker' && historyForBet[i].predicted === historyForBet[i].actual;  // 조커=패, 마틴 진행
                             const bet = Math.min(currentBet, Math.floor(cap));
                             if (cap < bet || cap <= 0) { bust = true; break; }
                             totalRolling += bet;
@@ -2041,7 +2058,7 @@ RESULTS_HTML = '''
             let wins = 0, losses = 0;
             let bust = false;
             for (let i = 0; i < lastPredictionHistoryForBet.length; i++) {
-                const isWin = lastPredictionHistoryForBet[i].predicted === lastPredictionHistoryForBet[i].actual;
+                const isWin = lastPredictionHistoryForBet[i].actual !== 'joker' && lastPredictionHistoryForBet[i].predicted === lastPredictionHistoryForBet[i].actual;
                 const bet = Math.min(currentBet, Math.floor(cap));
                 if (cap < bet || cap <= 0) { bust = true; break; }
                 totalRolling += bet;
