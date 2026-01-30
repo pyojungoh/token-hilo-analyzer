@@ -713,12 +713,33 @@ def delayed_socketio_init():
         except:
             pass
 
-# 데이터베이스 초기화 (모듈 레벨에서 실행)
-if DB_AVAILABLE and DATABASE_URL:
+# 데이터베이스 초기화 함수 (나중에 호출)
+def ensure_database_initialized():
+    """데이터베이스 초기화 확인 및 실행"""
+    if not DB_AVAILABLE:
+        print("[❌ 경고] psycopg2가 설치되지 않았습니다")
+        return False
+    
+    if not DATABASE_URL:
+        print("[❌ 경고] DATABASE_URL 환경 변수가 설정되지 않았습니다")
+        return False
+    
     try:
-        init_database()
+        result = init_database()
+        if result:
+            print("[✅] 데이터베이스 초기화 성공")
+        else:
+            print("[❌ 경고] 데이터베이스 초기화 실패 (init_database()가 False 반환)")
+        return result
     except Exception as e:
-        print(f"[❌ 경고] 데이터베이스 초기화 실패: {str(e)[:200]}")
+        import traceback
+        print(f"[❌ 오류] 데이터베이스 초기화 실패: {str(e)}")
+        print(f"[❌ 오류] 트레이스백:\n{traceback.format_exc()}")
+        return False
+
+# 모듈 로드 시 초기화 시도
+if DB_AVAILABLE and DATABASE_URL:
+    ensure_database_initialized()
 
 # 별도 스레드에서 Socket.IO 초기화 시작 (서버 시작을 막지 않음)
 init_thread = threading.Thread(target=delayed_socketio_init, daemon=True)
@@ -2012,6 +2033,25 @@ def debug_db_status():
     except Exception as e:
         import traceback
         return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()[:500]
+        }), 500
+
+@app.route('/api/debug/init-db', methods=['POST'])
+def debug_init_db():
+    """데이터베이스 테이블 수동 생성 (디버깅용)"""
+    try:
+        result = ensure_database_initialized()
+        return jsonify({
+            'success': result,
+            'message': '데이터베이스 초기화 완료' if result else '데이터베이스 초기화 실패',
+            'db_available': DB_AVAILABLE,
+            'database_url_set': bool(DATABASE_URL)
+        }), 200 if result else 500
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
             'error': str(e),
             'traceback': traceback.format_exc()[:500]
         }), 500
