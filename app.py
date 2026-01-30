@@ -228,53 +228,54 @@ RESULTS_HTML = '''
             background: #2a2a3e;
             color: #fff;
             font-family: 'Consolas', monospace;
-            padding: 20px;
+            padding: 10px;
         }
         .container {
             max-width: 100%;
             margin: 0 auto;
         }
         .header-info {
-            margin-bottom: 20px;
-            padding: 15px;
+            margin-bottom: 15px;
+            padding: 12px;
             background: rgba(255,255,255,0.05);
             border-radius: 5px;
+            font-size: clamp(0.8em, 2vw, 0.9em);
         }
         .header-info div {
-            margin: 5px 0;
-            font-size: 0.9em;
+            margin: 3px 0;
         }
         .cards-container {
             display: flex;
             overflow-x: auto;
-            gap: 10px;
-            padding: 20px 0;
+            gap: clamp(8px, 2vw, 15px);
+            padding: 15px 0;
             -webkit-overflow-scrolling: touch;
         }
         .cards-container::-webkit-scrollbar {
-            height: 8px;
+            height: 6px;
         }
         .cards-container::-webkit-scrollbar-track {
             background: rgba(255,255,255,0.1);
-            border-radius: 4px;
+            border-radius: 3px;
         }
         .cards-container::-webkit-scrollbar-thumb {
             background: rgba(255,255,255,0.3);
-            border-radius: 4px;
+            border-radius: 3px;
         }
         .card {
             position: relative;
-            width: 80px;
-            height: 120px;
+            width: clamp(70px, 12vw, 120px);
+            height: clamp(100px, 18vw, 180px);
             background: #fff;
-            border: 2px solid #000;
-            border-radius: 8px;
+            border: 3px solid #000;
+            border-radius: 10px;
             display: flex;
             flex-direction: column;
-            justify-content: space-between;
-            padding: 8px;
+            justify-content: center;
+            align-items: center;
+            padding: clamp(8px, 1.5vw, 15px);
             flex-shrink: 0;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
         }
         .card.red {
             color: #d32f2f;
@@ -282,49 +283,58 @@ RESULTS_HTML = '''
         .card.black {
             color: #000;
         }
+        .card-suit-icon {
+            font-size: clamp(40px, 8vw, 80px);
+            line-height: 1;
+            margin-bottom: 5px;
+        }
         .card-value {
-            font-size: 24px;
+            font-size: clamp(32px, 6vw, 64px);
             font-weight: bold;
             text-align: center;
             line-height: 1;
+            margin: 5px 0;
         }
-        .card-suit {
-            font-size: 20px;
-            text-align: center;
-        }
-        .card-suit.top {
-            align-self: flex-start;
-        }
-        .card-suit.bottom {
-            align-self: flex-end;
-            transform: rotate(180deg);
-        }
-        .card-badge {
+        .card-category {
             position: absolute;
-            top: -5px;
-            right: -5px;
-            width: 20px;
-            height: 20px;
-            background: #ffd700;
-            border: 2px solid #000;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 12px;
+            bottom: 5px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: clamp(14px, 2.5vw, 20px);
             font-weight: bold;
-            z-index: 10;
+            padding: 3px 8px;
+            border-radius: 5px;
+            white-space: nowrap;
         }
-        .card-badge.hi::after { content: "↑"; }
-        .card-badge.lo::after { content: "↓"; }
-        .card-badge.joker::after { content: "J"; }
-        .card-badge.red::after { content: "R"; }
-        .card-badge.black::after { content: "B"; }
+        .card-category.hi {
+            background: #4caf50;
+            color: #fff;
+        }
+        .card-category.lo {
+            background: #2196f3;
+            color: #fff;
+        }
+        .card-category.joker {
+            background: #9c27b0;
+            color: #fff;
+        }
+        .card-category.draw {
+            background: #ff9800;
+            color: #fff;
+        }
+        .card-category.red-only {
+            background: #f44336;
+            color: #fff;
+        }
+        .card-category.black-only {
+            background: #424242;
+            color: #fff;
+        }
         .status {
             text-align: center;
-            margin-top: 20px;
+            margin-top: 15px;
             color: #aaa;
-            font-size: 0.9em;
+            font-size: clamp(0.8em, 2vw, 0.9em);
         }
     </style>
 </head>
@@ -339,68 +349,79 @@ RESULTS_HTML = '''
         <div class="status" id="status">로딩 중...</div>
     </div>
     <script>
-        function getCardSuit(value) {
-            // 간단한 문양 할당 (실제 데이터에 따라 수정 필요)
-            const suits = ['♠', '♥', '♦', '♣'];
-            return suits[Math.abs(value.charCodeAt(0)) % 4];
+        function parseCardValue(value) {
+            if (!value) return { number: '', suit: '♥', isRed: true };
+            
+            // 문양 추출
+            const suits = {
+                '♥': { icon: '♥', isRed: true },
+                '♦': { icon: '♦', isRed: true },
+                '♠': { icon: '♠', isRed: false },
+                '♣': { icon: '♣', isRed: false }
+            };
+            
+            // result 값에서 문양 찾기
+            let suit = '♥';
+            let number = value;
+            let isRed = true;
+            
+            for (const [suitChar, suitInfo] of Object.entries(suits)) {
+                if (value.includes(suitChar)) {
+                    suit = suitChar;
+                    number = value.replace(suitChar, '').trim();
+                    isRed = suitInfo.isRed;
+                    break;
+                }
+            }
+            
+            // 문양이 없으면 기본값
+            if (number === value) {
+                suit = '♥';
+                isRed = true;
+            }
+            
+            return {
+                number: number,
+                suit: suits[suit].icon,
+                isRed: isRed
+            };
         }
         
-        function isRedCard(value) {
-            // 하트, 다이아몬드는 빨강
-            const redSuits = ['♥', '♦'];
-            return redSuits.includes(getCardSuit(value));
+        function getCategory(result) {
+            if (result.joker) return { text: 'JOKER', class: 'joker' };
+            if (result.hi && result.lo) return { text: '비김', class: 'draw' };
+            if (result.hi) return { text: 'HI ↑', class: 'hi' };
+            if (result.lo) return { text: 'LO ↓', class: 'lo' };
+            if (result.red && !result.black) return { text: 'RED', class: 'red-only' };
+            if (result.black && !result.red) return { text: 'BLACK', class: 'black-only' };
+            return null;
         }
         
         function createCard(result, index) {
             const card = document.createElement('div');
-            const value = result.result || '';
-            const isRed = result.red || false;
+            const cardInfo = parseCardValue(result.result || '');
+            const category = getCategory(result);
             
-            card.className = 'card ' + (isRed ? 'red' : 'black');
+            card.className = 'card ' + (cardInfo.isRed ? 'red' : 'black');
             
-            // 카드 값 표시
+            // 문양 아이콘 (크게)
+            const suitIcon = document.createElement('div');
+            suitIcon.className = 'card-suit-icon';
+            suitIcon.textContent = cardInfo.suit;
+            card.appendChild(suitIcon);
+            
+            // 카드 숫자 (크게)
             const valueDiv = document.createElement('div');
             valueDiv.className = 'card-value';
-            valueDiv.textContent = value;
+            valueDiv.textContent = cardInfo.number;
             card.appendChild(valueDiv);
             
-            // 문양 표시 (상단)
-            const suitTop = document.createElement('div');
-            suitTop.className = 'card-suit top';
-            suitTop.textContent = getCardSuit(value);
-            card.appendChild(suitTop);
-            
-            // 문양 표시 (하단)
-            const suitBottom = document.createElement('div');
-            suitBottom.className = 'card-suit bottom';
-            suitBottom.textContent = getCardSuit(value);
-            card.appendChild(suitBottom);
-            
-            // 카테고리 배지
-            if (result.hi) {
-                const badge = document.createElement('div');
-                badge.className = 'card-badge hi';
-                card.appendChild(badge);
-            }
-            if (result.lo) {
-                const badge = document.createElement('div');
-                badge.className = 'card-badge lo';
-                card.appendChild(badge);
-            }
-            if (result.joker) {
-                const badge = document.createElement('div');
-                badge.className = 'card-badge joker';
-                card.appendChild(badge);
-            }
-            if (result.red && !result.hi && !result.lo && !result.joker) {
-                const badge = document.createElement('div');
-                badge.className = 'card-badge red';
-                card.appendChild(badge);
-            }
-            if (result.black && !result.hi && !result.lo && !result.joker) {
-                const badge = document.createElement('div');
-                badge.className = 'card-badge black';
-                card.appendChild(badge);
+            // 카테고리 표시 (하단)
+            if (category) {
+                const categoryDiv = document.createElement('div');
+                categoryDiv.className = 'card-category ' + category.class;
+                categoryDiv.textContent = category.text;
+                card.appendChild(categoryDiv);
             }
             
             return card;
