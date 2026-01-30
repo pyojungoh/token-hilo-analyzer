@@ -1478,28 +1478,29 @@ def favicon():
     """favicon 404 에러 방지"""
     return '', 204  # No Content
 
-if __name__ == '__main__':
-    print("=" * 50)
-    print("[서버 시작] 토큰하이로우 분석기")
-    print("=" * 50)
-    print(f"[환경 변수] SOCKETIO_URL: {SOCKETIO_URL}")
-    print(f"[환경 변수] BASE_URL: {BASE_URL}")
-    print(f"[라이브러리] python-socketio 사용 가능: {SOCKETIO_AVAILABLE}")
-    
-    # Socket.IO 클라이언트 시작
-    if SOCKETIO_AVAILABLE:
-        if SOCKETIO_URL:
-            print(f"[✅ 정보] Socket.IO 연결 시작: {SOCKETIO_URL}")
-            start_socketio_client()
-        else:
-            print("[❌ 경고] SOCKETIO_URL 환경 변수가 설정되지 않았습니다")
-            print("[❌ 경고] Railway 환경 변수에 SOCKETIO_URL을 설정하세요")
-            print("[❌ 경고] 예: SOCKETIO_URL=https://game.cmx258.com:8080")
+# Gunicorn으로 실행될 때도 Socket.IO 연결 시작 (모듈 레벨에서 실행)
+print("=" * 50)
+print("[서버 시작] 토큰하이로우 분석기")
+print("=" * 50)
+print(f"[환경 변수] SOCKETIO_URL: {SOCKETIO_URL}")
+print(f"[환경 변수] BASE_URL: {BASE_URL}")
+print(f"[라이브러리] python-socketio 사용 가능: {SOCKETIO_AVAILABLE}")
+
+# Socket.IO 클라이언트 시작 (Gunicorn으로 실행될 때도 실행됨)
+if SOCKETIO_AVAILABLE:
+    if SOCKETIO_URL:
+        print(f"[✅ 정보] Socket.IO 연결 시작: {SOCKETIO_URL}")
+        start_socketio_client()
     else:
-        print("[❌ 경고] python-socketio가 설치되지 않아 Socket.IO 연결을 사용하지 않습니다")
-        print("[❌ 경고] pip install python-socketio로 설치하세요")
-    
+        print("[❌ 경고] SOCKETIO_URL 환경 변수가 설정되지 않았습니다")
+        print("[❌ 경고] Railway 환경 변수에 SOCKETIO_URL을 설정하세요")
+        print("[❌ 경고] 예: SOCKETIO_URL=https://game.cmx258.com:8080")
+else:
+    print("[❌ 경고] python-socketio가 설치되지 않아 Socket.IO 연결을 사용하지 않습니다")
+    print("[❌ 경고] pip install python-socketio로 설치하세요")
+print("=" * 50)
+
+if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     print(f"[✅ 정보] Flask 서버 시작: http://0.0.0.0:{port}")
-    print("=" * 50)
     app.run(host='0.0.0.0', port=port, debug=False)
