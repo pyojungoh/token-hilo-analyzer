@@ -93,9 +93,16 @@ def load_game_data():
         try:
             data = response.json()
             print(f"[JSON 파싱 성공] round: {data.get('round', 0)}, red: {len(data.get('red', []))}개, black: {len(data.get('black', []))}개")
+            print(f"[원본 데이터 키] {list(data.keys())}")
+            print(f"[원본 데이터 샘플] round={data.get('round')}, red 길이={len(data.get('red', []))}, black 길이={len(data.get('black', []))}")
+            if len(data.get('red', [])) > 0:
+                print(f"[RED 샘플] {data.get('red', [])[0]}")
+            if len(data.get('black', [])) > 0:
+                print(f"[BLACK 샘플] {data.get('black', [])[0]}")
         except (ValueError, json.JSONDecodeError) as e:
             print(f"[JSON 파싱 오류] {str(e)[:200]}")
             print(f"[응답 내용] {response.text[:500]}")
+            print(f"[응답 헤더] {dict(response.headers)}")
             return {
                 'round': 0,
                 'elapsed': 0,
