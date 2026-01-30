@@ -75,12 +75,22 @@ def load_game_data():
         
         data = response.json()
         
+        # red, black 배열 가져오기
+        red_bets = data.get('red', [])
+        black_bets = data.get('black', [])
+        
+        # 리스트가 아닌 경우 빈 배열로 처리
+        if not isinstance(red_bets, list):
+            red_bets = []
+        if not isinstance(black_bets, list):
+            black_bets = []
+        
         return {
             'round': data.get('round', 0),
             'elapsed': data.get('elapsed', 0),
             'currentBets': {
-                'red': data.get('red', []) if isinstance(data.get('red'), list) else [],
-                'black': data.get('black', []) if isinstance(data.get('black'), list) else []
+                'red': red_bets,
+                'black': black_bets
             },
             'timestamp': datetime.now().isoformat()
         }
@@ -451,7 +461,7 @@ RESULTS_HTML = '''
             </div>
         </div>
         <div class="cards-container" id="cards"></div>
-        <div class="betting-info" id="betting-info" style="display: none;">
+        <div class="betting-info" id="betting-info" style="display: flex;">
             <div class="betting-item">
                 <div class="betting-label">🔴 RED</div>
                 <div class="betting-amount red" id="red-amount">0</div>
