@@ -992,6 +992,7 @@ RESULTS_HTML = '''
         .container {
             max-width: 100%;
             margin: 0 auto;
+            padding: 0 clamp(8px, 2vw, 16px);
         }
         .header-info {
             margin-bottom: 15px;
@@ -1166,9 +1167,10 @@ RESULTS_HTML = '''
         }
         .graph-stats th, .graph-stats td {
             border: 1px solid #666;
-            padding: 8px 12px;
+            padding: clamp(6px, 1.5vw, 10px) clamp(8px, 2vw, 12px);
             text-align: center;
             color: #fff;
+            font-size: clamp(11px, 2vw, 14px);
         }
         .graph-stats th { background: #444; font-weight: bold; color: #fff; }
         .graph-stats td:first-child { text-align: left; font-weight: bold; color: #fff; }
@@ -1180,26 +1182,37 @@ RESULTS_HTML = '''
         .prediction-table-row {
             display: flex;
             align-items: flex-start;
-            gap: 16px;
+            gap: clamp(12px, 3vw, 20px);
             margin-top: 12px;
+            flex-wrap: wrap;
         }
-        #prediction-pick-container { flex: 0 0 auto; }
-        #graph-stats { flex: 1 1 auto; min-width: 0; }
-        #prediction-alert-container { flex: 0 0 auto; }
+        @media (max-width: 768px) {
+            .prediction-table-row { flex-direction: column; align-items: center; }
+            #prediction-pick-container { width: 100%; display: flex; justify-content: center; }
+        }
+        #prediction-pick-container {
+            flex: 0 0 auto;
+            padding: clamp(10px, 2vw, 16px);
+            background: rgba(255,255,255,0.04);
+            border: 1px solid #444;
+            border-radius: 12px;
+        }
+        #graph-stats { flex: 1 1 auto; min-width: 0; overflow-x: auto; }
         .prediction-pick {
             display: flex;
             flex-direction: column;
-            align-items: flex-start;
+            align-items: center;
+            text-align: center;
         }
         .prediction-pick-title {
-            font-size: 0.9em;
+            font-size: clamp(0.85em, 2vw, 0.95em);
             font-weight: bold;
             color: #81c784;
             margin-bottom: 6px;
         }
         .prediction-card {
-            width: 80px;
-            height: 80px;
+            width: clamp(70px, 18vw, 80px);
+            height: clamp(70px, 18vw, 80px);
             background: #1a1a1a;
             border: 3px solid #424242;
             border-radius: 12px;
@@ -1218,7 +1231,7 @@ RESULTS_HTML = '''
             border-color: #424242;
         }
         .prediction-card .pred-value-big {
-            font-size: 2.2em;
+            font-size: clamp(1.8em, 5vw, 2.2em);
             font-weight: 900;
             color: #fff;
             text-shadow: 0 0 12px rgba(255,255,255,0.4);
@@ -1227,54 +1240,38 @@ RESULTS_HTML = '''
         .prediction-card.card-black .pred-value-big { color: #e0e0e0; }
         .prediction-prob-under {
             margin-top: 8px;
-            font-size: 0.95em;
+            font-size: clamp(0.85em, 2vw, 0.95em);
             color: #81c784;
             font-weight: bold;
-        }
-        .prediction-alert {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-end;
-            text-align: right;
-            min-width: 180px;
-        }
-        .prediction-alert-icon {
-            font-size: 3.5em;
-            line-height: 1;
-            color: #ffc107;
-            text-shadow: 0 0 20px rgba(255,193,7,0.6);
-            width: 56px;
-            height: 56px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: rgba(255,193,7,0.15);
-            border: 2px solid rgba(255,193,7,0.5);
-            border-radius: 50%;
-            margin-left: auto;
-        }
-        .prediction-alert-text {
-            margin-top: 6px;
-            font-size: 0.85em;
-            color: #ffc107;
-            line-height: 1.3;
         }
         .prediction-stats-row {
             width: 100%;
             margin-top: 10px;
             padding-top: 8px;
             border-top: 1px solid #333;
-            font-size: 0.9em;
+            font-size: clamp(0.85em, 2vw, 0.95em);
             color: #aaa;
         }
         .prediction-stats-row strong { color: #fff; }
-        .prediction-streak-line { margin-top: 8px; font-size: 1em; color: #bbb; }
+        .prediction-streak-line { margin-top: 8px; font-size: clamp(0.9em, 2vw, 1em); color: #bbb; text-align: center; }
         .prediction-streak-line .streak-win { color: #81c784; font-weight: bold; }
         .prediction-streak-line .streak-lose { color: #e57373; font-weight: bold; }
         .prediction-streak-line .streak-joker { color: #64b5f6; }
+        .prediction-notice {
+            margin-top: 10px;
+            padding: 10px 12px;
+            background: rgba(255,193,7,0.12);
+            border: 1px solid rgba(255,193,7,0.35);
+            border-radius: 8px;
+            color: #ffc107;
+            font-size: clamp(0.85em, 2vw, 0.95em);
+            text-align: center;
+            line-height: 1.4;
+        }
+        .prediction-notice.danger { background: rgba(229,115,115,0.12); border-color: rgba(229,115,115,0.35); color: #e57373; }
         .prediction-box {
             margin-top: 10px;
-            padding: 10px 14px;
+            padding: clamp(10px, 2vw, 14px);
             background: #333;
             border-radius: 8px;
             color: #fff;
@@ -1347,7 +1344,6 @@ RESULTS_HTML = '''
         <div class="prediction-table-row">
             <div id="prediction-pick-container"></div>
             <div id="graph-stats" class="graph-stats"></div>
-            <div id="prediction-alert-container"></div>
         </div>
         <div id="prediction-box" class="prediction-box"></div>
         <div class="bet-calc">
@@ -1953,9 +1949,8 @@ RESULTS_HTML = '''
                     }
                     const streakNow = streakCount > 0 ? '현재 ' + streakCount + '연' + streakType : '';
                     
-                    // 예측 픽(표 왼쪽) · 경고(표 오른쪽) · 적중률·연승연패 기록(아래 박스)
+                    // 예측 픽(표 왼쪽 박스, 가운데 정렬) · 적중률·연승연패·주의 사항(아래 회색 박스)
                     const pickContainer = document.getElementById('prediction-pick-container');
-                    const alertContainer = document.getElementById('prediction-alert-container');
                     const predDiv = document.getElementById('prediction-box');
                     const hit = predictionHistory.filter(h => h.actual !== 'joker' && h.predicted === h.actual).length;
                     const losses = predictionHistory.filter(h => h.actual !== 'joker' && h.predicted !== h.actual).length;
@@ -1980,24 +1975,20 @@ RESULTS_HTML = '''
                         '<div class="prediction-prob-under">나올 확률 ' + predProb.toFixed(1) + '%</div>' +
                         '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + predictedRound + '회</div>' +
                         '</div>');
-                    let rightBlock = flowAdvice ? ('<div class="prediction-alert">' +
-                        '<div class="prediction-alert-icon">!</div>' +
-                        '<div class="prediction-alert-text">' + flowAdvice + '</div>' +
-                        '</div>') : '';
-                    if (lowWinRate) {
-                        rightBlock += '<div class="prediction-alert" style="margin-top:8px">' +
-                            '<div class="prediction-alert-icon" style="font-size:2em;color:#e57373">!</div>' +
-                            '<div class="prediction-alert-text" style="color:#e57373">승률이 낮으니 배팅 주의</div>' +
-                            '</div>';
-                    }
                     if (pickContainer) pickContainer.innerHTML = leftBlock;
-                    if (alertContainer) alertContainer.innerHTML = rightBlock;
                     if (predDiv) {
                         const statsBlock = '<div class="prediction-stats-row">전체 <strong>' + total + '</strong>회 &nbsp; 승 <strong>' + hit + '</strong>회 &nbsp; 패 <strong>' + losses + '</strong>회' + (jokerCount > 0 ? ' &nbsp; 조커 <strong>' + jokerCount + '</strong>회' : '') + (countForPct > 0 ? ' &nbsp; 승률 <strong>' + hitPct + '%</strong>' : '') + '</div>';
                         const streakDisplay = streakArr.map(s => s === '승' ? '<span class="streak-win">승</span>' : (s === '패' ? '<span class="streak-lose">패</span>' : '<span class="streak-joker">조커</span>')).join(' ');
                         const streakLineBlock = '<div class="prediction-streak-line">연승/연패 기록: ' + (streakDisplay || '-') + (streakNow ? ' &nbsp; <span class="streak-now">' + streakNow + '</span>' : '') + '</div>';
-                        const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:0.8em">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
-                        predDiv.innerHTML = statsBlock + streakLineBlock + extraLine;
+                        let noticeBlock = '';
+                        if (flowAdvice || lowWinRate) {
+                            const notices = [];
+                            if (flowAdvice) notices.push(flowAdvice);
+                            if (lowWinRate) notices.push('⚠ 승률이 낮으니 배팅 주의');
+                            noticeBlock = '<div class="prediction-notice' + (lowWinRate && !flowAdvice ? ' danger' : '') + '">' + notices.join(' &nbsp; · &nbsp; ') + '</div>';
+                        }
+                        const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:clamp(0.75em,1.8vw,0.85em)">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
+                        predDiv.innerHTML = statsBlock + streakLineBlock + noticeBlock + extraLine;
                     }
                     
                     // 가상 배팅 계산: 실행 눌렀을 때만 갱신. 리셋 이후 예측만 사용(리셋 시 누적 합산 방지).
@@ -2043,10 +2034,8 @@ RESULTS_HTML = '''
                 }
                 if (graphValues.length < 2) {
                     const pickEmpty = document.getElementById('prediction-pick-container');
-                    const alertEmpty = document.getElementById('prediction-alert-container');
                     const predDivEmpty = document.getElementById('prediction-box');
                     if (pickEmpty) pickEmpty.innerHTML = '';
-                    if (alertEmpty) alertEmpty.innerHTML = '';
                     if (predDivEmpty) predDivEmpty.innerHTML = '';
                 }
                 
