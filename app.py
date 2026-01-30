@@ -1118,15 +1118,19 @@ RESULTS_HTML = '''
             background: #f44336;
             color: #fff;
         }
-        /* 정/꺽 블록 그래프: 좌=최신, 같은 타입 세로로 쌓기, 배경 있는 글씨 */
+        /* 정/꺽 블록 그래프: 좌=최신, 같은 타입 세로로 쌓기, 배경 있는 글씨, 쭉 표시 */
         .jung-kkuk-graph {
             margin-top: 12px;
             display: flex;
             flex-direction: row;
-            justify-content: center;
+            justify-content: flex-start;
             align-items: flex-end;
             gap: 6px;
-            flex-wrap: wrap;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            overflow-y: hidden;
+            max-width: 100%;
+            padding-bottom: 4px;
         }
         .jung-kkuk-graph .graph-column {
             display: flex;
@@ -1293,7 +1297,7 @@ RESULTS_HTML = '''
         
         // 각 카드의 색상 비교 결과 저장 (gameID를 키로, 비교 대상 gameID도 함께 저장)
         const colorMatchCache = {};
-        // 최근 30개 결과 저장 (비교를 위해)
+        // 최근 150개 결과 저장 (카드 15개, 그래프는 전부 쭉 표시)
         let allResults = [];
         let isLoadingResults = false;  // 중복 요청 방지
         
@@ -1357,7 +1361,7 @@ RESULTS_HTML = '''
                     }))
                 });
                 
-                // 새로운 결과를 기존 결과와 병합 (중복 제거, 최신 30개 유지)
+                // 새로운 결과를 기존 결과와 병합 (중복 제거, 최신 150개 유지 - 그래프 쭉 표시용)
                 if (newResults.length > 0) {
                     // 새로운 결과의 gameID들
                     const newGameIDs = new Set(newResults.map(r => r.gameID).filter(id => id));
@@ -1365,8 +1369,8 @@ RESULTS_HTML = '''
                     // 기존 결과에서 새로운 결과에 없는 것만 유지
                     const oldResults = allResults.filter(r => !newGameIDs.has(r.gameID));
                     
-                    // 새로운 결과 + 기존 결과 (최신 30개만)
-                    allResults = [...newResults, ...oldResults].slice(0, 30);
+                    // 새로운 결과 + 기존 결과 (최신 150개 - 카드는 15개만, 그래프는 전부)
+                    allResults = [...newResults, ...oldResults].slice(0, 150);
                 } else {
                     // 새로운 결과가 없으면 기존 결과 유지
                     if (allResults.length === 0) {
@@ -1385,9 +1389,11 @@ RESULTS_HTML = '''
                 // 각 카드는 고정된 상대 위치의 카드와 비교 (1번째↔16번째, 2번째↔17번째, ...)
                 const colorMatchResults = [];
                 
+                // 그래프용: 전체 results에서 유효한 모든 위치(i vs i+15)에 대해 정/꺽 계산
+                const graphColorMatchResults = [];
+                
                 // 전체 results 배열이 16개 이상이어야 비교 가능
                 if (results.length < 16) {
-                    // 모든 카드에 null 할당
                     for (let i = 0; i < displayResults.length; i++) {
                         colorMatchResults[i] = null;
                     }
@@ -1395,52 +1401,67 @@ RESULTS_HTML = '''
                     for (let i = 0; i < displayResults.length; i++) {
                         const currentResult = displayResults[i];
                         const currentGameID = currentResult?.gameID || '';
-                        const compareIndex = i + 15;  // 1번째는 16번째와, 2번째는 17번째와 비교
+                        const compareIndex = i + 15;
                         
-                        // 조커 카드는 색상 비교 불가
                         if (currentResult.joker) {
                             colorMatchResults[i] = null;
                             continue;
                         }
-                        
                         if (!currentGameID) {
                             colorMatchResults[i] = null;
                             continue;
                         }
-                        
-                        // 16번째 이후 카드가 있어야 비교 가능
                         if (results.length <= compareIndex) {
                             colorMatchResults[i] = null;
                             continue;
                         }
-                        
-                        // 비교 대상도 조커가 아닌지 확인
                         if (results[compareIndex]?.joker) {
                             colorMatchResults[i] = null;
                             continue;
                         }
                         
-                        // 캐시 키 생성
                         const compareGameID = results[compareIndex]?.gameID || '';
                         const cacheKey = `${currentGameID}_${compareGameID}`;
-                        
-                        // 캐시에 이미 있는지 확인
                         if (colorMatchCache[cacheKey] !== undefined) {
-                            const cachedResult = colorMatchCache[cacheKey];
-                            colorMatchResults[i] = cachedResult === true;  // 명확히 boolean으로 변환
+                            colorMatchResults[i] = colorMatchCache[cacheKey] === true;
                         } else {
-                            // 새로운 비교 결과 계산
                             const currentCard = parseCardValue(currentResult.result || '');
                             const compareCard = parseCardValue(results[compareIndex].result || '');
                             const matchResult = (currentCard.isRed === compareCard.isRed);
                             colorMatchCache[cacheKey] = matchResult;
-                            colorMatchResults[i] = matchResult === true;  // 명확히 boolean으로 변환
+                            colorMatchResults[i] = matchResult === true;
+                        }
+                    }
+                    
+                    // 그래프용: 0 ~ (results.length - 16) 전부 계산 (쭉 표시)
+                    for (let i = 0; i <= results.length - 16; i++) {
+                        const cur = results[i];
+                        const compareIndex = i + 15;
+                        if (cur?.joker || results[compareIndex]?.joker) {
+                            graphColorMatchResults.push(null);
+                            continue;
+                        }
+                        const currentGameID = cur?.gameID || '';
+                        const compareGameID = results[compareIndex]?.gameID || '';
+                        if (!currentGameID || !compareGameID) {
+                            graphColorMatchResults.push(null);
+                            continue;
+                        }
+                        const cacheKey = `${currentGameID}_${compareGameID}`;
+                        if (colorMatchCache[cacheKey] !== undefined) {
+                            graphColorMatchResults.push(colorMatchCache[cacheKey] === true);
+                        } else {
+                            const currentCard = parseCardValue(cur.result || '');
+                            const compareCard = parseCardValue(results[compareIndex].result || '');
+                            const matchResult = (currentCard.isRed === compareCard.isRed);
+                            colorMatchCache[cacheKey] = matchResult;
+                            graphColorMatchResults.push(matchResult === true);
                         }
                     }
                 }
                 
-                // 오래된 캐시 정리 (현재 표시되지 않는 카드 제거)
-                const currentGameIDs = new Set(displayResults.map(r => r.gameID).filter(id => id));
+                // 오래된 캐시 정리 (allResults에 없는 카드만 제거 - 그래프용 데이터 유지)
+                const currentGameIDs = new Set(allResults.map(r => r.gameID).filter(id => id));
                 for (const key in colorMatchCache) {
                     const gameID = key.split('_')[0];
                     if (!currentGameIDs.has(gameID)) {
@@ -1471,19 +1492,22 @@ RESULTS_HTML = '''
                     return;
                 }
                 
-                // 정/꺽 최종 값 수집 (그래프용)
-                const graphValues = [];
+                // 카드용 정/꺽 (15개)
+                const cardMatchValues = [];
                 displayResults.forEach((result, index) => {
                     let matchResult = result.colorMatch;
                     if (matchResult === undefined || matchResult === null) {
                         matchResult = colorMatchResults[index];
                     }
-                    graphValues.push(matchResult);  // true=정, false=꺽, null
+                    cardMatchValues.push(matchResult);
                 });
+                
+                // 그래프용 정/꺽 (전체: results.length - 15개, 쭉 표시)
+                const graphValues = (results.length >= 16) ? graphColorMatchResults : [];
                 
                 displayResults.forEach((result, index) => {
                     try {
-                        const matchResult = graphValues[index];
+                        const matchResult = cardMatchValues[index];
                         const card = createCard(result, index, matchResult);
                         cardsDiv.appendChild(card);
                     } catch (error) {
