@@ -790,17 +790,35 @@ RESULTS_HTML = '''
         async function updateBettingInfo() {
             try {
                 const response = await fetch('/api/current-status?t=' + Date.now());
-                if (!response.ok) return;
+                if (!response.ok) {
+                    console.log('베팅 정보 API 오류:', response.status);
+                    return;
+                }
                 
                 const data = await response.json();
-                if (data.error || !data.currentBets) return;
+                console.log('베팅 데이터:', data);
+                
+                if (data.error) {
+                    console.log('베팅 데이터 오류:', data.error);
+                    return;
+                }
+                
+                if (!data.currentBets) {
+                    console.log('currentBets가 없음');
+                    return;
+                }
                 
                 const redBets = data.currentBets.red || [];
                 const blackBets = data.currentBets.black || [];
                 
+                console.log('RED 베팅:', redBets.length, '개');
+                console.log('BLACK 베팅:', blackBets.length, '개');
+                
                 // 총 베팅 금액 계산
                 const redTotal = redBets.reduce((sum, bet) => sum + (bet.cash || 0), 0);
                 const blackTotal = blackBets.reduce((sum, bet) => sum + (bet.cash || 0), 0);
+                
+                console.log('RED 총액:', redTotal, 'BLACK 총액:', blackTotal);
                 
                 // 금액 표시 (천 단위 콤마)
                 const formatAmount = (amount) => {
@@ -817,8 +835,17 @@ RESULTS_HTML = '''
                 const bettingInfoElement = document.getElementById('betting-info');
                 const bettingWinnerElement = document.getElementById('betting-winner');
                 
-                if (redAmountElement) redAmountElement.textContent = formatAmount(redTotal);
-                if (blackAmountElement) blackAmountElement.textContent = formatAmount(blackTotal);
+                if (redAmountElement) {
+                    redAmountElement.textContent = formatAmount(redTotal);
+                } else {
+                    console.error('red-amount 요소를 찾을 수 없음');
+                }
+                
+                if (blackAmountElement) {
+                    blackAmountElement.textContent = formatAmount(blackTotal);
+                } else {
+                    console.error('black-amount 요소를 찾을 수 없음');
+                }
                 
                 // 더 많이 베팅한 쪽 표시
                 if (bettingWinnerElement) {
@@ -837,10 +864,14 @@ RESULTS_HTML = '''
                 }
                 
                 // 베팅 정보 표시
-                if (bettingInfoElement && (redTotal > 0 || blackTotal > 0)) {
-                    bettingInfoElement.style.display = 'flex';
-                } else if (bettingInfoElement) {
-                    bettingInfoElement.style.display = 'none';
+                if (bettingInfoElement) {
+                    if (redTotal > 0 || blackTotal > 0) {
+                        bettingInfoElement.style.display = 'flex';
+                    } else {
+                        bettingInfoElement.style.display = 'none';
+                    }
+                } else {
+                    console.error('betting-info 요소를 찾을 수 없음');
                 }
             } catch (error) {
                 console.error('베팅 정보 업데이트 오류:', error);
@@ -875,12 +906,21 @@ RESULTS_HTML = '''
                             timerData.lastFetch = now;
                             
                             // 라운드가 변경되거나 elapsed가 리셋되면 경기 결과 즉시 새로고침
-                            if (timerData.round !== prevRound || 
-                                (prevElapsed > 8 && data.elapsed < 2) ||
-                                (prevElapsed < 1 && data.elapsed > 9)) {  // 새 라운드 시작 감지
-                                loadResults();
-                                lastResultsUpdate = now;
+                            const roundChanged = timerData.round !== prevRound;
+                            const roundEnded = prevElapsed > 8 && data.elapsed < 2;
+                            const roundStarted = prevElapsed < 1 && data.elapsed > 9;
+                            
+                            if (roundChanged || roundEnded || roundStarted) {
+                                console.log('라운드 변경 감지:', { roundChanged, roundEnded, roundStarted, prevRound, newRound: timerData.round, prevElapsed, newElapsed: data.elapsed });
+                                // 약간의 지연 후 결과 로드 (서버에서 결과가 업데이트될 시간 확보)
+                                setTimeout(() => {
+                                    loadResults();
+                                    lastResultsUpdate = Date.now();
+                                }, 500);
                             }
+                            
+                            // 베팅 정보도 함께 업데이트
+                            updateBettingInfo();
                         }
                     } catch (error) {
                         // 에러가 나도 클라이언트 측 계산 계속
