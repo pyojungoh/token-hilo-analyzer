@@ -93,8 +93,13 @@ def fetch_with_retry(url, max_retries=MAX_RETRIES, silent=False):
     return None
 
 def load_game_data():
-    """게임 데이터 로드 (current_status_frame.json) - 여러 경로 시도"""
-    # 가능한 URL 경로들 (우선순위 순)
+    """게임 데이터 로드 (current_status_frame.json) - WebSocket으로만 받을 수 있음"""
+    # 주의: 베팅 데이터는 WebSocket을 통해서만 받을 수 있습니다
+    # 공개 URL이 없으므로 빈 데이터 반환
+    # 실제 베팅 데이터를 받으려면 WebSocket 연결이 필요합니다
+    print(f"[경고] 베팅 데이터는 WebSocket으로만 받을 수 있습니다. 공개 URL이 없습니다.")
+    
+    # 여러 경로 시도 (혹시 모를 경우를 위해)
     possible_paths = [
         f"{BASE_URL}/frame/hilo/current_status_frame.json",
         f"{BASE_URL}/current_status_frame.json",
@@ -171,10 +176,10 @@ def load_game_data():
     }
 
 def load_results_data():
-    """경기 결과 데이터 로드 (result.json) - 여러 경로 시도"""
-    # 가능한 URL 경로들 (우선순위 순)
+    """경기 결과 데이터 로드 (result.json) - 실제 URL 사용"""
+    # 실제 확인된 URL 경로
     possible_paths = [
-        f"{BASE_URL}/frame/hilo/result.json",
+        f"{BASE_URL}/frame/hilo/result.json",  # 실제 확인된 경로
         f"{BASE_URL}/result.json",
         f"{BASE_URL}/hilo/result.json",
         f"{BASE_URL}/frame/result.json",
