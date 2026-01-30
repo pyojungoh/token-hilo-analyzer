@@ -1644,27 +1644,37 @@ def get_results():
                     # 각 결과에 정/꺽 정보 추가 (최신 15개만)
                     for i in range(min(15, len(results))):
                         if i + 15 < len(results):
-                            current_game_id = results[i].get('gameID')
-                            compare_game_id = results[i + 15].get('gameID')
+                            current_game_id = str(results[i].get('gameID', ''))
+                            compare_game_id = str(results[i + 15].get('gameID', ''))
                             
-                            # 이미 colorMatch가 있으면 유지 (DB에서 가져온 경우)
-                            if results[i].get('colorMatch') is not None:
+                            if not current_game_id or not compare_game_id:
+                                results[i]['colorMatch'] = None
                                 continue
                             
                             # 조커 카드는 비교 불가
                             if results[i].get('joker') or results[i + 15].get('joker'):
                                 results[i]['colorMatch'] = None
-                            else:
-                                match_result = get_color_match(current_game_id, compare_game_id)
-                                if match_result is None:
-                                    # DB에 없으면 즉시 계산
-                                    current_color = parse_card_color(results[i].get('result', ''))
-                                    compare_color = parse_card_color(results[i + 15].get('result', ''))
-                                    if current_color is not None and compare_color is not None:
-                                        match_result = (current_color == compare_color)
-                                        # 계산 결과를 DB에 저장
-                                        save_color_match(current_game_id, compare_game_id, match_result)
-                                results[i]['colorMatch'] = match_result
+                                continue
+                            
+                            # DB에서 정/꺽 결과 조회
+                            match_result = get_color_match(current_game_id, compare_game_id)
+                            
+                            if match_result is None:
+                                # DB에 없으면 즉시 계산
+                                current_color = parse_card_color(results[i].get('result', ''))
+                                compare_color = parse_card_color(results[i + 15].get('result', ''))
+                                
+                                if current_color is not None and compare_color is not None:
+                                    match_result = (current_color == compare_color)
+                                    # 계산 결과를 DB에 저장
+                                    save_color_match(current_game_id, compare_game_id, match_result)
+                                    print(f"[✅] 정/꺽 결과 계산 및 저장: {current_game_id} vs {compare_game_id} = {match_result}")
+                                else:
+                                    match_result = None
+                            
+                            # 결과에 추가 (항상 추가, None이어도)
+                            results[i]['colorMatch'] = match_result
+                            print(f"[API] 정/꺽 결과 추가: 카드 {i+1} ({current_game_id}) = {match_result}")
             else:
                 # 최신 데이터가 없으면 DB 데이터만 사용
                 results = db_results
