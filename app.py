@@ -796,27 +796,40 @@ RESULTS_HTML = '''
                 }
                 
                 const data = await response.json();
-                console.log('베팅 데이터:', data);
+                console.log('베팅 데이터 전체:', JSON.stringify(data, null, 2));
                 
                 if (data.error) {
                     console.log('베팅 데이터 오류:', data.error);
                     return;
                 }
                 
-                if (!data.currentBets) {
-                    console.log('currentBets가 없음');
-                    return;
+                // currentBets가 없어도 red, black을 직접 확인
+                let redBets = [];
+                let blackBets = [];
+                
+                if (data.currentBets) {
+                    redBets = data.currentBets.red || [];
+                    blackBets = data.currentBets.black || [];
+                } else if (data.red && data.black) {
+                    // currentBets가 없으면 직접 red, black 확인
+                    redBets = Array.isArray(data.red) ? data.red : [];
+                    blackBets = Array.isArray(data.black) ? data.black : [];
                 }
                 
-                const redBets = data.currentBets.red || [];
-                const blackBets = data.currentBets.black || [];
-                
-                console.log('RED 베팅:', redBets.length, '개');
-                console.log('BLACK 베팅:', blackBets.length, '개');
+                console.log('RED 베팅 배열:', redBets);
+                console.log('BLACK 베팅 배열:', blackBets);
+                console.log('RED 베팅 개수:', redBets.length);
+                console.log('BLACK 베팅 개수:', blackBets.length);
                 
                 // 총 베팅 금액 계산
-                const redTotal = redBets.reduce((sum, bet) => sum + (bet.cash || 0), 0);
-                const blackTotal = blackBets.reduce((sum, bet) => sum + (bet.cash || 0), 0);
+                const redTotal = redBets.reduce((sum, bet) => {
+                    const cash = bet.cash || bet.amount || 0;
+                    return sum + cash;
+                }, 0);
+                const blackTotal = blackBets.reduce((sum, bet) => {
+                    const cash = bet.cash || bet.amount || 0;
+                    return sum + cash;
+                }, 0);
                 
                 console.log('RED 총액:', redTotal, 'BLACK 총액:', blackTotal);
                 
@@ -835,14 +848,23 @@ RESULTS_HTML = '''
                 const bettingInfoElement = document.getElementById('betting-info');
                 const bettingWinnerElement = document.getElementById('betting-winner');
                 
+                console.log('DOM 요소 확인:', {
+                    redAmountElement: !!redAmountElement,
+                    blackAmountElement: !!blackAmountElement,
+                    bettingInfoElement: !!bettingInfoElement,
+                    bettingWinnerElement: !!bettingWinnerElement
+                });
+                
                 if (redAmountElement) {
                     redAmountElement.textContent = formatAmount(redTotal);
+                    console.log('RED 금액 표시:', formatAmount(redTotal));
                 } else {
                     console.error('red-amount 요소를 찾을 수 없음');
                 }
                 
                 if (blackAmountElement) {
                     blackAmountElement.textContent = formatAmount(blackTotal);
+                    console.log('BLACK 금액 표시:', formatAmount(blackTotal));
                 } else {
                     console.error('black-amount 요소를 찾을 수 없음');
                 }
@@ -863,13 +885,10 @@ RESULTS_HTML = '''
                     }
                 }
                 
-                // 베팅 정보 표시
+                // 베팅 정보 표시 (항상 표시, 0이어도)
                 if (bettingInfoElement) {
-                    if (redTotal > 0 || blackTotal > 0) {
-                        bettingInfoElement.style.display = 'flex';
-                    } else {
-                        bettingInfoElement.style.display = 'none';
-                    }
+                    bettingInfoElement.style.display = 'flex';
+                    console.log('베팅 정보 박스 표시');
                 } else {
                     console.error('betting-info 요소를 찾을 수 없음');
                 }
@@ -978,13 +997,11 @@ RESULTS_HTML = '''
             }
         }, 1000);
         
-        // 2초마다 베팅 정보 업데이트
+        // 1초마다 베팅 정보 업데이트 (더 빠른 업데이트)
         setInterval(() => {
-            if (Date.now() - lastBettingUpdate > 2000) {
-                updateBettingInfo();
-                lastBettingUpdate = Date.now();
-            }
-        }, 2000);
+            updateBettingInfo();
+            lastBettingUpdate = Date.now();
+        }, 1000);
         
         // 0.1초마다 타이머 업데이트 (실시간 동기화)
         setInterval(updateTimer, 100);
