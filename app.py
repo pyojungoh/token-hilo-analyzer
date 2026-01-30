@@ -1922,6 +1922,154 @@ def test_betting():
             'traceback': traceback.format_exc()
         }), 500
 
+@app.route('/api/debug/db-status', methods=['GET'])
+def debug_db_status():
+    """데이터베이스 상태 확인 (디버깅용)"""
+    try:
+        status = {
+            'db_available': DB_AVAILABLE,
+            'database_url_set': bool(DATABASE_URL),
+            'database_url_length': len(DATABASE_URL) if DATABASE_URL else 0
+        }
+        
+        if not DB_AVAILABLE or not DATABASE_URL:
+            return jsonify(status), 200
+        
+        # 데이터베이스 연결 테스트
+        conn = get_db_connection()
+        if not conn:
+            status['connection'] = 'failed'
+            return jsonify(status), 200
+        
+        try:
+            cur = conn.cursor()
+            
+            # game_results 테이블 확인
+            cur.execute('''
+                SELECT COUNT(*) as count,
+                       COUNT(DISTINCT game_id) as unique_count,
+                       MIN(created_at) as oldest,
+                       MAX(created_at) as newest
+                FROM game_results
+            ''')
+            game_results_row = cur.fetchone()
+            
+            # color_matches 테이블 확인
+            cur.execute('''
+                SELECT COUNT(*) as count,
+                       COUNT(DISTINCT (game_id, compare_game_id)) as unique_count
+                FROM color_matches
+            ''')
+            color_matches_row = cur.fetchone()
+            
+            # 최근 15개 게임 결과 샘플
+            cur.execute('''
+                SELECT game_id, result, created_at
+                FROM game_results
+                ORDER BY created_at DESC
+                LIMIT 15
+            ''')
+            recent_games = [{'game_id': row[0], 'result': row[1], 'created_at': str(row[2])} 
+                           for row in cur.fetchall()]
+            
+            # 최근 15개 정/꺽 결과 샘플
+            cur.execute('''
+                SELECT game_id, compare_game_id, match_result, created_at
+                FROM color_matches
+                ORDER BY created_at DESC
+                LIMIT 15
+            ''')
+            recent_matches = [{'game_id': row[0], 'compare_game_id': row[1], 
+                              'match_result': row[2], 'created_at': str(row[3])} 
+                             for row in cur.fetchall()]
+            
+            status.update({
+                'connection': 'success',
+                'game_results': {
+                    'total_count': game_results_row[0],
+                    'unique_count': game_results_row[1],
+                    'oldest': str(game_results_row[2]) if game_results_row[2] else None,
+                    'newest': str(game_results_row[3]) if game_results_row[3] else None,
+                    'recent_samples': recent_games
+                },
+                'color_matches': {
+                    'total_count': color_matches_row[0],
+                    'unique_count': color_matches_row[1],
+                    'recent_samples': recent_matches
+                }
+            })
+            
+            cur.close()
+            conn.close()
+        except Exception as e:
+            status['error'] = str(e)[:200]
+            try:
+                conn.close()
+            except:
+                pass
+        
+        return jsonify(status), 200
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()[:500]
+        }), 500
+
+@app.route('/api/debug/results-check', methods=['GET'])
+def debug_results_check():
+    """결과 데이터 점검 (디버깅용)"""
+    try:
+        # 최신 데이터 로드
+        latest_results = load_results_data()
+        
+        # DB 데이터 조회
+        db_results = []
+        if DB_AVAILABLE and DATABASE_URL:
+            db_results = get_recent_results(hours=5)
+        
+        # 병합
+        if latest_results:
+            latest_game_ids = {str(r.get('gameID', '')) for r in latest_results if r.get('gameID')}
+            db_results_filtered = [r for r in db_results if str(r.get('gameID', '')) not in latest_game_ids]
+            merged_results = latest_results + db_results_filtered
+        else:
+            merged_results = db_results
+        
+        # colorMatch 확인
+        color_match_info = []
+        for i in range(min(15, len(merged_results))):
+            if i + 15 < len(merged_results):
+                current = merged_results[i]
+                compare = merged_results[i + 15]
+                color_match_info.append({
+                    'index': i + 1,
+                    'current_game_id': current.get('gameID'),
+                    'current_result': current.get('result'),
+                    'compare_game_id': compare.get('gameID'),
+                    'compare_result': compare.get('result'),
+                    'has_color_match': 'colorMatch' in current,
+                    'color_match_value': current.get('colorMatch'),
+                    'current_joker': current.get('joker'),
+                    'compare_joker': compare.get('joker')
+                })
+        
+        return jsonify({
+            'latest_results_count': len(latest_results) if latest_results else 0,
+            'db_results_count': len(db_results),
+            'merged_results_count': len(merged_results),
+            'color_match_info': color_match_info,
+            'sample_latest': latest_results[:3] if latest_results else [],
+            'sample_db': db_results[:3] if db_results else [],
+            'sample_merged': merged_results[:3] if merged_results else []
+        }), 200
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()[:500]
+        }), 500
+
 @app.route('/favicon.ico', methods=['GET'])
 def favicon():
     """favicon 404 에러 방지"""
