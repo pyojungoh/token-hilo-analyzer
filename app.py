@@ -225,64 +225,102 @@ RESULTS_HTML = '''
             box-sizing: border-box;
         }
         body {
-            background: #1a1a2e;
+            background: #2a2a3e;
             color: #fff;
             font-family: 'Consolas', monospace;
             padding: 20px;
         }
         .container {
-            max-width: 1200px;
+            max-width: 100%;
             margin: 0 auto;
         }
-        h1 {
-            text-align: center;
+        .header-info {
             margin-bottom: 20px;
-            color: #4caf50;
-        }
-        .status {
-            text-align: center;
-            margin-bottom: 20px;
-            padding: 10px;
-            background: rgba(255,255,255,0.1);
+            padding: 15px;
+            background: rgba(255,255,255,0.05);
             border-radius: 5px;
         }
-        .results-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 15px;
-            margin-top: 20px;
+        .header-info div {
+            margin: 5px 0;
+            font-size: 0.9em;
         }
-        .result-card {
-            background: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 10px;
-            padding: 15px;
+        .cards-container {
+            display: flex;
+            overflow-x: auto;
+            gap: 10px;
+            padding: 20px 0;
+            -webkit-overflow-scrolling: touch;
+        }
+        .cards-container::-webkit-scrollbar {
+            height: 8px;
+        }
+        .cards-container::-webkit-scrollbar-track {
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+        }
+        .cards-container::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.3);
+            border-radius: 4px;
+        }
+        .card {
+            position: relative;
+            width: 80px;
+            height: 120px;
+            background: #fff;
+            border: 2px solid #000;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 8px;
+            flex-shrink: 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+        .card.red {
+            color: #d32f2f;
+        }
+        .card.black {
+            color: #000;
+        }
+        .card-value {
+            font-size: 24px;
+            font-weight: bold;
+            text-align: center;
+            line-height: 1;
+        }
+        .card-suit {
+            font-size: 20px;
             text-align: center;
         }
-        .result-card.recent {
-            border: 2px solid #4caf50;
+        .card-suit.top {
+            align-self: flex-start;
         }
-        .game-id {
-            font-size: 0.9em;
-            color: #aaa;
-            margin-bottom: 10px;
+        .card-suit.bottom {
+            align-self: flex-end;
+            transform: rotate(180deg);
         }
-        .result-value {
-            font-size: 1.5em;
+        .card-badge {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            width: 20px;
+            height: 20px;
+            background: #ffd700;
+            border: 2px solid #000;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
             font-weight: bold;
-            margin: 10px 0;
+            z-index: 10;
         }
-        .result-red { color: #ff3333; }
-        .result-black { color: #888888; }
-        .result-hi { color: #4caf50; }
-        .result-lo { color: #00bfff; }
-        .result-joker { color: #8a2be2; }
-        .details {
-            font-size: 0.8em;
-            color: #aaa;
-            margin-top: 10px;
-        }
-        .refresh-info {
+        .card-badge.hi::after { content: "↑"; }
+        .card-badge.lo::after { content: "↓"; }
+        .card-badge.joker::after { content: "J"; }
+        .card-badge.red::after { content: "R"; }
+        .card-badge.black::after { content: "B"; }
+        .status {
             text-align: center;
             margin-top: 20px;
             color: #aaa;
@@ -292,12 +330,82 @@ RESULTS_HTML = '''
 </head>
 <body>
     <div class="container">
-        <h1>🎲 토큰하이로우 경기 결과</h1>
+        <div class="header-info">
+            <div id="prev-round">이전회차: --</div>
+            <div id="hash">Hash: --</div>
+            <div id="remaining-time">남은 시간: -- 초</div>
+        </div>
+        <div class="cards-container" id="cards"></div>
         <div class="status" id="status">로딩 중...</div>
-        <div class="results-grid" id="results"></div>
-        <div class="refresh-info">5초마다 자동 새로고침</div>
     </div>
     <script>
+        function getCardSuit(value) {
+            // 간단한 문양 할당 (실제 데이터에 따라 수정 필요)
+            const suits = ['♠', '♥', '♦', '♣'];
+            return suits[Math.abs(value.charCodeAt(0)) % 4];
+        }
+        
+        function isRedCard(value) {
+            // 하트, 다이아몬드는 빨강
+            const redSuits = ['♥', '♦'];
+            return redSuits.includes(getCardSuit(value));
+        }
+        
+        function createCard(result, index) {
+            const card = document.createElement('div');
+            const value = result.result || '';
+            const isRed = result.red || false;
+            
+            card.className = 'card ' + (isRed ? 'red' : 'black');
+            
+            // 카드 값 표시
+            const valueDiv = document.createElement('div');
+            valueDiv.className = 'card-value';
+            valueDiv.textContent = value;
+            card.appendChild(valueDiv);
+            
+            // 문양 표시 (상단)
+            const suitTop = document.createElement('div');
+            suitTop.className = 'card-suit top';
+            suitTop.textContent = getCardSuit(value);
+            card.appendChild(suitTop);
+            
+            // 문양 표시 (하단)
+            const suitBottom = document.createElement('div');
+            suitBottom.className = 'card-suit bottom';
+            suitBottom.textContent = getCardSuit(value);
+            card.appendChild(suitBottom);
+            
+            // 카테고리 배지
+            if (result.hi) {
+                const badge = document.createElement('div');
+                badge.className = 'card-badge hi';
+                card.appendChild(badge);
+            }
+            if (result.lo) {
+                const badge = document.createElement('div');
+                badge.className = 'card-badge lo';
+                card.appendChild(badge);
+            }
+            if (result.joker) {
+                const badge = document.createElement('div');
+                badge.className = 'card-badge joker';
+                card.appendChild(badge);
+            }
+            if (result.red && !result.hi && !result.lo && !result.joker) {
+                const badge = document.createElement('div');
+                badge.className = 'card-badge red';
+                card.appendChild(badge);
+            }
+            if (result.black && !result.hi && !result.lo && !result.joker) {
+                const badge = document.createElement('div');
+                badge.className = 'card-badge black';
+                card.appendChild(badge);
+            }
+            
+            return card;
+        }
+        
         async function loadResults() {
             try {
                 const response = await fetch('/api/results');
@@ -308,33 +416,29 @@ RESULTS_HTML = '''
                     return;
                 }
                 
-                document.getElementById('status').textContent = `총 ${data.results.length}개 경기 결과`;
+                const results = data.results || [];
+                document.getElementById('status').textContent = `총 ${results.length}개 경기 결과`;
                 
-                const resultsDiv = document.getElementById('results');
-                resultsDiv.innerHTML = '';
+                // 최신 결과가 왼쪽에 오도록 역순 정렬
+                const reversedResults = [...results].reverse();
                 
-                // 최신 30개만 표시
-                const recentResults = data.results.slice(0, 30);
+                // 최신 50개만 표시
+                const displayResults = reversedResults.slice(0, 50);
                 
-                recentResults.forEach((result, index) => {
-                    const card = document.createElement('div');
-                    card.className = 'result-card' + (index < 5 ? ' recent' : '');
-                    
-                    let resultText = '';
-                    if (result.red) resultText += '<span class="result-red">R</span> ';
-                    if (result.black) resultText += '<span class="result-black">B</span> ';
-                    if (result.hi) resultText += '<span class="result-hi">HI</span> ';
-                    if (result.lo) resultText += '<span class="result-lo">LO</span> ';
-                    if (result.joker) resultText += '<span class="result-joker">J</span> ';
-                    
-                    card.innerHTML = `
-                        <div class="game-id">게임 #${result.gameID}</div>
-                        <div class="result-value">${result.result}</div>
-                        <div class="details">${resultText}</div>
-                    `;
-                    
-                    resultsDiv.appendChild(card);
+                const cardsDiv = document.getElementById('cards');
+                cardsDiv.innerHTML = '';
+                
+                displayResults.forEach((result, index) => {
+                    const card = createCard(result, index);
+                    cardsDiv.appendChild(card);
                 });
+                
+                // 헤더 정보 업데이트
+                if (displayResults.length > 0) {
+                    const latest = displayResults[0];
+                    document.getElementById('prev-round').textContent = `이전회차: ${latest.gameID || '--'}`;
+                    document.getElementById('hash').textContent = `Hash: ${latest.gameID ? latest.gameID.slice(-8) : '--'}`;
+                }
             } catch (error) {
                 document.getElementById('status').textContent = '오류: ' + error.message;
             }
