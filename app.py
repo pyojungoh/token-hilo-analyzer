@@ -694,12 +694,23 @@ RESULTS_HTML = '''
             
             try {
                 isLoadingResults = true;
-                const response = await fetch('/api/results');
+                
+                // 타임아웃 설정 (10초)
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 10000);
+                
+                const response = await fetch('/api/results?t=' + Date.now(), {
+                    signal: controller.signal,
+                    cache: 'no-cache'
+                });
+                
+                clearTimeout(timeoutId);
                 
                 if (!response.ok) {
+                    console.warn('결과 로드 실패:', response.status, response.statusText);
                     const statusElement = document.getElementById('status');
                     if (statusElement) {
-                        statusElement.textContent = `서버 오류: HTTP ${response.status}`;
+                        statusElement.textContent = `결과 로드 실패 (${response.status})`;
                     }
                     return;
                 }
@@ -877,12 +888,15 @@ RESULTS_HTML = '''
                 console.error('loadResults 오류:', error);
                 const statusElement = document.getElementById('status');
                 if (statusElement) {
-                    if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
-                        statusElement.textContent = '연결 오류: 서버에 연결할 수 없습니다';
+                    if (error.name === 'AbortError') {
+                        statusElement.textContent = '요청 시간 초과';
+                    } else if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
+                        statusElement.textContent = '서버 연결 실패 - 잠시 후 다시 시도';
                     } else {
-                        statusElement.textContent = '오류: ' + error.message;
+                        statusElement.textContent = '결과 로드 오류: ' + error.message;
                     }
                 }
+                // 에러 발생 시에도 기존 결과는 유지
             } finally {
                 isLoadingResults = false;  // 로딩 완료
             }
@@ -902,9 +916,20 @@ RESULTS_HTML = '''
             
             try {
                 isUpdatingBetting = true;
-                const response = await fetch('/api/current-status?t=' + Date.now());
+                
+                // 타임아웃 설정 (5초)
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
+                
+                const response = await fetch('/api/current-status?t=' + Date.now(), {
+                    signal: controller.signal,
+                    cache: 'no-cache'
+                });
+                
+                clearTimeout(timeoutId);
+                
                 if (!response.ok) {
-                    console.log('베팅 정보 API 오류:', response.status);
+                    console.warn('베팅 정보 API 오류:', response.status, response.statusText);
                     return;
                 }
                 
@@ -989,7 +1014,12 @@ RESULTS_HTML = '''
                     console.error('betting-info 요소를 찾을 수 없음');
                 }
             } catch (error) {
-                console.error('베팅 정보 업데이트 오류:', error);
+                if (error.name === 'AbortError') {
+                    console.warn('베팅 정보 요청 시간 초과');
+                } else {
+                    console.error('베팅 정보 업데이트 오류:', error);
+                }
+                // 에러 발생 시에도 기존 정보는 유지
             } finally {
                 isUpdatingBetting = false;  // 업데이트 완료
             }
@@ -1092,26 +1122,36 @@ RESULTS_HTML = '''
             }
         }
         
-        // 초기 로드
-        loadResults();
-        updateTimer();
-        updateBettingInfo();
+        // 초기 로드 (에러 발생 시에도 계속 시도)
+        async function initialLoad() {
+            try {
+                await Promise.all([
+                    loadResults().catch(e => console.warn('초기 결과 로드 실패:', e)),
+                    updateBettingInfo().catch(e => console.warn('초기 베팅 정보 로드 실패:', e))
+                ]);
+            } catch (e) {
+                console.warn('초기 로드 오류:', e);
+            }
+            updateTimer();
+        }
         
-        // 3초마다 결과 새로고침 (요청 빈도 감소)
+        initialLoad();
+        
+        // 5초마다 결과 새로고침 (요청 빈도 더 감소)
         setInterval(() => {
-            if (Date.now() - lastResultsUpdate > 3000) {
-                loadResults();
+            if (Date.now() - lastResultsUpdate > 5000) {
+                loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
                 lastResultsUpdate = Date.now();
             }
-        }, 3000);
+        }, 5000);
         
-        // 3초마다 베팅 정보 업데이트 (요청 빈도 감소)
+        // 5초마다 베팅 정보 업데이트 (요청 빈도 더 감소)
         setInterval(() => {
-            if (Date.now() - lastBettingUpdate > 3000) {
-                updateBettingInfo();
+            if (Date.now() - lastBettingUpdate > 5000) {
+                updateBettingInfo().catch(e => console.warn('베팅 정보 새로고침 실패:', e));
                 lastBettingUpdate = Date.now();
             }
-        }, 3000);
+        }, 5000);
         
         // 0.2초마다 타이머 업데이트 (UI만 업데이트, 서버 요청은 1초마다)
         setInterval(updateTimer, 200);
