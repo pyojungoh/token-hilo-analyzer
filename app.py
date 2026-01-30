@@ -766,6 +766,20 @@ def load_results_data():
                             continue
                     
                     print(f"[결과 데이터 최종] {len(results)}개 게임 결과 파싱 완료")
+                    
+                    # 데이터베이스에 저장 (비동기로 처리하지 않음 - 순차적으로 저장)
+                    if DB_AVAILABLE and DATABASE_URL:
+                        saved_count = 0
+                        for game_data in results:
+                            if save_game_result(game_data):
+                                saved_count += 1
+                        if saved_count > 0:
+                            print(f"[💾] 데이터베이스에 {saved_count}개 결과 저장 완료")
+                        
+                        # 정/꺽 결과 계산 및 저장 (30개 이상일 때만)
+                        if len(results) >= 16:
+                            calculate_and_save_color_matches(results)
+                    
                     return results
                 except (ValueError, json.JSONDecodeError) as e:
                     print(f"[결과 JSON 파싱 오류] {str(e)[:200]}")
