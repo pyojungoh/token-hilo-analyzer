@@ -817,9 +817,16 @@ RESULTS_HTML = '''
         let lastResultsUpdate = 0;
         let lastTimerUpdate = Date.now();
         let lastBettingUpdate = 0;
+        let isUpdatingBetting = false;  // 중복 요청 방지
         
         async function updateBettingInfo() {
+            // 이미 업데이트 중이면 스킵
+            if (isUpdatingBetting) {
+                return;
+            }
+            
             try {
+                isUpdatingBetting = true;
                 const response = await fetch('/api/current-status?t=' + Date.now());
                 if (!response.ok) {
                     console.log('베팅 정보 API 오류:', response.status);
