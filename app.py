@@ -1438,7 +1438,7 @@ RESULTS_HTML = '''
         .calc-dropdown-header .calc-summary { flex: 0 0 auto; font-size: 0.85em; color: #bbb; margin-left: auto; width: max-content; max-width: 100%; }
         .calc-summary-grid { display: grid; grid-template-columns: min-content min-content; gap: 2px 6px; align-items: baseline; width: max-content; }
         .calc-summary-grid .label { color: #888; font-size: 0.9em; white-space: nowrap; width: fit-content; }
-        .calc-summary-grid .value { color: #ddd; font-weight: 500; text-align: right; min-width: 0; }
+        .calc-summary-grid .value { color: #ddd; font-weight: 500; text-align: right; min-width: 0; white-space: nowrap; }
         .calc-summary-grid .value.profit-plus { color: #81c784; }
         .calc-summary-grid .value.profit-minus { color: #e57373; }
         .calc-summary-grid .calc-timer-note { margin-bottom: 2px; }
