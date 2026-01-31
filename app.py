@@ -1541,12 +1541,17 @@ RESULTS_HTML = '''
         .bet-calc .bet-buttons button.stop { background: #c62828; border-color: #e57373; }
         .bet-calc .bet-buttons button.reset { background: #455a64; border-color: #78909c; }
         .bet-calc .bet-result { margin-top: 8px; padding-top: 8px; }
-        .calc-dropdowns { margin-top: 8px; display: flex; flex-direction: row; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
-        .calc-dropdown { flex: 1 1 200px; min-width: 200px; max-width: 100%; border: 1px solid #444; border-radius: 8px; overflow: hidden; }
-        .calc-dropdown:not(.collapsed) { flex: 1 1 100%; min-width: 280px; }
-        .calc-dropdown-header { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 6px 8px; background: #333; cursor: pointer; }
-        .calc-dropdown-header .calc-title { font-weight: bold; color: #81c784; }
-        .calc-dropdown-header .calc-summary { flex: 1; font-size: 0.9em; color: #bbb; min-width: 0; }
+        .calc-dropdowns { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+        .calc-dropdown { width: 100%; border: 1px solid #444; border-radius: 8px; overflow: hidden; }
+        .calc-dropdown-header { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 10px; background: #333; cursor: pointer; }
+        .calc-dropdown-header .calc-title { font-weight: bold; color: #81c784; flex-shrink: 0; }
+        .calc-dropdown-header .calc-summary { flex: 1; font-size: 0.85em; color: #bbb; min-width: 0; }
+        .calc-summary-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 20px; align-items: baseline; }
+        .calc-summary-grid .label { color: #888; font-size: 0.9em; white-space: nowrap; }
+        .calc-summary-grid .value { color: #ddd; font-weight: 500; text-align: right; min-width: 0; }
+        .calc-summary-grid .value.profit-plus { color: #81c784; }
+        .calc-summary-grid .value.profit-minus { color: #e57373; }
+        .calc-summary-grid .calc-timer-note { margin-bottom: 2px; }
         .calc-dropdown-header .calc-status { font-size: 0.8em; margin-left: 6px; }
         .calc-dropdown-header .calc-status.running { color: #4caf50; }
         .calc-dropdown-header .calc-status.running::before { content: ''; display: inline-block; width: 6px; height: 6px; background: #4caf50; border-radius: 50%; margin-right: 4px; vertical-align: middle; animation: blink 1s ease-in-out infinite; }
@@ -1644,7 +1649,7 @@ RESULTS_HTML = '''
                         <div class="calc-dropdown-header">
                             <span class="calc-title">계산기 1</span>
                             <span class="calc-status idle" id="calc-1-status">대기중</span>
-                            <span class="calc-summary" id="calc-1-summary">보유자산 - | 순익 - | 배팅중 -</span>
+                            <div class="calc-summary" id="calc-1-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
                         </div>
                         <div class="calc-dropdown-body" id="calc-1-body">
@@ -1675,7 +1680,7 @@ RESULTS_HTML = '''
                         <div class="calc-dropdown-header">
                             <span class="calc-title">계산기 2</span>
                             <span class="calc-status idle" id="calc-2-status">대기중</span>
-                            <span class="calc-summary" id="calc-2-summary">보유자산 - | 순익 - | 배팅중 -</span>
+                            <div class="calc-summary" id="calc-2-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
                         </div>
                         <div class="calc-dropdown-body" id="calc-2-body">
@@ -1706,7 +1711,7 @@ RESULTS_HTML = '''
                         <div class="calc-dropdown-header">
                             <span class="calc-title">계산기 3</span>
                             <span class="calc-status idle" id="calc-3-status">대기중</span>
-                            <span class="calc-summary" id="calc-3-summary">보유자산 - | 순익 - | 배팅중 -</span>
+                            <div class="calc-summary" id="calc-3-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
                         </div>
                         <div class="calc-dropdown-body" id="calc-3-body">
@@ -1737,7 +1742,7 @@ RESULTS_HTML = '''
                         <div class="calc-dropdown-header">
                             <span class="calc-title">방어 계산기</span>
                             <span class="calc-status idle" id="calc-defense-status">대기중</span>
-                            <span class="calc-summary" id="calc-defense-summary">보유자산 - | 순익 - | 배팅중 -</span>
+                            <div class="calc-summary" id="calc-defense-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
                         </div>
                         <div class="calc-dropdown-body" id="calc-defense-body">
@@ -2892,20 +2897,25 @@ RESULTS_HTML = '''
             if (!el) return;
             const state = id === DEFENSE_ID ? calcState.defense : calcState[id];
             const hist = state.history || [];
+            const elapsedStr = state.running && typeof formatMmSs === 'function' ? formatMmSs(state.elapsed || 0) : '-';
+            const timerNote = state.timer_completed ? '<span class="calc-timer-note" style="color:#64b5f6;font-weight:bold;grid-column:1/-1">타이머 완료</span>' : '';
             if (hist.length === 0) {
-                let text = '보유자산 - | 순익 - | 배팅중 -';
-                if (state.running) text += ' | 경과 ' + formatMmSs(state.elapsed);
-                if (state.timer_completed) text = '타이머 완료 | ' + text;
-                el.textContent = text;
+                el.innerHTML = '<div class="calc-summary-grid">' + timerNote +
+                    '<span class="label">보유자산</span><span class="value">-</span>' +
+                    '<span class="label">순익</span><span class="value">-</span>' +
+                    '<span class="label">배팅중</span><span class="value">-</span>' +
+                    '<span class="label">경과</span><span class="value">' + elapsedStr + '</span></div>';
                 updateCalcStatus(id);
                 return;
             }
             const r = id === DEFENSE_ID ? getDefenseCalcResult() : getCalcResult(id);
             const profitStr = (r.profit >= 0 ? '+' : '') + r.profit.toLocaleString() + '원';
-            let text = '보유자산 ' + r.cap.toLocaleString() + '원 | 순익 ' + profitStr + ' | 배팅중 ' + r.currentBet.toLocaleString() + '원';
-            if (state.running && typeof formatMmSs === 'function') text += ' | 경과 ' + formatMmSs(state.elapsed || 0);
-            if (state.timer_completed) text = '타이머 완료 | ' + text;
-            el.textContent = text;
+            const profitClass = r.profit > 0 ? 'profit-plus' : (r.profit < 0 ? 'profit-minus' : '');
+            el.innerHTML = '<div class="calc-summary-grid">' + timerNote +
+                '<span class="label">보유자산</span><span class="value">' + r.cap.toLocaleString() + '원</span>' +
+                '<span class="label">순익</span><span class="value ' + profitClass + '">' + profitStr + '</span>' +
+                '<span class="label">배팅중</span><span class="value">' + r.currentBet.toLocaleString() + '원</span>' +
+                '<span class="label">경과</span><span class="value">' + elapsedStr + '</span></div>';
             updateCalcStatus(id);
             } catch (e) { console.warn('updateCalcSummary', id, e); }
         }
