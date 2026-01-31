@@ -2583,7 +2583,8 @@ RESULTS_HTML = '''
                             '<span class="stat-lose">패 <span class="num">' + losses + '</span>회</span>' +
                             (jokerCount > 0 ? '<span class="stat-joker">조커 <span class="num">' + jokerCount + '</span>회</span>' : '') +
                             (countForPct > 0 ? '<span class="stat-rate ' + rateClass + '">승률 ' + hitPct + '%</span>' : '') +
-                            '</div>';
+                            '</div>' +
+                            '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 메인=서버 최근 30회 · 계산기=해당 계산기 실행 중 쌓인 기록</div>';
                         const streakDisplay = streakArr.map(s => s === '승' ? '<span class="streak-win">승</span>' : (s === '패' ? '<span class="streak-lose">패</span>' : '<span class="streak-joker">조커</span>')).join(' ');
                         const streakLineBlock = '<div class="prediction-streak-line">연승/연패 기록: ' + (streakDisplay || '-') + (streakNow ? ' &nbsp; <span class="streak-now">' + streakNow + '</span>' : '') + '</div>';
                         let noticeBlock = '';
@@ -2658,20 +2659,21 @@ RESULTS_HTML = '''
         }
         function getCalcResult(id) {
             try {
-            if (!calcState[id]) return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-' };
+            if (!calcState[id]) return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-', processedCount: 0 };
             const capIn = parseFloat(document.getElementById('calc-' + id + '-capital')?.value) || 1000000;
             const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
             const oddsIn = parseFloat(document.getElementById('calc-' + id + '-odds')?.value) || 1.97;
             const hist = calcState[id].history || [];
             let cap = capIn, currentBet = baseIn, bust = false;
             let wins = 0, losses = 0, maxWinStreak = 0, maxLoseStreak = 0, curWin = 0, curLose = 0;
+            let processedCount = 0;
             for (let i = 0; i < hist.length; i++) {
                 const h = hist[i];
                 if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                const bet = Math.min(currentBet, Math.floor(cap));
+                if (cap < bet || cap <= 0) { bust = true; processedCount = i; break; }
                 const isJoker = h.actual === 'joker';
                 const isWin = !isJoker && h.predicted === h.actual;
-                const bet = Math.min(currentBet, Math.floor(cap));
-                if (cap < bet || cap <= 0) { bust = true; break; }
                 if (isJoker) {
                     cap -= bet;
                     currentBet = Math.min(currentBet * 2, Math.floor(cap));
@@ -2692,13 +2694,14 @@ RESULTS_HTML = '''
                     curWin = 0;
                     if (curLose > maxLoseStreak) maxLoseStreak = curLose;
                 }
+                processedCount = i + 1;
                 if (cap <= 0) { bust = true; break; }
             }
             const profit = cap - capIn;
             const total = wins + losses;
             const winRate = total > 0 ? (100 * wins / total).toFixed(1) : '-';
-            return { cap: Math.max(0, Math.floor(cap)), profit, currentBet: bust ? 0 : currentBet, wins, losses, bust, maxWinStreak, maxLoseStreak, winRate };
-            } catch (e) { console.warn('getCalcResult', id, e); return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-' }; }
+            return { cap: Math.max(0, Math.floor(cap)), profit, currentBet: bust ? 0 : currentBet, wins, losses, bust, maxWinStreak, maxLoseStreak, winRate, processedCount: bust ? processedCount : hist.length };
+            } catch (e) { console.warn('getCalcResult', id, e); return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-', processedCount: 0 }; }
         }
         function getDefenseBetAmount(linkedId) {
             const linkedBet = getCalcResult(linkedId).currentBet;
@@ -2844,9 +2847,18 @@ RESULTS_HTML = '''
                 return;
             }
             const r = id === DEFENSE_ID ? getDefenseCalcResult() : getCalcResult(id);
-            const arr = id === DEFENSE_ID
-                ? hist.map(h => ((h.betAmount || 0) <= 0 ? '-' : (h.actual === 'joker' ? 'j' : (h.predicted === h.actual ? 'w' : 'l'))))
-                : hist.map(h => h.actual === 'joker' ? 'j' : (h.predicted === h.actual ? 'w' : 'l'));
+            const usedLen = (r.processedCount !== undefined && r.processedCount >= 0) ? r.processedCount : hist.length;
+            const usedHist = hist.slice(0, usedLen);
+            // getCalcResult와 동일 기준: 무효 항목(predicted/actual 없음)은 표시에서 제외해 승률·경기결과 일치
+            let arr = [];
+            if (id === DEFENSE_ID) {
+                arr = usedHist.map(h => ((h.betAmount || 0) <= 0 ? '-' : (h.actual === 'joker' ? 'j' : (h.predicted === h.actual ? 'w' : 'l'))));
+            } else {
+                for (const h of usedHist) {
+                    if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                    arr.push(h.actual === 'joker' ? 'j' : (h.predicted === h.actual ? 'w' : 'l'));
+                }
+            }
             const arrRev = arr.slice().reverse();
             const streakStr = arrRev.map(a => {
                 if (a === '-') return '<span class="defense-skip">－</span>';
