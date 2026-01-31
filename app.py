@@ -2725,17 +2725,14 @@ RESULTS_HTML = '''
                         if (flowState === 'line_strong') { lineW = Math.min(1, lineW + 0.25); pongW = Math.max(0, 1 - lineW); }
                         else if (flowState === 'pong_strong') { pongW = Math.min(1, pongW + 0.25); lineW = Math.max(0, 1 - pongW); }
                         if (symmetryLineData) {
-                            var lc = typeof symmetryLineData.leftLineCount === 'number' ? symmetryLineData.leftLineCount : 0;
-                            var rc = typeof symmetryLineData.rightLineCount === 'number' ? symmetryLineData.rightLineCount : 0;
-                            var sp = typeof symmetryLineData.symmetryPct === 'number' ? symmetryLineData.symmetryPct : 0;
-                            var prevL = null, prevR = null;
-                            if (prevSymmetryCounts && typeof prevSymmetryCounts === 'object') {
-                                prevL = prevSymmetryCounts.left;
-                                prevR = prevSymmetryCounts.right;
-                            }
+                            var lc = symmetryLineData.leftLineCount;
+                            var rc = symmetryLineData.rightLineCount;
+                            var sp = symmetryLineData.symmetryPct;
+                            var prevL = (prevSymmetryCounts && typeof prevSymmetryCounts.left !== 'undefined') ? prevSymmetryCounts.left : null;
+                            var prevR = (prevSymmetryCounts && typeof prevSymmetryCounts.right !== 'undefined') ? prevSymmetryCounts.right : null;
                             // 우측 줄 없음(rc>=5) + 좌측 줄 생김(lc<=3) = 새 구간 시작. 오른쪽 쫒지 말고 왼쪽 추세(줄 유지) 반영.
                             var isNewSegment = (rc >= 5 && lc <= 3);
-                            var isNewSegmentEarly = (prevR != null && prevR >= 5 && (prevL === null || prevL >= 4) && lc <= 3);
+                            var isNewSegmentEarly = (prevR >= 5 && (prevL === null || prevL >= 4) && lc <= 3);
                             if (isNewSegment || isNewSegmentEarly) {
                                 lineW = Math.min(1, lineW + 0.22);
                                 pongW = Math.max(0, 1 - lineW);
