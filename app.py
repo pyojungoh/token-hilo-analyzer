@@ -1541,9 +1541,9 @@ RESULTS_HTML = '''
         .bet-calc .bet-buttons button.stop { background: #c62828; border-color: #e57373; }
         .bet-calc .bet-buttons button.reset { background: #455a64; border-color: #78909c; }
         .bet-calc .bet-result { margin-top: 8px; padding-top: 8px; }
-        .calc-dropdowns { margin-top: 8px; }
-        .calc-dropdown { margin-bottom: 6px; border: 1px solid #444; border-radius: 8px; overflow: hidden; }
-        .calc-dropdown-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 10px; background: #333; cursor: pointer; }
+        .calc-dropdowns { margin-top: 8px; display: flex; flex-direction: row; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
+        .calc-dropdown { flex: 1 1 160px; min-width: 160px; max-width: 240px; border: 1px solid #444; border-radius: 8px; overflow: hidden; }
+        .calc-dropdown-header { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 6px 8px; background: #333; cursor: pointer; }
         .calc-dropdown-header .calc-title { font-weight: bold; color: #81c784; }
         .calc-dropdown-header .calc-summary { flex: 1; font-size: 0.9em; color: #bbb; min-width: 0; }
         .calc-dropdown-header .calc-status { font-size: 0.8em; margin-left: 6px; }
@@ -1569,6 +1569,14 @@ RESULTS_HTML = '''
         .calc-buttons button.calc-reset { background: #455a64; }
         .calc-buttons button.calc-save { background: #1565c0; border-color: #1976d2; }
         .calc-detail { font-size: 0.85em; color: #bbb; }
+        .calc-round-table-wrap { margin-bottom: 8px; overflow-x: auto; }
+        .calc-round-table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
+        .calc-round-table th, .calc-round-table td { padding: 4px 6px; border: 1px solid #444; text-align: center; }
+        .calc-round-table th { background: #333; color: #81c784; }
+        .calc-round-table .win { color: #81c784; }
+        .calc-round-table .lose { color: #e57373; }
+        .calc-round-table .joker { color: #64b5f6; }
+        .calc-round-table .skip { color: #666; }
         .calc-streak { margin-bottom: 4px; word-break: break-all; }
         .calc-streak .w { color: #81c784; }
         .calc-streak .l { color: #e57373; }
@@ -1582,8 +1590,18 @@ RESULTS_HTML = '''
         .bet-calc-panel.active { display: block; }
         .bet-log-panel { display: none; padding: 10px; background: #1a1a1a; border-radius: 0 6px 6px 6px; border: 1px solid #444; border-top: none; }
         .bet-log-panel.active { display: block; }
-        .bet-calc-log { font-size: 0.8em; color: #aaa; max-height: 200px; overflow-y: auto; }
-        .bet-calc-log div { margin-bottom: 4px; }
+        .bet-calc-log { font-size: 0.8em; color: #aaa; max-height: 320px; overflow-y: auto; }
+        .bet-calc-log .log-entry { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid #333; }
+        .bet-calc-log .log-entry .log-text { flex: 1; min-width: 0; word-break: break-all; }
+        .bet-calc-log .log-entry .log-actions { flex-shrink: 0; display: flex; gap: 4px; }
+        .bet-calc-log .log-entry .log-actions button { padding: 2px 8px; font-size: 0.75em; border-radius: 4px; border: 1px solid #555; background: #2a2a2a; color: #bbb; cursor: pointer; }
+        .bet-calc-log .log-entry .log-actions button:hover { background: #333; color: #fff; }
+        .bet-calc-log .log-detail { margin-top: 6px; padding: 8px; background: #1a1a1a; border-radius: 4px; overflow-x: auto; display: none; }
+        .bet-calc-log .log-detail.open { display: block; }
+        .bet-calc-log .log-detail table { width: 100%; border-collapse: collapse; font-size: 0.75em; }
+        .bet-calc-log .log-detail th, .bet-calc-log .log-detail td { padding: 3px 6px; border: 1px solid #444; text-align: center; }
+        .bet-log-actions { margin-bottom: 8px; }
+        .bet-log-actions button { padding: 4px 10px; font-size: 0.8em; border-radius: 4px; border: 1px solid #555; background: #2a2a2a; color: #bbb; cursor: pointer; }
         .status {
             text-align: center;
             margin-top: 15px;
@@ -1646,7 +1664,8 @@ RESULTS_HTML = '''
                                 </div>
                             </div>
                             <div class="calc-detail" id="calc-1-detail">
-                                <div class="calc-streak" id="calc-1-streak">경기결과: -</div>
+                                <div class="calc-round-table-wrap" id="calc-1-round-table-wrap"></div>
+                                <div class="calc-streak" id="calc-1-streak">경기결과 (최근 30회): -</div>
                                 <div class="calc-stats" id="calc-1-stats">최대연승: - | 최대연패: - | 승률: -</div>
                             </div>
                         </div>
@@ -1676,7 +1695,8 @@ RESULTS_HTML = '''
                                 </div>
                             </div>
                             <div class="calc-detail" id="calc-2-detail">
-                                <div class="calc-streak" id="calc-2-streak">경기결과: -</div>
+                                <div class="calc-round-table-wrap" id="calc-2-round-table-wrap"></div>
+                                <div class="calc-streak" id="calc-2-streak">경기결과 (최근 30회): -</div>
                                 <div class="calc-stats" id="calc-2-stats">최대연승: - | 최대연패: - | 승률: -</div>
                             </div>
                         </div>
@@ -1706,7 +1726,8 @@ RESULTS_HTML = '''
                                 </div>
                             </div>
                             <div class="calc-detail" id="calc-3-detail">
-                                <div class="calc-streak" id="calc-3-streak">경기결과: -</div>
+                                <div class="calc-round-table-wrap" id="calc-3-round-table-wrap"></div>
+                                <div class="calc-streak" id="calc-3-streak">경기결과 (최근 30회): -</div>
                                 <div class="calc-stats" id="calc-3-stats">최대연승: - | 최대연패: - | 승률: -</div>
                             </div>
                         </div>
@@ -1737,7 +1758,8 @@ RESULTS_HTML = '''
                                 </div>
                             </div>
                             <div class="calc-detail" id="calc-defense-detail">
-                                <div class="calc-streak" id="calc-defense-streak">경기결과: - (연결 반픽·설정에 따라 동일/감액/미배팅)</div>
+                                <div class="calc-round-table-wrap" id="calc-defense-round-table-wrap"></div>
+                                <div class="calc-streak" id="calc-defense-streak">경기결과 (최근 30회): - (연결 반픽·설정에 따라 동일/감액/미배팅)</div>
                                 <div class="calc-stats" id="calc-defense-stats">최대연승: - | 최대연패: - | 승률: -</div>
                             </div>
                         </div>
@@ -1745,6 +1767,7 @@ RESULTS_HTML = '''
                 </div>
             </div>
             <div id="bet-log-panel" class="bet-log-panel">
+                <div class="bet-log-actions"><button type="button" id="bet-log-clear-all">전체 삭제</button></div>
                 <div id="bet-calc-log" class="bet-calc-log"></div>
             </div>
         </div>
@@ -2052,7 +2075,71 @@ RESULTS_HTML = '''
                 });
             } catch (e) { console.warn('계산기 상태 저장 실패:', e); }
         }
-        let betCalcLog = [];  // 저장 로그 (날짜_정픽또는반픽_배팅금액_결과)
+        const BET_LOG_KEY = 'tokenHiloBetCalcLog';
+        let betCalcLog = [];  // [{ line, calcId, history }, ...] 또는 레거시 문자열
+        try {
+            const saved = localStorage.getItem(BET_LOG_KEY);
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                if (Array.isArray(parsed)) betCalcLog = parsed;
+            }
+        } catch (e) { /* ignore */ }
+        function saveBetCalcLog() {
+            try { localStorage.setItem(BET_LOG_KEY, JSON.stringify(betCalcLog)); } catch (e) { /* ignore */ }
+        }
+        function buildLogDetailTable(hist, calcId) {
+            const isDefense = calcId === 'defense';
+            let rows = [];
+            for (let i = 0; i < hist.length; i++) {
+                const h = hist[i];
+                if (!h) continue;
+                if (isDefense) {
+                    const bet = (typeof h.betAmount === 'number' ? h.betAmount : 0) || parseInt(h.betAmount, 10) || 0;
+                    if (bet <= 0) { rows.push({ idx: i + 1, pick: '-', result: '-', outcome: '－' }); continue; }
+                }
+                const pred = h.predicted === '정' ? '정' : (h.predicted === '꺽' ? '꺽' : '-');
+                const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
+                const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
+                rows.push({ idx: i + 1, pick: pred, result: res, outcome: outcome });
+            }
+            let html = '<table><thead><tr><th>#</th><th>픽</th><th>결과</th><th>승패</th></tr></thead><tbody>';
+            rows.forEach(function(r) {
+                const c = r.outcome === '승' ? 'win' : r.outcome === '패' ? 'lose' : r.outcome === '조' ? 'joker' : 'skip';
+                html += '<tr><td>' + r.idx + '</td><td>' + r.pick + '</td><td>' + r.result + '</td><td class="' + c + '">' + r.outcome + '</td></tr>';
+            });
+            html += '</tbody></table>';
+            return html;
+        }
+        function renderBetCalcLog() {
+            const logEl = document.getElementById('bet-calc-log');
+            if (!logEl) return;
+            logEl.innerHTML = '';
+            betCalcLog.forEach(function(entry, idx) {
+                const isObj = entry && typeof entry === 'object' && !Array.isArray(entry) && Object.prototype.hasOwnProperty.call(entry, 'line');
+                const line = isObj ? entry.line : (typeof entry === 'string' ? entry : String(entry || ''));
+                const hist = isObj && Array.isArray(entry.history) ? entry.history : [];
+                const calcId = isObj ? entry.calcId : null;
+                const div = document.createElement('div');
+                div.className = 'log-entry';
+                div.setAttribute('data-idx', idx);
+                div.innerHTML = '<span class="log-text">' + String(line).replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</span><div class="log-actions"><button type="button" class="log-detail-btn">상세보기</button><button type="button" class="log-delete-btn">삭제</button></div>';
+                const detailDiv = document.createElement('div');
+                detailDiv.className = 'log-detail';
+                detailDiv.setAttribute('data-idx', idx);
+                if (hist.length > 0) detailDiv.innerHTML = buildLogDetailTable(hist, calcId);
+                div.appendChild(detailDiv);
+                logEl.appendChild(div);
+                div.querySelector('.log-detail-btn').addEventListener('click', function() {
+                    detailDiv.classList.toggle('open');
+                    this.textContent = detailDiv.classList.contains('open') ? '접기' : '상세보기';
+                });
+                div.querySelector('.log-delete-btn').addEventListener('click', function() {
+                    betCalcLog.splice(idx, 1);
+                    saveBetCalcLog();
+                    renderBetCalcLog();
+                });
+            });
+        }
         
         async function loadResults() {
             if (isLoadingResults) return;
@@ -2822,38 +2909,82 @@ RESULTS_HTML = '''
             } catch (e) { console.warn('updateCalcSummary', id, e); }
         }
         function appendCalcLog(id) {
-            if (!calcState[id] || calcState[id].history.length === 0) return;
-            const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
-            const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
-            const r = getCalcResult(id);
+            const state = id === DEFENSE_ID ? calcState.defense : calcState[id];
+            if (!state || !state.history || state.history.length === 0) return;
             const now = new Date();
             const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
-            const pickType = rev ? '반픽' : '정픽';
-            const resultStr = '순익' + (r.profit >= 0 ? '+' : '') + r.profit + '원_승' + r.wins + '패' + r.losses + '_승률' + r.winRate + '%_최대연승' + r.maxWinStreak + '_최대연패' + r.maxLoseStreak;
-            const logLine = dateStr + '_' + pickType + '_배팅' + baseIn + '원_' + resultStr;
-            betCalcLog.unshift(logLine);
-            const logEl = document.getElementById('bet-calc-log');
-            if (logEl) logEl.insertAdjacentHTML('afterbegin', '<div>' + logLine + '</div>');
+            const r = id === DEFENSE_ID ? getDefenseCalcResult() : getCalcResult(id);
+            let logLine;
+            if (id === DEFENSE_ID) {
+                logLine = dateStr + '_방어_순익' + (r.profit >= 0 ? '+' : '') + r.profit + '원_승' + r.wins + '패' + r.losses + '_승률' + r.winRate + '%_최대연승' + r.maxWinStreak + '_최대연패' + r.maxLoseStreak;
+            } else {
+                const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
+                const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
+                const pickType = rev ? '반픽' : '정픽';
+                logLine = dateStr + '_계산기' + id + '_' + pickType + '_배팅' + baseIn + '원_순익' + (r.profit >= 0 ? '+' : '') + r.profit + '원_승' + r.wins + '패' + r.losses + '_승률' + r.winRate + '%';
+            }
+            const histCopy = JSON.parse(JSON.stringify(state.history || []));
+            betCalcLog.unshift({ line: logLine, calcId: id === DEFENSE_ID ? 'defense' : String(id), history: histCopy });
+            saveBetCalcLog();
+            renderBetCalcLog();
         }
         function updateCalcDetail(id) {
             try {
             const streakId = id === DEFENSE_ID ? 'calc-defense-streak' : ('calc-' + id + '-streak');
             const statsId = id === DEFENSE_ID ? 'calc-defense-stats' : ('calc-' + id + '-stats');
+            const tableWrapId = id === DEFENSE_ID ? 'calc-defense-round-table-wrap' : ('calc-' + id + '-round-table-wrap');
             const streakEl = document.getElementById(streakId);
             const statsEl = document.getElementById(statsId);
+            const tableWrap = document.getElementById(tableWrapId);
             if (!streakEl || !statsEl) return;
             const state = id === DEFENSE_ID ? calcState.defense : calcState[id];
             if (!state) return;
             const hist = state.history || [];
             if (hist.length === 0) {
-                streakEl.textContent = id === DEFENSE_ID ? '경기결과: - (연결 계산기의 반픽·동일 배팅금)' : '경기결과: -';
+                streakEl.textContent = id === DEFENSE_ID ? '경기결과 (최근 30회): - (연결 계산기의 반픽·동일 배팅금)' : '경기결과 (최근 30회): -';
                 statsEl.textContent = '최대연승: - | 최대연패: - | 승률: -';
+                if (tableWrap) tableWrap.innerHTML = '';
                 return;
             }
             const r = id === DEFENSE_ID ? getDefenseCalcResult() : getCalcResult(id);
             const usedLen = (r.processedCount !== undefined && r.processedCount >= 0) ? r.processedCount : hist.length;
             const usedHist = hist.slice(0, usedLen);
-            // getCalcResult와 동일 기준: 무효 항목(predicted/actual 없음)은 표시에서 제외해 승률·경기결과 일치
+            // 회차별 픽/결과/승패용 행 목록 (유효 항목만, 최신순 = 뒤에서부터)
+            let rows = [];
+            if (id === DEFENSE_ID) {
+                for (let i = usedHist.length - 1; i >= 0; i--) {
+                    const h = usedHist[i];
+                    const bet = (h && typeof h.betAmount === 'number' ? h.betAmount : 0) || (h && parseInt(h.betAmount, 10)) || 0;
+                    if (!h || (typeof h.predicted === 'undefined' && typeof h.actual === 'undefined')) continue;
+                    if (bet <= 0) { rows.push({ idx: rows.length + 1, pick: '-', result: '-', outcome: '－' }); continue; }
+                    const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
+                    const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
+                    rows.push({ idx: rows.length + 1, pick: h.predicted === '정' ? '정' : '꺽', result: res, outcome: outcome });
+                }
+            } else {
+                for (let i = usedHist.length - 1; i >= 0; i--) {
+                    const h = usedHist[i];
+                    if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                    const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
+                    const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
+                    rows.push({ idx: rows.length + 1, pick: h.predicted === '정' ? '정' : '꺽', result: res, outcome: outcome });
+                }
+            }
+            const displayRows = rows.slice(0, 15);
+            if (tableWrap) {
+                if (displayRows.length === 0) {
+                    tableWrap.innerHTML = '';
+                } else {
+                    let tbl = '<table class="calc-round-table"><thead><tr><th>#</th><th>픽(걸은 것)</th><th>결과(실제)</th><th>승패</th></tr></thead><tbody>';
+                    displayRows.forEach(function(row) {
+                        const outClass = row.outcome === '승' ? 'win' : row.outcome === '패' ? 'lose' : row.outcome === '조' ? 'joker' : 'skip';
+                        tbl += '<tr><td>' + row.idx + '</td><td>' + row.pick + '</td><td>' + row.result + '</td><td class="' + outClass + '">' + row.outcome + '</td></tr>';
+                    });
+                    tbl += '</tbody></table>';
+                    tableWrap.innerHTML = tbl;
+                }
+            }
+            // getCalcResult와 동일 기준: 무효 항목은 표시에서 제외. 경기결과는 최근 30회만 표시(저장은 전부 유지)
             let arr = [];
             if (id === DEFENSE_ID) {
                 arr = usedHist.map(h => ((h.betAmount || 0) <= 0 ? '-' : (h.actual === 'joker' ? 'j' : (h.predicted === h.actual ? 'w' : 'l'))));
@@ -2864,11 +2995,13 @@ RESULTS_HTML = '''
                 }
             }
             const arrRev = arr.slice().reverse();
-            const streakStr = arrRev.map(a => {
+            const showMax = 30;
+            const arrShow = arrRev.slice(0, showMax);
+            const streakStr = arrShow.map(a => {
                 if (a === '-') return '<span class="defense-skip">－</span>';
                 return '<span class="' + (a === 'w' ? 'w' : a === 'l' ? 'l' : 'j') + '">' + (a === 'w' ? '승' : a === 'l' ? '패' : '조') + '</span>';
             }).join(' ');
-            streakEl.innerHTML = '경기결과 (최근←): ' + streakStr + (id === DEFENSE_ID ? ' <span class="defense-skip">※－=미배팅</span>' : '');
+            streakEl.innerHTML = '경기결과 (최근 30회←): ' + streakStr + (id === DEFENSE_ID ? ' <span class="defense-skip">※－=미배팅</span>' : '');
             statsEl.textContent = '최대연승: ' + r.maxWinStreak + ' | 최대연패: ' + r.maxLoseStreak + ' | 승률: ' + r.winRate + '%';
             } catch (e) { console.warn('updateCalcDetail', id, e); }
         }
@@ -2889,6 +3022,14 @@ RESULTS_HTML = '''
                 if (logPanel) logPanel.classList.toggle('active', t === 'log');
             });
         });
+        document.getElementById('bet-log-clear-all')?.addEventListener('click', function() {
+            if (betCalcLog.length === 0) return;
+            if (typeof confirm !== 'undefined' && !confirm('로그를 모두 삭제할까요?')) return;
+            betCalcLog = [];
+            saveBetCalcLog();
+            renderBetCalcLog();
+        });
+        renderBetCalcLog();
         setInterval(function() {
             const st = getServerTimeSec();
             CALC_IDS.forEach(id => {
@@ -2914,6 +3055,7 @@ RESULTS_HTML = '''
                 if (calcState.defense.use_duration_limit && calcState.defense.duration_limit > 0 && calcState.defense.elapsed >= calcState.defense.duration_limit) {
                     calcState.defense.running = false;
                     calcState.defense.timer_completed = true;
+                    if (calcState.defense.history.length > 0) appendCalcLog(DEFENSE_ID);
                     saveCalcStateToServer();
                     updateCalcSummary(DEFENSE_ID);
                     updateCalcStatus(DEFENSE_ID);
@@ -2996,8 +3138,11 @@ RESULTS_HTML = '''
                 if (state.timerId) { clearInterval(state.timerId); state.timerId = null; }
                 saveCalcStateToServer();
                 updateCalcSummary(id);
+                updateCalcDetail(id);
                 updateCalcStatus(id);
-                if (id !== DEFENSE_ID && state.history.length > 0) {
+                if (id === DEFENSE_ID && state.history.length > 0) {
+                    appendCalcLog(DEFENSE_ID);
+                } else if (id !== DEFENSE_ID && state.history.length > 0) {
                     const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
                     if (saveBtn) saveBtn.style.display = 'inline-block';
                 }
