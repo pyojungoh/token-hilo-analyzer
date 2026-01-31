@@ -1842,7 +1842,9 @@ RESULTS_HTML = '''
                 duration_limit: 0,
                 use_duration_limit: false,
                 timer_completed: false,
-                timerId: null
+                timerId: null,
+                maxWinStreakEver: 0,
+                maxLoseStreakEver: 0
             };
         });
         calcState.defense = {
@@ -1854,7 +1856,9 @@ RESULTS_HTML = '''
             use_duration_limit: false,
             timer_completed: false,
             linked_calc_id: 1,
-            timerId: null
+            timerId: null,
+            maxWinStreakEver: 0,
+            maxLoseStreakEver: 0
         };
         const DEFENSE_ID = 'defense';
         let lastServerTimeSec = 0;  // /api/current-status 등에서 갱신
@@ -1875,7 +1879,9 @@ RESULTS_HTML = '''
                     duration_limit: duration_limit,
                     use_duration_limit: use_duration_limit,
                     reverse: !!(revEl && revEl.checked),
-                    timer_completed: !!calcState[id].timer_completed
+                    timer_completed: !!calcState[id].timer_completed,
+                    max_win_streak_ever: calcState[id].maxWinStreakEver || 0,
+                    max_lose_streak_ever: calcState[id].maxLoseStreakEver || 0
                 };
             });
             const d = calcState.defense;
@@ -1898,7 +1904,9 @@ RESULTS_HTML = '''
                 full_steps: (defFullSteps && parseInt(defFullSteps.value, 10)) || 3,
                 reduce_from: (defReduceFrom && parseInt(defReduceFrom.value, 10)) || 4,
                 reduce_div: (defReduceDiv && parseInt(defReduceDiv.value, 10)) || 4,
-                stop_streak: (defStopStreak && parseInt(defStopStreak.value, 10)) || 0
+                stop_streak: (defStopStreak && parseInt(defStopStreak.value, 10)) || 0,
+                max_win_streak_ever: (d.maxWinStreakEver || 0),
+                max_lose_streak_ever: (d.maxLoseStreakEver || 0)
             };
             return payload;
         }
@@ -1913,6 +1921,8 @@ RESULTS_HTML = '''
                 calcState[id].duration_limit = parseInt(c.duration_limit, 10) || 0;
                 calcState[id].use_duration_limit = !!c.use_duration_limit;
                 calcState[id].timer_completed = !!c.timer_completed;
+                calcState[id].maxWinStreakEver = Math.max(0, parseInt(c.max_win_streak_ever, 10) || 0);
+                calcState[id].maxLoseStreakEver = Math.max(0, parseInt(c.max_lose_streak_ever, 10) || 0);
                 calcState[id].elapsed = calcState[id].running && calcState[id].started_at ? Math.max(0, st - calcState[id].started_at) : 0;
                 const durEl = document.getElementById('calc-' + id + '-duration');
                 const checkEl = document.getElementById('calc-' + id + '-duration-check');
@@ -1930,6 +1940,8 @@ RESULTS_HTML = '''
             calcState.defense.use_duration_limit = !!dc.use_duration_limit;
             calcState.defense.timer_completed = !!dc.timer_completed;
             calcState.defense.linked_calc_id = parseInt(dc.linked_calc_id, 10) || 1;
+            calcState.defense.maxWinStreakEver = Math.max(0, parseInt(dc.max_win_streak_ever, 10) || 0);
+            calcState.defense.maxLoseStreakEver = Math.max(0, parseInt(dc.max_lose_streak_ever, 10) || 0);
             calcState.defense.elapsed = calcState.defense.running && calcState.defense.started_at ? Math.max(0, st - calcState.defense.started_at) : 0;
             const defDurEl = document.getElementById('calc-defense-duration');
             const defCheckEl = document.getElementById('calc-defense-duration-check');
@@ -2385,6 +2397,22 @@ RESULTS_HTML = '''
                     
                     // 직전 예측의 실제 결과 반영: 예측했던 회차(전체 ID)가 지금 나왔으면 기록
                     const alreadyRecordedRound = lastPrediction ? predictionHistory.some(function(h) { return h && h.round === lastPrediction.round; }) : true;
+                    var lowWinRateForRecord = false;
+                    try {
+                        var vh = predictionHistory.filter(function(h) { return h && typeof h === 'object'; });
+                        var v15 = vh.slice(-15), v30 = vh.slice(-30), v100 = vh.slice(-100);
+                        var hit15r = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                        var loss15 = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                        var c15 = hit15r + loss15, r15 = c15 > 0 ? 100 * hit15r / c15 : 50;
+                        var hit30r = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                        var loss30 = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                        var c30 = hit30r + loss30, r30 = c30 > 0 ? 100 * hit30r / c30 : 50;
+                        var hit100r = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                        var loss100 = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                        var c100 = hit100r + loss100, r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
+                        var blended = 0.5 * r15 + 0.3 * r30 + 0.2 * r100;
+                        lowWinRateForRecord = (c15 > 0 || c30 > 0 || c100 > 0) && blended <= 50;
+                    } catch (e) {}
                     if (lastPrediction && currentRoundFull === lastPrediction.round && !alreadyRecordedRound) {
                         const isActualJoker = displayResults.length > 0 && !!displayResults[0].joker;
                         if (isActualJoker) {
@@ -2394,7 +2422,8 @@ RESULTS_HTML = '''
                                 const hasRound = calcState[id].history.some(function(h) { return h && h.round === lastPrediction.round; });
                                 if (hasRound) return;
                                 const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
-                                const pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
+                                var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
+                                if (document.getElementById('win-rate-reverse-check') && document.getElementById('win-rate-reverse-check').checked && lowWinRateForRecord) pred = pred === '정' ? '꺽' : '정';
                                 // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
                                 let defenseBet = 0;
                                 if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
@@ -2415,7 +2444,8 @@ RESULTS_HTML = '''
                                 const hasRound = calcState[id].history.some(function(h) { return h && h.round === lastPrediction.round; });
                                 if (hasRound) return;
                                 const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
-                                const pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
+                                var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
+                                if (document.getElementById('win-rate-reverse-check') && document.getElementById('win-rate-reverse-check').checked && lowWinRateForRecord) pred = pred === '정' ? '꺽' : '정';
                                 // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
                                 let defenseBet = 0;
                                 if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
@@ -2777,8 +2807,10 @@ RESULTS_HTML = '''
                             if (lowWinRate) notices.push('⚠ 승률이 낮으니 배팅 주의 (합산승률: ' + blendedWinRate.toFixed(1) + '%)');
                             noticeBlock = '<div class="prediction-notice' + (lowWinRate && !flowAdvice ? ' danger' : '') + '">' + notices.join(' &nbsp; · &nbsp; ') + '</div>';
                         }
+                        var winRateReverseChecked = (document.getElementById('win-rate-reverse-check') && document.getElementById('win-rate-reverse-check').checked) || false;
+                        const winRateReverseRow = '<div class="prediction-option-row" style="margin-top:6px;font-size:0.9em"><label><input type="checkbox" id="win-rate-reverse-check"' + (winRateReverseChecked ? ' checked' : '') + '> 승률반픽</label></div>';
                         const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:clamp(0.75em,1.8vw,0.85em)">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
-                        predDiv.innerHTML = noticeBlock + statsBlock + streakTableBlock + extraLine;
+                        predDiv.innerHTML = noticeBlock + winRateReverseRow + statsBlock + streakTableBlock + extraLine;
                     }
                     
                     // 가상 배팅 계산기 1,2,3 요약·상세 갱신 (오류 시에도 메인 화면은 유지)
@@ -2886,10 +2918,16 @@ RESULTS_HTML = '''
                 processedCount = i + 1;
                 if (cap <= 0) { bust = true; break; }
             }
+            if (calcState[id]) {
+                calcState[id].maxWinStreakEver = Math.max(calcState[id].maxWinStreakEver || 0, maxWinStreak);
+                calcState[id].maxLoseStreakEver = Math.max(calcState[id].maxLoseStreakEver || 0, maxLoseStreak);
+            }
             const profit = cap - capIn;
             const total = wins + losses;
             const winRate = total > 0 ? (100 * wins / total).toFixed(1) : '-';
-            return { cap: Math.max(0, Math.floor(cap)), profit, currentBet: bust ? 0 : currentBet, wins, losses, bust, maxWinStreak, maxLoseStreak, winRate, processedCount: bust ? processedCount : hist.length };
+            const displayMaxWin = (calcState[id] && calcState[id].maxWinStreakEver != null) ? calcState[id].maxWinStreakEver : maxWinStreak;
+            const displayMaxLose = (calcState[id] && calcState[id].maxLoseStreakEver != null) ? calcState[id].maxLoseStreakEver : maxLoseStreak;
+            return { cap: Math.max(0, Math.floor(cap)), profit, currentBet: bust ? 0 : currentBet, wins, losses, bust, maxWinStreak: displayMaxWin, maxLoseStreak: displayMaxLose, winRate, processedCount: bust ? processedCount : hist.length };
             } catch (e) { console.warn('getCalcResult', id, e); return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-', processedCount: 0 }; }
         }
         function getDefenseBetAmount(linkedId) {
@@ -2951,12 +2989,18 @@ RESULTS_HTML = '''
                 }
                 if (cap <= 0) { bust = true; break; }
             }
+            if (calcState.defense) {
+                calcState.defense.maxWinStreakEver = Math.max(calcState.defense.maxWinStreakEver || 0, maxWinStreak);
+                calcState.defense.maxLoseStreakEver = Math.max(calcState.defense.maxLoseStreakEver || 0, maxLoseStreak);
+            }
             const linkedId = d.linked_calc_id || 1;
             const currentBet = (d.running && calcState[linkedId] && calcState[linkedId].running) ? getDefenseBetAmount(linkedId) : 0;
             const profit = cap - capIn;
             const total = wins + losses;
             const winRate = total > 0 ? (100 * wins / total).toFixed(1) : '-';
-            return { cap: Math.max(0, Math.floor(cap)), profit, currentBet, wins, losses, bust, maxWinStreak, maxLoseStreak, winRate };
+            const displayMaxWin = (calcState.defense && calcState.defense.maxWinStreakEver != null) ? calcState.defense.maxWinStreakEver : maxWinStreak;
+            const displayMaxLose = (calcState.defense && calcState.defense.maxLoseStreakEver != null) ? calcState.defense.maxLoseStreakEver : maxLoseStreak;
+            return { cap: Math.max(0, Math.floor(cap)), profit, currentBet, wins, losses, bust, maxWinStreak: displayMaxWin, maxLoseStreak: displayMaxLose, winRate };
             } catch (e) { console.warn('getDefenseCalcResult', e); return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-' }; }
         }
         function updateCalcStatus(id) {
@@ -3199,6 +3243,8 @@ RESULTS_HTML = '''
                     calcState.defense.history = [];
                     calcState.defense.started_at = 0;
                     calcState.defense.elapsed = 0;
+                    calcState.defense.maxWinStreakEver = 0;
+                    calcState.defense.maxLoseStreakEver = 0;
                     try {
                         const res = await fetch('/api/calc-state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: localStorage.getItem(CALC_SESSION_KEY), calcs: buildCalcPayload() }) });
                         const data = await res.json();
@@ -3220,6 +3266,8 @@ RESULTS_HTML = '''
                 calcState[id].history = [];
                 calcState[id].started_at = 0;
                 calcState[id].elapsed = 0;
+                calcState[id].maxWinStreakEver = 0;
+                calcState[id].maxLoseStreakEver = 0;
                 try {
                     const payload = buildCalcPayload();
                     payload[String(id)].running = true;
@@ -3682,10 +3730,12 @@ def api_calc_state():
                     'duration_limit': int(c.get('duration_limit') or 0),
                     'use_duration_limit': bool(c.get('use_duration_limit')),
                     'reverse': bool(c.get('reverse')),
-                    'timer_completed': bool(c.get('timer_completed'))
+                    'timer_completed': bool(c.get('timer_completed')),
+                    'max_win_streak_ever': int(c.get('max_win_streak_ever') or 0),
+                    'max_lose_streak_ever': int(c.get('max_lose_streak_ever') or 0)
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0}
         c = calcs.get('defense') or {}
         if isinstance(c, dict):
             running = c.get('running', False)
@@ -3703,10 +3753,12 @@ def api_calc_state():
                 'full_steps': int(c.get('full_steps') or 3),
                 'reduce_from': int(c.get('reduce_from') or 4),
                 'reduce_div': int(c.get('reduce_div') or 4),
-                'stop_streak': int(c.get('stop_streak') or 0)
+                'stop_streak': int(c.get('stop_streak') or 0),
+                'max_win_streak_ever': int(c.get('max_win_streak_ever') or 0),
+                'max_lose_streak_ever': int(c.get('max_lose_streak_ever') or 0)
             }
         else:
-            out['defense'] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'timer_completed': False, 'linked_calc_id': 1, 'full_steps': 3, 'reduce_from': 4, 'reduce_div': 4, 'stop_streak': 0}
+            out['defense'] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'timer_completed': False, 'linked_calc_id': 1, 'full_steps': 3, 'reduce_from': 4, 'reduce_div': 4, 'stop_streak': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0}
         save_calc_state(session_id, out)
         return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': out}), 200
     except Exception as e:
