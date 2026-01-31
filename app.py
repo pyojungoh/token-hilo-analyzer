@@ -1178,8 +1178,7 @@ RESULTS_HTML = '''
             .prediction-table-row { flex-direction: column; align-items: stretch; gap: 8px; }
             .prediction-table-row #prediction-pick-container { order: 1; width: 100%; max-width: 100%; display: flex; justify-content: center; box-sizing: border-box; }
             .prediction-table-row #prediction-box { order: 2; width: 100%; max-width: 100%; box-sizing: border-box; }
-            .prediction-table-row #graph-stats { order: 3; width: 100%; }
-            .prediction-table-row #prob-bucket-collapse { order: 4; width: 100%; }
+            .prediction-table-row #prob-bucket-collapse { order: 3; width: 100%; }
         }
         @media (max-width: 480px) {
             .cards-container { gap: 2px; padding: 8px 0; }
@@ -1599,10 +1598,15 @@ RESULTS_HTML = '''
         <div class="prediction-result-section">
             <div id="prediction-result-bar" class="prediction-result-bar-wrap"></div>
         </div>
+        <div id="graph-stats-collapse" class="prob-bucket-collapse collapsed">
+            <div class="prob-bucket-collapse-header" id="graph-stats-collapse-header" role="button" tabindex="0">최근 15회/30회/전체 정꺽 승률</div>
+            <div class="prob-bucket-collapse-body" id="graph-stats-collapse-body">
+                <div id="graph-stats" class="graph-stats"></div>
+            </div>
+        </div>
         <div class="prediction-table-row">
             <div id="prediction-pick-container"></div>
-            <div id="graph-stats" class="graph-stats"></div>
-        <div id="prediction-box" class="prediction-box"></div>
+            <div id="prediction-box" class="prediction-box"></div>
         </div>
         <div id="prob-bucket-collapse" class="prob-bucket-collapse collapsed">
             <div class="prob-bucket-collapse-header" id="prob-bucket-collapse-header" role="button" tabindex="0">예측 확률 구간별 승률</div>
@@ -3051,6 +3055,16 @@ RESULTS_HTML = '''
                                 if (el) el.classList.toggle('collapsed');
                             });
                         }
+                        var graphStatsCollapse = document.getElementById('graph-stats-collapse');
+                        if (graphStatsCollapse) graphStatsCollapse.style.display = '';
+                        var graphStatsCollapseHeader = document.getElementById('graph-stats-collapse-header');
+                        if (graphStatsCollapseHeader && !graphStatsCollapseHeader.getAttribute('data-bound')) {
+                            graphStatsCollapseHeader.setAttribute('data-bound', '1');
+                            graphStatsCollapseHeader.addEventListener('click', function() {
+                                var el = document.getElementById('graph-stats-collapse');
+                                if (el) el.classList.toggle('collapsed');
+                            });
+                        }
                         let noticeBlock = '';
                         if (flowAdvice || lowWinRate || symmetryBoostNotice || newSegmentNotice) {
                             const notices = [];
@@ -3080,6 +3094,7 @@ RESULTS_HTML = '''
                     const probBucketCollapseEmpty = document.getElementById('prob-bucket-collapse');
                     const symmetryLineBodyEmpty = document.getElementById('symmetry-line-collapse-body');
                     const symmetryLineCollapseEmpty = document.getElementById('symmetry-line-collapse');
+                    const graphStatsCollapseEmpty = document.getElementById('graph-stats-collapse');
                     if (resultBarEmpty) resultBarEmpty.innerHTML = '';
                     if (pickEmpty) pickEmpty.innerHTML = '';
                     if (predDivEmpty) predDivEmpty.innerHTML = '';
@@ -3087,6 +3102,7 @@ RESULTS_HTML = '''
                     if (probBucketCollapseEmpty) probBucketCollapseEmpty.style.display = 'none';
                     if (symmetryLineBodyEmpty) symmetryLineBodyEmpty.innerHTML = '';
                     if (symmetryLineCollapseEmpty) symmetryLineCollapseEmpty.style.display = 'none';
+                    if (graphStatsCollapseEmpty) graphStatsCollapseEmpty.style.display = 'none';
                 }
                 
                 // 헤더: 상단에는 회차 전체 숫자 표시 (비교용), 표에는 뒤 3자리만
