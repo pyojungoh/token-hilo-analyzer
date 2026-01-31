@@ -1144,7 +1144,7 @@ RESULTS_HTML = '''
         .graph-stats .kkuk-next { color: #e57373; }
         .graph-stats .jung-kkuk { color: #ffb74d; }
         .graph-stats .kkuk-jung { color: #64b5f6; }
-        .graph-stats-note { margin-top: 6px; font-size: 0.85em; color: #aaa; text-align: center; }
+        .graph-stats-note { margin-top: 6px; font-size: 0.85em; color: #aaa; text-align: center; line-height: 1.5; }
         /* 성공/실패 결과: 예측 박스와 완전 분리(아웃) */
         .prediction-result-section {
             width: 100%;
@@ -1172,9 +1172,9 @@ RESULTS_HTML = '''
             min-width: 0;
         }
         @media (max-width: 768px) {
-            .prediction-table-row { flex-direction: column; align-items: center; gap: 8px; }
-            .prediction-table-row #prediction-pick-container { order: 1; width: 100%; max-width: 320px; display: flex; justify-content: center; }
-            .prediction-table-row #prediction-box { order: 2; width: 100%; }
+            .prediction-table-row { flex-direction: column; align-items: stretch; gap: 8px; }
+            .prediction-table-row #prediction-pick-container { order: 1; width: 100%; max-width: 100%; display: flex; justify-content: center; box-sizing: border-box; }
+            .prediction-table-row #prediction-box { order: 2; width: 100%; max-width: 100%; box-sizing: border-box; }
             .prediction-table-row #graph-stats { order: 3; width: 100%; }
             .prediction-table-row #prob-bucket-collapse { order: 4; width: 100%; }
         }
@@ -2404,7 +2404,7 @@ RESULTS_HTML = '''
                         '<tr><td><span class="jung-kkuk">← 꺽</span></td><td>' + (short15 ? fmt(short15.pJungToKkuk, short15.jk, short15.jungDenom) : '-') + '</td><td>' + fmt(recent30.pJungToKkuk, recent30.jk, recent30.jungDenom) + '</td><td>' + fmt(full.pJungToKkuk, full.jk, full.jungDenom) + '</td></tr>' +
                         '<tr><td><span class="kkuk-jung">← 정</span></td><td>' + (short15 ? fmt(short15.pKkukToJung, short15.kj, short15.kkukDenom) : '-') + '</td><td>' + fmt(recent30.pKkukToJung, recent30.kj, recent30.kkukDenom) + '</td><td>' + fmt(full.pKkukToJung, full.kj, full.kkukDenom) + '</td></tr>' +
                         '<tr><td><span style="color:#888">구간반영</span></td><td>' + rowBlend15 + '</td><td>' + rowBlend30 + '</td><td>' + rowBlend100 + '</td></tr>' +
-                        '</tbody></table><p class="graph-stats-note">※ 단기(15회) vs 장기(30회) 비교로 흐름 전환 감지 · 아랫줄=구간반영(예측이력 15/30/100회, 30% 적용) · % 높을수록 예측 픽(정/꺽)에 대한 확신↑</p>';
+                        '</tbody></table><p class="graph-stats-note">※ 단기(15회) vs 장기(30회) 비교로 흐름 전환 감지<br>· 아랫줄=구간반영(예측이력 15/30/100회, 30% 적용)<br>· % 높을수록 예측 픽(정/꺽)에 대한 확신↑</p>';
                     
                     // 회차: 비교·저장은 전체 gameID(11416052 등), 표시만 뒤 3자리(052). 숫자 높을수록 최신이므로 전체로 비교해야 035가 999보다 최신으로 인식됨
                     function fullRoundFromGameID(g) {
@@ -2649,6 +2649,30 @@ RESULTS_HTML = '''
                         else break;
                     }
                     const streakNow = streakCount > 0 ? '현재 ' + streakCount + '연' + streakType : '';
+                    // 최근 100회 기준: 현재 연승/연패, 최대 연승, 최대 연패 (가독성)
+                    var currStreak100 = 0, currStreakType100 = '', maxWin100 = 0, maxLose100 = 0;
+                    (function() {
+                        var v100 = predictionHistory.slice(-100).filter(function(h) { return h && typeof h === 'object'; });
+                        var i, run = 0, runType = '';
+                        for (i = v100.length - 1; i >= 0; i--) {
+                            var h = v100[i];
+                            if (h.actual === 'joker') break;
+                            var s = h.predicted === h.actual ? '승' : '패';
+                            if (i === v100.length - 1) { currStreakType100 = s; currStreak100 = 1; }
+                            else if (s === currStreakType100) currStreak100++;
+                            else break;
+                        }
+                        for (i = 0; i < v100.length; i++) {
+                            var h = v100[i];
+                            if (h.actual === 'joker') { run = 0; runType = ''; continue; }
+                            var s = h.predicted === h.actual ? '승' : '패';
+                            if (s === runType) run++;
+                            else { run = 1; runType = s; }
+                            if (runType === '승') maxWin100 = Math.max(maxWin100, run);
+                            else maxLose100 = Math.max(maxLose100, run);
+                        }
+                    })();
+                    const streakLine100 = '현재 ' + (currStreak100 > 0 ? currStreak100 + '연' + currStreakType100 : '-') + ' | 최대 연승 ' + (maxWin100 || '-') + ' | 최대 연패 ' + (maxLose100 || '-');
                     
                     // 예측 픽(표 왼쪽 박스, 가운데 정렬) · 적중률·연승연패·주의 사항(아래 회색 박스)
                     const resultBarContainer = document.getElementById('prediction-result-bar');
@@ -2774,7 +2798,7 @@ RESULTS_HTML = '''
                         let streakTableBlock = '';
                         try {
                         if (rev.length === 0) {
-                            streakTableBlock = '<div class="prediction-streak-line">연승/연패 기록: -' + (streakNow ? ' &nbsp; <span class="streak-now">' + streakNow + '</span>' : '') + '</div>';
+                            streakTableBlock = '<div class="prediction-streak-line">최근 100회 기준 · <span class="streak-now">' + streakLine100 + '</span></div>';
                         } else {
                             const headerCells = rev.map(function(h) { return '<th>' + displayRound3(h.round) + '</th>'; }).join('');
                             const rowProb = rev.map(function(h) { return '<td>' + (h.probability != null ? Number(h.probability).toFixed(1) + '%' : '-') + '</td>'; }).join('');
@@ -2793,11 +2817,11 @@ RESULTS_HTML = '''
                                 '<tr>' + rowProb + '</tr>' +
                                 '<tr>' + rowPick + '</tr>' +
                                 '<tr>' + rowOutcome + '</tr>' +
-                                '</tbody></table></div>' + (streakNow ? '<div class="prediction-streak-line" style="margin-top:4px"><span class="streak-now">' + streakNow + '</span></div>' : '');
+                                '</tbody></table></div><div class="prediction-streak-line" style="margin-top:6px">최근 100회 기준 · <span class="streak-now">' + streakLine100 + '</span></div>';
                         }
                         } catch (streakErr) {
                             console.warn('연승/연패 표 구성 오류:', streakErr);
-                            streakTableBlock = '<div class="prediction-streak-line">연승/연패 기록: -' + (streakNow ? ' &nbsp; <span class="streak-now">' + streakNow + '</span>' : '') + '</div>';
+                            streakTableBlock = '<div class="prediction-streak-line">최근 100회 기준 · <span class="streak-now">' + streakLine100 + '</span></div>';
                         }
                         const probBucketBody = document.getElementById('prob-bucket-collapse-body');
                         const probBucketCollapse = document.getElementById('prob-bucket-collapse');
