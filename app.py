@@ -2347,9 +2347,11 @@ RESULTS_HTML = '''
                                 if (!calcState[id].running) return;
                                 const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
                                 const pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
+                                // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
+                                let defenseBet = 0;
+                                if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
                                 calcState[id].history.push({ predicted: pred, actual: 'joker' });
                                 if (calcState.defense.running && calcState.defense.linked_calc_id === id) {
-                                    const defenseBet = getDefenseBetAmount(id);
                                     calcState.defense.history.push({ predicted: pred === '정' ? '꺽' : '정', actual: 'joker', betAmount: defenseBet });
                                     updateCalcSummary(DEFENSE_ID);
                                     updateCalcDetail(DEFENSE_ID);
@@ -2364,9 +2366,11 @@ RESULTS_HTML = '''
                                 if (!calcState[id].running) return;
                                 const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
                                 const pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
+                                // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
+                                let defenseBet = 0;
+                                if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
                                 calcState[id].history.push({ predicted: pred, actual: actual });
                                 if (calcState.defense.running && calcState.defense.linked_calc_id === id) {
-                                    const defenseBet = getDefenseBetAmount(id);
                                     calcState.defense.history.push({ predicted: pred === '정' ? '꺽' : '정', actual: actual, betAmount: defenseBet });
                                     updateCalcSummary(DEFENSE_ID);
                                     updateCalcDetail(DEFENSE_ID);
