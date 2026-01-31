@@ -2382,14 +2382,16 @@ RESULTS_HTML = '''
                 }
                 var blendData = { p15: null, p30: null, p100: null, newProb: null };
                 const statsDiv = document.getElementById('graph-stats');
-                if (statsDiv && graphValues.length >= 2) {
+                if (statsDiv && graphValues && Array.isArray(graphValues) && graphValues.length >= 2) {
+                    try {
+                    if (!Array.isArray(predictionHistory)) predictionHistory = [];
                     let symmetryLineData = null;
                     const full = calcTransitions(graphValues);
                     const recent30 = calcTransitions(graphValues.slice(0, 30));
                     const short15 = graphValues.length >= 15 ? calcTransitions(graphValues.slice(0, 15)) : null;
                     const fmt = (p, n, d) => d > 0 ? p + '% (' + n + '/' + d + ')' : '-';
                     // 예측 이력으로 15/30/100 구간 반영값 계산 (표 맨 아랫줄 + 확률 30% 반영용)
-                    const validHistBlend = predictionHistory.filter(function(h) { return h && typeof h === 'object'; });
+                    const validHistBlend = Array.isArray(predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
                     const outcomesNewestFirst = validHistBlend.filter(function(h) { return h.actual !== 'joker'; }).map(function(h) { return h.actual === '정'; }).reverse();
                     if (outcomesNewestFirst.length >= 2) {
                         function transCounts(arr) {
@@ -2626,33 +2628,35 @@ RESULTS_HTML = '''
                         flowAdvice = '확률 급상승 구간(방향 불명) → 보수적 배팅 권장';
                     }
                     
-                    // 20열 기준 좌우대칭·줄 데이터 (예측픽 보정 + 아래 표에 사용)
-                    var arr20 = (graphValues && graphValues.filter(function(v) { return v === true || v === false; }).slice(0, 20)) || [];
-                    if (arr20.length >= 20) {
-                        function getRunLengths(a) {
-                            var r = [], cur = null, c = 0, i;
-                            for (i = 0; i < a.length; i++) {
-                                if (a[i] === cur) c++;
-                                else { if (cur !== null) r.push(c); cur = a[i]; c = 1; }
+                    // 20열 기준 좌우대칭·줄 데이터 (예측픽 보정 + 아래 표에 사용). 오류 시 symmetryLineData=null로 무시.
+                    try {
+                        var arr20 = (graphValues && graphValues.filter(function(v) { return v === true || v === false; }).slice(0, 20)) || [];
+                        if (arr20 && arr20.length >= 20) {
+                            function getRunLengths(a) {
+                                var r = [], cur = null, c = 0, i;
+                                for (i = 0; i < a.length; i++) {
+                                    if (a[i] === cur) c++;
+                                    else { if (cur !== null) r.push(c); cur = a[i]; c = 1; }
+                                }
+                                if (cur !== null) r.push(c);
+                                return r;
                             }
-                            if (cur !== null) r.push(c);
-                            return r;
+                            var symCount = 0;
+                            for (var si = 0; si < 10; si++) { if (arr20[si] === arr20[19 - si]) symCount++; }
+                            var left10 = arr20.slice(0, 10), right10 = arr20.slice(10, 20);
+                            var leftRuns = getRunLengths(left10), rightRuns = getRunLengths(right10);
+                            var avgL = leftRuns.length ? leftRuns.reduce(function(s, x) { return s + x; }, 0) / leftRuns.length : 0;
+                            var avgR = rightRuns.length ? rightRuns.reduce(function(s, x) { return s + x; }, 0) / rightRuns.length : 0;
+                            var lineDiff = Math.abs(avgL - avgR);
+                            symmetryLineData = {
+                                symmetryPct: symCount / 10 * 100,
+                                avgLeft: avgL, avgRight: avgR,
+                                lineSimilarityPct: Math.max(0, 100 - Math.min(100, lineDiff * 25)),
+                                leftLineCount: leftRuns.length,
+                                rightLineCount: rightRuns.length
+                            };
                         }
-                        var symCount = 0;
-                        for (var si = 0; si < 10; si++) { if (arr20[si] === arr20[19 - si]) symCount++; }
-                        var left10 = arr20.slice(0, 10), right10 = arr20.slice(10, 20);
-                        var leftRuns = getRunLengths(left10), rightRuns = getRunLengths(right10);
-                        var avgL = leftRuns.length ? leftRuns.reduce(function(s, x) { return s + x; }, 0) / leftRuns.length : 0;
-                        var avgR = rightRuns.length ? rightRuns.reduce(function(s, x) { return s + x; }, 0) / rightRuns.length : 0;
-                        var lineDiff = Math.abs(avgL - avgR);
-                        symmetryLineData = {
-                            symmetryPct: symCount / 10 * 100,
-                            avgLeft: avgL, avgRight: avgR,
-                            lineSimilarityPct: Math.max(0, 100 - Math.min(100, lineDiff * 25)),
-                            leftLineCount: leftRuns.length,
-                            rightLineCount: rightRuns.length
-                        };
-                    }
+                    } catch (symErr) { symmetryLineData = null; console.warn('20열 symmetry/line calc:', symErr); }
                     
                     // 예측픽 합산 공식: (유지확률×줄가중치) vs (바뀜확률×퐁당가중치) → 정규화 후 큰 쪽이 예측.
                     // 가중치(lineW,pongW) 구성: ①최근15회 줄/퐁당% ②흐름전환(줄강/퐁당강) ±0.25 ③20열(줄개수 ±0.15, 대칭도 +0.05 또는 ×0.95) ④30회패턴(chunk/scatter/twoOne) → 합산 후 정규화.
@@ -2947,6 +2951,10 @@ RESULTS_HTML = '''
                         }
                         const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:clamp(0.75em,1.8vw,0.85em)">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
                         predDiv.innerHTML = noticeBlock + statsBlock + streakTableBlock + extraLine;
+                    } catch (statsErr) {
+                        console.warn('Stats/prediction update error:', statsErr);
+                        if (statsDiv) statsDiv.innerHTML = '<p class="graph-stats-note">데이터를 불러오는 중 오류가 발생했습니다. 새로고침해 주세요.</p>';
+                    }
                     }
                     
                     // 가상 배팅 계산기 1,2,3 요약·상세 갱신 (오류 시에도 메인 화면은 유지)
