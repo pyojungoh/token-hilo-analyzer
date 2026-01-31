@@ -1197,8 +1197,8 @@ RESULTS_HTML = '''
             overflow: hidden;
         }
         .prob-bucket-collapse-header {
-            padding: 6px 10px;
-            font-size: 0.85em;
+            padding: 10px 14px;
+            font-size: 1em;
             color: #aaa;
             cursor: pointer;
             user-select: none;
@@ -1208,26 +1208,46 @@ RESULTS_HTML = '''
         .prob-bucket-collapse:not(.collapsed) .prob-bucket-collapse-header::before { content: '▼ '; }
         .prob-bucket-collapse-body {
             display: none;
-            padding: 8px;
+            padding: 14px 18px;
             border-top: 1px solid #333;
         }
         .prob-bucket-collapse:not(.collapsed) .prob-bucket-collapse-body { display: block; }
-        #prob-bucket-collapse-body table {
+        #prob-bucket-collapse-body .prob-bucket-table {
             border-collapse: collapse;
             margin: 0 auto;
-            font-size: 10px;
+            font-size: clamp(14px, 2.2vw, 18px);
             color: #fff;
+            min-width: 280px;
         }
-        #prob-bucket-collapse-body th, #prob-bucket-collapse-body td {
+        #prob-bucket-collapse-body .prob-bucket-table th,
+        #prob-bucket-collapse-body .prob-bucket-table td {
             border: 1px solid #555;
-            padding: 2px 6px;
+            padding: 10px 14px;
             text-align: center;
         }
-        #prob-bucket-collapse-body th { background: #444; color: #aaa; }
-        #prob-bucket-collapse-body td:first-child { text-align: left; font-weight: bold; }
-        #prob-bucket-collapse-body .stat-rate.high { color: #81c784; font-weight: 600; }
-        #prob-bucket-collapse-body .stat-rate.mid { color: #ffb74d; }
-        #prob-bucket-collapse-body .stat-rate.low { color: #e57373; }
+        #prob-bucket-collapse-body .prob-bucket-table th { background: #444; color: #aaa; font-weight: 600; }
+        #prob-bucket-collapse-body .prob-bucket-table td:first-child { text-align: left; font-weight: bold; }
+        #prob-bucket-collapse-body .prob-bucket-table .stat-rate.high { color: #81c784; font-weight: 600; }
+        #prob-bucket-collapse-body .prob-bucket-table .stat-rate.mid { color: #ffb74d; }
+        #prob-bucket-collapse-body .prob-bucket-table .stat-rate.low { color: #e57373; }
+        /* 예측픽이 해당 확률 구간에 있을 때 아웃라인 깜빡임 (강승부 구간 강조) */
+        .prediction-pick.pick-in-bucket .prediction-card {
+            animation: bucketOutlineBlink 1.4s ease-in-out infinite;
+        }
+        @keyframes bucketOutlineBlink {
+            0%, 100% { box-shadow: 0 0 0 2px rgba(129, 199, 132, 0.5), 0 4px 16px rgba(0,0,0,0.5); outline: 2px solid rgba(129, 199, 132, 0.8); outline-offset: 2px; }
+            50% { box-shadow: 0 0 0 6px rgba(129, 199, 132, 0.9), 0 4px 20px rgba(129, 199, 132, 0.3); outline: 3px solid #81c784; outline-offset: 3px; }
+        }
+        .prediction-pick.pick-in-bucket .prediction-card.card-red { animation-name: bucketOutlineBlinkRed; }
+        @keyframes bucketOutlineBlinkRed {
+            0%, 100% { box-shadow: 0 0 0 2px rgba(198, 40, 40, 0.6), 0 4px 16px rgba(198,40,40,0.5); outline: 2px solid rgba(229, 115, 115, 0.9); outline-offset: 2px; }
+            50% { box-shadow: 0 0 0 6px rgba(229, 115, 115, 0.95), 0 4px 20px rgba(198, 40, 40, 0.4); outline: 3px solid #e57373; outline-offset: 3px; }
+        }
+        .prediction-pick.pick-in-bucket .prediction-card.card-black { animation-name: bucketOutlineBlinkBlack; }
+        @keyframes bucketOutlineBlinkBlack {
+            0%, 100% { box-shadow: 0 0 0 2px rgba(144, 164, 174, 0.6), 0 4px 16px rgba(0,0,0,0.5); outline: 2px solid rgba(144, 164, 174, 0.8); outline-offset: 2px; }
+            50% { box-shadow: 0 0 0 6px rgba(144, 164, 174, 0.9), 0 4px 20px rgba(66, 66, 66, 0.5); outline: 3px solid #90a4ae; outline-offset: 3px; }
+        }
         .prediction-pick {
             position: relative;
             display: flex;
@@ -2609,11 +2629,19 @@ RESULTS_HTML = '''
                     }).filter(function(s) { return s.total > 0; });
                     // 기존 확률에 30% 반영 (blendData는 전이 확률 표에서 계산됨)
                     if (blendData && blendData.newProb != null && !is15Joker) predProb = 0.7 * predProb + 0.3 * blendData.newProb;
+                    var pickInBucket = false;
+                    if (!is15Joker && predProb != null) {
+                        for (var bi = 0; bi < BUCKETS.length; bi++) {
+                            var b = BUCKETS[bi];
+                            if (predProb >= b.min && predProb < b.max) { pickInBucket = true; break; }
+                        }
+                    }
                     const lastEntry = validHist.length > 0 ? validHist[validHist.length - 1] : null;
                     const lastIsWin = lastEntry && lastEntry.actual !== 'joker' && lastEntry.predicted === lastEntry.actual;
                     const shouldShowWinEffect = lastIsWin && lastEntry && lastWinEffectRound !== lastEntry.round;
                     if (shouldShowWinEffect) lastWinEffectRound = lastEntry.round;
                     const winOverlay = shouldShowWinEffect ? '<div class="pick-win-overlay">승리!</div>' : '';
+                    const pickWrapClass = 'prediction-pick' + (pickInBucket ? ' pick-in-bucket' : '');
                     const leftBlock = is15Joker ? ('<div class="prediction-pick">' +
                         '<div class="prediction-pick-title">예측 픽</div>' +
                         '<div class="prediction-card" style="background:#455a64;border-color:#78909c">' +
@@ -2621,7 +2649,7 @@ RESULTS_HTML = '''
                         '</div>' +
                         '<div class="prediction-prob-under" style="color:#ffb74d">15번 카드 조커 · 배팅하지 마세요</div>' +
                         '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + displayRound3(predictedRoundFull) + '회</div>' +
-                        '</div>') : ('<div class="prediction-pick">' +
+                        '</div>') : ('<div class="' + pickWrapClass + '">' +
                         '<div class="prediction-pick-title">예측 픽 · ' + colorToPick + '</div>' +
                         '<div class="prediction-card card-' + colorClass + '">' +
                         '<span class="pred-value-big">' + predict + '</span>' +
@@ -2693,7 +2721,7 @@ RESULTS_HTML = '''
                                     const rowClass = pctNum >= 60 ? 'high' : pctNum >= 50 ? 'mid' : 'low';
                                     return '<tr><td>' + s.label + '</td><td>' + s.total + '</td><td>' + s.wins + '</td><td class="stat-rate ' + rowClass + '">' + s.pct + '%</td></tr>';
                                 }).join('');
-                                probBucketBody.innerHTML = '<table><thead><tr><th>구간</th><th>n</th><th>승</th><th>%</th></tr></thead><tbody>' + bucketRows + '</tbody></table>';
+                                probBucketBody.innerHTML = '<table class="prob-bucket-table"><thead><tr><th>구간</th><th>n</th><th>승</th><th>%</th></tr></thead><tbody>' + bucketRows + '</tbody></table>';
                                 probBucketCollapse.style.display = '';
                             } else {
                                 probBucketBody.innerHTML = '';
