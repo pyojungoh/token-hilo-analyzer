@@ -1920,7 +1920,6 @@ RESULTS_HTML = '''
         let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
         let lastLoseEffectRound = null;  // 실패 이펙트를 이미 보여준 회차 (한 번만 표시)
         var prevSymmetryCounts = { left: null, right: null };  // 이전 시점 20열 줄 개수 (새 구간 빨리 캐치용)
-        var lastKnownCurrentRoundFull = 0;  // 렌더 시점의 현재 회차 (실행 시 다음회차부터 배팅용)
         const CALC_IDS = [1, 2, 3];
         const CALC_SESSION_KEY = 'tokenHiloCalcSessionId';
         const CALC_STATE_BACKUP_KEY = 'tokenHiloCalcStateBackup';
@@ -1940,7 +1939,7 @@ RESULTS_HTML = '''
                 timerId: null,
                 maxWinStreakEver: 0,
                 maxLoseStreakEver: 0,
-                startFromRound: null  // null=제한없음, 숫자=이 회차 이상만 기록 (실행 시 다음회차부터)
+                first_bet_round: 0
             };
         });
         calcState.defense = {
@@ -1955,7 +1954,7 @@ RESULTS_HTML = '''
             timerId: null,
             maxWinStreakEver: 0,
             maxLoseStreakEver: 0,
-            startFromRound: null
+            first_bet_round: 0
         };
         const DEFENSE_ID = 'defense';
         let lastServerTimeSec = 0;  // /api/current-status 등에서 갱신
@@ -1985,7 +1984,7 @@ RESULTS_HTML = '''
                     timer_completed: !!calcState[id].timer_completed,
                     max_win_streak_ever: calcState[id].maxWinStreakEver || 0,
                     max_lose_streak_ever: calcState[id].maxLoseStreakEver || 0,
-                    start_from_round: calcState[id].startFromRound != null ? calcState[id].startFromRound : null
+                    first_bet_round: calcState[id].first_bet_round || 0
                 };
             });
             const d = calcState.defense;
@@ -2011,7 +2010,7 @@ RESULTS_HTML = '''
                 stop_streak: (defStopStreak && parseInt(defStopStreak.value, 10)) || 0,
                 max_win_streak_ever: (d.maxWinStreakEver || 0),
                 max_lose_streak_ever: (d.maxLoseStreakEver || 0),
-                start_from_round: d.startFromRound != null ? d.startFromRound : null
+                first_bet_round: d.first_bet_round || 0
             };
             return payload;
         }
@@ -2028,7 +2027,7 @@ RESULTS_HTML = '''
                 calcState[id].timer_completed = !!c.timer_completed;
                 calcState[id].maxWinStreakEver = Math.max(0, parseInt(c.max_win_streak_ever, 10) || 0);
                 calcState[id].maxLoseStreakEver = Math.max(0, parseInt(c.max_lose_streak_ever, 10) || 0);
-                calcState[id].startFromRound = (c.start_from_round != null && !isNaN(parseInt(c.start_from_round, 10))) ? parseInt(c.start_from_round, 10) : null;
+                calcState[id].first_bet_round = Math.max(0, parseInt(c.first_bet_round, 10) || 0);
                 calcState[id].elapsed = calcState[id].running && calcState[id].started_at ? Math.max(0, st - calcState[id].started_at) : 0;
                 const durEl = document.getElementById('calc-' + id + '-duration');
                 const checkEl = document.getElementById('calc-' + id + '-duration-check');
@@ -2056,7 +2055,7 @@ RESULTS_HTML = '''
             calcState.defense.linked_calc_id = parseInt(dc.linked_calc_id, 10) || 1;
             calcState.defense.maxWinStreakEver = Math.max(0, parseInt(dc.max_win_streak_ever, 10) || 0);
             calcState.defense.maxLoseStreakEver = Math.max(0, parseInt(dc.max_lose_streak_ever, 10) || 0);
-            calcState.defense.startFromRound = (dc.start_from_round != null && !isNaN(parseInt(dc.start_from_round, 10))) ? parseInt(dc.start_from_round, 10) : null;
+            calcState.defense.first_bet_round = Math.max(0, parseInt(dc.first_bet_round, 10) || 0);
             calcState.defense.elapsed = calcState.defense.running && calcState.defense.started_at ? Math.max(0, st - calcState.defense.started_at) : 0;
             const defDurEl = document.getElementById('calc-defense-duration');
             const defCheckEl = document.getElementById('calc-defense-duration-check');
@@ -2509,8 +2508,8 @@ RESULTS_HTML = '''
                     function displayRound3(r) { return r != null ? String(r).slice(-3) : '-'; }
                     const latestGameID = displayResults[0]?.gameID;
                     const currentRoundFull = fullRoundFromGameID(latestGameID);
-                    lastKnownCurrentRoundFull = currentRoundFull;
                     const predictedRoundFull = currentRoundFull + 1;
+                    try { window.__latestGameIDForCalc = latestGameID; } catch (e) {}
                     const is15Joker = displayResults.length >= 15 && !!displayResults[14].joker;  // 15번 카드 조커면 픽/배팅 보류
                     
                     // 직전 예측의 실제 결과 반영: 예측했던 회차(전체 ID)가 지금 나왔으면 기록
@@ -2541,7 +2540,8 @@ RESULTS_HTML = '''
                             predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: 'joker', probability: lastPrediction.prob != null ? lastPrediction.prob : null, pickColor: lastPrediction.color || null });
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
-                                if (calcState[id].startFromRound != null && lastPrediction.round < calcState[id].startFromRound) return;
+                                const firstBetJoker = calcState[id].first_bet_round || 0;
+                                if (firstBetJoker > 0 && lastPrediction.round < firstBetJoker) return;
                                 const hasRound = calcState[id].history.some(function(h) { return h && h.round === lastPrediction.round; });
                                 if (hasRound) return;
                                 const rev = !!(calcState[id] && calcState[id].reverse);
@@ -2555,10 +2555,13 @@ RESULTS_HTML = '''
                                 let defenseBet = 0;
                                 if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
                                 calcState[id].history.push({ predicted: pred, actual: 'joker', round: lastPrediction.round });
-                                if (calcState.defense.running && calcState.defense.linked_calc_id === id && (calcState.defense.startFromRound == null || lastPrediction.round >= calcState.defense.startFromRound)) {
-                                    calcState.defense.history.push({ predicted: pred === '정' ? '꺽' : '정', actual: 'joker', betAmount: defenseBet, round: lastPrediction.round });
-                                    updateCalcSummary(DEFENSE_ID);
-                                    updateCalcDetail(DEFENSE_ID);
+                                if (calcState.defense.running && calcState.defense.linked_calc_id === id) {
+                                    const defFirstJ = calcState.defense.first_bet_round || 0;
+                                    if (defFirstJ === 0 || lastPrediction.round >= defFirstJ) {
+                                        calcState.defense.history.push({ predicted: pred === '정' ? '꺽' : '정', actual: 'joker', betAmount: defenseBet, round: lastPrediction.round });
+                                        updateCalcSummary(DEFENSE_ID);
+                                        updateCalcDetail(DEFENSE_ID);
+                                    }
                                 }
                             });
                             saveCalcStateToServer();
@@ -2568,7 +2571,8 @@ RESULTS_HTML = '''
                             predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: actual, probability: lastPrediction.prob != null ? lastPrediction.prob : null, pickColor: lastPrediction.color || null });
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
-                                if (calcState[id].startFromRound != null && lastPrediction.round < calcState[id].startFromRound) return;
+                                const firstBetActual = calcState[id].first_bet_round || 0;
+                                if (firstBetActual > 0 && lastPrediction.round < firstBetActual) return;
                                 const hasRound = calcState[id].history.some(function(h) { return h && h.round === lastPrediction.round; });
                                 if (hasRound) return;
                                 const rev = !!(calcState[id] && calcState[id].reverse);
@@ -2582,10 +2586,13 @@ RESULTS_HTML = '''
                                 let defenseBet = 0;
                                 if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
                                 calcState[id].history.push({ predicted: pred, actual: actual, round: lastPrediction.round });
-                                if (calcState.defense.running && calcState.defense.linked_calc_id === id && (calcState.defense.startFromRound == null || lastPrediction.round >= calcState.defense.startFromRound)) {
-                                    calcState.defense.history.push({ predicted: pred === '정' ? '꺽' : '정', actual: actual, betAmount: defenseBet, round: lastPrediction.round });
-                                    updateCalcSummary(DEFENSE_ID);
-                                    updateCalcDetail(DEFENSE_ID);
+                                if (calcState.defense.running && calcState.defense.linked_calc_id === id) {
+                                    const defFirstA = calcState.defense.first_bet_round || 0;
+                                    if (defFirstA === 0 || lastPrediction.round >= defFirstA) {
+                                        calcState.defense.history.push({ predicted: pred === '정' ? '꺽' : '정', actual: actual, betAmount: defenseBet, round: lastPrediction.round });
+                                        updateCalcSummary(DEFENSE_ID);
+                                        updateCalcDetail(DEFENSE_ID);
+                                    }
                                 }
                             });
                             saveCalcStateToServer();
@@ -3578,9 +3585,15 @@ RESULTS_HTML = '''
                     calcState.defense.elapsed = 0;
                     calcState.defense.maxWinStreakEver = 0;
                     calcState.defense.maxLoseStreakEver = 0;
-                    calcState.defense.startFromRound = lastKnownCurrentRoundFull + 2;
+                    var defLatestG = null;
+                    try { defLatestG = window.__latestGameIDForCalc; } catch (e) {}
+                    var defNextRound = 0;
+                    if (defLatestG != null && defLatestG !== '') { var dn = parseInt(String(defLatestG), 10); if (!isNaN(dn)) defNextRound = dn + 1; }
+                    calcState.defense.first_bet_round = defNextRound;
                     try {
-                        const res = await fetch('/api/calc-state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: localStorage.getItem(CALC_SESSION_KEY), calcs: buildCalcPayload() }) });
+                        const defPayload = buildCalcPayload();
+                        defPayload[DEFENSE_ID].first_bet_round = calcState.defense.first_bet_round;
+                        const res = await fetch('/api/calc-state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: localStorage.getItem(CALC_SESSION_KEY), calcs: defPayload }) });
                         const data = await res.json();
                         if (data.calcs && data.calcs[DEFENSE_ID]) calcState.defense.started_at = data.calcs[DEFENSE_ID].started_at || 0;
                         if (data.server_time) lastServerTimeSec = data.server_time;
@@ -3609,11 +3622,16 @@ RESULTS_HTML = '''
                 calcState[id].elapsed = 0;
                 calcState[id].maxWinStreakEver = 0;
                 calcState[id].maxLoseStreakEver = 0;
-                calcState[id].startFromRound = lastKnownCurrentRoundFull + 2;  // 다음회차부터 배팅 (현재 예측 중인 회차 제외)
+                var latestG = null;
+                try { latestG = window.__latestGameIDForCalc; } catch (e) {}
+                var nextRound = 0;
+                if (latestG != null && latestG !== '') { var n = parseInt(String(latestG), 10); if (!isNaN(n)) nextRound = n + 1; }
+                calcState[id].first_bet_round = nextRound;
                 try {
                     const payload = buildCalcPayload();
                     payload[String(id)].running = true;
                     payload[String(id)].history = [];
+                    payload[String(id)].first_bet_round = calcState[id].first_bet_round;
                     const session_id = localStorage.getItem(CALC_SESSION_KEY);
                     const res = await fetch('/api/calc-state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: session_id, calcs: payload }) });
                     const data = await res.json();
@@ -4076,10 +4094,11 @@ def api_calc_state():
                     'win_rate_reverse': bool(c.get('win_rate_reverse')),
                     'win_rate_threshold': max(0, min(100, int(c.get('win_rate_threshold') or 50))),
                     'max_win_streak_ever': int(c.get('max_win_streak_ever') or 0),
-                    'max_lose_streak_ever': int(c.get('max_lose_streak_ever') or 0)
+                    'max_lose_streak_ever': int(c.get('max_lose_streak_ever') or 0),
+                    'first_bet_round': max(0, int(c.get('first_bet_round') or 0))
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0}
         c = calcs.get('defense') or {}
         if isinstance(c, dict):
             running = c.get('running', False)
@@ -4099,10 +4118,11 @@ def api_calc_state():
                 'reduce_div': int(c.get('reduce_div') or 4),
                 'stop_streak': int(c.get('stop_streak') or 0),
                 'max_win_streak_ever': int(c.get('max_win_streak_ever') or 0),
-                'max_lose_streak_ever': int(c.get('max_lose_streak_ever') or 0)
+                'max_lose_streak_ever': int(c.get('max_lose_streak_ever') or 0),
+                'first_bet_round': max(0, int(c.get('first_bet_round') or 0))
             }
         else:
-            out['defense'] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'timer_completed': False, 'linked_calc_id': 1, 'full_steps': 3, 'reduce_from': 4, 'reduce_div': 4, 'stop_streak': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0}
+            out['defense'] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'timer_completed': False, 'linked_calc_id': 1, 'full_steps': 3, 'reduce_from': 4, 'reduce_div': 4, 'stop_streak': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0}
         save_calc_state(session_id, out)
         return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': out}), 200
     except Exception as e:
