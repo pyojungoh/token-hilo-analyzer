@@ -2324,9 +2324,13 @@ RESULTS_HTML = '''
                         predDiv.innerHTML = statsBlock + streakLineBlock + noticeBlock + extraLine;
                     }
                     
-                    // 가상 배팅 계산기 1,2,3 요약·상세 갱신
-                    CALC_IDS.forEach(id => updateCalcSummary(id));
-                    CALC_IDS.forEach(id => updateCalcDetail(id));
+                    // 가상 배팅 계산기 1,2,3 요약·상세 갱신 (오류 시에도 메인 화면은 유지)
+                    try {
+                        CALC_IDS.forEach(id => updateCalcSummary(id));
+                        CALC_IDS.forEach(id => updateCalcDetail(id));
+                    } catch (calcErr) {
+                        console.warn('계산기 갱신 오류:', calcErr);
+                    }
                 } else if (statsDiv) {
                     statsDiv.innerHTML = '';
                     const pickEmpty = document.getElementById('prediction-pick-container');
@@ -2380,10 +2384,11 @@ RESULTS_HTML = '''
             return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
         }
         function getCalcResult(id) {
+            if (!calcState[id]) return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-' };
             const capIn = parseFloat(document.getElementById('calc-' + id + '-capital')?.value) || 1000000;
             const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 1000;
             const oddsIn = parseFloat(document.getElementById('calc-' + id + '-odds')?.value) || 1.97;
-            const hist = calcState[id].history;
+            const hist = calcState[id].history || [];
             let cap = capIn, currentBet = baseIn, wins = 0, losses = 0, bust = false;
             let maxWinStreak = 0, maxLoseStreak = 0, curWin = 0, curLose = 0;
             for (let i = 0; i < hist.length; i++) {
@@ -2411,8 +2416,10 @@ RESULTS_HTML = '''
             return { cap: Math.max(0, Math.floor(cap)), profit, currentBet: bust ? 0 : currentBet, wins, losses, bust, maxWinStreak, maxLoseStreak, winRate };
         }
         function updateCalcStatus(id) {
+            try {
             const el = document.getElementById('calc-' + id + '-status');
             if (!el) return;
+            if (!calcState[id]) return;
             el.className = 'calc-status';
             if (calcState[id].running) {
                 el.classList.add('running');
@@ -2424,8 +2431,10 @@ RESULTS_HTML = '''
                 el.classList.add('idle');
                 el.textContent = '대기중';
             }
+            } catch (e) { console.warn('updateCalcStatus', id, e); }
         }
         function updateCalcSummary(id) {
+            try {
             const el = document.getElementById('calc-' + id + '-summary');
             if (!el) return;
             const hist = calcState[id].history;
@@ -2439,14 +2448,17 @@ RESULTS_HTML = '''
             const r = getCalcResult(id);
             const profitStr = (r.profit >= 0 ? '+' : '') + r.profit.toLocaleString() + '원';
             let text = '보유자산 ' + r.cap.toLocaleString() + '원 | 순익 ' + profitStr + ' | 배팅중 ' + r.currentBet.toLocaleString() + '원';
-            if (calcState[id].running) text += ' | 경과 ' + formatMmSs(calcState[id].elapsed);
+            if (calcState[id].running && typeof formatMmSs === 'function') text += ' | 경과 ' + formatMmSs(calcState[id].elapsed || 0);
             el.textContent = text;
             updateCalcStatus(id);
+            } catch (e) { console.warn('updateCalcSummary', id, e); }
         }
         function updateCalcDetail(id) {
+            try {
             const streakEl = document.getElementById('calc-' + id + '-streak');
             const statsEl = document.getElementById('calc-' + id + '-stats');
             if (!streakEl || !statsEl) return;
+            if (!calcState[id]) return;
             const hist = calcState[id].history;
             if (hist.length === 0) {
                 streakEl.textContent = '경기결과: -';
@@ -2459,6 +2471,7 @@ RESULTS_HTML = '''
             const streakStr = arrRev.map(a => '<span class="' + (a === 'w' ? 'w' : a === 'l' ? 'l' : 'j') + '">' + (a === 'w' ? '승' : a === 'l' ? '패' : '조') + '</span>').join(' ');
             streakEl.innerHTML = '경기결과 (최근←): ' + streakStr;
             statsEl.textContent = '최대연승: ' + r.maxWinStreak + ' | 최대연패: ' + r.maxLoseStreak + ' | 승률: ' + r.winRate + '%';
+            } catch (e) { console.warn('updateCalcDetail', id, e); }
         }
         document.querySelectorAll('.calc-dropdown-header').forEach(h => {
             h.addEventListener('click', function() {
@@ -2471,11 +2484,13 @@ RESULTS_HTML = '''
                 const t = this.getAttribute('data-tab');
                 document.querySelectorAll('.bet-calc-tabs .tab').forEach(x => x.classList.remove('active'));
                 this.classList.add('active');
-                document.getElementById('bet-calc-panel').classList.toggle('active', t === 'calc');
-                document.getElementById('bet-log-panel').classList.toggle('active', t === 'log');
+                const calcPanel = document.getElementById('bet-calc-panel');
+                const logPanel = document.getElementById('bet-log-panel');
+                if (calcPanel) calcPanel.classList.toggle('active', t === 'calc');
+                if (logPanel) logPanel.classList.toggle('active', t === 'log');
             });
         });
-        CALC_IDS.forEach(id => updateCalcStatus(id));
+        try { CALC_IDS.forEach(id => updateCalcStatus(id)); } catch (e) { console.warn('초기 계산기 상태:', e); }
         document.querySelectorAll('.calc-run').forEach(btn => {
             btn.addEventListener('click', function() {
                 const id = parseInt(this.getAttribute('data-calc'), 10);
