@@ -3,7 +3,7 @@
 필요한 정보만 추출하여 새로 작성
 """
 
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string, request
 from flask_cors import CORS
 import requests
 import os
@@ -106,6 +106,19 @@ def init_database():
             CREATE INDEX IF NOT EXISTS idx_color_matches_compare_game_id ON color_matches(compare_game_id)
         ''')
         
+        # prediction_history: 시스템 예측 기록 (전체 공용, 어디서 접속해도 동일)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS prediction_history (
+                round_num INTEGER PRIMARY KEY,
+                predicted VARCHAR(10) NOT NULL,
+                actual VARCHAR(10) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cur.execute('''
+            CREATE INDEX IF NOT EXISTS idx_prediction_history_created ON prediction_history(created_at DESC)
+        ''')
+        
         conn.commit()
         cur.close()
         conn.close()
@@ -167,6 +180,66 @@ def save_game_result(game_data):
         except:
             pass
         return False
+
+
+def save_prediction_record(round_num, predicted, actual):
+    """시스템 예측 기록 1건 저장 (round 기준 중복 시 업데이트). 어디서 접속해도 동일 기록 유지."""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return False
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        cur = conn.cursor()
+        cur.execute('''
+            INSERT INTO prediction_history (round_num, predicted, actual)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (round_num) DO UPDATE SET predicted = EXCLUDED.predicted, actual = EXCLUDED.actual, created_at = DEFAULT
+        ''', (int(round_num), str(predicted), str(actual)))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[❌ 오류] 예측 기록 저장 실패: {str(e)[:200]}")
+        try:
+            conn.close()
+        except:
+            pass
+        return False
+
+
+def get_prediction_history(limit=30):
+    """시스템 예측 기록 조회 (최신 N건, round 오름차순 = 과거→현재)."""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return []
+    conn = get_db_connection()
+    if not conn:
+        return []
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('''
+            SELECT round_num as "round", predicted, actual
+            FROM prediction_history
+            ORDER BY round_num DESC
+            LIMIT %s
+        ''', (limit,))
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        # 프론트와 맞추기: 과거→현재 순 (round 오름차순)
+        out = []
+        for r in reversed(rows):
+            out.append({'round': r['round'], 'predicted': r['predicted'], 'actual': r['actual']})
+        return out
+    except Exception as e:
+        print(f"[❌ 오류] 예측 기록 조회 실패: {str(e)[:200]}")
+        try:
+            conn.close()
+        except:
+            pass
+        return []
+
 
 def parse_card_color(result_str):
     """카드 결과 문자열에서 색상 추출 (빨강/검정)"""
@@ -1577,6 +1650,9 @@ RESULTS_HTML = '''
         function savePredictionHistory() {
             try { localStorage.setItem(PREDICTION_HISTORY_KEY, JSON.stringify(predictionHistory)); } catch (e) {}
         }
+        function savePredictionHistoryToServer(round, predicted, actual) {
+            fetch('/api/prediction-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ round: round, predicted: predicted, actual: actual }) }).catch(function() {});
+        }
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
         let betCalcHistory = [];  // 계산기 전용: 실행 누른 시점부터만 쌓는 승/패 기록 { predicted, actual }
@@ -1613,6 +1689,11 @@ RESULTS_HTML = '''
                 if (data.error) {
                     if (statusEl) statusEl.textContent = '오류: ' + data.error;
                     return;
+                }
+                // 서버에 저장된 시스템 예측 기록 복원 (어디서 접속해도 동일)
+                if (Object.prototype.hasOwnProperty.call(data, 'prediction_history') && Array.isArray(data.prediction_history)) {
+                    predictionHistory = data.prediction_history.slice(-30);
+                    savePredictionHistory();
                 }
                 
                 const newResults = data.results || [];
@@ -1870,13 +1951,15 @@ RESULTS_HTML = '''
                         if (isActualJoker) {
                             predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: 'joker' });
                             if (betCalcRunning) betCalcHistory.push({ predicted: lastPrediction.value, actual: 'joker' });
+                            savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, 'joker');
                         } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
                             const actual = graphValues[0] ? '정' : '꺽';
                             predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: actual });
                             if (betCalcRunning) betCalcHistory.push({ predicted: lastPrediction.value, actual: actual });
+                            savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, actual);
                         }
                         predictionHistory = predictionHistory.slice(-30);
-                        savePredictionHistory();  // 새로고침 후에도 승률 유지
+                        savePredictionHistory();  // localStorage 백업
                     }
                     
                     // 최근 15회 정/꺽 흐름으로 퐁당·줄 계산 (승패 아님)
@@ -2543,7 +2626,8 @@ def get_results():
                 'results': results,
                 'count': len(results),
                 'timestamp': datetime.now().isoformat(),
-                'source': 'database+json'
+                'source': 'database+json',
+                'prediction_history': get_prediction_history(30)
             }
             last_update_time = current_time
             return jsonify(results_cache)
@@ -2585,7 +2669,8 @@ def get_results():
                 'results': results,
                 'count': len(results),
                 'timestamp': datetime.now().isoformat(),
-                'source': 'json'
+                'source': 'json',
+                'prediction_history': get_prediction_history(30)
             }
             last_update_time = current_time
             return jsonify(results_cache)
@@ -2601,8 +2686,27 @@ def get_results():
             'results': [],
             'count': 0,
             'timestamp': datetime.now().isoformat(),
-            'error': error_msg
+            'error': error_msg,
+            'prediction_history': []
         }), 200
+
+
+@app.route('/api/prediction-history', methods=['POST'])
+def api_save_prediction_history():
+    """시스템 예측 기록 1건 저장 (round, predicted, actual). 어디서 접속해도 동일 기록 유지."""
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        round_num = data.get('round')
+        predicted = data.get('predicted')
+        actual = data.get('actual')
+        if round_num is None or predicted is None or actual is None:
+            return jsonify({'ok': False, 'error': 'round, predicted, actual required'}), 400
+        ok = save_prediction_record(int(round_num), str(predicted), str(actual))
+        return jsonify({'ok': ok}), 200
+    except Exception as e:
+        print(f"[❌ 오류] 예측 기록 API 실패: {str(e)[:200]}")
+        return jsonify({'ok': False, 'error': str(e)[:200]}), 500
+
 
 @app.route('/api/current-status', methods=['GET'])
 def get_current_status():
