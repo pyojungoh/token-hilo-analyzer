@@ -1237,11 +1237,34 @@ RESULTS_HTML = '''
             overflow-x: auto;
         }
         .prediction-pick {
+            position: relative;
             display: flex;
             flex-direction: column;
             align-items: center;
             text-align: center;
             width: 100%;
+        }
+        .pick-win-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(76, 175, 80, 0.9);
+            border-radius: clamp(10px, 2vw, 14px);
+            font-size: clamp(1.2em, 4vw, 2em);
+            font-weight: 900;
+            color: #fff;
+            text-shadow: 0 2px 8px rgba(0,0,0,0.4);
+            animation: pickWinFade 2s ease-out forwards;
+            pointer-events: none;
+        }
+        @keyframes pickWinFade {
+            0% { opacity: 0; transform: scale(0.7); }
+            15% { opacity: 1; transform: scale(1.15); }
+            50% { opacity: 1; transform: scale(1.05); }
+            85% { opacity: 1; }
+            100% { opacity: 0; transform: scale(1); }
         }
         .prediction-pick-title {
             font-size: clamp(0.85em, 2vw, 0.95em);
@@ -1286,12 +1309,28 @@ RESULTS_HTML = '''
         .prediction-stats-row {
             width: 100%;
             margin-top: 10px;
-            padding-top: 8px;
-            border-top: 1px solid #333;
-            font-size: clamp(0.85em, 2vw, 0.95em);
-            color: #aaa;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: rgba(0,0,0,0.25);
+            font-size: clamp(0.9em, 2vw, 1em);
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 10px 14px;
         }
-        .prediction-stats-row strong { color: #fff; }
+        .prediction-stats-row .stat-total { color: #b0bec5; }
+        .prediction-stats-row .stat-total .num { color: #fff; font-weight: bold; }
+        .prediction-stats-row .stat-win { color: #81c784; font-weight: bold; }
+        .prediction-stats-row .stat-win .num { color: #a5d6a7; }
+        .prediction-stats-row .stat-lose { color: #e57373; font-weight: bold; }
+        .prediction-stats-row .stat-lose .num { color: #ef9a9a; }
+        .prediction-stats-row .stat-joker { color: #64b5f6; }
+        .prediction-stats-row .stat-joker .num { color: #90caf9; }
+        .prediction-stats-row .stat-rate { font-weight: 900; }
+        .prediction-stats-row .stat-rate.high { color: #81c784; }
+        .prediction-stats-row .stat-rate.low { color: #e57373; }
+        .prediction-stats-row .stat-rate.mid { color: #ffb74d; }
         .prediction-streak-line { margin-top: 8px; font-size: clamp(0.9em, 2vw, 1em); color: #bbb; text-align: center; }
         .prediction-streak-line .streak-win { color: #81c784; font-weight: bold; }
         .prediction-streak-line .streak-lose { color: #e57373; font-weight: bold; }
@@ -1528,6 +1567,7 @@ RESULTS_HTML = '''
         // 예측 기록 (최근 30회): { round, predicted, actual }
         let predictionHistory = [];
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
+        let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
         let betCalcHistory = [];  // 계산기 전용: 실행 누른 시점부터만 쌓는 승/패 기록 { predicted, actual }
         let lastCurrentBetAmount = 0;  // 현재 배팅 금액 (표시용)
         let betElapsedSeconds = 0;
@@ -2002,6 +2042,11 @@ RESULTS_HTML = '''
                     const hitPctNum = countForPct > 0 ? 100 * hit / countForPct : 0;
                     const hitPct = countForPct > 0 ? hitPctNum.toFixed(1) : '-';
                     const lowWinRate = countForPct > 0 && hitPctNum <= 50;
+                    const lastEntry = predictionHistory.length > 0 ? predictionHistory[predictionHistory.length - 1] : null;
+                    const lastIsWin = lastEntry && lastEntry.actual !== 'joker' && lastEntry.predicted === lastEntry.actual;
+                    const shouldShowWinEffect = lastIsWin && lastEntry && lastWinEffectRound !== lastEntry.round;
+                    if (shouldShowWinEffect) lastWinEffectRound = lastEntry.round;
+                    const winOverlay = shouldShowWinEffect ? '<div class="pick-win-overlay">승리!</div>' : '';
                     const leftBlock = is15Joker ? ('<div class="prediction-pick">' +
                         '<div class="prediction-pick-title">예측 픽</div>' +
                         '<div class="prediction-card" style="background:#455a64;border-color:#78909c">' +
@@ -2013,13 +2058,20 @@ RESULTS_HTML = '''
                         '<div class="prediction-pick-title">예측 픽 · ' + colorToPick + '</div>' +
                         '<div class="prediction-card card-' + colorClass + '">' +
                         '<span class="pred-value-big">' + predict + '</span>' +
-                        '</div>' +
+                        '</div>' + winOverlay +
                         '<div class="prediction-prob-under">나올 확률 ' + predProb.toFixed(1) + '%</div>' +
                         '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + predictedRound + '회</div>' +
                         '</div>');
                     if (pickContainer) pickContainer.innerHTML = leftBlock;
                     if (predDiv) {
-                        const statsBlock = '<div class="prediction-stats-row">전체 <strong>' + total + '</strong>회 &nbsp; 승 <strong>' + hit + '</strong>회 &nbsp; 패 <strong>' + losses + '</strong>회' + (jokerCount > 0 ? ' &nbsp; 조커 <strong>' + jokerCount + '</strong>회' : '') + (countForPct > 0 ? ' &nbsp; 승률 <strong>' + hitPct + '%</strong>' : '') + '</div>';
+                        const rateClass = countForPct > 0 ? (hitPctNum >= 60 ? 'high' : hitPctNum >= 50 ? 'mid' : 'low') : '';
+                        const statsBlock = '<div class="prediction-stats-row">' +
+                            '<span class="stat-total">전체 <span class="num">' + total + '</span>회</span>' +
+                            '<span class="stat-win">승 <span class="num">' + hit + '</span>회</span>' +
+                            '<span class="stat-lose">패 <span class="num">' + losses + '</span>회</span>' +
+                            (jokerCount > 0 ? '<span class="stat-joker">조커 <span class="num">' + jokerCount + '</span>회</span>' : '') +
+                            (countForPct > 0 ? '<span class="stat-rate ' + rateClass + '">승률 ' + hitPct + '%</span>' : '') +
+                            '</div>';
                         const streakDisplay = streakArr.map(s => s === '승' ? '<span class="streak-win">승</span>' : (s === '패' ? '<span class="streak-lose">패</span>' : '<span class="streak-joker">조커</span>')).join(' ');
                         const streakLineBlock = '<div class="prediction-streak-line">연승/연패 기록: ' + (streakDisplay || '-') + (streakNow ? ' &nbsp; <span class="streak-now">' + streakNow + '</span>' : '') + '</div>';
                         let noticeBlock = '';
