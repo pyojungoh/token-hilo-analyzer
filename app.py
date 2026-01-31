@@ -1636,6 +1636,7 @@ RESULTS_HTML = '''
                                     <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label>
                                     <label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label>
                                     <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label>
+                                    <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label>
                                     <label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label>
                                     <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label>
             </div>
@@ -1672,6 +1673,7 @@ RESULTS_HTML = '''
                                     <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label>
                                     <label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label>
                                     <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label>
+                                    <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label>
                                     <label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label>
                                     <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label>
                                 </div>
@@ -1708,6 +1710,7 @@ RESULTS_HTML = '''
                                     <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label>
                                     <label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label>
                                     <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label>
+                                    <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label>
                                     <label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label>
                                     <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label>
                                 </div>
@@ -1924,6 +1927,7 @@ RESULTS_HTML = '''
                 use_duration_limit: false,
                 reverse: false,
                 win_rate_reverse: false,
+                win_rate_threshold: 50,
                 timer_completed: false,
                 timerId: null,
                 maxWinStreakEver: 0,
@@ -1956,6 +1960,8 @@ RESULTS_HTML = '''
                 const duration_limit = duration_min * 60;
                 const use_duration_limit = !!(checkEl && checkEl.checked);
                 const winRateRevEl = document.getElementById('calc-' + id + '-win-rate-reverse');
+                const winRateThrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
+                const winRateThr = (winRateThrEl && parseFloat(winRateThrEl.value)) != null && !isNaN(parseFloat(winRateThrEl.value)) ? Math.max(0, Math.min(100, parseFloat(winRateThrEl.value))) : 50;
                 payload[String(id)] = {
                     running: calcState[id].running,
                     started_at: calcState[id].started_at || 0,
@@ -1964,6 +1970,7 @@ RESULTS_HTML = '''
                     use_duration_limit: use_duration_limit,
                     reverse: !!(revEl && revEl.checked),
                     win_rate_reverse: !!(winRateRevEl && winRateRevEl.checked),
+                    win_rate_threshold: winRateThr,
                     timer_completed: !!calcState[id].timer_completed,
                     max_win_streak_ever: calcState[id].maxWinStreakEver || 0,
                     max_lose_streak_ever: calcState[id].maxLoseStreakEver || 0
@@ -2017,8 +2024,12 @@ RESULTS_HTML = '''
                 if (revEl) revEl.checked = !!c.reverse;
                 calcState[id].reverse = !!c.reverse;
                 calcState[id].win_rate_reverse = !!c.win_rate_reverse;
+                var thr = (typeof c.win_rate_threshold === 'number' && c.win_rate_threshold >= 0 && c.win_rate_threshold <= 100) ? c.win_rate_threshold : 50;
+                calcState[id].win_rate_threshold = thr;
                 const winRateRevEl = document.getElementById('calc-' + id + '-win-rate-reverse');
                 if (winRateRevEl) winRateRevEl.checked = !!c.win_rate_reverse;
+                const winRateThrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
+                if (winRateThrEl) { winRateThrEl.value = String(Math.round(thr)); }
             });
             const dc = calcs[DEFENSE_ID] || {};
             if (Array.isArray(dc.history)) calcState.defense.history = dc.history.slice(-500);
@@ -2515,7 +2526,9 @@ RESULTS_HTML = '''
                                 const rev = !!(calcState[id] && calcState[id].reverse);
                                 var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
                                 const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
-                                if (useWinRateRev && lowWinRateForRecord) pred = pred === '정' ? '꺽' : '정';
+                                var thrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
+                                var thr = (thrEl && parseFloat(thrEl.value) != null && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
+                                if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && blended <= thr) pred = pred === '정' ? '꺽' : '정';
                                 // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
                                 let defenseBet = 0;
                                 if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
@@ -2538,7 +2551,9 @@ RESULTS_HTML = '''
                                 const rev = !!(calcState[id] && calcState[id].reverse);
                                 var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
                                 const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
-                                if (useWinRateRevActual && lowWinRateForRecord) pred = pred === '정' ? '꺽' : '정';
+                                var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
+                                var thrActual = (thrElActual && parseFloat(thrElActual.value) != null && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
+                                if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
                                 // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
                                 let defenseBet = 0;
                                 if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
@@ -3264,7 +3279,9 @@ RESULTS_HTML = '''
                             var loss100 = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
                             var c100 = hit100r + loss100, r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
                             var blended = 0.5 * r15 + 0.3 * r30 + 0.2 * r100;
-                            lowWinRate = (c15 > 0 || c30 > 0 || c100 > 0) && blended <= 50;
+                            var thrCardEl = document.getElementById('calc-' + id + '-win-rate-threshold');
+                            var thrCard = (thrCardEl && parseFloat(thrCardEl.value) != null && !isNaN(parseFloat(thrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrCardEl.value))) : (typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
+                            lowWinRate = (c15 > 0 || c30 > 0 || c100 > 0) && blended <= thrCard;
                         } catch (e2) {}
                         const useWinRateRevCard = !!(calcState[id] && calcState[id].win_rate_reverse);
                         if (useWinRateRevCard && lowWinRate) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
@@ -3521,6 +3538,9 @@ RESULTS_HTML = '''
                 calcState[id].reverse = !!(revRun && revRun.checked);
                 const winRateRevRun = document.getElementById('calc-' + id + '-win-rate-reverse');
                 calcState[id].win_rate_reverse = !!(winRateRevRun && winRateRevRun.checked);
+                const winRateThrRun = document.getElementById('calc-' + id + '-win-rate-threshold');
+                var thrRun = (winRateThrRun && parseFloat(winRateThrRun.value) != null && !isNaN(parseFloat(winRateThrRun.value))) ? Math.max(0, Math.min(100, parseFloat(winRateThrRun.value))) : 50;
+                calcState[id].win_rate_threshold = thrRun;
                 calcState[id].timer_completed = false;
                 calcState[id].running = true;
                 calcState[id].history = [];
@@ -3992,11 +4012,12 @@ def api_calc_state():
                     'reverse': bool(c.get('reverse')),
                     'timer_completed': bool(c.get('timer_completed')),
                     'win_rate_reverse': bool(c.get('win_rate_reverse')),
+                    'win_rate_threshold': max(0, min(100, int(c.get('win_rate_threshold') or 50))),
                     'max_win_streak_ever': int(c.get('max_win_streak_ever') or 0),
                     'max_lose_streak_ever': int(c.get('max_lose_streak_ever') or 0)
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0}
         c = calcs.get('defense') or {}
         if isinstance(c, dict):
             running = c.get('running', False)
