@@ -309,6 +309,19 @@ def save_color_match(game_id, compare_game_id, match_result):
             pass
         return False
 
+def _sort_results_newest_first(results):
+    """결과를 gameID 기준 최신순(높은 ID 먼저)으로 정렬. 그래프/표시 순서 일관성 유지."""
+    if not results:
+        return results
+    def key_fn(r):
+        g = str(r.get('gameID') or '')
+        try:
+            return (-int(g), '')  # 숫자면 높은 ID가 앞으로
+        except ValueError:
+            return (0, g)  # 문자열이면 그대로
+    return sorted(results, key=key_fn)
+
+
 def get_recent_results(hours=5):
     """최근 N시간 데이터 조회 (정/꺽 결과 포함)"""
     if not DB_AVAILABLE or not DATABASE_URL:
@@ -1019,33 +1032,40 @@ RESULTS_HTML = '''
         }
         .cards-container {
             display: flex;
-            gap: clamp(5px, 1.5vw, 12px);
+            gap: clamp(2px, 1.2vw, 12px);
             padding: 15px 0;
             flex-wrap: nowrap;
             width: 100%;
+            min-width: 0;
         }
         .card-wrapper {
             display: flex;
             flex-direction: column;
             align-items: center;
-            flex: 0 0 calc((100% - (14 * clamp(5px, 1.5vw, 12px))) / 15);
+            flex: 0 0 calc((100% - (14 * clamp(2px, 1.2vw, 12px))) / 15);
             min-width: 0;
         }
         .card-wrapper .card {
-            width: 54px !important;
-            height: 48px !important;
+            width: 100% !important;
+            max-width: clamp(22px, 6.5vw, 54px) !important;
+            height: auto !important;
+            aspect-ratio: 54 / 48;
+            min-height: clamp(20px, 5.8vw, 48px) !important;
         }
         .card {
-            width: 54px;
-            height: 48px;
+            width: 100%;
+            max-width: clamp(22px, 6.5vw, 54px);
+            height: auto;
+            aspect-ratio: 54 / 48;
+            min-height: clamp(20px, 5.8vw, 48px);
             background: #fff;
-            border: 3px solid #000;
-            border-radius: 10px;
+            border: clamp(2px, 0.5vw, 3px) solid #000;
+            border-radius: clamp(4px, 1.2vw, 10px);
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            padding: clamp(2px, 0.5vw, 4px);
+            padding: clamp(1px, 0.4vw, 4px);
             box-shadow: 0 4px 12px rgba(0,0,0,0.4);
         }
         .card.red {
@@ -1056,22 +1076,22 @@ RESULTS_HTML = '''
             color: #000;
         }
         .card-suit-icon {
-            font-size: clamp(10px, 2vw, 14px);
+            font-size: clamp(8px, 1.8vw, 14px);
             line-height: 1;
-            margin-bottom: 2px;
+            margin-bottom: clamp(1px, 0.3vw, 2px);
         }
         .card-value {
-            font-size: clamp(12px, 2.5vw, 18px);
+            font-size: clamp(9px, 2.2vw, 18px);
             font-weight: bold;
             text-align: center;
             line-height: 1;
         }
         .card-category {
-            margin-top: 5px;
-            font-size: clamp(10px, 2vw, 16px);
+            margin-top: clamp(2px, 0.5vw, 5px);
+            font-size: clamp(7px, 1.6vw, 16px);
             font-weight: bold;
-            padding: 4px 8px;
-            border-radius: 5px;
+            padding: clamp(2px, 0.4vw, 4px) clamp(4px, 0.8vw, 8px);
+            border-radius: clamp(3px, 0.8vw, 5px);
             white-space: nowrap;
             width: 100%;
             text-align: center;
@@ -1102,11 +1122,11 @@ RESULTS_HTML = '''
             color: #fff;
         }
         .color-match {
-            margin-top: 5px;
-            font-size: clamp(10px, 2vw, 16px);
+            margin-top: clamp(2px, 0.5vw, 5px);
+            font-size: clamp(7px, 1.6vw, 16px);
             font-weight: bold;
-            padding: 4px 8px;
-            border-radius: 5px;
+            padding: clamp(2px, 0.4vw, 4px) clamp(4px, 0.8vw, 8px);
+            border-radius: clamp(3px, 0.8vw, 5px);
             white-space: nowrap;
             width: 100%;
             text-align: center;
@@ -1189,6 +1209,15 @@ RESULTS_HTML = '''
         @media (max-width: 768px) {
             .prediction-table-row { flex-direction: column; align-items: center; }
             #prediction-pick-container { width: 100%; max-width: 320px; display: flex; justify-content: center; }
+        }
+        @media (max-width: 480px) {
+            .cards-container { gap: 2px; padding: 8px 0; }
+            .card-wrapper { flex: 0 0 calc((100% - 28px) / 15); }
+            .card-wrapper .card { max-width: none !important; min-height: 20px !important; }
+            .card { max-width: none; min-height: 20px; border-width: 1px; border-radius: 4px; }
+            .card-suit-icon { font-size: 7px; }
+            .card-value { font-size: 8px; }
+            .card-category, .color-match { font-size: 6px; padding: 2px 3px; }
         }
         #prediction-pick-container {
             flex: 1 1 260px;
@@ -1544,6 +1573,16 @@ RESULTS_HTML = '''
                 }
                 
                 try {
+                // 정/꺽 그래프 순서 일관성: gameID 기준 최신순 정렬 (항상 동일한 순서로 표시)
+                function sortResultsNewestFirst(arr) {
+                    return [...arr].sort((a, b) => {
+                        const ga = String(a.gameID || '');
+                        const gb = String(b.gameID || '');
+                        const na = parseInt(ga, 10), nb = parseInt(gb, 10);
+                        if (!isNaN(na) && !isNaN(nb)) return nb - na;  // 숫자면 높은 ID가 앞
+                        return gb.localeCompare(ga);  // 문자열이면 역순
+                    });
+                }
                 // 새로운 결과를 기존 결과와 병합 (중복 제거, 최신 150개 유지 - 그래프 쭉 표시용)
                 if (newResults.length > 0) {
                     // 새로운 결과의 gameID들
@@ -1552,12 +1591,14 @@ RESULTS_HTML = '''
                     // 기존 결과에서 새로운 결과에 없는 것만 유지
                     const oldResults = allResults.filter(r => !newGameIDs.has(r.gameID));
                     
-                    // 새로운 결과 + 기존 결과 (최신 150개 - 카드는 15개만, 그래프는 전부)
-                    allResults = [...newResults, ...oldResults].slice(0, 150);
+                    // 새로운 결과 + 기존 결과 (최신 150개) → gameID 기준 정렬로 그래프 순서 고정
+                    allResults = sortResultsNewestFirst([...newResults, ...oldResults].slice(0, 150));
                 } else {
-                    // 새로운 결과가 없으면 기존 결과 유지
+                    // 새로운 결과가 없으면 기존 결과 유지 (순서만 정렬)
                     if (allResults.length === 0) {
-                        allResults = newResults;
+                        allResults = sortResultsNewestFirst(newResults);
+                    } else {
+                        allResults = sortResultsNewestFirst(allResults);
                     }
                 }
                 
@@ -2341,8 +2382,9 @@ def get_results():
                 # DB 결과에서 최신 데이터에 없는 것만 유지
                 db_results_filtered = [r for r in db_results if str(r.get('gameID', '')) not in latest_game_ids]
                 
-                # 최신 데이터 + DB 데이터 (최신순)
+                # 최신 데이터 + DB 데이터 (최신순) → gameID 기준 정렬로 순서 고정 (그래프 일관성)
                 results = latest_results + db_results_filtered
+                results = _sort_results_newest_first(results)
                 print(f"[API] 병합 결과: 최신 {len(latest_results)}개 + DB {len(db_results_filtered)}개 = 총 {len(results)}개")
                 
                 # 병합된 전체 결과에 대해 정/꺽 결과 계산 및 추가
@@ -2430,6 +2472,8 @@ def get_results():
                 results = db_results
                 print(f"[API] 최신 데이터 없음, DB 데이터만 사용: {len(results)}개")
             
+            # 그래프/표시 순서 일관성: 항상 gameID 기준 최신순으로 정렬
+            results = _sort_results_newest_first(results)
             
             results_cache = {
                 'results': results,
@@ -2442,6 +2486,7 @@ def get_results():
         else:
             # 데이터베이스가 없으면 기존 방식 (result.json에서 가져오기)
             results = latest_results if latest_results else []
+            results = _sort_results_newest_first(results)
             print(f"[API] DB 없음, 최신 데이터만 사용: {len(results)}개")
             
             # DB가 없어도 정/꺽 결과 계산 (클라이언트 측 계산을 위해)
