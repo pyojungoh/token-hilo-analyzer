@@ -1961,7 +1961,8 @@ RESULTS_HTML = '''
                 const use_duration_limit = !!(checkEl && checkEl.checked);
                 const winRateRevEl = document.getElementById('calc-' + id + '-win-rate-reverse');
                 const winRateThrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
-                const winRateThr = (winRateThrEl && parseFloat(winRateThrEl.value)) != null && !isNaN(parseFloat(winRateThrEl.value)) ? Math.max(0, Math.min(100, parseFloat(winRateThrEl.value))) : 50;
+                var winRateThr = (winRateThrEl && !isNaN(parseFloat(winRateThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(winRateThrEl.value))) : 50;
+                if (typeof winRateThr !== 'number' || isNaN(winRateThr)) winRateThr = 50;
                 payload[String(id)] = {
                     running: calcState[id].running,
                     started_at: calcState[id].started_at || 0,
@@ -2500,19 +2501,23 @@ RESULTS_HTML = '''
                     // 직전 예측의 실제 결과 반영: 예측했던 회차(전체 ID)가 지금 나왔으면 기록
                     const alreadyRecordedRound = lastPrediction ? predictionHistory.some(function(h) { return h && h.round === lastPrediction.round; }) : true;
                     var lowWinRateForRecord = false;
+                    var blended = 50, c15 = 0, c30 = 0, c100 = 0;
                     try {
-                        var vh = predictionHistory.filter(function(h) { return h && typeof h === 'object'; });
+                        var vh = Array.isArray(predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
                         var v15 = vh.slice(-15), v30 = vh.slice(-30), v100 = vh.slice(-100);
                         var hit15r = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
                         var loss15 = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-                        var c15 = hit15r + loss15, r15 = c15 > 0 ? 100 * hit15r / c15 : 50;
+                        c15 = hit15r + loss15;
+                        var r15 = c15 > 0 ? 100 * hit15r / c15 : 50;
                         var hit30r = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
                         var loss30 = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-                        var c30 = hit30r + loss30, r30 = c30 > 0 ? 100 * hit30r / c30 : 50;
+                        c30 = hit30r + loss30;
+                        var r30 = c30 > 0 ? 100 * hit30r / c30 : 50;
                         var hit100r = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
                         var loss100 = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-                        var c100 = hit100r + loss100, r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
-                        var blended = 0.5 * r15 + 0.3 * r30 + 0.2 * r100;
+                        c100 = hit100r + loss100;
+                        var r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
+                        blended = 0.5 * r15 + 0.3 * r30 + 0.2 * r100;
                         lowWinRateForRecord = (c15 > 0 || c30 > 0 || c100 > 0) && blended <= 50;
                     } catch (e) {}
                     if (lastPrediction && currentRoundFull === lastPrediction.round && !alreadyRecordedRound) {
@@ -2527,8 +2532,9 @@ RESULTS_HTML = '''
                                 var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
                                 const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
                                 var thrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
-                                var thr = (thrEl && parseFloat(thrEl.value) != null && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
-                                if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && blended <= thr) pred = pred === '정' ? '꺽' : '정';
+                                var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
+                                if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
+                                if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
                                 // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
                                 let defenseBet = 0;
                                 if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
@@ -2552,8 +2558,9 @@ RESULTS_HTML = '''
                                 var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
                                 const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
                                 var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
-                                var thrActual = (thrElActual && parseFloat(thrElActual.value) != null && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
-                                if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
+                                var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
+                                if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
+                                if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
                                 // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
                                 let defenseBet = 0;
                                 if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
@@ -3280,8 +3287,9 @@ RESULTS_HTML = '''
                             var c100 = hit100r + loss100, r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
                             var blended = 0.5 * r15 + 0.3 * r30 + 0.2 * r100;
                             var thrCardEl = document.getElementById('calc-' + id + '-win-rate-threshold');
-                            var thrCard = (thrCardEl && parseFloat(thrCardEl.value) != null && !isNaN(parseFloat(thrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrCardEl.value))) : (typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
-                            lowWinRate = (c15 > 0 || c30 > 0 || c100 > 0) && blended <= thrCard;
+                            var thrCardNum = (thrCardEl && !isNaN(parseFloat(thrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrCardEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
+                            if (typeof thrCardNum !== 'number' || isNaN(thrCardNum)) thrCardNum = 50;
+                            lowWinRate = (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrCardNum;
                         } catch (e2) {}
                         const useWinRateRevCard = !!(calcState[id] && calcState[id].win_rate_reverse);
                         if (useWinRateRevCard && lowWinRate) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
