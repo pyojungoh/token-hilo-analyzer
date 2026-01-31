@@ -3820,6 +3820,12 @@ BETTING_HELPER_HTML = '''<!DOCTYPE html>
             2. 배팅금 입력 후, 위 <strong id="step-pick">픽</strong>에 맞는 RED 또는 BLACK 클릭
         </div>
     </div>
+    <h2>배팅 후 다음 단계</h2>
+    <div class="card" style="border-left: 4px solid #64b5f6;">
+        <p style="margin:0 0 6px;">1. <strong>결과 나올 때까지 대기</strong> (해당 회차 게임 종료)</p>
+        <p style="margin:0 0 6px;">2. 메인 분석기(/results)가 새 결과를 반영하면 <strong>예측 픽이 자동 갱신</strong>됩니다. 이 페이지는 3초마다 픽을 조회하므로 새 RED/BLACK이 자동으로 바뀝니다.</p>
+        <p style="margin:0;">3. <strong>위쪽 "현재 예측 픽"</strong>이 바뀌면 → 배팅 사이트(이미 열어 둔 탭)에서 새 회차에 맞게 배팅금 입력 후 RED 또는 BLACK 클릭. 반복하면 됩니다.</p>
+    </div>
     <div class="link"><a href="/results">← 메인 분석기로 이동</a></div>
     <script>
         (function() {
