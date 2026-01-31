@@ -3090,45 +3090,55 @@ RESULTS_HTML = '''
                 el.classList.add('idle');
                 el.textContent = '대기중';
             }
-            // 계산기 1,2,3: 예측픽은 메인과 동일(정/꺽, 정=빨강 꺽=검정). 반픽/승률반픽이면 배팅만 반대로.
+            // 계산기 1,2,3: 예측픽은 메인 #prediction-pick-container .prediction-card DOM 그대로(텍스트+card-red/card-black). 반픽/승률반픽이면 배팅만 반대로.
             if (id !== DEFENSE_ID) {
                 try {
                     const bettingCardEl = document.getElementById('calc-' + id + '-current-card');
                     const predictionCardEl = document.getElementById('calc-' + id + '-prediction-card');
-                    if (bettingCardEl && predictionCardEl) {
-                    if (state.running && lastPrediction && lastPrediction.value) {
-                        var predictionPred = lastPrediction.value;
-                        var bettingPred = predictionPred;
-                        const rev = !!(calcState[id] && calcState[id].reverse);
-                        if (rev) bettingPred = bettingPred === '정' ? '꺽' : '정';
-                        var lowWinRate = false;
-                        try {
-                            var vh = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
-                            var v15 = vh.slice(-15), v30 = vh.slice(-30), v100 = vh.slice(-100);
-                            var hit15r = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
-                            var loss15 = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-                            var c15 = hit15r + loss15, r15 = c15 > 0 ? 100 * hit15r / c15 : 50;
-                            var hit30r = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
-                            var loss30 = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-                            var c30 = hit30r + loss30, r30 = c30 > 0 ? 100 * hit30r / c30 : 50;
-                            var hit100r = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
-                            var loss100 = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-                            var c100 = hit100r + loss100, r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
-                            var blended = 0.5 * r15 + 0.3 * r30 + 0.2 * r100;
-                            lowWinRate = (c15 > 0 || c30 > 0 || c100 > 0) && blended <= 50;
-                        } catch (e2) {}
-                        const useWinRateRevCard = !!(calcState[id] && calcState[id].win_rate_reverse);
-                        if (useWinRateRevCard && lowWinRate) bettingPred = bettingPred === '정' ? '꺽' : '정';
-                        bettingCardEl.textContent = bettingPred;
-                        bettingCardEl.className = 'calc-current-card calc-card-betting card-' + (bettingPred === '정' ? 'jung' : 'kkuk');
-                        predictionCardEl.textContent = predictionPred;
-                        predictionCardEl.className = 'calc-current-card calc-card-prediction card-' + (predictionPred === '정' ? 'jung' : 'kkuk');
+                    if (!bettingCardEl || !predictionCardEl) return;
+                    const mainCard = document.querySelector('#prediction-pick-container .prediction-card');
+                    if (state.running && mainCard && (mainCard.classList.contains('card-red') || mainCard.classList.contains('card-black'))) {
+                        const predVal = mainCard.querySelector('.pred-value-big');
+                        const predictionText = (predVal && predVal.textContent) ? predVal.textContent.trim() : mainCard.textContent.trim();
+                        const predictionIsRed = mainCard.classList.contains('card-red');
+                        if (predictionText === '정' || predictionText === '꺽') {
+                            predictionCardEl.textContent = predictionText;
+                            predictionCardEl.className = 'calc-current-card calc-card-prediction card-' + (predictionIsRed ? 'jung' : 'kkuk');
+                            var bettingText = predictionText;
+                            var bettingIsRed = predictionIsRed;
+                            const rev = !!(calcState[id] && calcState[id].reverse);
+                            if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                            var lowWinRate = false;
+                            try {
+                                var vh = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
+                                var v15 = vh.slice(-15), v30 = vh.slice(-30), v100 = vh.slice(-100);
+                                var hit15r = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                                var loss15 = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                                var c15 = hit15r + loss15, r15 = c15 > 0 ? 100 * hit15r / c15 : 50;
+                                var hit30r = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                                var loss30 = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                                var c30 = hit30r + loss30, r30 = c30 > 0 ? 100 * hit30r / c30 : 50;
+                                var hit100r = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                                var loss100 = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                                var c100 = hit100r + loss100, r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
+                                var blended = 0.5 * r15 + 0.3 * r30 + 0.2 * r100;
+                                lowWinRate = (c15 > 0 || c30 > 0 || c100 > 0) && blended <= 50;
+                            } catch (e2) {}
+                            const useWinRateRevCard = !!(calcState[id] && calcState[id].win_rate_reverse);
+                            if (useWinRateRevCard && lowWinRate) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                            bettingCardEl.textContent = bettingText;
+                            bettingCardEl.className = 'calc-current-card calc-card-betting card-' + (bettingIsRed ? 'jung' : 'kkuk');
+                        } else {
+                            bettingCardEl.textContent = '';
+                            bettingCardEl.className = 'calc-current-card calc-card-betting';
+                            predictionCardEl.textContent = '';
+                            predictionCardEl.className = 'calc-current-card calc-card-prediction';
+                        }
                     } else {
                         bettingCardEl.textContent = '';
                         bettingCardEl.className = 'calc-current-card calc-card-betting';
                         predictionCardEl.textContent = '';
                         predictionCardEl.className = 'calc-current-card calc-card-prediction';
-                    }
                     }
                 } catch (cardErr) { console.warn('updateCalcStatus card', id, cardErr); }
             }
