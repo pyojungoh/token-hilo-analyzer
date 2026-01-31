@@ -1278,6 +1278,31 @@ RESULTS_HTML = '''
             85% { opacity: 1; }
             100% { opacity: 0; transform: scale(1); }
         }
+        .pick-lose-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(120, 30, 40, 0.92);
+            border-radius: clamp(10px, 2vw, 14px);
+            font-size: clamp(1.2em, 4vw, 2em);
+            font-weight: 900;
+            color: #ffcdd2;
+            text-shadow: 0 0 12px rgba(255,80,80,0.8), 0 2px 6px rgba(0,0,0,0.6);
+            animation: pickLoseFade 2.2s ease-out forwards;
+            pointer-events: none;
+            border: 2px solid rgba(239, 83, 80, 0.6);
+        }
+        @keyframes pickLoseFade {
+            0% { opacity: 0; transform: scale(0.8); }
+            12% { opacity: 1; transform: scale(1.1); }
+            25% { opacity: 1; transform: scale(1.05) rotate(-1deg); }
+            37% { opacity: 1; transform: scale(1.05) rotate(1deg); }
+            50% { opacity: 1; transform: scale(1.05); }
+            85% { opacity: 1; }
+            100% { opacity: 0; transform: scale(1); }
+        }
         .prediction-pick-title {
             font-size: clamp(0.85em, 2vw, 0.95em);
             font-weight: bold;
@@ -1813,6 +1838,7 @@ RESULTS_HTML = '''
         }
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
+        let lastLoseEffectRound = null;  // 실패 이펙트를 이미 보여준 회차 (한 번만 표시)
         const CALC_IDS = [1, 2, 3];
         const CALC_SESSION_KEY = 'tokenHiloCalcSessionId';
         const CALC_STATE_BACKUP_KEY = 'tokenHiloCalcStateBackup';
@@ -2638,9 +2664,13 @@ RESULTS_HTML = '''
                     }
                     const lastEntry = validHist.length > 0 ? validHist[validHist.length - 1] : null;
                     const lastIsWin = lastEntry && lastEntry.actual !== 'joker' && lastEntry.predicted === lastEntry.actual;
+                    const lastIsLose = lastEntry && lastEntry.actual !== 'joker' && lastEntry.predicted !== lastEntry.actual;
                     const shouldShowWinEffect = lastIsWin && lastEntry && lastWinEffectRound !== lastEntry.round;
+                    const shouldShowLoseEffect = lastIsLose && lastEntry && lastLoseEffectRound !== lastEntry.round;
                     if (shouldShowWinEffect) lastWinEffectRound = lastEntry.round;
+                    if (shouldShowLoseEffect) lastLoseEffectRound = lastEntry.round;
                     const winOverlay = shouldShowWinEffect ? '<div class="pick-win-overlay">승리!</div>' : '';
+                    const loseOverlay = shouldShowLoseEffect ? '<div class="pick-lose-overlay">실패</div>' : '';
                     const pickWrapClass = 'prediction-pick' + (pickInBucket ? ' pick-in-bucket' : '');
                     const leftBlock = is15Joker ? ('<div class="prediction-pick">' +
                         '<div class="prediction-pick-title">예측 픽</div>' +
@@ -2653,7 +2683,7 @@ RESULTS_HTML = '''
                         '<div class="prediction-pick-title">예측 픽 · ' + colorToPick + '</div>' +
                         '<div class="prediction-card card-' + colorClass + '">' +
                         '<span class="pred-value-big">' + predict + '</span>' +
-                        '</div>' + winOverlay +
+                        '</div>' + winOverlay + loseOverlay +
                         '<div class="prediction-prob-under">나올 확률 ' + predProb.toFixed(1) + '%</div>' +
                         '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + displayRound3(predictedRoundFull) + '회</div>' +
                         '</div>');
@@ -3270,9 +3300,14 @@ RESULTS_HTML = '''
                 if (!timeElement) {
                     return;
                 }
-                
-                // 0.5초마다 서버에서 데이터 가져오기 (10초 게임에 맞춰 빠른 업데이트)
-                if (now - timerData.lastFetch > 500) {
+                // 클라이언트 측 남은 시간 (폴링 간격·결과 새로고침 판단용)
+                const timeDiff = (now - timerData.serverTime) / 1000;
+                const currentElapsed = Math.max(0, timerData.elapsed + timeDiff);
+                const remaining = Math.max(0, 10 - currentElapsed);
+                // 라운드 종료 직전/직후에는 더 자주 폴링 (다음 픽을 빨리 보여주기)
+                const nearEnd = remaining < 3;
+                const fetchInterval = nearEnd ? 300 : 500;
+                if (now - timerData.lastFetch > fetchInterval) {
                     try {
                     // 10초 경기 룰: 8초 타임아웃
                     const controller = new AbortController();
@@ -3309,11 +3344,12 @@ RESULTS_HTML = '''
                             
                             if (roundChanged || roundEnded || roundStarted) {
                                 console.log('라운드 변경 감지:', { roundChanged, roundEnded, roundStarted, prevRound, newRound: timerData.round, prevElapsed, newElapsed: data.elapsed });
-                                // 즉시 결과 로드 (10초 게임에 맞춰 빠른 반응)
-                                setTimeout(() => {
-                                    loadResults();
-                                    lastResultsUpdate = Date.now();
-                                }, 200);
+                                // 즉시 결과 로드 (지연 최소화로 다음 픽 빨리 표시)
+                                loadResults();
+                                lastResultsUpdate = Date.now();
+                                [150, 400, 700, 1100].forEach(function(ms) {
+                                    setTimeout(function() { loadResults(); lastResultsUpdate = Date.now(); }, ms);
+                                });
                             }
                             // updateBettingInfo는 별도로 실행하므로 여기서 제거
                         }
@@ -3322,11 +3358,6 @@ RESULTS_HTML = '''
                         // AbortError, Failed to fetch 등은 조용히 처리
                     }
                 }
-                
-                // 클라이언트 측에서 시간 계산 (서버 elapsed + 경과 시간)
-                const timeDiff = (now - timerData.serverTime) / 1000;
-                const currentElapsed = Math.max(0, timerData.elapsed + timeDiff);
-                const remaining = Math.max(0, 10 - currentElapsed);
                 
                 // 항상 시간 표시 (실시간 카운팅)
                 timeElement.textContent = `남은 시간: ${remaining.toFixed(2)} 초`;
@@ -3339,18 +3370,17 @@ RESULTS_HTML = '''
                     timeElement.classList.add('warning');
                 }
                 
-                // 타이머가 거의 0이 되면 경기 결과 새로고침 (라운드 종료 직전, 10초 게임에 맞춰 빠른 반응)
-                if (remaining <= 0.5 && now - lastResultsUpdate > 200) {
+                // 타이머가 거의 0이 되면 경기 결과 즉시 새로고침 (다음 픽 빨리 보여주기)
+                if (remaining <= 1 && now - lastResultsUpdate > 150) {
                     loadResults();
                     lastResultsUpdate = now;
                 }
-                
-                // 타이머가 0이 되면 즉시 결과 새로고침 (10초 게임에 맞춰 빠른 반응)
-                if (remaining <= 0 && now - lastResultsUpdate > 100) {
-                    setTimeout(() => {
-                        loadResults();
-                        lastResultsUpdate = Date.now();
-                    }, 100);
+                if (remaining <= 0 && now - lastResultsUpdate > 80) {
+                    loadResults();
+                    lastResultsUpdate = now;
+                    [200, 450, 750].forEach(function(ms) {
+                        setTimeout(function() { loadResults(); lastResultsUpdate = Date.now(); }, ms);
+                    });
                 }
             } catch (error) {
                 console.error('타이머 업데이트 오류:', error);
