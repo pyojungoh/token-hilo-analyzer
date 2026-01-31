@@ -15,15 +15,6 @@ import threading
 import re
 import uuid
 try:
-    import socketio
-    SOCKETIO_AVAILABLE = True
-    print("[✅] python-socketio 라이브러리 로드 성공")
-except ImportError as e:
-    SOCKETIO_AVAILABLE = False
-    print(f"[❌ 경고] python-socketio가 설치되지 않았습니다: {e}")
-    print("[❌ 경고] pip install python-socketio로 설치하세요")
-
-try:
     import psycopg2
     from psycopg2.extras import RealDictCursor
     DB_AVAILABLE = True
@@ -618,28 +609,12 @@ def cleanup_old_results(hours=5):
         except:
             pass
 
-# init_socketio() 함수는 start_socketio_client() 함수 정의 후에 정의됨 (아래 참조)
-
 # 캐시
 game_data_cache = None
 streaks_cache = None
 results_cache = None
 last_update_time = 0
 CACHE_TTL = 1000  # 1초 (10초 게임에 맞춰 빠른 업데이트)
-
-# Socket.IO 관련
-socketio_client = None
-socketio_thread = None
-socketio_connected = False
-current_status_data = {
-    'round': 0,
-    'elapsed': 0,
-    'currentBets': {
-        'red': [],
-        'black': []
-    },
-    'timestamp': datetime.now().isoformat()
-}
 
 def fetch_with_retry(url, max_retries=MAX_RETRIES, silent=False):
     """재시도 로직 포함 fetch (기존 파일과 동일한 방식)"""
@@ -704,231 +679,6 @@ def fetch_with_retry(url, max_retries=MAX_RETRIES, silent=False):
                 print(f"   오류 내용: {str(e)[:200]}")
     return None
 
-# Socket.IO 이벤트 핸들러
-def on_socketio_connect():
-    """Socket.IO 연결 성공"""
-    global socketio_connected
-    socketio_connected = True
-    print("🔵 [Socket.IO] ✅ 연결됨!")
-
-def on_socketio_disconnect():
-    """Socket.IO 연결 종료"""
-    global socketio_connected
-    socketio_connected = False
-    print("🔵 [Socket.IO] ❌ 연결 종료됨")
-
-def on_socketio_total(data):
-    """total 이벤트 수신 (베팅 데이터) - 배열의 첫 번째 요소 사용"""
-    global current_status_data
-    
-    try:
-        # 데이터가 배열로 전달되므로 첫 번째 요소 추출
-        if isinstance(data, list) and len(data) > 0:
-            data = data[0]
-        
-        if isinstance(data, dict):
-            # 베팅 데이터 업데이트
-            red_bets = data.get('red', [])
-            black_bets = data.get('black', [])
-            
-            if not isinstance(red_bets, list):
-                red_bets = []
-            if not isinstance(black_bets, list):
-                black_bets = []
-            
-            current_status_data['currentBets'] = {
-                'red': red_bets,
-                'black': black_bets
-            }
-            current_status_data['timestamp'] = datetime.now().isoformat()
-            
-            print(f"🔵 [Socket.IO total] RED {len(red_bets)}명, BLACK {len(black_bets)}명")
-        else:
-            print(f"[Socket.IO] total 이벤트 데이터 형식 오류: {type(data)}")
-    except Exception as e:
-        print(f"[Socket.IO total 이벤트 처리 오류] {str(e)[:200]}")
-
-def on_socketio_status(data):
-    """status 이벤트 수신 (경기 상태) - 배열의 첫 번째 요소 사용"""
-    global current_status_data
-    
-    try:
-        # 데이터가 배열로 전달되므로 첫 번째 요소 추출
-        if isinstance(data, list) and len(data) > 0:
-            data = data[0]
-        
-        if isinstance(data, dict):
-            if data.get("round") is not None:
-                current_status_data['round'] = data.get("round")
-            current_status_data['elapsed'] = data.get('elapsed', 0)
-            current_status_data['timestamp'] = datetime.now().isoformat()
-            
-            status_type = data.get('status', 'unknown')
-            print(f"[Socket.IO] status 이벤트: {status_type}, round={data.get('round')}, elapsed={data.get('elapsed')}")
-        else:
-            print(f"[Socket.IO] status 이벤트 데이터 형식 오류: {type(data)}")
-    except Exception as e:
-        print(f"[Socket.IO status 이벤트 처리 오류] {str(e)[:200]}")
-
-def on_socketio_betting(data):
-    """betting 이벤트 수신 (베팅 정보) - 배열의 첫 번째 요소 사용"""
-    global current_status_data
-    
-    try:
-        # 데이터가 배열로 전달되므로 첫 번째 요소 추출
-        if isinstance(data, list) and len(data) > 0:
-            data = data[0]
-        
-        if isinstance(data, dict):
-            # betting 이벤트도 베팅 데이터를 포함할 수 있음
-            red_bets = data.get('red', [])
-            black_bets = data.get('black', [])
-            
-            if isinstance(red_bets, list) and isinstance(black_bets, list):
-                current_status_data['currentBets'] = {
-                    'red': red_bets,
-                    'black': black_bets
-                }
-                current_status_data['timestamp'] = datetime.now().isoformat()
-                print(f"🔵 [Socket.IO betting] RED {len(red_bets)}명, BLACK {len(black_bets)}명")
-    except Exception as e:
-        print(f"[Socket.IO betting 이벤트 처리 오류] {str(e)[:200]}")
-
-def on_socketio_result(data):
-    """result 이벤트 수신 (경기 결과) - 배열의 첫 번째 요소 사용"""
-    try:
-        # 데이터가 배열로 전달되므로 첫 번째 요소 추출
-        if isinstance(data, list) and len(data) > 0:
-            data = data[0]
-        
-        if isinstance(data, dict):
-            print(f"[Socket.IO] result 이벤트: round={data.get('round')}, result={data.get('result')}, number={data.get('number')}")
-        else:
-            print(f"[Socket.IO] result 이벤트 데이터 형식: {type(data)}")
-    except Exception as e:
-        print(f"[Socket.IO result 이벤트 처리 오류] {str(e)[:200]}")
-
-def start_socketio_client():
-    """Socket.IO 클라이언트 시작 (별도 스레드에서 실행)"""
-    global socketio_client, socketio_thread, socketio_connected
-    
-    if not SOCKETIO_AVAILABLE:
-        print("[경고] python-socketio가 설치되지 않아 Socket.IO 연결을 사용할 수 없습니다")
-        return
-    
-    if socketio_client and socketio_connected:
-        print("[경고] Socket.IO 클라이언트가 이미 실행 중입니다")
-        return
-    
-    def socketio_worker():
-        global socketio_client, socketio_connected
-        
-        while True:
-            try:
-                print(f"🔵 [Socket.IO] 연결 시도: {SOCKETIO_URL}")
-                
-                # 기존 파일 방식: engineio.Client를 먼저 생성하고 ssl_verify=False 설정
-                import engineio
-                eio_client = engineio.Client(ssl_verify=False, logger=False)
-                
-                # Socket.IO 클라이언트 생성 (engineio_client 전달)
-                socketio_client = socketio.Client(
-                    engineio_logger=False,
-                    logger=False,
-                    engineio_client=eio_client
-                )
-                
-                # 이벤트 핸들러 등록 (실제 이벤트 이름 사용)
-                socketio_client.on('connect', on_socketio_connect)
-                socketio_client.on('disconnect', on_socketio_disconnect)
-                socketio_client.on('total', on_socketio_total)
-                socketio_client.on('status', on_socketio_status)
-                socketio_client.on('betting', on_socketio_betting)
-                socketio_client.on('result', on_socketio_result)
-                
-                # 연결 시도 (기존 파일 방식 사용)
-                print(f"🔵 [연결 정보] URL: {SOCKETIO_URL}")
-                
-                # 기존 파일과 동일한 방식으로 연결
-                socketio_client.connect(
-                    SOCKETIO_URL,
-                    transports=['polling', 'websocket'],
-                    socketio_path='/socket.io/',
-                    headers={
-                        "Origin": "http://tgame365.com",
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
-                    }
-                )
-                
-                print(f"🔵 [연결 성공] connect() 메서드 완료")
-                
-                # 연결 유지
-                socketio_client.wait()
-                
-            except Exception as e:
-                error_msg = str(e)
-                print(f"🔵 [Socket.IO 연결 오류] {error_msg[:300]}")
-                print(f"🔵 [오류 상세] {type(e).__name__}: {error_msg}")
-                import traceback
-                print(f"🔵 [오류 스택] {traceback.format_exc()[:500]}")
-                socketio_connected = False
-                if socketio_client:
-                    try:
-                        socketio_client.disconnect()
-                    except:
-                        pass
-                time.sleep(5)  # 5초 후 재연결 시도
-    
-    socketio_thread = threading.Thread(target=socketio_worker, daemon=True)
-    socketio_thread.start()
-    print("🔵 [✅ Socket.IO] 클라이언트 스레드 시작됨")
-
-# Socket.IO 초기화 함수 (start_socketio_client() 함수 정의 후에 정의)
-def init_socketio():
-    """Socket.IO 연결 초기화"""
-    print("\n" + "=" * 50)
-    print("🔵 [SOCKET.IO 초기화 시작]")
-    print("=" * 50)
-    print(f"🔵 SOCKETIO_URL: {SOCKETIO_URL}")
-    print(f"🔵 BASE_URL: {BASE_URL}")
-    print(f"🔵 python-socketio 사용 가능: {SOCKETIO_AVAILABLE}")
-
-    # Socket.IO 클라이언트 시작
-    if SOCKETIO_AVAILABLE:
-        if SOCKETIO_URL:
-            print(f"🔵 [✅] Socket.IO 연결 시작: {SOCKETIO_URL}")
-            start_socketio_client()
-        else:
-            print("🔵 [❌] SOCKETIO_URL 환경 변수가 설정되지 않았습니다")
-            print("🔵 [❌] Railway 환경 변수에 SOCKETIO_URL을 설정하세요")
-            print("🔵 [❌] 예: SOCKETIO_URL=https://game.cmx258.com:8080")
-    else:
-        print("🔵 [❌] python-socketio가 설치되지 않아 Socket.IO 연결을 사용하지 않습니다")
-        print("🔵 [❌] pip install python-socketio로 설치하세요")
-    print("=" * 50 + "\n")
-
-# Socket.IO 초기화를 지연 실행 (서버 시작 후 별도 스레드에서 실행)
-def delayed_socketio_init():
-    """Socket.IO 초기화를 지연 실행 (서버 시작을 막지 않음)"""
-    global socketio_initialized
-    if socketio_initialized:
-        return
-    
-    # 서버가 완전히 시작될 때까지 약간 대기
-    import time
-    time.sleep(2)
-    
-    try:
-        init_socketio()
-        socketio_initialized = True
-    except Exception as e:
-        print(f"🔵 [❌ 오류] Socket.IO 초기화 실패: {e}")
-        try:
-            import traceback
-            traceback.print_exc()
-        except:
-            pass
-
 # 데이터베이스 초기화 함수 (나중에 호출)
 def ensure_database_initialized():
     """데이터베이스 초기화 확인 및 실행"""
@@ -968,31 +718,12 @@ if DB_AVAILABLE:
 else:
     print("[❌ 경고] DB_AVAILABLE이 False입니다. psycopg2를 설치하세요.")
 
-# 별도 스레드에서 Socket.IO 초기화 시작 (서버 시작을 막지 않음)
-init_thread = threading.Thread(target=delayed_socketio_init, daemon=True)
-init_thread.start()
-
 def load_game_data():
-    """게임 데이터 로드 - Socket.IO 데이터 우선 사용"""
-    global current_status_data
-    
-    # Socket.IO가 연결되어 있으면 Socket.IO 데이터 사용 (HTTP 요청 불필요)
-    if socketio_connected:
-        # Socket.IO 데이터가 있으면 사용
-        if current_status_data.get('currentBets', {}).get('red') is not None:
-            return current_status_data
-        # Socket.IO는 연결되었지만 아직 데이터가 없으면 기본값 반환
-        return current_status_data
-    
-    # Socket.IO가 연결되지 않았으면 빈 데이터 반환 (HTTP 요청 제거 - 공개 URL 없음)
-    # HTTP 요청은 실패하므로 불필요한 로그 스팸 방지
+    """게임 데이터 로드 (Socket.IO 제거됨 - 빈 데이터만 반환)"""
     return {
         'round': 0,
         'elapsed': 0,
-        'currentBets': {
-            'red': [],
-            'black': []
-        },
+        'currentBets': {'red': [], 'black': []},
         'timestamp': datetime.now().isoformat()
     }
 
@@ -1745,7 +1476,8 @@ RESULTS_HTML = '''
 </head>
 <body>
     <div class="container">
-        <div class="header-info">
+        <div class="header-info" style="background: rgba(244,67,54,0.2); border: 1px solid #f44336;">
+            <div style="font-weight: bold; color: #f44336;">⚠ 현재 먹통</div>
             <div id="prev-round">이전회차: --</div>
             <div>
                 <span id="remaining-time" class="remaining-time">남은 시간: -- 초</span>
