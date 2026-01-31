@@ -1232,13 +1232,13 @@ RESULTS_HTML = '''
             flex-wrap: wrap;
         }
         .prediction-table-row #prediction-box {
-            flex: 1 1 100%;
+            flex: 1 1 55%;
             min-width: 0;
         }
         @media (max-width: 768px) {
             .prediction-table-row { flex-direction: column; align-items: stretch; gap: 8px; }
-            .prediction-table-row #prediction-pick-container { order: 1; width: 100%; max-width: 100%; display: flex; justify-content: center; box-sizing: border-box; }
-            .prediction-table-row #prediction-box { order: 2; width: 100%; max-width: 100%; box-sizing: border-box; }
+            .prediction-table-row #prediction-pick-container { order: 1; width: 100%; max-width: 100%; flex: 1 1 auto; display: flex; justify-content: center; box-sizing: border-box; }
+            .prediction-table-row #prediction-box { order: 2; width: 100%; max-width: 100%; flex: 1 1 auto; box-sizing: border-box; }
             .prediction-table-row #prob-bucket-collapse { order: 3; width: 100%; }
         }
         @media (max-width: 480px) {
@@ -1251,9 +1251,9 @@ RESULTS_HTML = '''
             .card-category, .color-match { font-size: 6px; padding: 2px 3px; }
         }
         #prediction-pick-container {
-            flex: 1 1 260px;
+            flex: 1 1 45%;
             min-width: 200px;
-            max-width: 420px;
+            max-width: 100%;
             padding: clamp(12px, 2.5vw, 20px);
             background: rgba(255,255,255,0.04);
             border: 1px solid #444;
@@ -1261,6 +1261,7 @@ RESULTS_HTML = '''
             display: flex;
             align-items: center;
             justify-content: center;
+            box-sizing: border-box;
         }
         #graph-stats {
             flex: 1 1 260px;
@@ -1659,15 +1660,15 @@ RESULTS_HTML = '''
         <div class="prediction-result-section">
             <div id="prediction-result-bar" class="prediction-result-bar-wrap"></div>
         </div>
+        <div class="prediction-table-row">
+            <div id="prediction-pick-container"></div>
+            <div id="prediction-box" class="prediction-box"></div>
+        </div>
         <div id="graph-stats-collapse" class="prob-bucket-collapse collapsed">
             <div class="prob-bucket-collapse-header" id="graph-stats-collapse-header" role="button" tabindex="0">최근 15회/30회/전체 정꺽 승률</div>
             <div class="prob-bucket-collapse-body" id="graph-stats-collapse-body">
                 <div id="graph-stats" class="graph-stats"></div>
             </div>
-        </div>
-        <div class="prediction-table-row">
-            <div id="prediction-pick-container"></div>
-            <div id="prediction-box" class="prediction-box"></div>
         </div>
         <div id="prob-bucket-collapse" class="prob-bucket-collapse collapsed">
             <div class="prob-bucket-collapse-header" id="prob-bucket-collapse-header" role="button" tabindex="0">예측 확률 구간별 승률</div>
