@@ -2555,49 +2555,48 @@ RESULTS_HTML = '''
             return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
         }
         function getCalcResult(id) {
+            try {
             if (!calcState[id]) return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-' };
             const capIn = parseFloat(document.getElementById('calc-' + id + '-capital')?.value) || 1000000;
             const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
             const oddsIn = parseFloat(document.getElementById('calc-' + id + '-odds')?.value) || 1.97;
             const hist = calcState[id].history || [];
             let cap = capIn, currentBet = baseIn, bust = false;
-            for (let i = 0; i < hist.length; i++) {
-                const isWin = hist[i].actual !== 'joker' && hist[i].predicted === hist[i].actual;
-                const bet = Math.min(currentBet, Math.floor(cap));
-                if (cap < bet || cap <= 0) { bust = true; break; }
-                if (isWin) {
-                    cap += bet * (oddsIn - 1);
-                    currentBet = baseIn;
-                } else {
-                    cap -= bet;
-                    currentBet = Math.min(currentBet * 2, Math.floor(cap));
-                }
-                if (cap <= 0) { bust = true; break; }
-            }
             let wins = 0, losses = 0, maxWinStreak = 0, maxLoseStreak = 0, curWin = 0, curLose = 0;
             for (let i = 0; i < hist.length; i++) {
-                if (hist[i].actual === 'joker') {
+                const h = hist[i];
+                if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                const isJoker = h.actual === 'joker';
+                const isWin = !isJoker && h.predicted === h.actual;
+                const bet = Math.min(currentBet, Math.floor(cap));
+                if (cap < bet || cap <= 0) { bust = true; break; }
+                if (isJoker) {
+                    cap -= bet;
+                    currentBet = Math.min(currentBet * 2, Math.floor(cap));
                     curWin = 0;
                     curLose = 0;
-                    continue;
-                }
-                const isWin = hist[i].predicted === hist[i].actual;
-                if (isWin) {
+                } else if (isWin) {
+                    cap += bet * (oddsIn - 1);
+                    currentBet = baseIn;
                     wins++;
                     curWin++;
                     curLose = 0;
                     if (curWin > maxWinStreak) maxWinStreak = curWin;
                 } else {
+                    cap -= bet;
+                    currentBet = Math.min(currentBet * 2, Math.floor(cap));
                     losses++;
                     curLose++;
                     curWin = 0;
                     if (curLose > maxLoseStreak) maxLoseStreak = curLose;
                 }
+                if (cap <= 0) { bust = true; break; }
             }
             const profit = cap - capIn;
             const total = wins + losses;
             const winRate = total > 0 ? (100 * wins / total).toFixed(1) : '-';
             return { cap: Math.max(0, Math.floor(cap)), profit, currentBet: bust ? 0 : currentBet, wins, losses, bust, maxWinStreak, maxLoseStreak, winRate };
+            } catch (e) { console.warn('getCalcResult', id, e); return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-' }; }
         }
         function updateCalcStatus(id) {
             try {
