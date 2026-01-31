@@ -1245,6 +1245,49 @@ RESULTS_HTML = '''
         #prob-bucket-collapse-body .prob-bucket-table .stat-rate.high { color: #81c784; font-weight: 600; }
         #prob-bucket-collapse-body .prob-bucket-table .stat-rate.mid { color: #ffb74d; }
         #prob-bucket-collapse-body .prob-bucket-table .stat-rate.low { color: #e57373; }
+        /* 좌우대칭 / 줄 유사도 표: 보기 좋게 */
+        #symmetry-line-collapse-body .symmetry-line-table {
+            border-collapse: collapse;
+            width: 100%;
+            max-width: 480px;
+            margin: 0 auto;
+            font-size: clamp(13px, 1.9vw, 15px);
+            color: #e0e0e0;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+        #symmetry-line-collapse-body .symmetry-line-table thead {
+            background: linear-gradient(180deg, #3a3a3a 0%, #2d2d2d 100%);
+            color: #fff;
+        }
+        #symmetry-line-collapse-body .symmetry-line-table th {
+            padding: 12px 14px;
+            font-weight: 600;
+            text-align: left;
+            border-bottom: 2px solid #555;
+        }
+        #symmetry-line-collapse-body .symmetry-line-table th:nth-child(1) { width: 38%; }
+        #symmetry-line-collapse-body .symmetry-line-table th:nth-child(2) { width: 18%; text-align: center; }
+        #symmetry-line-collapse-body .symmetry-line-table th:nth-child(3) { width: 44%; }
+        #symmetry-line-collapse-body .symmetry-line-table tbody tr {
+            background: #2a2a2a;
+            border-bottom: 1px solid #3a3a3a;
+        }
+        #symmetry-line-collapse-body .symmetry-line-table tbody tr:nth-child(even) {
+            background: #252525;
+        }
+        #symmetry-line-collapse-body .symmetry-line-table tbody tr:hover {
+            background: #333;
+        }
+        #symmetry-line-collapse-body .symmetry-line-table td {
+            padding: 10px 14px;
+            border-bottom: 1px solid #333;
+        }
+        #symmetry-line-collapse-body .symmetry-line-table td:nth-child(1) { font-weight: 500; color: #ccc; }
+        #symmetry-line-collapse-body .symmetry-line-table td:nth-child(2) { text-align: center; font-weight: 600; color: #81c784; }
+        #symmetry-line-collapse-body .symmetry-line-table td:nth-child(3) { font-size: 0.92em; color: #999; }
+        #symmetry-line-collapse-body .symmetry-line-table tbody tr:last-child td { border-bottom: none; }
         /* 예측픽이 해당 확률 구간에 있을 때 아웃라인 깜빡임 (강승부 구간 강조) */
         .prediction-pick.pick-in-bucket .prediction-card {
             animation: bucketOutlineBlink 1.4s ease-in-out infinite;
@@ -1866,6 +1909,7 @@ RESULTS_HTML = '''
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
         let lastLoseEffectRound = null;  // 실패 이펙트를 이미 보여준 회차 (한 번만 표시)
+        var prevSymmetryCounts = { left: null, right: null };  // 이전 시점 20열 줄 개수 (새 구간 빨리 캐치용)
         const CALC_IDS = [1, 2, 3];
         const CALC_SESSION_KEY = 'tokenHiloCalcSessionId';
         const CALC_STATE_BACKUP_KEY = 'tokenHiloCalcStateBackup';
@@ -2656,6 +2700,8 @@ RESULTS_HTML = '''
                             };
                         }
                     } catch (symErr) { symmetryLineData = null; console.warn('20열 symmetry/line calc:', symErr); }
+                    var symmetryBoostNotice = false;  // 20열 보정 반영 시 경고문구용
+                    var newSegmentNotice = false;    // 새 구간 구성 중 경고문구용
                     
                     // 예측픽 합산 공식: (유지확률×줄가중치) vs (바뀜확률×퐁당가중치) → 정규화 후 큰 쪽이 예측.
                     // 가중치(lineW,pongW) 구성: ①최근15회 줄/퐁당% ②흐름전환(줄강/퐁당강) ±0.25 ③20열(줄개수 ±0.15, 대칭도 +0.05 또는 ×0.95) ④30회패턴(chunk/scatter/twoOne) → 합산 후 정규화.
@@ -2679,11 +2725,35 @@ RESULTS_HTML = '''
                         if (flowState === 'line_strong') { lineW = Math.min(1, lineW + 0.25); pongW = Math.max(0, 1 - lineW); }
                         else if (flowState === 'pong_strong') { pongW = Math.min(1, pongW + 0.25); lineW = Math.max(0, 1 - pongW); }
                         if (symmetryLineData) {
-                            var lc = symmetryLineData.leftLineCount;
-                            if (lc <= 3) { lineW = Math.min(1, lineW + SYM_LINE_PONG_BOOST); pongW = Math.max(0, 1 - lineW); }
-                            else if (lc >= 5) { pongW = Math.min(1, pongW + SYM_LINE_PONG_BOOST); lineW = Math.max(0, 1 - pongW); }
-                            if (symmetryLineData.symmetryPct >= 70) lineW = Math.min(1, lineW + SYM_SAME_BOOST);
-                            else if (symmetryLineData.symmetryPct <= 30) { lineW *= SYM_LOW_MUL; pongW *= SYM_LOW_MUL; }
+                            var lc = typeof symmetryLineData.leftLineCount === 'number' ? symmetryLineData.leftLineCount : 0;
+                            var rc = typeof symmetryLineData.rightLineCount === 'number' ? symmetryLineData.rightLineCount : 0;
+                            var sp = typeof symmetryLineData.symmetryPct === 'number' ? symmetryLineData.symmetryPct : 0;
+                            var prevL = null, prevR = null;
+                            if (prevSymmetryCounts && typeof prevSymmetryCounts === 'object') {
+                                prevL = prevSymmetryCounts.left;
+                                prevR = prevSymmetryCounts.right;
+                            }
+                            // 우측 줄 없음(rc>=5) + 좌측 줄 생김(lc<=3) = 새 구간 시작. 오른쪽 쫒지 말고 왼쪽 추세(줄 유지) 반영.
+                            var isNewSegment = (rc >= 5 && lc <= 3);
+                            var isNewSegmentEarly = (prevR != null && prevR >= 5 && (prevL === null || prevL >= 4) && lc <= 3);
+                            if (isNewSegment || isNewSegmentEarly) {
+                                lineW = Math.min(1, lineW + 0.22);
+                                pongW = Math.max(0, 1 - lineW);
+                                newSegmentNotice = true;
+                            } else if (sp >= 70 && rc <= 3) {
+                                lineW = Math.min(1, lineW + 0.28);
+                                pongW = Math.max(0, 1 - lineW);
+                                symmetryBoostNotice = true;
+                            } else {
+                                if (lc <= 3) { lineW = Math.min(1, lineW + SYM_LINE_PONG_BOOST); pongW = Math.max(0, 1 - lineW); symmetryBoostNotice = true; }
+                                else if (lc >= 5) { pongW = Math.min(1, pongW + SYM_LINE_PONG_BOOST); lineW = Math.max(0, 1 - pongW); symmetryBoostNotice = true; }
+                                if (sp >= 70) { lineW = Math.min(1, lineW + SYM_SAME_BOOST); symmetryBoostNotice = true; }
+                                else if (sp <= 30) { lineW *= SYM_LOW_MUL; pongW *= SYM_LOW_MUL; }
+                            }
+                            if (prevSymmetryCounts && typeof prevSymmetryCounts === 'object') {
+                                prevSymmetryCounts.left = lc;
+                                prevSymmetryCounts.right = rc;
+                            }
                         }
                         lineW += chunkIdx * 0.2 + twoOneIdx * 0.1;
                         pongW += scatterIdx * 0.2;
@@ -2920,7 +2990,7 @@ RESULTS_HTML = '''
                         if (symmetryLineBody && symmetryLineCollapse) {
                             if (symmetryLineData) {
                                 var s = symmetryLineData;
-                                symmetryLineBody.innerHTML = '<table class="prob-bucket-table"><thead><tr><th>항목</th><th>값</th><th>비고</th></tr></thead><tbody>' +
+                                symmetryLineBody.innerHTML = '<table class="symmetry-line-table" cellspacing="0" cellpadding="0"><thead><tr><th>항목</th><th>값</th><th>비고</th></tr></thead><tbody>' +
                                     '<tr><td>좌우 대칭도</td><td>' + s.symmetryPct.toFixed(1) + '%</td><td>1~10열 vs 11~20열 대칭 매칭(10쌍)</td></tr>' +
                                     '<tr><td>왼쪽(1~10열) 줄 개수</td><td>' + s.leftLineCount + '</td><td>적을수록 긴 줄(추세), 많을수록 퐁당</td></tr>' +
                                     '<tr><td>오른쪽(11~20열) 줄 개수</td><td>' + s.rightLineCount + '</td><td>적을수록 긴 줄(추세), 많을수록 퐁당</td></tr>' +
@@ -2942,10 +3012,12 @@ RESULTS_HTML = '''
                             });
                         }
                         let noticeBlock = '';
-                        if (flowAdvice || lowWinRate) {
+                        if (flowAdvice || lowWinRate || symmetryBoostNotice || newSegmentNotice) {
                             const notices = [];
                             if (flowAdvice) notices.push(flowAdvice);
                             if (lowWinRate) notices.push('⚠ 승률이 낮으니 배팅 주의 (합산승률: ' + blendedWinRate.toFixed(1) + '%)');
+                            if (newSegmentNotice) notices.push('새로운 구간 구성 중, 왼쪽 추세 반영');
+                            if (symmetryBoostNotice) notices.push('좌우대칭이 확인되어 보정이 반영됩니다');
                             noticeBlock = '<div class="prediction-notice' + (lowWinRate && !flowAdvice ? ' danger' : '') + '">' + notices.join(' &nbsp; · &nbsp; ') + '</div>';
                         }
                         const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:clamp(0.75em,1.8vw,0.85em)">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
