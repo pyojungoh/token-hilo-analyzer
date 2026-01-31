@@ -1214,7 +1214,7 @@ RESULTS_HTML = '''
         }
         /* 정/꺽 블록 그래프: 좌=최신, 같은 타입 세로로 쌓기, 배경 있는 글씨, 쭉 표시 */
         .jung-kkuk-graph {
-            margin-top: 12px;
+            margin-top: 8px;
             display: flex;
             flex-direction: row;
             justify-content: flex-start;
@@ -1248,7 +1248,7 @@ RESULTS_HTML = '''
             background: #f44336;
         }
         .graph-stats {
-            margin-top: 12px;
+            margin-top: 0;
             font-size: clamp(12px, 2vw, 14px);
             color: #fff;
             overflow-x: auto;
@@ -1275,13 +1275,19 @@ RESULTS_HTML = '''
         .prediction-table-row {
             display: flex;
             align-items: stretch;
-            gap: clamp(12px, 3vw, 20px);
-            margin-top: 12px;
+            gap: 8px;
+            margin-top: 8px;
             flex-wrap: wrap;
         }
+        .prediction-table-row #prediction-box {
+            flex: 1 1 100%;
+            min-width: 0;
+        }
         @media (max-width: 768px) {
-            .prediction-table-row { flex-direction: column; align-items: center; }
-            #prediction-pick-container { width: 100%; max-width: 320px; display: flex; justify-content: center; }
+            .prediction-table-row { flex-direction: column; align-items: center; gap: 8px; }
+            .prediction-table-row #prediction-pick-container { order: 1; width: 100%; max-width: 320px; display: flex; justify-content: center; }
+            .prediction-table-row #prediction-box { order: 2; width: 100%; }
+            .prediction-table-row #graph-stats { order: 3; width: 100%; }
         }
         @media (max-width: 480px) {
             .cards-container { gap: 2px; padding: 8px 0; }
@@ -1421,8 +1427,8 @@ RESULTS_HTML = '''
         }
         .prediction-notice.danger { background: rgba(229,115,115,0.12); border-color: rgba(229,115,115,0.35); color: #e57373; }
         .prediction-box {
-            margin-top: 10px;
-            padding: clamp(10px, 2vw, 14px);
+            margin-top: 0;
+            padding: clamp(8px, 1.5vw, 12px);
             background: #333;
             border-radius: 8px;
             color: #fff;
@@ -1443,8 +1449,8 @@ RESULTS_HTML = '''
         .prediction-box .flow-advice { margin-top: 6px; font-size: 0.85em; padding: 4px 6px; border-radius: 4px; background: rgba(255,193,7,0.15); color: #ffc107; border: 1px solid rgba(255,193,7,0.4); }
         .prediction-box .hit-rate { margin-top: 6px; font-size: 0.9em; color: #aaa; }
         .bet-calc {
-            margin-top: 16px;
-            padding: 12px 14px;
+            margin-top: 8px;
+            padding: 10px 12px;
             background: #2a2a2a;
             border-radius: 8px;
             color: #fff;
@@ -1495,8 +1501,8 @@ RESULTS_HTML = '''
         <div class="prediction-table-row">
             <div id="prediction-pick-container"></div>
             <div id="graph-stats" class="graph-stats"></div>
+            <div id="prediction-box" class="prediction-box"></div>
         </div>
-        <div id="prediction-box" class="prediction-box"></div>
         <div class="bet-calc">
             <h4>가상 배팅 계산기</h4>
             <div class="bet-inputs">
