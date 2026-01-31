@@ -1563,7 +1563,7 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <div class="calc-inputs">
                                     <label>자본금 <input type="number" id="calc-1-capital" min="0" value="1000000"></label>
-                                    <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="1000"></label>
+                                    <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="10000"></label>
                                     <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label>
                                     <label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label>
                                 </div>
@@ -1591,7 +1591,7 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <div class="calc-inputs">
                                     <label>자본금 <input type="number" id="calc-2-capital" min="0" value="1000000"></label>
-                                    <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="2000"></label>
+                                    <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="10000"></label>
                                     <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label>
                                     <label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label>
                                 </div>
@@ -1619,7 +1619,7 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <div class="calc-inputs">
                                     <label>자본금 <input type="number" id="calc-3-capital" min="0" value="1000000"></label>
-                                    <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="5000"></label>
+                                    <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="10000"></label>
                                     <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label>
                                     <label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label>
                                 </div>
@@ -1784,6 +1784,7 @@ RESULTS_HTML = '''
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
         const CALC_IDS = [1, 2, 3];
+        const CALC_STATE_KEY = 'tokenHiloCalcState';
         const calcState = {};
         CALC_IDS.forEach(id => {
             calcState[id] = {
@@ -1793,6 +1794,28 @@ RESULTS_HTML = '''
                 timerId: null
             };
         });
+        function loadCalcState() {
+            try {
+                const saved = localStorage.getItem(CALC_STATE_KEY);
+                if (!saved) return;
+                const data = JSON.parse(saved);
+                CALC_IDS.forEach(id => {
+                    if (!data[id]) return;
+                    if (Array.isArray(data[id].history)) calcState[id].history = data[id].history.slice(-500);
+                    if (typeof data[id].elapsed === 'number') calcState[id].elapsed = data[id].elapsed;
+                });
+            } catch (e) { /* ignore */ }
+        }
+        function saveCalcState() {
+            try {
+                const data = {};
+                CALC_IDS.forEach(id => {
+                    data[id] = { history: calcState[id].history || [], elapsed: calcState[id].elapsed || 0 };
+                });
+                localStorage.setItem(CALC_STATE_KEY, JSON.stringify(data));
+            } catch (e) { /* ignore */ }
+        }
+        loadCalcState();
         let betCalcLog = [];  // 저장 로그 (날짜_정픽또는반픽_배팅금액_결과)
         
         async function loadResults() {
@@ -2090,6 +2113,7 @@ RESULTS_HTML = '''
                                 const pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
                                 calcState[id].history.push({ predicted: pred, actual: 'joker' });
                             });
+                            saveCalcState();
                             savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, 'joker');
                         } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
                             const actual = graphValues[0] ? '정' : '꺽';
@@ -2100,6 +2124,7 @@ RESULTS_HTML = '''
                                 const pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
                                 calcState[id].history.push({ predicted: pred, actual: actual });
                             });
+                            saveCalcState();
                             savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, actual);
                         }
                         predictionHistory = predictionHistory.slice(-30);
@@ -2386,7 +2411,7 @@ RESULTS_HTML = '''
         function getCalcResult(id) {
             if (!calcState[id]) return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-' };
             const capIn = parseFloat(document.getElementById('calc-' + id + '-capital')?.value) || 1000000;
-            const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 1000;
+            const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
             const oddsIn = parseFloat(document.getElementById('calc-' + id + '-odds')?.value) || 1.97;
             const hist = calcState[id].history || [];
             let cap = capIn, currentBet = baseIn, wins = 0, losses = 0, bust = false;
@@ -2490,7 +2515,7 @@ RESULTS_HTML = '''
                 if (logPanel) logPanel.classList.toggle('active', t === 'log');
             });
         });
-        try { CALC_IDS.forEach(id => updateCalcStatus(id)); } catch (e) { console.warn('초기 계산기 상태:', e); }
+        try { CALC_IDS.forEach(id => { updateCalcSummary(id); updateCalcDetail(id); updateCalcStatus(id); }); } catch (e) { console.warn('초기 계산기 상태:', e); }
         document.querySelectorAll('.calc-run').forEach(btn => {
             btn.addEventListener('click', function() {
                 const id = parseInt(this.getAttribute('data-calc'), 10);
@@ -2511,6 +2536,7 @@ RESULTS_HTML = '''
                 const id = parseInt(this.getAttribute('data-calc'), 10);
                 calcState[id].running = false;
                 if (calcState[id].timerId) { clearInterval(calcState[id].timerId); calcState[id].timerId = null; }
+                saveCalcState();
                 updateCalcSummary(id);
                 updateCalcStatus(id);
                 if (calcState[id].history.length > 0) document.querySelector('.calc-save[data-calc="' + id + '"]').style.display = 'inline-block';
@@ -2523,6 +2549,7 @@ RESULTS_HTML = '''
                 if (calcState[id].timerId) { clearInterval(calcState[id].timerId); calcState[id].timerId = null; }
                 calcState[id].history = [];
                 calcState[id].elapsed = 0;
+                saveCalcState();
                 updateCalcSummary(id);
                 updateCalcDetail(id);
                 updateCalcStatus(id);
@@ -2534,7 +2561,7 @@ RESULTS_HTML = '''
                 const id = parseInt(this.getAttribute('data-calc'), 10);
                 if (calcState[id].history.length === 0) return;
                 const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
-                const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 1000;
+                const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
                 const r = getCalcResult(id);
                 const now = new Date();
                 const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
