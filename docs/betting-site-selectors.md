@@ -7,7 +7,7 @@
 
 | 요소 | 셀렉터 | 비고 |
 |------|--------|------|
-| 배팅금 입력 | `#unit` | `<input type="text" id="unit">` |
+| 배팅금 입력 | `#unit` | `<input type="text" id="unit">` (또는 `.betting_cart input`, `.money_info input`) |
 | RED 배팅 버튼 | `button.btn_red` 또는 `.btn_red` | 클릭 시 RED 배팅 |
 | BLACK 배팅 버튼 | `button.btn_black` 또는 `.btn_black` | 클릭 시 BLACK 배팅 |
 | RED 배당률 hidden | `#rate_red` | value="1.97" |

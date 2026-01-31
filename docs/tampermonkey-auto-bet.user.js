@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         토큰하이로우 자동배팅 (nhs900)
 // @namespace    https://github.com/
-// @version      0.5
+// @version      0.6
 // @description  설정값을 사이트에 입력·클릭 테스트 → (선택) 예측기 API 연동 자동배팅
 // @match        https://nhs900.com/*
 // @match        http://nhs900.com/*
 // @match        https://www.nhs900.com/*
 // @match        http://www.nhs900.com/*
+// @match        *://*.nhs900.com/*
 // @run-at       document-end
 // @grant        GM_xmlhttpRequest
 // @connect      *
@@ -22,7 +23,7 @@
     var AUTO_CLICK_ENABLED = false;
     var lastAppliedRound = null;
 
-    var UNIT_SELECTORS = ['#unit', 'input[name="unit"]', 'input[name="Unit"]', '#Unit', 'input[id="unit"]', 'input.bet_amount', '.unit input', 'input[placeholder*="배팅"]', 'input[placeholder*="금액"]'];
+    var UNIT_SELECTORS = ['#unit', 'input[id="unit"]', 'input[name="unit"]', 'input[name="Unit"]', '#Unit', '.betting_cart input[type="text"]', '.money_info input', 'dl.money_info input', 'input.bet_amount', '.unit input', 'input[placeholder*="배팅"]', 'input[placeholder*="금액"]'];
     var RED_SELECTORS = ['button.btn_red', '.btn_red', 'button[class*="red"]', '.bet_red', '[data-bet="red"]', 'a.btn_red'];
     var BLACK_SELECTORS = ['button.btn_black', '.btn_black', 'button[class*="black"]', '.bet_black', '[data-bet="black"]', 'a.btn_black'];
 
@@ -141,8 +142,10 @@
     } else {
         tryInject();
     }
-    [500, 1000, 2000, 4000, 8000, 12000].forEach(function(ms) { setTimeout(tryInject, ms); });
-    setInterval(tryInject, 6000);
+    [300, 600, 1000, 1500, 2000, 3000, 5000, 8000, 12000, 18000].forEach(function(ms) { setTimeout(tryInject, ms); });
+    setInterval(tryInject, 3000);
+    var obs = typeof MutationObserver !== 'undefined' ? new MutationObserver(function() { tryInject(); }) : null;
+    if (obs && document.body) obs.observe(document.body, { childList: true, subtree: true });
 
     // ----- 1-2) 왼쪽 설정 → 오른쪽 사이트: 부모/iframe에서 오는 postMessage 수신 -----
     window.addEventListener('message', function(e) {
