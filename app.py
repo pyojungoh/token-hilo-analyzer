@@ -13,6 +13,7 @@ import json
 import traceback
 import threading
 import re
+import uuid
 try:
     import socketio
     SOCKETIO_AVAILABLE = True
@@ -119,6 +120,15 @@ def init_database():
             CREATE INDEX IF NOT EXISTS idx_prediction_history_created ON prediction_history(created_at DESC)
         ''')
         
+        # calc_sessions: 계산기 상태 서버 저장 (새로고침/재접속 후에도 실행중 유지)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS calc_sessions (
+                session_id VARCHAR(64) PRIMARY KEY,
+                state_json TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
         conn.commit()
         cur.close()
         conn.close()
@@ -207,6 +217,63 @@ def save_prediction_record(round_num, predicted, actual):
         except:
             pass
         return False
+
+
+# DB 없을 때 계산기 상태 in-memory 저장 (새로고침 시 유지, 서버 재시작 시 초기화)
+_calc_state_memory = {}
+
+def get_calc_state(session_id):
+    """계산기 세션 상태 조회. 없으면 None. 반환: { '1': { running, started_at, history, duration_limit, use_duration_limit }, ... }"""
+    if not session_id:
+        return None
+    sk = str(session_id)[:64]
+    if DB_AVAILABLE and DATABASE_URL:
+        conn = get_db_connection()
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute('SELECT state_json FROM calc_sessions WHERE session_id = %s', (sk,))
+                row = cur.fetchone()
+                cur.close()
+                conn.close()
+                if row and row[0]:
+                    return json.loads(row[0])
+            except Exception as e:
+                print(f"[❌ 오류] 계산기 상태 조회 실패: {str(e)[:200]}")
+                try:
+                    conn.close()
+                except:
+                    pass
+    return _calc_state_memory.get(sk)
+
+
+def save_calc_state(session_id, state_dict):
+    """계산기 세션 상태 저장. state_dict = { '1': { running, started_at, history, duration_limit, use_duration_limit }, ... }"""
+    if not session_id:
+        return False
+    sk = str(session_id)[:64]
+    _calc_state_memory[sk] = state_dict
+    if DB_AVAILABLE and DATABASE_URL:
+        conn = get_db_connection()
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute('''
+                    INSERT INTO calc_sessions (session_id, state_json, updated_at)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP)
+                    ON CONFLICT (session_id) DO UPDATE SET state_json = EXCLUDED.state_json, updated_at = CURRENT_TIMESTAMP
+                ''', (sk, json.dumps(state_dict)))
+                conn.commit()
+                cur.close()
+                conn.close()
+                return True
+            except Exception as e:
+                print(f"[❌ 오류] 계산기 상태 저장 실패: {str(e)[:200]}")
+                try:
+                    conn.close()
+                except:
+                    pass
+    return True
 
 
 def get_prediction_history(limit=30):
@@ -1566,6 +1633,8 @@ RESULTS_HTML = '''
                                     <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="10000"></label>
                                     <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label>
                                     <label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label>
+                                    <label>지속 시간(초) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label>
+                                    <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label>
                                 </div>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="1">실행</button>
@@ -1594,6 +1663,8 @@ RESULTS_HTML = '''
                                     <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="10000"></label>
                                     <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label>
                                     <label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label>
+                                    <label>지속 시간(초) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label>
+                                    <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label>
                                 </div>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="2">실행</button>
@@ -1622,6 +1693,8 @@ RESULTS_HTML = '''
                                     <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="10000"></label>
                                     <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label>
                                     <label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label>
+                                    <label>지속 시간(초) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label>
+                                    <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label>
                                 </div>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="3">실행</button>
@@ -1784,38 +1857,102 @@ RESULTS_HTML = '''
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
         const CALC_IDS = [1, 2, 3];
-        const CALC_STATE_KEY = 'tokenHiloCalcState';
+        const CALC_SESSION_KEY = 'tokenHiloCalcSessionId';
+        const CALC_STATE_BACKUP_KEY = 'tokenHiloCalcStateBackup';
         const calcState = {};
         CALC_IDS.forEach(id => {
             calcState[id] = {
                 running: false,
+                started_at: 0,
                 history: [],
                 elapsed: 0,
+                duration_limit: 0,
+                use_duration_limit: false,
                 timerId: null
             };
         });
-        function loadCalcState() {
-            try {
-                const saved = localStorage.getItem(CALC_STATE_KEY);
-                if (!saved) return;
-                const data = JSON.parse(saved);
-                CALC_IDS.forEach(id => {
-                    if (!data[id]) return;
-                    if (Array.isArray(data[id].history)) calcState[id].history = data[id].history.slice(-500);
-                    if (typeof data[id].elapsed === 'number') calcState[id].elapsed = data[id].elapsed;
-                });
-            } catch (e) { /* ignore */ }
+        let lastServerTimeSec = 0;  // /api/current-status 등에서 갱신
+        function getServerTimeSec() { return lastServerTimeSec || Math.floor(Date.now() / 1000); }
+        function buildCalcPayload() {
+            const payload = {};
+            CALC_IDS.forEach(id => {
+                const durEl = document.getElementById('calc-' + id + '-duration');
+                const checkEl = document.getElementById('calc-' + id + '-duration-check');
+                const duration_limit = (durEl && parseInt(durEl.value, 10)) || 0;
+                const use_duration_limit = !!(checkEl && checkEl.checked);
+                payload[String(id)] = {
+                    running: calcState[id].running,
+                    started_at: calcState[id].started_at || 0,
+                    history: (calcState[id].history || []).slice(-500),
+                    duration_limit: duration_limit,
+                    use_duration_limit: use_duration_limit
+                };
+            });
+            return payload;
         }
-        function saveCalcState() {
-            try {
-                const data = {};
-                CALC_IDS.forEach(id => {
-                    data[id] = { history: calcState[id].history || [], elapsed: calcState[id].elapsed || 0 };
-                });
-                localStorage.setItem(CALC_STATE_KEY, JSON.stringify(data));
-            } catch (e) { /* ignore */ }
+        function applyCalcsToState(calcs, serverTimeSec) {
+            const st = serverTimeSec || Math.floor(Date.now() / 1000);
+            CALC_IDS.forEach(id => {
+                const c = calcs[String(id)] || {};
+                if (Array.isArray(c.history)) calcState[id].history = c.history.slice(-500);
+                else calcState[id].history = [];
+                calcState[id].running = !!c.running;
+                calcState[id].started_at = c.started_at || 0;
+                calcState[id].duration_limit = parseInt(c.duration_limit, 10) || 0;
+                calcState[id].use_duration_limit = !!c.use_duration_limit;
+                calcState[id].elapsed = calcState[id].running && calcState[id].started_at ? Math.max(0, st - calcState[id].started_at) : 0;
+                const durEl = document.getElementById('calc-' + id + '-duration');
+                const checkEl = document.getElementById('calc-' + id + '-duration-check');
+                if (durEl) durEl.value = calcState[id].duration_limit || 0;
+                if (checkEl) checkEl.checked = calcState[id].use_duration_limit;
+            });
         }
-        loadCalcState();
+        async function loadCalcStateFromServer() {
+            try {
+                const session_id = localStorage.getItem(CALC_SESSION_KEY);
+                const url = session_id ? '/api/calc-state?session_id=' + encodeURIComponent(session_id) : '/api/calc-state';
+                const res = await fetch(url, { cache: 'no-cache' });
+                const data = await res.json();
+                if (data.session_id) localStorage.setItem(CALC_SESSION_KEY, data.session_id);
+                lastServerTimeSec = data.server_time || Math.floor(Date.now() / 1000);
+                let calcs = data.calcs || {};
+                const hasRunning = CALC_IDS.some(id => calcs[String(id)] && calcs[String(id)].running);
+                const hasHistory = CALC_IDS.some(id => calcs[String(id)] && Array.isArray(calcs[String(id)].history) && calcs[String(id)].history.length > 0);
+                if (!hasRunning && !hasHistory) {
+                    try {
+                        const backup = localStorage.getItem(CALC_STATE_BACKUP_KEY);
+                        if (backup) {
+                            const parsed = JSON.parse(backup);
+                            if (parsed && typeof parsed === 'object') calcs = parsed;
+                        }
+                    } catch (e) { /* ignore */ }
+                }
+                applyCalcsToState(calcs, lastServerTimeSec);
+            } catch (e) { console.warn('계산기 상태 로드 실패:', e); }
+        }
+        async function saveCalcStateToServer() {
+            try {
+                let session_id = localStorage.getItem(CALC_SESSION_KEY);
+                if (!session_id) {
+                    const res = await fetch('/api/calc-state', { cache: 'no-cache' });
+                    const data = await res.json();
+                    if (data.session_id) {
+                        localStorage.setItem(CALC_SESSION_KEY, data.session_id);
+                        session_id = data.session_id;
+                    }
+                }
+                if (!session_id) return;
+                const payload = buildCalcPayload();
+                try {
+                    localStorage.setItem(CALC_STATE_BACKUP_KEY, JSON.stringify(payload));
+                } catch (e) { /* ignore */ }
+                await fetch('/api/calc-state', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: session_id, calcs: payload })
+                });
+            } catch (e) { console.warn('계산기 상태 저장 실패:', e); }
+        }
         let betCalcLog = [];  // 저장 로그 (날짜_정픽또는반픽_배팅금액_결과)
         
         async function loadResults() {
@@ -2113,7 +2250,7 @@ RESULTS_HTML = '''
                                 const pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
                                 calcState[id].history.push({ predicted: pred, actual: 'joker' });
                             });
-                            saveCalcState();
+                            saveCalcStateToServer();
                             savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, 'joker');
                         } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
                             const actual = graphValues[0] ? '정' : '꺽';
@@ -2124,7 +2261,7 @@ RESULTS_HTML = '''
                                 const pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
                                 calcState[id].history.push({ predicted: pred, actual: actual });
                             });
-                            saveCalcState();
+                            saveCalcStateToServer();
                             savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, actual);
                         }
                         predictionHistory = predictionHistory.slice(-30);
@@ -2515,16 +2652,53 @@ RESULTS_HTML = '''
                 if (logPanel) logPanel.classList.toggle('active', t === 'log');
             });
         });
+        setInterval(function() {
+            const st = getServerTimeSec();
+            CALC_IDS.forEach(id => {
+                if (!calcState[id].running) return;
+                const started = calcState[id].started_at || 0;
+                calcState[id].elapsed = started ? Math.max(0, st - started) : 0;
+                updateCalcSummary(id);
+                if (calcState[id].use_duration_limit && calcState[id].duration_limit > 0 && calcState[id].elapsed >= calcState[id].duration_limit) {
+                    calcState[id].running = false;
+                    saveCalcStateToServer();
+                    updateCalcSummary(id);
+                    updateCalcStatus(id);
+                    if (calcState[id].history.length > 0) {
+                        const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
+                        if (saveBtn) saveBtn.style.display = 'inline-block';
+                    }
+                }
+            });
+        }, 1000);
         try { CALC_IDS.forEach(id => { updateCalcSummary(id); updateCalcDetail(id); updateCalcStatus(id); }); } catch (e) { console.warn('초기 계산기 상태:', e); }
         document.querySelectorAll('.calc-run').forEach(btn => {
-            btn.addEventListener('click', function() {
+            btn.addEventListener('click', async function() {
                 const id = parseInt(this.getAttribute('data-calc'), 10);
                 if (calcState[id].running) return;
+                if (!localStorage.getItem(CALC_SESSION_KEY)) {
+                    await loadCalcStateFromServer();
+                }
+                const durEl = document.getElementById('calc-' + id + '-duration');
+                const checkEl = document.getElementById('calc-' + id + '-duration-check');
+                calcState[id].duration_limit = (durEl && parseInt(durEl.value, 10)) || 0;
+                calcState[id].use_duration_limit = !!(checkEl && checkEl.checked);
                 calcState[id].running = true;
                 calcState[id].history = [];
+                calcState[id].started_at = 0;
                 calcState[id].elapsed = 0;
-                if (calcState[id].timerId) clearInterval(calcState[id].timerId);
-                calcState[id].timerId = setInterval(function() { calcState[id].elapsed++; updateCalcSummary(id); }, 1000);
+                try {
+                    const payload = buildCalcPayload();
+                    payload[String(id)].running = true;
+                    payload[String(id)].history = [];
+                    const session_id = localStorage.getItem(CALC_SESSION_KEY);
+                    const res = await fetch('/api/calc-state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: session_id, calcs: payload }) });
+                    const data = await res.json();
+                    if (data.calcs && data.calcs[String(id)]) {
+                        calcState[id].started_at = data.calcs[String(id)].started_at || 0;
+                        lastServerTimeSec = data.server_time || lastServerTimeSec;
+                    }
+                } catch (e) { console.warn('계산기 실행 저장 실패:', e); }
                 updateCalcSummary(id);
                 updateCalcDetail(id);
                 updateCalcStatus(id);
@@ -2536,7 +2710,7 @@ RESULTS_HTML = '''
                 const id = parseInt(this.getAttribute('data-calc'), 10);
                 calcState[id].running = false;
                 if (calcState[id].timerId) { clearInterval(calcState[id].timerId); calcState[id].timerId = null; }
-                saveCalcState();
+                saveCalcStateToServer();
                 updateCalcSummary(id);
                 updateCalcStatus(id);
                 if (calcState[id].history.length > 0) document.querySelector('.calc-save[data-calc="' + id + '"]').style.display = 'inline-block';
@@ -2549,7 +2723,7 @@ RESULTS_HTML = '''
                 if (calcState[id].timerId) { clearInterval(calcState[id].timerId); calcState[id].timerId = null; }
                 calcState[id].history = [];
                 calcState[id].elapsed = 0;
-                saveCalcState();
+                saveCalcStateToServer();
                 updateCalcSummary(id);
                 updateCalcDetail(id);
                 updateCalcStatus(id);
@@ -2614,6 +2788,7 @@ RESULTS_HTML = '''
                     }
                     const data = await response.json();
                         
+                        if (data.server_time !== undefined) lastServerTimeSec = data.server_time;
                         if (!data.error && data.elapsed !== undefined) {
                             const prevElapsed = timerData.elapsed;
                             const prevRound = timerData.round;
@@ -2684,8 +2859,12 @@ RESULTS_HTML = '''
             }
         }
         
-        // 초기 로드 (에러 발생 시에도 계속 시도)
+        // 초기 로드: 서버에서 계산기 상태 복원 후 결과 로드 (실행중 상태 유지)
         async function initialLoad() {
+            try {
+                await loadCalcStateFromServer();
+                CALC_IDS.forEach(id => { updateCalcSummary(id); updateCalcDetail(id); updateCalcStatus(id); });
+            } catch (e) { console.warn('계산기 상태 로드:', e); }
             try {
                 await loadResults().catch(e => console.warn('초기 결과 로드 실패:', e));
             } catch (e) {
@@ -2921,6 +3100,49 @@ def get_results():
         }), 200
 
 
+@app.route('/api/calc-state', methods=['GET', 'POST'])
+def api_calc_state():
+    """GET: 계산기 상태 조회. session_id 없으면 새로 생성. POST: 계산기 상태 저장. running=true이고 started_at 없으면 서버가 started_at 설정."""
+    try:
+        server_time = int(time.time())
+        if request.method == 'GET':
+            session_id = request.args.get('session_id', '').strip() or None
+            if not session_id:
+                session_id = uuid.uuid4().hex
+                save_calc_state(session_id, {})
+            state = get_calc_state(session_id)
+            if state is None:
+                state = {}
+            return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': state}), 200
+        # POST
+        data = request.get_json(force=True, silent=True) or {}
+        session_id = (data.get('session_id') or '').strip()
+        if not session_id:
+            session_id = uuid.uuid4().hex
+        calcs = data.get('calcs') or {}
+        out = {}
+        for cid in ('1', '2', '3'):
+            c = calcs.get(cid) or {}
+            if isinstance(c, dict):
+                running = c.get('running', False)
+                started_at = c.get('started_at') or 0
+                if running and not started_at:
+                    started_at = server_time
+                out[cid] = {
+                    'running': running,
+                    'started_at': started_at,
+                    'history': c.get('history') if isinstance(c.get('history'), list) else [],
+                    'duration_limit': int(c.get('duration_limit') or 0),
+                    'use_duration_limit': bool(c.get('use_duration_limit'))
+                }
+            else:
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False}
+        save_calc_state(session_id, out)
+        return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': out}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)[:200], 'session_id': None, 'server_time': int(time.time()), 'calcs': {}}), 200
+
+
 @app.route('/api/prediction-history', methods=['POST'])
 def api_save_prediction_history():
     """시스템 예측 기록 1건 저장 (round, predicted, actual). 어디서 접속해도 동일 기록 유지."""
@@ -2949,7 +3171,7 @@ def get_current_status():
         print(f"[API 응답] RED: {red_count}명, BLACK: {black_count}명")
         print(f"[API 응답] 전체 데이터 구조: {list(data.keys())}")
         print(f"[API 응답] currentBets 키: {list(data.get('currentBets', {}).keys())}")
-        # 항상 데이터 반환 (기본값 포함)
+        data['server_time'] = int(time.time())  # 계산기 경과시간용
         return jsonify(data), 200
     except Exception as e:
         # 에러 발생 시 기본값 반환 (서버 크래시 방지)
@@ -2962,7 +3184,8 @@ def get_current_status():
             'round': 0,
             'elapsed': 0,
             'currentBets': {'red': [], 'black': []},
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'server_time': int(time.time())
         }), 200
 
 @app.route('/api/streaks', methods=['GET'])
