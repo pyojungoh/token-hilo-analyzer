@@ -21,8 +21,9 @@
   자동 배팅은 우리 앱과 배팅 사이트가 다른 도메인이므로, **배팅 사이트에서 동작하는 Tampermonkey 스크립트**로 구현 (아래 참고).
 
 - **GET `/docs/tampermonkey-auto-bet.user.js`**  
-  Tampermonkey용 자동배팅 스크립트. nhs900 페이지에서 우리 앱 `/api/current-pick`을 조회해 RED/BLACK에 따라 `#unit` 입력·`button.btn_red`/`button.btn_black` 클릭.  
-  스크립트 내 `APP_BASE_URL`, `DEFAULT_AMOUNT`, `AUTO_CLICK_ENABLED` 수정 후 사용.
+  Tampermonkey용 자동배팅 스크립트.  
+  1) **먼저 테스트**: nhs900 접속 시 우측 상단에 **배팅 테스트 패널**이 뜹니다. 배팅금 입력 후 [금액만 입력] / [RED] / [BLACK] 으로 **설정한 값이 사이트(#unit, 버튼)에 들어가는지** 확인. (API 없음)  
+  2) **API 연동**: 스크립트 내 `APP_BASE_URL`, `DEFAULT_AMOUNT`, `AUTO_CLICK_ENABLED = true` 로 수정하면 예측기 픽에 따라 자동 입력·클릭.
 
 ## 예측기 앱 연동 API
 

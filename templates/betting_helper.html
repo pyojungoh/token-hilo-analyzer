@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>배팅 연동</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: "Noto Sans KR", sans-serif; background: #1a1a2e; color: #eee; height: 100vh; overflow: hidden; }
+        .layout { display: flex; height: 100vh; }
+        .left { width: 340px; min-width: 300px; overflow-y: auto; padding: 16px; background: #1a1a2e; border-right: 1px solid #333; }
+        .right { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+        .right iframe { flex: 1; width: 100%; border: none; background: #111; }
+        .right-foot { padding: 8px 12px; font-size: 12px; color: #666; background: #0d0d0d; }
+        .right-foot a { color: #64b5f6; }
+        h1 { font-size: 1.15em; margin: 0 0 12px; }
+        h2 { font-size: 0.95em; color: #aaa; margin: 14px 0 6px; }
+        .card { background: #16213e; border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+        .pick { font-size: 1.3em; font-weight: bold; }
+        .pick.red { color: #e57373; }
+        .pick.black { color: #90a4ae; }
+        .pick.hold { color: #ffb74d; }
+        .meta { font-size: 0.85em; color: #aaa; margin-top: 4px; }
+        .btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+        .btn { padding: 8px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9em; }
+        .btn-amount { background: #37474f; color: #90a4ae; }
+        .btn-red { background: #b71c1c; color: #fff; }
+        .btn-black { background: #212121; color: #fff; }
+        .btn:hover { opacity: 0.9; }
+        #left-status { font-size: 0.85em; color: #81c784; min-height: 18px; margin-top: 6px; }
+        #left-status.err { color: #f44336; }
+        .usage { font-size: 0.88em; line-height: 1.55; color: #bbb; }
+        .usage strong { color: #eee; }
+        .usage ol { margin: 8px 0 0; padding-left: 20px; }
+        .usage li { margin-bottom: 4px; }
+        .link a { color: #64b5f6; }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <div class="left">
+            <h1>배팅 연동</h1>
+            <div class="card">
+                <h2>설정 → 오른쪽 사이트로 보내기</h2>
+                <label>배팅금 <input type="text" id="left-amount" value="1000" style="width:80px;margin-left:6px;padding:6px;background:#333;color:#fff;border:1px solid #555;border-radius:4px;" /></label>
+                <div class="btn-row">
+                    <button type="button" id="btn-amount-only" class="btn btn-amount">금액만 입력</button>
+                    <button type="button" id="btn-red" class="btn btn-red">RED</button>
+                    <button type="button" id="btn-black" class="btn btn-black">BLACK</button>
+                </div>
+                <div id="left-status"></div>
+            </div>
+            <div class="card" id="pick-card">
+                <h2>현재 예측 픽</h2>
+                <div id="pick-display" class="pick hold">—</div>
+                <div id="meta-display" class="meta">회차: — | 확률: —</div>
+                <div id="status-display" class="meta">연결 대기 중...</div>
+            </div>
+            <div class="card">
+                <h2>사용 방법</h2>
+                <div class="usage">
+                    <strong>준비:</strong> Tampermonkey 확장을 설치한 뒤, <a href="/docs/tampermonkey-auto-bet.user.js" target="_blank">이 스크립트</a>를 "URL에서 가져오기"로 추가한다. 배팅 사이트(nhs900)에서만 동작한다.
+                    <ol>
+                        <li>이 페이지(<strong>/betting-helper</strong>)를 연다. 왼쪽이 설정, 오른쪽이 배팅 사이트다.</li>
+                        <li>오른쪽에 사이트가 안 뜨면(iframe 차단 시) 아래 "새 탭에서 열기"로 사이트를 연다. 그 탭에서도 Tampermonkey 패널이 뜨므로, 그 패널에서 금액·RED/BLACK을 쓰면 된다.</li>
+                        <li>왼쪽 "배팅금"에 금액을 넣고 <strong>금액만 입력</strong>을 누르면, 오른쪽 사이트의 배팅금 입력란(#unit)에 그 값이 들어간다. (오른쪽이 iframe으로 열려 있을 때만 동작한다. Tampermonkey가 설치돼 있어야 한다.)</li>
+                        <li><strong>RED</strong> 또는 <strong>BLACK</strong>을 누르면, 왼쪽에 입력한 금액이 오른쪽 사이트에 들어가고 해당 버튼이 자동으로 클릭된다.</li>
+                        <li>아래 "현재 예측 픽"은 메인 분석기(/results)에서 나온 픽이다. 3초마다 갱신된다. 보류일 때는 배팅하지 말고, RED/BLACK이 뜬 회차에만 위에서 RED 또는 BLACK을 눌러 배팅하면 된다.</li>
+                        <li>픽이 안 올라오면: /results 탭을 반드시 열어 두었는지, 16회차 이상 데이터가 있는지 "진단 다시 확인"으로 확인한다.</li>
+                    </ol>
+                </div>
+            </div>
+            <div class="card">
+                <h2>진단</h2>
+                <div id="diagnostic-msg" style="font-size:0.85em;color:#aaa;">확인 중...</div>
+                <button type="button" id="btn-diagnostic" class="btn btn-amount" style="margin-top:6px;">진단 다시 확인</button>
+                <div style="margin-top:10px;padding-top:10px;border-top:1px solid #333;">
+                    <button type="button" id="btn-save-test" class="btn btn-amount">저장 테스트 (RED 99999회차)</button>
+                    <div id="save-test-result" style="margin-top:6px;font-size:0.85em;color:#aaa;"></div>
+                </div>
+            </div>
+            <div class="link" style="margin-top:12px;"><a href="/results">← 메인 분석기</a> · <a href="/docs/tampermonkey-auto-bet.user.js">Tampermonkey 스크립트</a></div>
+        </div>
+        <div class="right">
+            <iframe id="bet-site-frame" src="{{ betting_site_url }}" title="배팅 사이트"></iframe>
+            <div class="right-foot">오른쪽에 사이트가 안 보이면 <a id="btn-open-new-tab" href="#" target="_blank" rel="noopener">새 탭에서 열기</a></div>
+        </div>
+    </div>
+    <script>
+        (function() {
+            var siteUrl = {{ betting_site_url_json | safe }};
+            document.getElementById("btn-open-new-tab").href = siteUrl;
+            var iframe = document.getElementById("bet-site-frame");
+            var leftStatus = document.getElementById("left-status");
+            var leftAmount = document.getElementById("left-amount");
+            function sendToSite(pick, amount) {
+                var amt = (amount || "").trim() || "1000";
+                try {
+                    if (iframe && iframe.contentWindow) {
+                        iframe.contentWindow.postMessage({ type: "TOKEN_HILO_APPLY", pick: pick, amount: amt }, "*");
+                        leftStatus.textContent = "오른쪽으로 전송함: " + (pick === "AMOUNT_ONLY" ? "금액만 " + amt : pick + " " + amt);
+                        leftStatus.classList.remove("err");
+                    } else {
+                        leftStatus.textContent = "오른쪽 프레임을 사용할 수 없음. 새 탭에서 사이트를 열고, 사이트에 뜨는 패널을 사용하세요.";
+                        leftStatus.classList.add("err");
+                    }
+                } catch (e) {
+                    leftStatus.textContent = "전송 오류: " + e.message;
+                    leftStatus.classList.add("err");
+                }
+            }
+            window.addEventListener("message", function(e) {
+                if (!e.data || e.data.type !== "TOKEN_HILO_RESULT") return;
+                leftStatus.textContent = e.data.msg || (e.data.ok ? "적용됨" : "실패");
+                leftStatus.classList.toggle("err", !e.data.ok);
+            });
+            document.getElementById("btn-amount-only").addEventListener("click", function() { sendToSite("AMOUNT_ONLY", leftAmount.value); });
+            document.getElementById("btn-red").addEventListener("click", function() { sendToSite("RED", leftAmount.value); });
+            document.getElementById("btn-black").addEventListener("click", function() { sendToSite("BLACK", leftAmount.value); });
+            function fetchPick() {
+                var cardEl = document.getElementById("pick-card");
+                fetch("/api/current-pick").then(function(r) { return r.json(); }).then(function(data) {
+                    var pickEl = document.getElementById("pick-display");
+                    var metaEl = document.getElementById("meta-display");
+                    var statusEl = document.getElementById("status-display");
+                    if (data.pick_color === "RED") {
+                        pickEl.textContent = "RED (빨강)";
+                        pickEl.className = "pick red";
+                        cardEl.classList.add("highlight");
+                    } else if (data.pick_color === "BLACK") {
+                        pickEl.textContent = "BLACK (검정)";
+                        pickEl.className = "pick black";
+                        cardEl.classList.add("highlight");
+                    } else {
+                        pickEl.textContent = "보류";
+                        pickEl.className = "pick hold";
+                        cardEl.classList.remove("highlight");
+                    }
+                    metaEl.textContent = "회차: " + (data.round != null ? data.round : "—") + " | 확률: " + (data.probability != null ? data.probability.toFixed(1) + "%" : "—");
+                    statusEl.textContent = "갱신: " + (data.updated_at || "—");
+                }).catch(function() {});
+            }
+            function runDiagnostic() {
+                var el = document.getElementById("diagnostic-msg");
+                if (!el) return;
+                el.textContent = "확인 중...";
+                fetch("/api/results?t=" + Date.now()).then(function(r) { return r.json(); }).then(function(data) {
+                    var n = (data.results || []).length;
+                    el.innerHTML = "분석기 결과: " + n + "회차 로드됨. " + (n < 16 ? "픽은 최소 16회차 필요." : "데이터 충분. /results 탭을 열어 두면 픽 갱신됨.");
+                }).catch(function() { el.textContent = "조회 실패"; });
+            }
+            document.getElementById("btn-diagnostic").addEventListener("click", runDiagnostic);
+            document.getElementById("btn-save-test").addEventListener("click", function() {
+                var resultEl = document.getElementById("save-test-result");
+                resultEl.textContent = "전송 중...";
+                fetch("/api/current-pick", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pickColor: "RED", round: 99999, probability: 50 }) })
+                    .then(function(r) { return r.json(); }).then(function(res) {
+                        if (!res.ok) { resultEl.innerHTML = '<span style="color:#e57373">저장 실패</span>'; return; }
+                        return fetch("/api/current-pick").then(function(r) { return r.json(); });
+                    }).then(function(getData) {
+                        if (!getData) return;
+                        resultEl.innerHTML = (getData.pick_color === "RED" && getData.round === 99999) ? '<span style="color:#81c784">저장·조회 정상</span>' : '<span style="color:#ffb74d">조회 다름</span>';
+                    }).catch(function() { resultEl.innerHTML = '<span style="color:#e57373">요청 실패</span>'; });
+            });
+            runDiagnostic();
+            fetchPick();
+            setInterval(fetchPick, 3000);
+        })();
+    </script>
+</body>
+</html>

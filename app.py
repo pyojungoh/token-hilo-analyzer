@@ -3,7 +3,7 @@
 필요한 정보만 추출하여 새로 작성
 """
 
-from flask import Flask, jsonify, render_template_string, request, redirect
+from flask import Flask, jsonify, render_template_string, render_template, request, redirect
 from flask_cors import CORS
 import requests
 import os
@@ -3806,181 +3806,16 @@ def api_current_pick():
 # 배팅 사이트 URL (토큰하이로우). 필요 시 환경변수로 오버라이드 가능
 BETTING_SITE_URL = os.getenv('BETTING_SITE_URL', 'https://nhs900.com')
 
-BETTING_HELPER_HTML = '''<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>배팅 연동 테스트</title>
-    <style>
-        * { box-sizing: border-box; }
-        body { font-family: "Noto Sans KR", sans-serif; margin: 20px; background: #1a1a2e; color: #eee; }
-        h1 { font-size: 1.2em; margin-bottom: 8px; }
-        h2 { font-size: 1em; color: #aaa; margin: 16px 0 8px; }
-        .card { background: #16213e; border-radius: 8px; padding: 16px; margin-bottom: 12px; max-width: 400px; }
-        .card.highlight { border: 2px solid #64b5f6; }
-        .pick { font-size: 1.5em; font-weight: bold; }
-        .pick.red { color: #e57373; }
-        .pick.black { color: #90a4ae; }
-        .pick.hold { color: #ffb74d; }
-        .meta { font-size: 0.9em; color: #aaa; margin-top: 8px; }
-        .link { margin-top: 16px; }
-        .link a { color: #64b5f6; }
-        .status { font-size: 0.85em; color: #666; margin-top: 8px; }
-        .btn-open { display: inline-block; margin: 8px 0; padding: 12px 20px; background: #0f3460; color: #64b5f6; border: 1px solid #64b5f6; border-radius: 8px; text-decoration: none; font-weight: bold; }
-        .btn-open:hover { background: #16213e; }
-        .steps { font-size: 0.9em; color: #888; margin-top: 12px; line-height: 1.6; }
-    </style>
-</head>
-<body>
-    <h1>배팅 연동 테스트</h1>
-    <p style="color:#888;font-size:0.9em;">메인 분석기에서 예측 픽이 갱신되면 여기서 조회됩니다.</p>
-    <div class="card" style="background:#0f3460;border:1px solid #64b5f6;margin-bottom:16px;">
-        <strong style="color:#64b5f6;">보류가 계속될 때</strong>
-        <p style="margin:8px 0 0;font-size:0.9em;color:#aaa;">1) <strong>메인 분석기(<a href="/results" style="color:#64b5f6;">/results</a>) 탭을 반드시 열어 두세요.</strong> 이 탭만 있으면 픽이 서버에 저장되지 않습니다.<br>
-        2) 15번 카드가 <strong>조커</strong>인 회차는 의도적으로 보류입니다 (배팅하지 마세요).<br>
-        3) /results를 열어 두면, 15번 카드가 조커가 아닌 회차가 나올 때 RED 또는 BLACK이 여기 자동으로 뜹니다.</p>
-    </div>
-    <h2>픽이 안 올 때 진단</h2>
-    <div class="card" id="diagnostic-card">
-        <div id="diagnostic-msg" style="font-size:0.9em;color:#aaa;">확인 중...</div>
-        <button type="button" id="btn-diagnostic" style="margin-top:8px;padding:6px 12px;background:#0f3460;color:#64b5f6;border:1px solid #64b5f6;border-radius:6px;cursor:pointer;font-size:0.85em;">진단 다시 확인</button>
-        <div style="margin-top:12px;padding-top:12px;border-top:1px solid #333;">
-            <strong style="color:#64b5f6;">서버 저장 테스트</strong>
-            <p style="margin:4px 0 6px;font-size:0.85em;color:#888;">저장·조회가 되는지 확인합니다. 성공하면 메인 분석기에서 픽이 전송될 때도 저장됩니다.</p>
-            <button type="button" id="btn-save-test" style="padding:6px 12px;background:#0f3460;color:#64b5f6;border:1px solid #64b5f6;border-radius:6px;cursor:pointer;font-size:0.85em;">저장 테스트 (RED 99999회차)</button>
-            <div id="save-test-result" style="margin-top:6px;font-size:0.85em;color:#aaa;"></div>
-        </div>
-    </div>
-    <h2>현재 예측 픽</h2>
-    <div class="card" id="pick-card">
-        <div id="pick-display" class="pick hold">—</div>
-        <div id="meta-display" class="meta">회차: — | 확률: —</div>
-        <div id="updated-display" class="meta">갱신: —</div>
-        <div id="status-display" class="status">연결 대기 중...</div>
-    </div>
-    <h2>자동 배팅 (목표)</h2>
-    <div class="card" style="border-left: 4px solid #81c784;">
-        <p style="margin:0 0 8px;">이 테스트 페이지의 <strong>목표</strong>는 실제 배팅 사이트(nhs900 등)에서 <strong>예측 픽에 따라 자동으로 배팅</strong>할 수 있게 하는 것입니다.</p>
-        <p style="margin:8px 0 0;font-size:0.9em;color:#aaa;">우리 앱과 배팅 사이트는 서로 다른 도메인이라, 브라우저 보안상 우리 페이지에서 배팅 사이트 버튼을 직접 누를 수 없습니다. 따라서 <strong>배팅 사이트 페이지에서 동작하는 스크립트</strong>(Tampermonkey 등)가 우리 API를 조회한 뒤 해당 페이지의 입력·버튼을 제어하는 방식이 필요합니다.</p>
-    </div>
-    <h3 style="font-size:1em;color:#64b5f6;margin-top:12px;">Tampermonkey 스크립트 (자동 배팅)</h3>
-    <div class="card" style="background:#1a1a2e;">
-        <p style="margin:0 0 8px;font-size:0.9em;">배팅 사이트(nhs900)에서만 동작하는 스크립트입니다. Tampermonkey 확장 설치 후 아래 링크로 스크립트를 추가하고, 스크립트 안에서 <strong>APP_BASE_URL</strong>(이 앱 주소), <strong>DEFAULT_AMOUNT</strong>(배팅금), 필요 시 <strong>AUTO_CLICK_ENABLED = true</strong> 로 수정하세요.</p>
-        <p style="margin:8px 0 4px;"><a href="/docs/tampermonkey-auto-bet.user.js" style="color:#64b5f6;">/docs/tampermonkey-auto-bet.user.js</a> ← Tampermonkey에서 “새 스크립트” → URL에서 가져오기로 설치</p>
-        <p style="margin:0;font-size:0.85em;color:#888;">※ 같은 회차 중복 클릭 방지·보류 시 미클릭 등은 스크립트에 포함되어 있습니다. 사용·약관·리스크는 사용자 책임입니다.</p>
-    </div>
-    <h2>배팅 사이트 연동</h2>
-    <div class="card">
-        <p style="margin:0 0 8px;">토큰하이로우 게임 페이지를 열고, 위 픽에 맞는 RED 또는 BLACK 버튼을 눌러주세요.</p>
-        <a id="btn-open-site" class="btn-open" href="#" target="_blank" rel="noopener">배팅 사이트(토큰하이로우) 열기</a>
-        <div class="steps">
-            1. 아래 버튼으로 배팅 사이트 열기<br>
-            2. 배팅금 입력 후, 위 <strong id="step-pick">픽</strong>에 맞는 RED 또는 BLACK 클릭
-        </div>
-    </div>
-    <h2>배팅 후 다음 단계</h2>
-    <div class="card" style="border-left: 4px solid #64b5f6;">
-        <p style="margin:0 0 6px;">1. <strong>결과 나올 때까지 대기</strong> (해당 회차 게임 종료)</p>
-        <p style="margin:0 0 6px;">2. 메인 분석기(/results)가 새 결과를 반영하면 <strong>예측 픽이 자동 갱신</strong>됩니다. 이 페이지는 3초마다 픽을 조회하므로 새 RED/BLACK이 자동으로 바뀝니다.</p>
-        <p style="margin:0;">3. <strong>위쪽 "현재 예측 픽"</strong>이 바뀌면 → 배팅 사이트(이미 열어 둔 탭)에서 새 회차에 맞게 배팅금 입력 후 RED 또는 BLACK 클릭. 반복하면 됩니다.</p>
-    </div>
-    <div class="link"><a href="/results">← 메인 분석기로 이동</a></div>
-    <script>
-        (function() {
-            var siteUrl = ''' + json.dumps(BETTING_SITE_URL) + ''';
-            document.getElementById("btn-open-site").href = siteUrl;
-            function fetchPick() {
-                var statusEl = document.getElementById("status-display");
-                var cardEl = document.getElementById("pick-card");
-                var stepPick = document.getElementById("step-pick");
-                fetch("/api/current-pick")
-                    .then(function(r) { return r.json(); })
-                    .then(function(data) {
-                        var pickEl = document.getElementById("pick-display");
-                        var metaEl = document.getElementById("meta-display");
-                        var upEl = document.getElementById("updated-display");
-                        if (data.pick_color === "RED") {
-                            pickEl.textContent = "RED (빨강)";
-                            pickEl.className = "pick red";
-                            cardEl.classList.add("highlight");
-                            if (stepPick) stepPick.textContent = "RED(빨강)";
-                        } else if (data.pick_color === "BLACK") {
-                            pickEl.textContent = "BLACK (검정)";
-                            pickEl.className = "pick black";
-                            cardEl.classList.add("highlight");
-                            if (stepPick) stepPick.textContent = "BLACK(검정)";
-                        } else {
-                            pickEl.textContent = "보류";
-                            pickEl.className = "pick hold";
-                            cardEl.classList.remove("highlight");
-                            if (stepPick) stepPick.textContent = "픽(보류 시 배팅 안 함)";
-                        }
-                        metaEl.textContent = "회차: " + (data.round != null ? data.round : "—") + " | 확률: " + (data.probability != null ? data.probability.toFixed(1) + "%" : "—");
-                        upEl.textContent = "갱신: " + (data.updated_at || "—");
-                        statusEl.textContent = "마지막 조회: " + new Date().toLocaleTimeString("ko-KR");
-                    })
-                    .catch(function() {
-                        statusEl.textContent = "조회 실패 (다시 시도 중)";
-                    });
-            }
-            function runDiagnostic() {
-                var el = document.getElementById("diagnostic-msg");
-                if (!el) return;
-                el.textContent = "확인 중...";
-                fetch("/api/results?t=" + Date.now())
-                    .then(function(r) { return r.json(); })
-                    .then(function(data) {
-                        var results = data.results || [];
-                        var n = results.length;
-                        var msg = "분석기 결과: " + n + "회차 로드됨. ";
-                        if (n < 16) {
-                            msg += "픽이 나오려면 <strong>최소 16회차</strong> 데이터가 필요합니다. (지금 " + n + "개)";
-                        } else {
-                            msg += "데이터는 충분합니다. 15번 카드가 조커가 아니면 RED/BLACK이 갱신됩니다. /results 탭을 같은 주소에서 열어 두었는지 확인하세요.";
-                        }
-                        el.innerHTML = msg;
-                    })
-                    .catch(function() {
-                        el.textContent = "분석기 데이터 조회 실패. /results 와 이 페이지가 같은 서버(같은 주소)에서 열렸는지 확인하세요.";
-                    });
-            }
-            document.getElementById("btn-diagnostic").addEventListener("click", runDiagnostic);
-            document.getElementById("btn-save-test").addEventListener("click", function() {
-                var resultEl = document.getElementById("save-test-result");
-                resultEl.textContent = "전송 중...";
-                fetch("/api/current-pick", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ pickColor: "RED", round: 99999, probability: 50 })
-                }).then(function(r) { return r.json();                 }).then(function(postRes) {
-                    if (!postRes.ok) { resultEl.innerHTML = '<span style="color:#e57373">저장 실패 (서버 반환 ok: false). DB/테이블 확인 필요.</span>'; return; }
-                    return fetch("/api/current-pick").then(function(r) { return r.json(); });
-                }).then(function(getData) {
-                    if (!getData) return;
-                    if (getData.pick_color === "RED" && getData.round === 99999) {
-                        resultEl.innerHTML = '<span style="color:#81c784">저장·조회 정상.</span> 메인 분석기(/results)에서 <strong>15번 카드가 조커가 아닐 때</strong>만 RED/BLACK이 전송됩니다. 메인 화면 예측 픽이 보류면 여기도 보류로만 저장됩니다.';
-                    } else {
-                        resultEl.innerHTML = '<span style="color:#ffb74d">저장됐지만 조회가 다릅니다. (다른 서버/워커일 수 있음)</span>';
-                    }
-                }).catch(function() {
-                    resultEl.innerHTML = '<span style="color:#e57373">요청 실패. 같은 주소에서 열었는지 확인하세요.</span>';
-                });
-            });
-            runDiagnostic();
-            fetchPick();
-            setInterval(fetchPick, 3000);
-        })();
-    </script>
-</body>
-</html>
-'''
 
 
 @app.route('/betting-helper', methods=['GET'])
 def betting_helper_page():
-    """자동배팅 테스트용 별도 페이지. 메인 분석기와 분리되어 있으며 /api/current-pick 만 조회."""
-    return render_template_string(BETTING_HELPER_HTML)
+    """배팅 연동 페이지. 왼쪽 설정, 오른쪽 배팅 사이트 iframe. Tampermonkey 스크립트가 postMessage 수신."""
+    return render_template(
+        'betting_helper.html',
+        betting_site_url=BETTING_SITE_URL,
+        betting_site_url_json=json.dumps(BETTING_SITE_URL)
+    )
 
 
 @app.route('/docs/tampermonkey-auto-bet.user.js', methods=['GET'])

@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         토큰하이로우 예측 연동 자동배팅 (nhs900)
+// @name         토큰하이로우 자동배팅 (nhs900)
 // @namespace    https://github.com/
-// @version      0.1
-// @description  예측기 앱 /api/current-pick 픽에 따라 배팅 사이트에서 RED/BLACK 자동 입력·클릭
+// @version      0.2
+// @description  설정값을 사이트에 입력·클릭 테스트 → (선택) 예측기 API 연동 자동배팅
 // @match        https://nhs900.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      *
@@ -11,12 +11,11 @@
 (function() {
     'use strict';
 
-    // ===== 설정 (반드시 수정) =====
-    var APP_BASE_URL = 'https://your-app.railway.app';  // 예측기 앱 주소 (끝에 / 없이)
-    var DEFAULT_AMOUNT = '1000';                        // 기본 배팅금
-    var POLL_INTERVAL_MS = 3000;                        // 픽 조회 간격 (ms)
-    var AUTO_CLICK_ENABLED = false;                     // true로 바꾸면 자동 클릭 활성화 (주의)
-
+    // ===== API 연동 설정 (나중에 사용) =====
+    var APP_BASE_URL = 'https://your-app.railway.app';
+    var DEFAULT_AMOUNT = '1000';
+    var POLL_INTERVAL_MS = 3000;
+    var AUTO_CLICK_ENABLED = false;
     var lastAppliedRound = null;
 
     function getUnitInput() {
@@ -29,38 +28,119 @@
         return document.querySelector('button.btn_black') || document.querySelector('.btn_black');
     }
 
-    function applyPick(pickColor, round, amount) {
-        if (!pickColor || pickColor !== 'RED' && pickColor !== 'BLACK') return;
-        if (round != null && round === lastAppliedRound) return;
+    function setAmountOnly(amountStr) {
+        var unit = getUnitInput();
+        if (!unit) return { ok: false, msg: '#unit 입력란을 찾을 수 없음' };
+        var amt = (amountStr || '').trim() || DEFAULT_AMOUNT;
+        unit.value = amt;
+        unit.dispatchEvent(new Event('input', { bubbles: true }));
+        unit.dispatchEvent(new Event('change', { bubbles: true }));
+        return { ok: true, msg: '금액 ' + amt + ' 적용됨' };
+    }
 
+    function applyBet(pickColor, amountStr) {
         var unit = getUnitInput();
         var btn = pickColor === 'RED' ? getRedBtn() : getBlackBtn();
-        if (!unit || !btn) return;
-
-        unit.value = amount || DEFAULT_AMOUNT;
+        if (!unit) return { ok: false, msg: '#unit 없음' };
+        if (!btn) return { ok: false, msg: (pickColor === 'RED' ? '.btn_red' : '.btn_black') + ' 버튼 없음' };
+        var amt = (amountStr || '').trim() || DEFAULT_AMOUNT;
+        unit.value = amt;
         unit.dispatchEvent(new Event('input', { bubbles: true }));
+        unit.dispatchEvent(new Event('change', { bubbles: true }));
         btn.click();
-        lastAppliedRound = round;
-        console.log('[자동배팅] ' + pickColor + ' 회차 ' + round + ' 적용');
+        return { ok: true, msg: pickColor + ' 배팅 적용 (금액 ' + amt + ')' };
+    }
+
+    // ----- 1) 설정값 → 사이트 입력 테스트 패널 (API 없음) -----
+    function showStatus(el, text, isError) {
+        if (!el) return;
+        el.textContent = text;
+        el.style.color = isError ? '#f44336' : '#81c784';
+    }
+
+    function injectTestPanel() {
+        if (document.getElementById('token-hilo-bet-panel')) return;
+
+        var panel = document.createElement('div');
+        panel.id = 'token-hilo-bet-panel';
+        panel.style.cssText = 'position:fixed;top:12px;right:12px;z-index:999999;width:200px;padding:10px;' +
+            'background:#1a1a2e;border:1px solid #64b5f6;border-radius:8px;font-family:sans-serif;font-size:12px;color:#eee;';
+        panel.innerHTML =
+            '<div style="margin-bottom:6px;color:#64b5f6;font-weight:bold;">배팅 테스트</div>' +
+            '<label style="display:block;margin-bottom:4px;">배팅금 <input type="text" id="th-bet-amount" value="1000" style="width:80px;margin-left:4px;padding:4px;background:#333;color:#fff;border:1px solid #555;" /></label>' +
+            '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;">' +
+            '<button type="button" id="th-btn-amount-only" style="padding:6px 10px;background:#37474f;color:#90a4ae;border:none;border-radius:4px;cursor:pointer;">금액만 입력</button>' +
+            '<button type="button" id="th-btn-red" style="padding:6px 10px;background:#b71c1c;color:#fff;border:none;border-radius:4px;cursor:pointer;">RED</button>' +
+            '<button type="button" id="th-btn-black" style="padding:6px 10px;background:#212121;color:#fff;border:none;border-radius:4px;cursor:pointer;">BLACK</button>' +
+            '</div>' +
+            '<div id="th-status" style="font-size:11px;color:#81c784;min-height:14px;"></div>';
+
+        document.body.appendChild(panel);
+
+        var amountInput = document.getElementById('th-bet-amount');
+        var statusEl = document.getElementById('th-status');
+
+        document.getElementById('th-btn-amount-only').addEventListener('click', function() {
+            var res = setAmountOnly(amountInput ? amountInput.value : '');
+            showStatus(statusEl, res.msg, !res.ok);
+        });
+        document.getElementById('th-btn-red').addEventListener('click', function() {
+            var res = applyBet('RED', amountInput ? amountInput.value : '');
+            showStatus(statusEl, res.msg, !res.ok);
+        });
+        document.getElementById('th-btn-black').addEventListener('click', function() {
+            var res = applyBet('BLACK', amountInput ? amountInput.value : '');
+            showStatus(statusEl, res.msg, !res.ok);
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', injectTestPanel);
+    } else {
+        injectTestPanel();
+    }
+
+    // 페이지가 동적일 수 있으므로 짧은 지연 후 한 번 더 시도
+    setTimeout(injectTestPanel, 1500);
+
+    // ----- 1-2) 왼쪽 설정 → 오른쪽 사이트: 부모/iframe에서 오는 postMessage 수신 -----
+    window.addEventListener('message', function(e) {
+        if (!e.data || e.data.type !== 'TOKEN_HILO_APPLY') return;
+        var pick = e.data.pick, amount = e.data.amount;
+        var r;
+        if (pick === 'AMOUNT_ONLY') {
+            r = setAmountOnly(amount);
+        } else if (pick === 'RED' || pick === 'BLACK') {
+            r = applyBet(pick, amount);
+        } else return;
+        try {
+            if (e.source && e.source.postMessage) {
+                e.source.postMessage({ type: 'TOKEN_HILO_RESULT', ok: r.ok, msg: r.msg }, '*');
+            }
+        } catch (err) {}
+    });
+
+    // ----- 2) API 연동 자동배팅 (AUTO_CLICK_ENABLED 시) -----
+    function applyPickFromApi(pickColor, round, amount) {
+        if (!pickColor || (pickColor !== 'RED' && pickColor !== 'BLACK')) return;
+        if (round != null && round === lastAppliedRound) return;
+        var r = applyBet(pickColor, String(amount || DEFAULT_AMOUNT));
+        if (r.ok) lastAppliedRound = round;
     }
 
     function poll() {
-        if (APP_BASE_URL.indexOf('your-app') >= 0) return;
-
+        if (APP_BASE_URL.indexOf('your-app') >= 0 || !AUTO_CLICK_ENABLED) return;
         GM_xmlhttpRequest({
             method: 'GET',
             url: APP_BASE_URL.replace(/\/$/, '') + '/api/current-pick',
             onload: function(res) {
                 try {
                     var data = JSON.parse(res.responseText);
-                    if (data.pick_color && AUTO_CLICK_ENABLED) {
-                        applyPick(data.pick_color, data.round, DEFAULT_AMOUNT);
-                    }
+                    if (data.pick_color) applyPickFromApi(data.pick_color, data.round, data.suggested_amount || DEFAULT_AMOUNT);
                 } catch (e) {}
             }
         });
     }
-
     setInterval(poll, POLL_INTERVAL_MS);
     poll();
 })();
