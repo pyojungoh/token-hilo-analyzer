@@ -2773,7 +2773,7 @@ RESULTS_HTML = '''
                         if (flowAdvice || lowWinRate) {
                             const notices = [];
                             if (flowAdvice) notices.push(flowAdvice);
-                            if (lowWinRate) notices.push('⚠ 승률이 낮으니 배팅 주의');
+                            if (lowWinRate) notices.push('⚠ 승률이 낮으니 배팅 주의 (합산승률: ' + blendedWinRate.toFixed(1) + '%)');
                             noticeBlock = '<div class="prediction-notice' + (lowWinRate && !flowAdvice ? ' danger' : '') + '">' + notices.join(' &nbsp; · &nbsp; ') + '</div>';
                         }
                         const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:clamp(0.75em,1.8vw,0.85em)">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
@@ -3347,10 +3347,10 @@ RESULTS_HTML = '''
                             
                             if (roundChanged || roundEnded || roundStarted) {
                                 console.log('라운드 변경 감지:', { roundChanged, roundEnded, roundStarted, prevRound, newRound: timerData.round, prevElapsed, newElapsed: data.elapsed });
-                                // 즉시 결과 로드 (지연 최소화로 다음 픽 빨리 표시)
+                                // 즉시 결과 로드 (승리/실패 결과 빨리 표시)
                                 loadResults();
                                 lastResultsUpdate = Date.now();
-                                [150, 400, 700, 1100].forEach(function(ms) {
+                                [80, 200, 350, 550, 800, 1100].forEach(function(ms) {
                                     setTimeout(function() { loadResults(); lastResultsUpdate = Date.now(); }, ms);
                                 });
                             }
@@ -3373,15 +3373,15 @@ RESULTS_HTML = '''
                     timeElement.classList.add('warning');
                 }
                 
-                // 타이머가 거의 0이 되면 경기 결과 즉시 새로고침 (다음 픽 빨리 보여주기)
-                if (remaining <= 1 && now - lastResultsUpdate > 150) {
+                // 타이머가 거의 0이 되면 경기 결과 즉시·반복 새로고침 (승리/실패 결과 빨리 표시)
+                if (remaining <= 1.5 && now - lastResultsUpdate > 100) {
                     loadResults();
                     lastResultsUpdate = now;
                 }
-                if (remaining <= 0 && now - lastResultsUpdate > 80) {
+                if (remaining <= 0 && now - lastResultsUpdate > 50) {
                     loadResults();
                     lastResultsUpdate = now;
-                    [200, 450, 750].forEach(function(ms) {
+                    [100, 200, 350, 500, 700, 950, 1200].forEach(function(ms) {
                         setTimeout(function() { loadResults(); lastResultsUpdate = Date.now(); }, ms);
                     });
                 }
