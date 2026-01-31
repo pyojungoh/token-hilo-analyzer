@@ -1989,7 +1989,7 @@ RESULTS_HTML = '''
             const saved = localStorage.getItem(PREDICTION_HISTORY_KEY);
             if (saved) {
                 const parsed = JSON.parse(saved);
-                if (Array.isArray(parsed)) predictionHistory = parsed.slice(-30).filter(function(h) { return h && typeof h === 'object'; });
+                if (Array.isArray(parsed)) predictionHistory = parsed.slice(-100).filter(function(h) { return h && typeof h === 'object'; });
             }
         } catch (e) { /* 복원 실패 시 빈 배열 유지 */ }
         function savePredictionHistory() {
@@ -2263,7 +2263,7 @@ RESULTS_HTML = '''
                 }
                 // 서버에 저장된 시스템 예측 기록 복원 (어디서 접속해도 동일). 무효 항목 제거해 ReferenceError 방지
                 if (Object.prototype.hasOwnProperty.call(data, 'prediction_history') && Array.isArray(data.prediction_history)) {
-                    predictionHistory = data.prediction_history.slice(-30).filter(function(h) { return h && typeof h === 'object'; });
+                    predictionHistory = data.prediction_history.slice(-100).filter(function(h) { return h && typeof h === 'object'; });
                     savePredictionHistory();
                 }
                 
@@ -2568,7 +2568,7 @@ RESULTS_HTML = '''
                             saveCalcStateToServer();
                             savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, actual, lastPrediction.prob, lastPrediction.color);
                         }
-                        predictionHistory = predictionHistory.slice(-30);
+                        predictionHistory = predictionHistory.slice(-100);
                         savePredictionHistory();  // localStorage 백업
                     }
                     
@@ -2757,6 +2757,42 @@ RESULTS_HTML = '''
                         const total = inBucket.length;
                         return { label: b.min + '~' + (b.max === 101 ? '100' : b.max) + '%', total: total, wins: wins, pct: total > 0 ? (100 * wins / total).toFixed(1) : '-' };
                     }).filter(function(s) { return s.total > 0; });
+                    // 15/30/100 구간 반영(50/30/20) + 기존 확률에 30% 반영
+                    const outcomesNewestFirst = validHist.filter(function(h) { return h.actual !== 'joker'; }).map(function(h) { return h.actual === '정'; }).reverse();
+                    function transCounts(arr) {
+                        var jj = 0, jk = 0, kj = 0, kk = 0;
+                        for (var i = 0; i < arr.length - 1; i++) {
+                            var a = arr[i], b = arr[i + 1];
+                            if (a === true && b === true) jj++; else if (a === true && b === false) jk++; else if (a === false && b === true) kj++; else if (a === false && b === false) kk++;
+                        }
+                        return { jj: jj, jk: jk, kj: kj, kk: kk, jungDenom: jj + jk, kkukDenom: kk + kj };
+                    }
+                    function probFromTrans(t, lastBool) {
+                        if (lastBool === true && t.jungDenom > 0) { var sameP = t.jj / t.jungDenom, changeP = t.jk / t.jungDenom; return { sameP: sameP, changeP: changeP }; }
+                        if (lastBool === false && t.kkukDenom > 0) { var sameP = t.kk / t.kkukDenom, changeP = t.kj / t.kkukDenom; return { sameP: sameP, changeP: changeP }; }
+                        return { sameP: 0.5, changeP: 0.5 };
+                    }
+                    var blendData = { p15: null, p30: null, p100: null, newProb: null };
+                    if (outcomesNewestFirst.length >= 2 && !is15Joker) {
+                        var lastBool = outcomesNewestFirst[0];
+                        var s15 = outcomesNewestFirst.slice(0, Math.min(15, outcomesNewestFirst.length));
+                        var s30 = outcomesNewestFirst.slice(0, Math.min(30, outcomesNewestFirst.length));
+                        var s100 = outcomesNewestFirst.slice(0, Math.min(100, outcomesNewestFirst.length));
+                        var t15 = transCounts(s15), t30 = transCounts(s30), t100 = transCounts(s100);
+                        var r15 = probFromTrans(t15, lastBool), r30 = probFromTrans(t30, lastBool), r100 = probFromTrans(t100, lastBool);
+                        var prob15 = (r15.sameP >= r15.changeP ? r15.sameP : r15.changeP) * 100;
+                        var prob30 = (r30.sameP >= r30.changeP ? r30.sameP : r30.changeP) * 100;
+                        var prob100 = (r100.sameP >= r100.changeP ? r100.sameP : r100.changeP) * 100;
+                        blendData.p15 = s15.length >= 2 ? prob15 : null;
+                        blendData.p30 = s30.length >= 2 ? prob30 : null;
+                        blendData.p100 = s100.length >= 2 ? prob100 : null;
+                        var w15 = s15.length >= 2 ? 0.5 : 0, w30 = s30.length >= 2 ? 0.3 : 0, w100 = s100.length >= 2 ? 0.2 : 0;
+                        var denom = w15 + w30 + w100;
+                        if (denom > 0) {
+                            blendData.newProb = (w15 * (blendData.p15 || 50) + w30 * (blendData.p30 || 50) + w100 * (blendData.p100 || 50)) / denom;
+                            predProb = 0.7 * predProb + 0.3 * blendData.newProb;
+                        }
+                    }
                     const lastEntry = validHist.length > 0 ? validHist[validHist.length - 1] : null;
                     const lastIsWin = lastEntry && lastEntry.actual !== 'joker' && lastEntry.predicted === lastEntry.actual;
                     const shouldShowWinEffect = lastIsWin && lastEntry && lastWinEffectRound !== lastEntry.round;
@@ -2803,7 +2839,19 @@ RESULTS_HTML = '''
                             (jokerCount > 0 ? '<span class="stat-joker">조커 <span class="num">' + jokerCount + '</span>회</span>' : '') +
                             (countForPct > 0 ? '<span class="stat-rate ' + rateClass + '">승률 ' + hitPct + '%</span>' : '') +
                             '</div>' +
-                            '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 메인=서버 최근 30회 · 계산기=해당 계산기 실행 중 쌓인 기록</div>';
+                            '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 메인=서버 최근 100회 · 계산기=해당 계산기 실행 중 쌓인 기록</div>';
+                        let blendTableBlock = '';
+                        if (blendData.newProb != null) {
+                            var row15 = blendData.p15 != null ? (Number(blendData.p15).toFixed(1) + '%') : '-';
+                            var row30 = blendData.p30 != null ? (Number(blendData.p30).toFixed(1) + '%') : '-';
+                            var row100 = blendData.p100 != null ? (Number(blendData.p100).toFixed(1) + '%') : '-';
+                            blendTableBlock = '<div class="prob-bucket-wrap" style="margin-top:6px;font-size:0.8em"><div style="margin-bottom:4px;color:#666">구간별 반영 (기존 70% + 신규 30%)</div><table class="main-streak-table prob-bucket-table"><thead><tr><th>구간</th><th>확률</th><th>반영비율</th></tr></thead><tbody>' +
+                                '<tr><td>최근 15회</td><td>' + row15 + '</td><td>50%</td></tr>' +
+                                '<tr><td>최근 30회</td><td>' + row30 + '</td><td>30%</td></tr>' +
+                                '<tr><td>전체(100회)</td><td>' + row100 + '</td><td>20%</td></tr>' +
+                                '<tr style="border-top:1px solid #555"><td>신규 반영값</td><td>' + Number(blendData.newProb).toFixed(1) + '%</td><td>30% 반영</td></tr>' +
+                                '</tbody></table></div>';
+                        }
                         let streakTableBlock = '';
                         try {
                         if (rev.length === 0) {
@@ -2849,7 +2897,7 @@ RESULTS_HTML = '''
                             noticeBlock = '<div class="prediction-notice' + (lowWinRate && !flowAdvice ? ' danger' : '') + '">' + notices.join(' &nbsp; · &nbsp; ') + '</div>';
                         }
                         const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:clamp(0.75em,1.8vw,0.85em)">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
-                        predDiv.innerHTML = statsBlock + streakTableBlock + probBucketBlock + noticeBlock + extraLine;
+                        predDiv.innerHTML = statsBlock + blendTableBlock + streakTableBlock + probBucketBlock + noticeBlock + extraLine;
                     }
                     
                     // 가상 배팅 계산기 1,2,3 요약·상세 갱신 (오류 시에도 메인 화면은 유지)
@@ -3639,7 +3687,7 @@ def get_results():
                 'count': len(results),
                 'timestamp': datetime.now().isoformat(),
                 'source': 'database+json',
-                'prediction_history': get_prediction_history(30)
+                'prediction_history': get_prediction_history(100)
             }
             last_update_time = current_time
             return jsonify(results_cache)
@@ -3682,7 +3730,7 @@ def get_results():
                 'count': len(results),
                 'timestamp': datetime.now().isoformat(),
                 'source': 'json',
-                'prediction_history': get_prediction_history(30)
+                'prediction_history': get_prediction_history(100)
             }
             last_update_time = current_time
             return jsonify(results_cache)
