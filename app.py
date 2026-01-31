@@ -113,12 +113,20 @@ def init_database():
                 round_num INTEGER PRIMARY KEY,
                 predicted VARCHAR(10) NOT NULL,
                 actual VARCHAR(10) NOT NULL,
+                probability REAL,
+                pick_color VARCHAR(10),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         cur.execute('''
             CREATE INDEX IF NOT EXISTS idx_prediction_history_created ON prediction_history(created_at DESC)
         ''')
+        for col, typ in [('probability', 'REAL'), ('pick_color', 'VARCHAR(10)')]:
+            try:
+                cur.execute('ALTER TABLE prediction_history ADD COLUMN ' + col + ' ' + typ)
+                conn.commit()
+            except Exception:
+                pass
         
         # calc_sessions: 계산기 상태 서버 저장 (새로고침/재접속 후에도 실행중 유지)
         cur.execute('''
@@ -192,7 +200,7 @@ def save_game_result(game_data):
         return False
 
 
-def save_prediction_record(round_num, predicted, actual):
+def save_prediction_record(round_num, predicted, actual, probability=None, pick_color=None):
     """시스템 예측 기록 1건 저장 (round 기준 중복 시 업데이트). 어디서 접속해도 동일 기록 유지."""
     if not DB_AVAILABLE or not DATABASE_URL:
         return False
@@ -202,10 +210,11 @@ def save_prediction_record(round_num, predicted, actual):
     try:
         cur = conn.cursor()
         cur.execute('''
-            INSERT INTO prediction_history (round_num, predicted, actual)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (round_num) DO UPDATE SET predicted = EXCLUDED.predicted, actual = EXCLUDED.actual, created_at = DEFAULT
-        ''', (int(round_num), str(predicted), str(actual)))
+            INSERT INTO prediction_history (round_num, predicted, actual, probability, pick_color)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (round_num) DO UPDATE SET predicted = EXCLUDED.predicted, actual = EXCLUDED.actual,
+                probability = EXCLUDED.probability, pick_color = EXCLUDED.pick_color, created_at = DEFAULT
+        ''', (int(round_num), str(predicted), str(actual), float(probability) if probability is not None else None, str(pick_color) if pick_color else None))
         conn.commit()
         cur.close()
         conn.close()
@@ -286,7 +295,7 @@ def get_prediction_history(limit=30):
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute('''
-            SELECT round_num as "round", predicted, actual
+            SELECT round_num as "round", predicted, actual, probability, pick_color
             FROM prediction_history
             ORDER BY round_num DESC
             LIMIT %s
@@ -297,7 +306,12 @@ def get_prediction_history(limit=30):
         # 프론트와 맞추기: 과거→현재 순 (round 오름차순)
         out = []
         for r in reversed(rows):
-            out.append({'round': r['round'], 'predicted': r['predicted'], 'actual': r['actual']})
+            o = {'round': r['round'], 'predicted': r['predicted'], 'actual': r['actual']}
+            if r.get('probability') is not None:
+                o['probability'] = float(r['probability'])
+            if r.get('pick_color'):
+                o['pickColor'] = str(r['pick_color'])
+            out.append(o)
         return out
     except Exception as e:
         print(f"[❌ 오류] 예측 기록 조회 실패: {str(e)[:200]}")
@@ -1481,11 +1495,11 @@ RESULTS_HTML = '''
         .prediction-streak-line .streak-win { color: #81c784; font-weight: bold; }
         .prediction-streak-line .streak-lose { color: #e57373; font-weight: bold; }
         .prediction-streak-line .streak-joker { color: #64b5f6; }
-        .main-streak-table { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: clamp(0.75em, 1.8vw, 0.9em); }
-        .main-streak-table th, .main-streak-table td { padding: 4px 6px; border: 1px solid #444; text-align: center; background: #2a2a2a; }
+        .main-streak-table { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: clamp(0.65em, 1.5vw, 0.75em); }
+        .main-streak-table th, .main-streak-table td { padding: 3px 5px; border: 1px solid #444; text-align: center; background: #2a2a2a; }
         .main-streak-table th { color: #81c784; background: #333; white-space: nowrap; }
-        .main-streak-table td.pick-jung { background: rgba(76, 175, 80, 0.3); color: #1b5e20; }
-        .main-streak-table td.pick-kkuk { background: rgba(229, 115, 115, 0.35); color: #b71c1c; }
+        .main-streak-table td.pick-red { background: #b71c1c; color: #fff; }
+        .main-streak-table td.pick-black { background: #111; color: #fff; }
         .main-streak-table td.streak-win { color: #c62828; font-weight: 600; }
         .main-streak-table td.streak-lose { color: #111; font-weight: 500; }
         .main-streak-table td.streak-joker { color: #64b5f6; }
@@ -1594,11 +1608,11 @@ RESULTS_HTML = '''
         .calc-round-table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
         .calc-round-table th, .calc-round-table td { padding: 4px 6px; border: 1px solid #444; text-align: center; }
         .calc-round-table th { background: #333; color: #81c784; }
-        .calc-round-table td.pick-jung { background: rgba(76, 175, 80, 0.25); color: #1b5e20; }
-        .calc-round-table td.pick-kkuk { background: rgba(229, 115, 115, 0.35); color: #b71c1c; }
-        .calc-round-table td.result-jung { background: rgba(76, 175, 80, 0.25); }
-        .calc-round-table td.result-kkuk { background: rgba(229, 115, 115, 0.35); }
-        .calc-round-table td.result-joker { background: rgba(100, 181, 246, 0.2); }
+        .calc-round-table td.pick-jung { background: #111; color: #fff; }
+        .calc-round-table td.pick-kkuk { background: #b71c1c; color: #fff; }
+        .calc-round-table td.result-jung { background: #111; color: #fff; }
+        .calc-round-table td.result-kkuk { background: #b71c1c; color: #fff; }
+        .calc-round-table td.result-joker { background: rgba(100, 181, 246, 0.3); color: #fff; }
         .calc-round-table .win { color: #c62828; font-weight: 600; }
         .calc-round-table .lose { color: #111; font-weight: 500; }
         .calc-round-table .joker { color: #64b5f6; }
@@ -1933,8 +1947,11 @@ RESULTS_HTML = '''
         function savePredictionHistory() {
             try { localStorage.setItem(PREDICTION_HISTORY_KEY, JSON.stringify(predictionHistory)); } catch (e) {}
         }
-        function savePredictionHistoryToServer(round, predicted, actual) {
-            fetch('/api/prediction-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ round: round, predicted: predicted, actual: actual }) }).catch(function() {});
+        function savePredictionHistoryToServer(round, predicted, actual, probability, pickColor) {
+            const body = { round: round, predicted: predicted, actual: actual };
+            if (probability != null) body.probability = probability;
+            if (pickColor) body.pickColor = pickColor;
+            fetch('/api/prediction-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(function() {});
         }
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
@@ -2455,7 +2472,7 @@ RESULTS_HTML = '''
                     if (lastPrediction && currentRound === lastPrediction.round) {
                         const isActualJoker = displayResults.length > 0 && !!displayResults[0].joker;
                         if (isActualJoker) {
-                            predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: 'joker', probability: lastPrediction.prob != null ? lastPrediction.prob : null });
+                            predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: 'joker', probability: lastPrediction.prob != null ? lastPrediction.prob : null, pickColor: lastPrediction.color || null });
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
                                 const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
@@ -2471,10 +2488,10 @@ RESULTS_HTML = '''
                                 }
                             });
                             saveCalcStateToServer();
-                            savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, 'joker');
+                            savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, 'joker', lastPrediction.prob, lastPrediction.color);
                         } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
                             const actual = graphValues[0] ? '정' : '꺽';
-                            predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: actual, probability: lastPrediction.prob != null ? lastPrediction.prob : null });
+                            predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: actual, probability: lastPrediction.prob != null ? lastPrediction.prob : null, pickColor: lastPrediction.color || null });
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
                                 const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
@@ -2490,7 +2507,7 @@ RESULTS_HTML = '''
                                 }
                             });
                             saveCalcStateToServer();
-                            savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, actual);
+                            savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, actual, lastPrediction.prob, lastPrediction.color);
                         }
                         predictionHistory = predictionHistory.slice(-30);
                         savePredictionHistory();  // localStorage 백업
@@ -2638,10 +2655,10 @@ RESULTS_HTML = '''
                         const adjChangeN = adjChange / sum;
                         predict = adjSameN >= adjChangeN ? (last === true ? '정' : '꺽') : (last === true ? '꺽' : '정');
                         predProb = (predict === (last === true ? '정' : '꺽') ? adjSameN : adjChangeN) * 100;
-                        lastPrediction = { value: predict, round: predictedRound, prob: predProb };
                         const card15 = displayResults.length >= 15 ? parseCardValue(displayResults[14].result || '') : null;
                         const is15Red = card15 ? card15.isRed : false;
                         colorToPick = predict === '정' ? (is15Red ? '빨강' : '검정') : (is15Red ? '검정' : '빨강');
+                        lastPrediction = { value: predict, round: predictedRound, prob: predProb, color: colorToPick };
                         colorClass = colorToPick === '빨강' ? 'red' : 'black';
                     }
                     
@@ -2708,7 +2725,8 @@ RESULTS_HTML = '''
                             const rowRound = rev.map(h => '<td>' + (h.round != null ? String(h.round).slice(-3) : '-') + '</td>').join('');
                             const rowProb = rev.map(h => '<td>' + (h.probability != null ? Number(h.probability).toFixed(1) + '%' : '-') + '</td>').join('');
                             const rowPick = rev.map(h => {
-                                const c = h.predicted === '정' ? 'pick-jung' : (h.predicted === '꺽' ? 'pick-kkuk' : '');
+                                const pickColor = h.pickColor || h.pick_color;
+                                const c = pickColor === '빨강' ? 'pick-red' : (pickColor === '검정' ? 'pick-black' : '');
                                 return '<td class="' + c + '">' + (h.predicted || '-') + '</td>';
                             }).join('');
                             const rowOutcome = rev.map(h => {
@@ -2717,11 +2735,11 @@ RESULTS_HTML = '''
                                 return '<td class="' + c + '">' + out + '</td>';
                             }).join('');
                             streakTableBlock = '<div class="main-streak-table-wrap"><table class="main-streak-table">' +
-                                '<thead><tr><th></th>' + headerCells + '</tr></thead><tbody>' +
-                                '<tr><th>몇회</th>' + rowRound + '</tr>' +
-                                '<tr><th>나올확률</th>' + rowProb + '</tr>' +
-                                '<tr><th>예측픽</th>' + rowPick + '</tr>' +
-                                '<tr><th>승/패</th>' + rowOutcome + '</tr>' +
+                                '<thead><tr>' + headerCells + '</tr></thead><tbody>' +
+                                '<tr>' + rowRound + '</tr>' +
+                                '<tr>' + rowProb + '</tr>' +
+                                '<tr>' + rowPick + '</tr>' +
+                                '<tr>' + rowOutcome + '</tr>' +
                                 '</tbody></table></div>' + (streakNow ? '<div class="prediction-streak-line" style="margin-top:4px"><span class="streak-now">' + streakNow + '</span></div>' : '');
                         }
                         let noticeBlock = '';
@@ -3654,7 +3672,7 @@ def api_calc_state():
 
 @app.route('/api/prediction-history', methods=['POST'])
 def api_save_prediction_history():
-    """시스템 예측 기록 1건 저장 (round, predicted, actual). 어디서 접속해도 동일 기록 유지."""
+    """시스템 예측 기록 1건 저장 (round, predicted, actual, probability, pick_color). 어디서 접속해도 동일 기록 유지."""
     try:
         data = request.get_json(force=True, silent=True) or {}
         round_num = data.get('round')
@@ -3662,7 +3680,9 @@ def api_save_prediction_history():
         actual = data.get('actual')
         if round_num is None or predicted is None or actual is None:
             return jsonify({'ok': False, 'error': 'round, predicted, actual required'}), 400
-        ok = save_prediction_record(int(round_num), str(predicted), str(actual))
+        probability = data.get('probability')
+        pick_color = data.get('pickColor') or data.get('pick_color')
+        ok = save_prediction_record(int(round_num), str(predicted), str(actual), probability=probability, pick_color=pick_color)
         return jsonify({'ok': ok}), 200
     except Exception as e:
         print(f"[❌ 오류] 예측 기록 API 실패: {str(e)[:200]}")
