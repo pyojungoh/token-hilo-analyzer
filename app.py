@@ -1478,16 +1478,23 @@ RESULTS_HTML = '''
         .calc-dropdown { margin-bottom: 6px; border: 1px solid #444; border-radius: 8px; overflow: hidden; }
         .calc-dropdown-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 10px; background: #333; cursor: pointer; }
         .calc-dropdown-header .calc-title { font-weight: bold; color: #81c784; }
-        .calc-dropdown-header .calc-summary { flex: 1; font-size: 0.9em; color: #bbb; }
+        .calc-dropdown-header .calc-summary { flex: 1; font-size: 0.9em; color: #bbb; min-width: 0; }
+        .calc-dropdown-header .calc-status { font-size: 0.8em; margin-left: 6px; }
+        .calc-dropdown-header .calc-status.running { color: #4caf50; }
+        .calc-dropdown-header .calc-status.running::before { content: ''; display: inline-block; width: 6px; height: 6px; background: #4caf50; border-radius: 50%; margin-right: 4px; vertical-align: middle; animation: blink 1s ease-in-out infinite; }
+        @keyframes blink { 50% { opacity: 0.6; } }
+        .calc-dropdown-header .calc-status.stopped { color: #e57373; }
+        .calc-dropdown-header .calc-status.idle { color: #888; }
         .calc-dropdown-header .calc-toggle { font-size: 0.8em; color: #888; }
-        .calc-dropdown.collapsed .calc-dropdown-body { display: none; }
+        .calc-dropdown.collapsed .calc-dropdown-body { display: none !important; }
         .calc-dropdown:not(.collapsed) .calc-dropdown-header .calc-toggle { transform: rotate(180deg); }
-        .calc-dropdown-body { padding: 10px 12px; background: #2a2a2a; }
-        .calc-inputs { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 8px; }
+        .calc-dropdown-body { padding: 8px 12px; background: #2a2a2a; }
+        .calc-body-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+        .calc-inputs { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
         .calc-inputs label { display: flex; align-items: center; gap: 4px; font-size: 0.9em; }
         .calc-inputs input[type="number"] { width: 80px; padding: 4px 6px; border-radius: 4px; border: 1px solid #555; background: #1a1a1a; color: #fff; }
-        .calc-reverse { margin-left: 8px; }
-        .calc-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+        .calc-reverse { margin-left: 4px; }
+        .calc-buttons { display: flex; flex-wrap: wrap; gap: 4px; }
         .calc-buttons button { padding: 4px 10px; border-radius: 4px; border: 1px solid #555; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 0.85em; }
         .calc-buttons button.calc-run { background: #2e7d32; border-color: #4caf50; }
         .calc-buttons button.calc-stop { background: #c62828; border-color: #e57373; }
@@ -1499,9 +1506,14 @@ RESULTS_HTML = '''
         .calc-streak .l { color: #e57373; }
         .calc-streak .j { color: #64b5f6; }
         .calc-stats { color: #aaa; }
-        .bet-calc-log-wrap { margin-top: 10px; padding: 8px; background: #1a1a1a; border-radius: 6px; }
-        .bet-calc-log-title { font-size: 0.85em; color: #81c784; margin-bottom: 6px; }
-        .bet-calc-log { font-size: 0.8em; color: #aaa; max-height: 120px; overflow-y: auto; }
+        .bet-calc-tabs { display: flex; gap: 0; margin-top: 8px; border-bottom: 1px solid #444; }
+        .bet-calc-tabs .tab { padding: 8px 16px; cursor: pointer; font-size: 0.9em; color: #888; background: #2a2a2a; border: 1px solid #444; border-bottom: none; border-radius: 6px 6px 0 0; margin-bottom: -1px; }
+        .bet-calc-tabs .tab.active { color: #81c784; background: #333; }
+        .bet-calc-panel { display: none; padding: 0; }
+        .bet-calc-panel.active { display: block; }
+        .bet-log-panel { display: none; padding: 10px; background: #1a1a1a; border-radius: 0 6px 6px 6px; border: 1px solid #444; border-top: none; }
+        .bet-log-panel.active { display: block; }
+        .bet-calc-log { font-size: 0.8em; color: #aaa; max-height: 200px; overflow-y: auto; }
         .bet-calc-log div { margin-bottom: 4px; }
         .status {
             text-align: center;
@@ -1534,85 +1546,99 @@ RESULTS_HTML = '''
         </div>
         <div class="bet-calc">
             <h4>가상 배팅 계산기</h4>
-            <div class="calc-dropdowns">
-                <div class="calc-dropdown collapsed" data-calc="1">
-                    <div class="calc-dropdown-header">
-                        <span class="calc-title">계산기 1</span>
-                        <span class="calc-summary" id="calc-1-summary">보유자산 - | 순익 - | 배팅중 -</span>
-                        <span class="calc-toggle">▼</span>
-                    </div>
-                    <div class="calc-dropdown-body" id="calc-1-body">
-                        <div class="calc-inputs">
-                            <label>자본금 <input type="number" id="calc-1-capital" min="0" value="1000000"></label>
-                            <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="1000"></label>
-                            <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label>
-                            <label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽(픽 반대로 배팅)</label>
+            <div class="bet-calc-tabs">
+                <span class="tab active" data-tab="calc">계산기</span>
+                <span class="tab" data-tab="log">로그</span>
+            </div>
+            <div id="bet-calc-panel" class="bet-calc-panel active">
+                <div class="calc-dropdowns">
+                    <div class="calc-dropdown collapsed" data-calc="1">
+                        <div class="calc-dropdown-header">
+                            <span class="calc-title">계산기 1</span>
+                            <span class="calc-status idle" id="calc-1-status">대기중</span>
+                            <span class="calc-summary" id="calc-1-summary">보유자산 - | 순익 - | 배팅중 -</span>
+                            <span class="calc-toggle">▼</span>
                         </div>
-                        <div class="calc-buttons">
-                            <button type="button" class="calc-run" data-calc="1">실행</button>
-                            <button type="button" class="calc-stop" data-calc="1">정지</button>
-                            <button type="button" class="calc-reset" data-calc="1">리셋</button>
-                            <button type="button" class="calc-save" data-calc="1" style="display:none">저장</button>
-                        </div>
-                        <div class="calc-detail" id="calc-1-detail">
-                            <div class="calc-streak" id="calc-1-streak">경기결과: -</div>
-                            <div class="calc-stats" id="calc-1-stats">최대연승: - | 최대연패: - | 승률: -</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="calc-dropdown collapsed" data-calc="2">
-                    <div class="calc-dropdown-header">
-                        <span class="calc-title">계산기 2</span>
-                        <span class="calc-summary" id="calc-2-summary">보유자산 - | 순익 - | 배팅중 -</span>
-                        <span class="calc-toggle">▼</span>
-                    </div>
-                    <div class="calc-dropdown-body" id="calc-2-body">
-                        <div class="calc-inputs">
-                            <label>자본금 <input type="number" id="calc-2-capital" min="0" value="1000000"></label>
-                            <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="2000"></label>
-                            <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label>
-                            <label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label>
-                        </div>
-                        <div class="calc-buttons">
-                            <button type="button" class="calc-run" data-calc="2">실행</button>
-                            <button type="button" class="calc-stop" data-calc="2">정지</button>
-                            <button type="button" class="calc-reset" data-calc="2">리셋</button>
-                            <button type="button" class="calc-save" data-calc="2" style="display:none">저장</button>
-                        </div>
-                        <div class="calc-detail" id="calc-2-detail">
-                            <div class="calc-streak" id="calc-2-streak">경기결과: -</div>
-                            <div class="calc-stats" id="calc-2-stats">최대연승: - | 최대연패: - | 승률: -</div>
+                        <div class="calc-dropdown-body" id="calc-1-body">
+                            <div class="calc-body-row">
+                                <div class="calc-inputs">
+                                    <label>자본금 <input type="number" id="calc-1-capital" min="0" value="1000000"></label>
+                                    <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="1000"></label>
+                                    <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label>
+                                    <label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label>
+                                </div>
+                                <div class="calc-buttons">
+                                    <button type="button" class="calc-run" data-calc="1">실행</button>
+                                    <button type="button" class="calc-stop" data-calc="1">정지</button>
+                                    <button type="button" class="calc-reset" data-calc="1">리셋</button>
+                                    <button type="button" class="calc-save" data-calc="1" style="display:none">저장</button>
+                                </div>
+                            </div>
+                            <div class="calc-detail" id="calc-1-detail">
+                                <div class="calc-streak" id="calc-1-streak">경기결과: -</div>
+                                <div class="calc-stats" id="calc-1-stats">최대연승: - | 최대연패: - | 승률: -</div>
+                            </div>
                         </div>
                     </div>
-                </div>
-                <div class="calc-dropdown collapsed" data-calc="3">
-                    <div class="calc-dropdown-header">
-                        <span class="calc-title">계산기 3</span>
-                        <span class="calc-summary" id="calc-3-summary">보유자산 - | 순익 - | 배팅중 -</span>
-                        <span class="calc-toggle">▼</span>
+                    <div class="calc-dropdown collapsed" data-calc="2">
+                        <div class="calc-dropdown-header">
+                            <span class="calc-title">계산기 2</span>
+                            <span class="calc-status idle" id="calc-2-status">대기중</span>
+                            <span class="calc-summary" id="calc-2-summary">보유자산 - | 순익 - | 배팅중 -</span>
+                            <span class="calc-toggle">▼</span>
+                        </div>
+                        <div class="calc-dropdown-body" id="calc-2-body">
+                            <div class="calc-body-row">
+                                <div class="calc-inputs">
+                                    <label>자본금 <input type="number" id="calc-2-capital" min="0" value="1000000"></label>
+                                    <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="2000"></label>
+                                    <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label>
+                                    <label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label>
+                                </div>
+                                <div class="calc-buttons">
+                                    <button type="button" class="calc-run" data-calc="2">실행</button>
+                                    <button type="button" class="calc-stop" data-calc="2">정지</button>
+                                    <button type="button" class="calc-reset" data-calc="2">리셋</button>
+                                    <button type="button" class="calc-save" data-calc="2" style="display:none">저장</button>
+                                </div>
+                            </div>
+                            <div class="calc-detail" id="calc-2-detail">
+                                <div class="calc-streak" id="calc-2-streak">경기결과: -</div>
+                                <div class="calc-stats" id="calc-2-stats">최대연승: - | 최대연패: - | 승률: -</div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="calc-dropdown-body" id="calc-3-body">
-                        <div class="calc-inputs">
-                            <label>자본금 <input type="number" id="calc-3-capital" min="0" value="1000000"></label>
-                            <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="5000"></label>
-                            <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label>
-                            <label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label>
+                    <div class="calc-dropdown collapsed" data-calc="3">
+                        <div class="calc-dropdown-header">
+                            <span class="calc-title">계산기 3</span>
+                            <span class="calc-status idle" id="calc-3-status">대기중</span>
+                            <span class="calc-summary" id="calc-3-summary">보유자산 - | 순익 - | 배팅중 -</span>
+                            <span class="calc-toggle">▼</span>
                         </div>
-                        <div class="calc-buttons">
-                            <button type="button" class="calc-run" data-calc="3">실행</button>
-                            <button type="button" class="calc-stop" data-calc="3">정지</button>
-                            <button type="button" class="calc-reset" data-calc="3">리셋</button>
-                            <button type="button" class="calc-save" data-calc="3" style="display:none">저장</button>
-                        </div>
-                        <div class="calc-detail" id="calc-3-detail">
-                            <div class="calc-streak" id="calc-3-streak">경기결과: -</div>
-                            <div class="calc-stats" id="calc-3-stats">최대연승: - | 최대연패: - | 승률: -</div>
+                        <div class="calc-dropdown-body" id="calc-3-body">
+                            <div class="calc-body-row">
+                                <div class="calc-inputs">
+                                    <label>자본금 <input type="number" id="calc-3-capital" min="0" value="1000000"></label>
+                                    <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="5000"></label>
+                                    <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label>
+                                    <label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label>
+                                </div>
+                                <div class="calc-buttons">
+                                    <button type="button" class="calc-run" data-calc="3">실행</button>
+                                    <button type="button" class="calc-stop" data-calc="3">정지</button>
+                                    <button type="button" class="calc-reset" data-calc="3">리셋</button>
+                                    <button type="button" class="calc-save" data-calc="3" style="display:none">저장</button>
+                                </div>
+                            </div>
+                            <div class="calc-detail" id="calc-3-detail">
+                                <div class="calc-streak" id="calc-3-streak">경기결과: -</div>
+                                <div class="calc-stats" id="calc-3-stats">최대연승: - | 최대연패: - | 승률: -</div>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
-            <div class="bet-calc-log-wrap">
-                <div class="bet-calc-log-title">저장 로그</div>
+            <div id="bet-log-panel" class="bet-log-panel">
                 <div id="bet-calc-log" class="bet-calc-log"></div>
             </div>
         </div>
@@ -2384,17 +2410,34 @@ RESULTS_HTML = '''
             const winRate = total > 0 ? (100 * wins / total).toFixed(1) : '-';
             return { cap: Math.max(0, Math.floor(cap)), profit, currentBet: bust ? 0 : currentBet, wins, losses, bust, maxWinStreak, maxLoseStreak, winRate };
         }
+        function updateCalcStatus(id) {
+            const el = document.getElementById('calc-' + id + '-status');
+            if (!el) return;
+            el.className = 'calc-status';
+            if (calcState[id].running) {
+                el.classList.add('running');
+                el.textContent = '실행중';
+            } else if (calcState[id].history.length > 0) {
+                el.classList.add('stopped');
+                el.textContent = '정지중';
+            } else {
+                el.classList.add('idle');
+                el.textContent = '대기중';
+            }
+        }
         function updateCalcSummary(id) {
             const el = document.getElementById('calc-' + id + '-summary');
             if (!el) return;
             const hist = calcState[id].history;
             if (hist.length === 0) {
                 el.textContent = '보유자산 - | 순익 - | 배팅중 -';
+                updateCalcStatus(id);
                 return;
             }
             const r = getCalcResult(id);
             const profitStr = (r.profit >= 0 ? '+' : '') + r.profit.toLocaleString() + '원';
             el.textContent = '보유자산 ' + r.cap.toLocaleString() + '원 | 순익 ' + profitStr + ' | 배팅중 ' + r.currentBet.toLocaleString() + '원';
+            updateCalcStatus(id);
         }
         function updateCalcDetail(id) {
             const streakEl = document.getElementById('calc-' + id + '-streak');
@@ -2419,10 +2462,16 @@ RESULTS_HTML = '''
                 if (dd) dd.classList.toggle('collapsed');
             });
         });
-        CALC_IDS.forEach(id => {
-            const body = document.getElementById('calc-' + id + '-body');
-            if (body) body.style.display = 'block';
+        document.querySelectorAll('.bet-calc-tabs .tab').forEach(tab => {
+            tab.addEventListener('click', function() {
+                const t = this.getAttribute('data-tab');
+                document.querySelectorAll('.bet-calc-tabs .tab').forEach(x => x.classList.remove('active'));
+                this.classList.add('active');
+                document.getElementById('bet-calc-panel').classList.toggle('active', t === 'calc');
+                document.getElementById('bet-log-panel').classList.toggle('active', t === 'log');
+            });
         });
+        CALC_IDS.forEach(id => updateCalcStatus(id));
         document.querySelectorAll('.calc-run').forEach(btn => {
             btn.addEventListener('click', function() {
                 const id = parseInt(this.getAttribute('data-calc'), 10);
@@ -2434,6 +2483,7 @@ RESULTS_HTML = '''
                 calcState[id].timerId = setInterval(function() { calcState[id].elapsed++; updateCalcSummary(id); }, 1000);
                 updateCalcSummary(id);
                 updateCalcDetail(id);
+                updateCalcStatus(id);
                 document.querySelector('.calc-save[data-calc="' + id + '"]').style.display = 'none';
             });
         });
@@ -2443,6 +2493,7 @@ RESULTS_HTML = '''
                 calcState[id].running = false;
                 if (calcState[id].timerId) { clearInterval(calcState[id].timerId); calcState[id].timerId = null; }
                 updateCalcSummary(id);
+                updateCalcStatus(id);
                 if (calcState[id].history.length > 0) document.querySelector('.calc-save[data-calc="' + id + '"]').style.display = 'inline-block';
             });
         });
@@ -2455,6 +2506,7 @@ RESULTS_HTML = '''
                 calcState[id].elapsed = 0;
                 updateCalcSummary(id);
                 updateCalcDetail(id);
+                updateCalcStatus(id);
                 document.querySelector('.calc-save[data-calc="' + id + '"]').style.display = 'none';
             });
         });
