@@ -32,17 +32,12 @@ except ImportError:
 app = Flask(__name__)
 CORS(app)
 
-# 환경 변수 (init_socketio() 호출 전에 정의되어야 함)
+# 환경 변수
 BASE_URL = os.getenv('BASE_URL', 'http://tgame365.com')
-# 기존 파일 예제를 보면 루트 경로에 파일이 있음
-DATA_PATH = ''  # 데이터 파일 경로 (루트)
-TIMEOUT = int(os.getenv('TIMEOUT', '10'))  # 타임아웃을 10초로 단축
-MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))  # 재시도 횟수 감소
-SOCKETIO_URL = os.getenv('SOCKETIO_URL', 'https://game.cmx258.com:8080')  # Socket.IO 서버 URL (실제 서버)
-DATABASE_URL = os.getenv('DATABASE_URL', None)  # PostgreSQL 데이터베이스 URL
-
-# Socket.IO 초기화 플래그
-socketio_initialized = False
+DATA_PATH = ''
+TIMEOUT = int(os.getenv('TIMEOUT', '10'))
+MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))
+DATABASE_URL = os.getenv('DATABASE_URL', None)
 
 # 데이터베이스 연결 및 초기화
 def init_database():
@@ -614,7 +609,18 @@ game_data_cache = None
 streaks_cache = None
 results_cache = None
 last_update_time = 0
-CACHE_TTL = 1000  # 1초 (10초 게임에 맞춰 빠른 업데이트)
+CACHE_TTL = 1000
+
+# 게임 상태 (Socket.IO 제거 후 기본값만 사용)
+current_status_data = {
+    'round': 0,
+    'elapsed': 0,
+    'currentBets': {
+        'red': [],
+        'black': []
+    },
+    'timestamp': datetime.now().isoformat()
+}
 
 def fetch_with_retry(url, max_retries=MAX_RETRIES, silent=False):
     """재시도 로직 포함 fetch (기존 파일과 동일한 방식)"""
@@ -719,12 +725,13 @@ else:
     print("[❌ 경고] DB_AVAILABLE이 False입니다. psycopg2를 설치하세요.")
 
 def load_game_data():
-    """게임 데이터 로드 (Socket.IO 제거됨 - 빈 데이터만 반환)"""
+    """게임 데이터 로드 (Socket.IO 제거 후 기본값만 반환)"""
+    global current_status_data
     return {
-        'round': 0,
-        'elapsed': 0,
-        'currentBets': {'red': [], 'black': []},
-        'timestamp': datetime.now().isoformat()
+        'round': current_status_data.get('round', 0),
+        'elapsed': current_status_data.get('elapsed', 0),
+        'currentBets': current_status_data.get('currentBets', {'red': [], 'black': []}),
+        'timestamp': current_status_data.get('timestamp', datetime.now().isoformat())
     }
 
 def load_results_data():
@@ -950,6 +957,17 @@ RESULTS_HTML = '''
         }
         .header-info div {
             margin: 0 10px;
+        }
+        .status-banner {
+            background: #b71c1c;
+            color: #fff;
+            text-align: center;
+            padding: 12px 16px;
+            font-weight: bold;
+            font-size: clamp(0.95em, 2.2vw, 1.1em);
+            margin-bottom: 12px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(183,28,28,0.4);
         }
         .remaining-time {
             font-weight: bold;
@@ -1476,8 +1494,8 @@ RESULTS_HTML = '''
 </head>
 <body>
     <div class="container">
-        <div class="header-info" style="background: rgba(244,67,54,0.2); border: 1px solid #f44336;">
-            <div style="font-weight: bold; color: #f44336;">⚠ 현재 먹통</div>
+        <div class="status-banner">⚠️ 현재 먹통</div>
+        <div class="header-info">
             <div id="prev-round">이전회차: --</div>
             <div>
                 <span id="remaining-time" class="remaining-time">남은 시간: -- 초</span>
