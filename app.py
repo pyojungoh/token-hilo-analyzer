@@ -1435,8 +1435,8 @@ RESULTS_HTML = '''
         .calc-dropdown { width: 100%; border: 1px solid #444; border-radius: 8px; overflow: hidden; }
         .calc-dropdown-header { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 10px; background: #333; cursor: pointer; }
         .calc-dropdown-header .calc-title { font-weight: bold; color: #81c784; flex-shrink: 0; }
-        .calc-dropdown-header .calc-summary { flex: 1; font-size: 0.85em; color: #bbb; min-width: 0; margin-left: auto; width: max-content; }
-        .calc-summary-grid { display: grid; grid-template-columns: min-content auto; gap: 2px 6px; align-items: baseline; }
+        .calc-dropdown-header .calc-summary { flex: 0 0 auto; font-size: 0.85em; color: #bbb; margin-left: auto; width: max-content; max-width: 100%; }
+        .calc-summary-grid { display: grid; grid-template-columns: min-content min-content; gap: 2px 6px; align-items: baseline; width: max-content; }
         .calc-summary-grid .label { color: #888; font-size: 0.9em; white-space: nowrap; width: fit-content; }
         .calc-summary-grid .value { color: #ddd; font-weight: 500; text-align: right; min-width: 0; }
         .calc-summary-grid .value.profit-plus { color: #81c784; }
