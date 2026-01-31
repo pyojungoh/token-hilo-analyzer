@@ -1296,6 +1296,17 @@ RESULTS_HTML = '''
             color: #81c784;
             margin-bottom: clamp(6px, 1.5vw, 10px);
         }
+        .prediction-pick-title.prediction-pick-title-betting {
+            color: #ffeb3b;
+            animation: prediction-blink 1s ease-in-out infinite;
+        }
+        @keyframes prediction-blink { 50% { opacity: 0.7; } }
+        .prediction-pick .pred-round {
+            margin-top: 4px;
+            font-size: 0.95em;
+            font-weight: bold;
+            color: #81c784;
+        }
         .prediction-card {
             width: clamp(64px, 22vw, 140px);
             height: clamp(64px, 22vw, 140px);
@@ -2724,14 +2735,14 @@ RESULTS_HTML = '''
                         '<span class="pred-value-big" style="color:#fff;font-size:1.2em">보류</span>' +
                         '</div>' +
                         '<div class="prediction-prob-under" style="color:#ffb74d">15번 카드 조커 · 배팅하지 마세요</div>' +
-                        '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + displayRound3(predictedRoundFull) + '회</div>' +
+                        '<div class="pred-round">' + displayRound3(predictedRoundFull) + '회</div>' +
                         '</div>') : ('<div class="' + pickWrapClass + '">' +
-                        '<div class="prediction-pick-title">예측 픽 · ' + colorToPick + '</div>' +
+                        '<div class="prediction-pick-title prediction-pick-title-betting">배팅중<br>' + (colorToPick === '빨강' ? 'RED' : 'BLACK') + '</div>' +
                         '<div class="prediction-card card-' + colorClass + '">' +
                         '<span class="pred-value-big">' + predict + '</span>' +
                         '</div>' +
-                        '<div class="prediction-prob-under">나올 확률 ' + predProb.toFixed(1) + '%</div>' +
-                        '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + displayRound3(predictedRoundFull) + '회</div>' +
+                        '<div class="prediction-prob-under">예측 확률 ' + predProb.toFixed(1) + '%</div>' +
+                        '<div class="pred-round">' + displayRound3(predictedRoundFull) + '회</div>' +
                         '</div>');
                     if (pickContainer) pickContainer.innerHTML = leftBlock;
                     // 배팅 연동: 현재 픽을 서버에 저장 (GET /api/current-pick 으로 외부 조회 가능)
