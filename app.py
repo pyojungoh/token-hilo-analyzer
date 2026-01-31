@@ -2507,9 +2507,13 @@ RESULTS_HTML = '''
                         '<tr><td><span class="kkuk-jung">← 정</span></td><td>' + (short15 ? fmt(short15.pKkukToJung, short15.kj, short15.kkukDenom) : '-') + '</td><td>' + fmt(recent30.pKkukToJung, recent30.kj, recent30.kkukDenom) + '</td><td>' + fmt(full.pKkukToJung, full.kj, full.kkukDenom) + '</td></tr>' +
                         '</tbody></table><p class="graph-stats-note">※ 단기(15회) vs 장기(30회) 비교로 흐름 전환 감지</p>';
                     
-                    // 회차: gameID 뒤 3자리 = 현재 회차, 다음 회차 예측
-                    const latestGameID = String(displayResults[0]?.gameID || '0');
-                    const currentRound = parseInt(latestGameID.slice(-3), 10) || 0;
+                    // 회차: gameID가 11416043 등 길 때 뒤 3자리만 사용 (043 → 43). 규칙 통일
+                    function roundFromGameID(g) {
+                        var s = String(g != null && g !== '' ? g : '0');
+                        return parseInt(s.slice(-3), 10) || 0;
+                    }
+                    const latestGameID = displayResults[0]?.gameID;
+                    const currentRound = roundFromGameID(latestGameID);
                     const predictedRound = currentRound + 1;
                     const is15Joker = displayResults.length >= 15 && !!displayResults[14].joker;  // 15번 카드 조커면 픽/배팅 보류
                     
@@ -2843,13 +2847,14 @@ RESULTS_HTML = '''
                     if (predDivEmpty) predDivEmpty.innerHTML = '';
                 }
                 
-                // 헤더 정보 업데이트
+                // 헤더 정보 업데이트 (gameID 길면 뒤 3자리만 표시, 예: 11416043 → 043)
                 if (displayResults.length > 0) {
                     const latest = displayResults[0];
-                    const gameID = latest.gameID || '';
+                    const rawGameID = latest.gameID != null && latest.gameID !== '' ? String(latest.gameID) : '';
+                    const roundDisplay = rawGameID ? rawGameID.slice(-3) : '--';
                     const prevRoundElement = document.getElementById('prev-round');
                     if (prevRoundElement) {
-                        prevRoundElement.textContent = `이전회차: ${gameID}`;
+                        prevRoundElement.textContent = '이전회차: ' + roundDisplay;
                     }
                 }
                 } catch (renderErr) {
