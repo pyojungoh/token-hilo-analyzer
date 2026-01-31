@@ -1874,6 +1874,8 @@ RESULTS_HTML = '''
                 elapsed: 0,
                 duration_limit: 0,
                 use_duration_limit: false,
+                reverse: false,
+                win_rate_reverse: false,
                 timer_completed: false,
                 timerId: null,
                 maxWinStreakEver: 0,
@@ -2460,9 +2462,9 @@ RESULTS_HTML = '''
                                 if (!calcState[id].running) return;
                                 const hasRound = calcState[id].history.some(function(h) { return h && h.round === lastPrediction.round; });
                                 if (hasRound) return;
-                                const rev = !!calcState[id].reverse;
+                                const rev = !!(calcState[id] && calcState[id].reverse);
                                 var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
-                                const useWinRateRev = !!calcState[id].win_rate_reverse;
+                                const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
                                 if (useWinRateRev && lowWinRateForRecord) pred = pred === '정' ? '꺽' : '정';
                                 // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
                                 let defenseBet = 0;
@@ -2483,9 +2485,9 @@ RESULTS_HTML = '''
                                 if (!calcState[id].running) return;
                                 const hasRound = calcState[id].history.some(function(h) { return h && h.round === lastPrediction.round; });
                                 if (hasRound) return;
-                                const rev = !!calcState[id].reverse;
+                                const rev = !!(calcState[id] && calcState[id].reverse);
                                 var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
-                                const useWinRateRevActual = !!calcState[id].win_rate_reverse;
+                                const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
                                 if (useWinRateRevActual && lowWinRateForRecord) pred = pred === '정' ? '꺽' : '정';
                                 // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
                                 let defenseBet = 0;
@@ -3090,17 +3092,18 @@ RESULTS_HTML = '''
             }
             // 계산기 1,2,3: 실행중일 때 배팅중 카드(실제 걸 픽) + 예측픽 카드(원본) 표시. 반대면 정/꺽·색상 모두 반대.
             if (id !== DEFENSE_ID) {
-                const bettingCardEl = document.getElementById('calc-' + id + '-current-card');
-                const predictionCardEl = document.getElementById('calc-' + id + '-prediction-card');
-                if (bettingCardEl && predictionCardEl) {
+                try {
+                    const bettingCardEl = document.getElementById('calc-' + id + '-current-card');
+                    const predictionCardEl = document.getElementById('calc-' + id + '-prediction-card');
+                    if (bettingCardEl && predictionCardEl) {
                     if (state.running && lastPrediction && lastPrediction.value) {
                         var predictionPred = lastPrediction.value;
                         var bettingPred = predictionPred;
-                        const rev = !!calcState[id].reverse;
+                        const rev = !!(calcState[id] && calcState[id].reverse);
                         if (rev) bettingPred = bettingPred === '정' ? '꺽' : '정';
                         var lowWinRate = false;
                         try {
-                            var vh = (typeof predictionHistory !== 'undefined' && predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
+                            var vh = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
                             var v15 = vh.slice(-15), v30 = vh.slice(-30), v100 = vh.slice(-100);
                             var hit15r = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
                             var loss15 = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
@@ -3114,7 +3117,7 @@ RESULTS_HTML = '''
                             var blended = 0.5 * r15 + 0.3 * r30 + 0.2 * r100;
                             lowWinRate = (c15 > 0 || c30 > 0 || c100 > 0) && blended <= 50;
                         } catch (e2) {}
-                        const useWinRateRevCard = !!calcState[id].win_rate_reverse;
+                        const useWinRateRevCard = !!(calcState[id] && calcState[id].win_rate_reverse);
                         if (useWinRateRevCard && lowWinRate) bettingPred = bettingPred === '정' ? '꺽' : '정';
                         bettingCardEl.textContent = bettingPred;
                         bettingCardEl.className = 'calc-current-card calc-card-betting card-' + (bettingPred === '정' ? 'jung' : 'kkuk');
@@ -3126,7 +3129,8 @@ RESULTS_HTML = '''
                         predictionCardEl.textContent = '';
                         predictionCardEl.className = 'calc-current-card calc-card-prediction';
                     }
-                }
+                    }
+                } catch (cardErr) { console.warn('updateCalcStatus card', id, cardErr); }
             }
             } catch (e) { console.warn('updateCalcStatus', id, e); }
         }
