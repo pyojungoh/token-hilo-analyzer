@@ -1152,12 +1152,26 @@ RESULTS_HTML = '''
             margin-top: 8px;
             flex-wrap: wrap;
         }
+        /* 예측 박스 밖 별도 가로 박스: 성공/실패 결과 */
+        .prediction-result-bar-wrap {
+            width: 100%;
+            flex: 1 1 100%;
+            order: -1;
+            min-height: 0;
+            margin-bottom: 4px;
+        }
+        .prediction-result-bar-wrap .pick-result-bar {
+            max-width: none;
+            width: 100%;
+            box-sizing: border-box;
+        }
         .prediction-table-row #prediction-box {
             flex: 1 1 100%;
             min-width: 0;
         }
         @media (max-width: 768px) {
             .prediction-table-row { flex-direction: column; align-items: center; gap: 8px; }
+            .prediction-table-row #prediction-result-bar { order: 0; width: 100%; }
             .prediction-table-row #prediction-pick-container { order: 1; width: 100%; max-width: 320px; display: flex; justify-content: center; }
             .prediction-table-row #prediction-box { order: 2; width: 100%; }
             .prediction-table-row #graph-stats { order: 3; width: 100%; }
@@ -1256,14 +1270,11 @@ RESULTS_HTML = '''
             text-align: center;
             width: 100%;
         }
-        /* 예측 박스 위 얇은 가로 결과 바 (몇 회차 성공/실패, 정·꺽 / 빨강·검정) */
+        /* 예측 박스 밖 별도 가로 박스 (몇 회차 성공/실패, 정·꺽 / 빨강·검정) */
         .pick-result-bar {
-            width: 100%;
-            max-width: 320px;
-            padding: 6px 12px;
-            margin-bottom: 8px;
+            padding: 8px 14px;
             border-radius: 6px;
-            font-size: clamp(0.8em, 1.8vw, 0.95em);
+            font-size: clamp(0.85em, 1.9vw, 1em);
             font-weight: 600;
             text-align: center;
             box-sizing: border-box;
@@ -1521,6 +1532,7 @@ RESULTS_HTML = '''
         <div class="cards-container" id="cards"></div>
         <div id="jung-kkuk-graph" class="jung-kkuk-graph"></div>
         <div class="prediction-table-row">
+            <div id="prediction-result-bar" class="prediction-result-bar-wrap"></div>
             <div id="prediction-pick-container"></div>
             <div id="graph-stats" class="graph-stats"></div>
         <div id="prediction-box" class="prediction-box"></div>
@@ -2583,6 +2595,7 @@ RESULTS_HTML = '''
                     const streakNow = streakCount > 0 ? '현재 ' + streakCount + '연' + streakType : '';
                     
                     // 예측 픽(표 왼쪽 박스, 가운데 정렬) · 적중률·연승연패·주의 사항(아래 회색 박스)
+                    const resultBarContainer = document.getElementById('prediction-result-bar');
                     const pickContainer = document.getElementById('prediction-pick-container');
                     const predDiv = document.getElementById('prediction-box');
                     const validHist = predictionHistory.filter(function(h) { return h && typeof h === 'object'; });
@@ -2659,14 +2672,15 @@ RESULTS_HTML = '''
                         resultBarHtml = '<div class="' + resultBarClass + '">' + resultBarText + '</div>';
                     }
                     const pickWrapClass = 'prediction-pick' + (pickInBucket ? ' pick-in-bucket' : '');
-                    const leftBlock = is15Joker ? (resultBarHtml + '<div class="prediction-pick">' +
+                    if (resultBarContainer) resultBarContainer.innerHTML = resultBarHtml;
+                    const leftBlock = is15Joker ? ('<div class="prediction-pick">' +
                         '<div class="prediction-pick-title">예측 픽</div>' +
                         '<div class="prediction-card" style="background:#455a64;border-color:#78909c">' +
                         '<span class="pred-value-big" style="color:#fff;font-size:1.2em">보류</span>' +
                         '</div>' +
                         '<div class="prediction-prob-under" style="color:#ffb74d">15번 카드 조커 · 배팅하지 마세요</div>' +
                         '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + displayRound3(predictedRoundFull) + '회</div>' +
-                        '</div>') : (resultBarHtml + '<div class="' + pickWrapClass + '">' +
+                        '</div>') : ('<div class="' + pickWrapClass + '">' +
                         '<div class="prediction-pick-title">예측 픽 · ' + colorToPick + '</div>' +
                         '<div class="prediction-card card-' + colorClass + '">' +
                         '<span class="pred-value-big">' + predict + '</span>' +
@@ -2773,10 +2787,12 @@ RESULTS_HTML = '''
                     }
                 } else if (statsDiv) {
                     statsDiv.innerHTML = '';
+                    const resultBarEmpty = document.getElementById('prediction-result-bar');
                     const pickEmpty = document.getElementById('prediction-pick-container');
                     const predDivEmpty = document.getElementById('prediction-box');
                     const probBucketBodyEmpty = document.getElementById('prob-bucket-collapse-body');
                     const probBucketCollapseEmpty = document.getElementById('prob-bucket-collapse');
+                    if (resultBarEmpty) resultBarEmpty.innerHTML = '';
                     if (pickEmpty) pickEmpty.innerHTML = '';
                     if (predDivEmpty) predDivEmpty.innerHTML = '';
                     if (probBucketBodyEmpty) probBucketBodyEmpty.innerHTML = '';
