@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         토큰하이로우 자동배팅 (nhs900)
 // @namespace    https://github.com/
-// @version      0.3
+// @version      0.4
 // @description  설정값을 사이트에 입력·클릭 테스트 → (선택) 예측기 API 연동 자동배팅
 // @match        https://nhs900.com/*
 // @match        http://nhs900.com/*
@@ -22,18 +22,18 @@
     var AUTO_CLICK_ENABLED = false;
     var lastAppliedRound = null;
 
-    function getUnitInput() {
-        return document.querySelector('#unit');
-    }
-    function getRedBtn() {
-        return document.querySelector('button.btn_red') || document.querySelector('.btn_red');
-    }
-    function getBlackBtn() {
-        return document.querySelector('button.btn_black') || document.querySelector('.btn_black');
+    function makeDocHelpers(doc) {
+        doc = doc || document;
+        return {
+            getUnit: function() { return doc.querySelector('#unit'); },
+            getRed: function() { return doc.querySelector('button.btn_red') || doc.querySelector('.btn_red'); },
+            getBlack: function() { return doc.querySelector('button.btn_black') || doc.querySelector('.btn_black'); }
+        };
     }
 
-    function setAmountOnly(amountStr) {
-        var unit = getUnitInput();
+    function setAmountOnly(amountStr, doc) {
+        var h = makeDocHelpers(doc);
+        var unit = h.getUnit();
         if (!unit) return { ok: false, msg: '#unit 입력란을 찾을 수 없음' };
         var amt = (amountStr || '').trim() || DEFAULT_AMOUNT;
         unit.value = amt;
@@ -42,9 +42,11 @@
         return { ok: true, msg: '금액 ' + amt + ' 적용됨' };
     }
 
-    function applyBet(pickColor, amountStr) {
-        var unit = getUnitInput();
-        var btn = pickColor === 'RED' ? getRedBtn() : getBlackBtn();
+    function applyBet(pickColor, amountStr, doc) {
+        doc = doc || document;
+        var h = makeDocHelpers(doc);
+        var unit = h.getUnit();
+        var btn = pickColor === 'RED' ? h.getRed() : h.getBlack();
         if (!unit) return { ok: false, msg: '#unit 없음' };
         if (!btn) return { ok: false, msg: (pickColor === 'RED' ? '.btn_red' : '.btn_black') + ' 버튼 없음' };
         var amt = (amountStr || '').trim() || DEFAULT_AMOUNT;
@@ -55,17 +57,19 @@
         return { ok: true, msg: pickColor + ' 배팅 적용 (금액 ' + amt + ')' };
     }
 
-    // ----- 1) 설정값 → 사이트 입력 테스트 패널 (API 없음) -----
     function showStatus(el, text, isError) {
         if (!el) return;
         el.textContent = text;
         el.style.color = isError ? '#f44336' : '#81c784';
     }
 
-    function injectTestPanel() {
-        if (document.getElementById('token-hilo-bet-panel')) return;
+    function injectTestPanelIntoDoc(targetDoc) {
+        targetDoc = targetDoc || document;
+        if (targetDoc.getElementById('token-hilo-bet-panel')) return;
+        var targetBody = targetDoc.body || targetDoc.documentElement;
+        if (!targetBody) return;
 
-        var panel = document.createElement('div');
+        var panel = targetDoc.createElement('div');
         panel.id = 'token-hilo-bet-panel';
         panel.style.cssText = 'position:fixed !important;top:12px !important;right:12px !important;z-index:2147483647 !important;width:220px;padding:10px;' +
             'background:#1a1a2e !important;border:2px solid #64b5f6 !important;border-radius:8px;font-family:sans-serif;font-size:12px;color:#eee !important;box-shadow:0 4px 20px rgba(0,0,0,0.5) !important;';
@@ -79,28 +83,33 @@
             '</div>' +
             '<div id="th-status" style="font-size:11px;color:#81c784;min-height:14px;"></div>';
 
-        var target = document.body || document.documentElement;
-        if (target) target.appendChild(panel);
+        targetBody.appendChild(panel);
 
-        var amountInput = document.getElementById('th-bet-amount');
-        var statusEl = document.getElementById('th-status');
-
-        document.getElementById('th-btn-amount-only').addEventListener('click', function() {
-            var res = setAmountOnly(amountInput ? amountInput.value : '');
+        var amountInput = targetDoc.getElementById('th-bet-amount');
+        var statusEl = targetDoc.getElementById('th-status');
+        targetDoc.getElementById('th-btn-amount-only').addEventListener('click', function() {
+            var res = setAmountOnly(amountInput ? amountInput.value : '', targetDoc);
             showStatus(statusEl, res.msg, !res.ok);
         });
-        document.getElementById('th-btn-red').addEventListener('click', function() {
-            var res = applyBet('RED', amountInput ? amountInput.value : '');
+        targetDoc.getElementById('th-btn-red').addEventListener('click', function() {
+            var res = applyBet('RED', amountInput ? amountInput.value : '', targetDoc);
             showStatus(statusEl, res.msg, !res.ok);
         });
-        document.getElementById('th-btn-black').addEventListener('click', function() {
-            var res = applyBet('BLACK', amountInput ? amountInput.value : '');
+        targetDoc.getElementById('th-btn-black').addEventListener('click', function() {
+            var res = applyBet('BLACK', amountInput ? amountInput.value : '', targetDoc);
             showStatus(statusEl, res.msg, !res.ok);
         });
     }
 
     function tryInject() {
-        if (document.body || document.documentElement) injectTestPanel();
+        if (document.body || document.documentElement) injectTestPanelIntoDoc(document);
+        var iframes = document.querySelectorAll('iframe');
+        for (var i = 0; i < iframes.length; i++) {
+            try {
+                var f = iframes[i];
+                if (f.contentDocument && f.contentDocument.body) injectTestPanelIntoDoc(f.contentDocument);
+            } catch (e) {}
+        }
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', tryInject);
@@ -108,6 +117,7 @@
         tryInject();
     }
     [500, 1000, 2000, 4000, 8000, 12000].forEach(function(ms) { setTimeout(tryInject, ms); });
+    setInterval(tryInject, 6000);
 
     // ----- 1-2) 왼쪽 설정 → 오른쪽 사이트: 부모/iframe에서 오는 postMessage 수신 -----
     window.addEventListener('message', function(e) {
@@ -115,9 +125,9 @@
         var pick = e.data.pick, amount = e.data.amount;
         var r;
         if (pick === 'AMOUNT_ONLY') {
-            r = setAmountOnly(amount);
+            r = setAmountOnly(amount, document);
         } else if (pick === 'RED' || pick === 'BLACK') {
-            r = applyBet(pick, amount);
+            r = applyBet(pick, amount, document);
         } else return;
         try {
             if (e.source && e.source.postMessage) {
@@ -130,7 +140,7 @@
     function applyPickFromApi(pickColor, round, amount) {
         if (!pickColor || (pickColor !== 'RED' && pickColor !== 'BLACK')) return;
         if (round != null && round === lastAppliedRound) return;
-        var r = applyBet(pickColor, String(amount || DEFAULT_AMOUNT));
+        var r = applyBet(pickColor, String(amount || DEFAULT_AMOUNT), document);
         if (r.ok) lastAppliedRound = round;
     }
 
