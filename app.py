@@ -1451,6 +1451,16 @@ RESULTS_HTML = '''
             margin-top: 0;
             font-size: 10px;
             color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-self: stretch;
+        }
+        #prob-bucket-stats .prob-bucket-wrap {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
         }
         #prob-bucket-stats table {
             border-collapse: collapse;
@@ -2812,13 +2822,24 @@ RESULTS_HTML = '''
                     const countForPct = hit + losses;
                     const hitPctNum = countForPct > 0 ? 100 * hit / countForPct : 0;
                     const hitPct = countForPct > 0 ? hitPctNum.toFixed(1) : '-';
-                    // 승률 낮음·배팅 주의: 최근 30회 기준 (룰: 최근 30회 승률 50% 이하면 주의)
+                    // 승률 낮음·배팅 주의: 15회 50% + 30회 30% + 100회 20% 반영 (룰)
+                    const validHist15 = validHist.slice(-15);
                     const validHist30 = validHist.slice(-30);
+                    const validHist100 = validHist.slice(-100);
+                    const hit15 = validHist15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                    const losses15 = validHist15.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                    const count15 = hit15 + losses15;
                     const hit30 = validHist30.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
                     const losses30 = validHist30.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
                     const count30 = hit30 + losses30;
-                    const hitPctNum30 = count30 > 0 ? 100 * hit30 / count30 : 0;
-                    const lowWinRate = count30 > 0 && hitPctNum30 <= 50;
+                    const hit100 = validHist100.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                    const losses100 = validHist100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                    const count100 = hit100 + losses100;
+                    const rate15 = count15 > 0 ? 100 * hit15 / count15 : 50;
+                    const hitPctNum30 = count30 > 0 ? 100 * hit30 / count30 : 50;
+                    const rate100 = count100 > 0 ? 100 * hit100 / count100 : 50;
+                    const blendedWinRate = 0.5 * rate15 + 0.3 * hitPctNum30 + 0.2 * rate100;
+                    const lowWinRate = (count15 > 0 || count30 > 0 || count100 > 0) && blendedWinRate <= 50;
                     // 확률 구간별 승률 (joker 제외, probability 있는 것만)
                     const nonJokerWithProb = validHist.filter(function(h) { return h && h.actual !== 'joker' && h.probability != null; });
                     const BUCKETS = [{ min: 50, max: 55 }, { min: 55, max: 60 }, { min: 60, max: 65 }, { min: 65, max: 70 }, { min: 70, max: 75 }, { min: 75, max: 80 }, { min: 80, max: 85 }, { min: 85, max: 90 }, { min: 90, max: 101 }];
@@ -2868,17 +2889,17 @@ RESULTS_HTML = '''
                         }
                     } catch (e) {}
                     if (predDiv) {
-                        // 표시 승률·경고 기준: 최근 30회 (룰 준수)
-                        const hitPct30 = count30 > 0 ? hitPctNum30.toFixed(1) : '-';
-                        const rateClass30 = count30 > 0 ? (hitPctNum30 >= 60 ? 'high' : hitPctNum30 >= 50 ? 'mid' : 'low') : '';
+                        // 표시 승률·경고: 15·30·100 반영(50·30·20) (룰 준수)
+                        const hitPctBlend = (count15 > 0 || count30 > 0 || count100 > 0) ? blendedWinRate.toFixed(1) : '-';
+                        const rateClassBlend = (count15 > 0 || count30 > 0 || count100 > 0) ? (blendedWinRate >= 60 ? 'high' : blendedWinRate >= 50 ? 'mid' : 'low') : '';
                         const statsBlock = '<div class="prediction-stats-row">' +
                             '<span class="stat-total">전체 <span class="num">' + total + '</span>회</span>' +
                             '<span class="stat-win">승 <span class="num">' + hit30 + '</span>회</span>' +
                             '<span class="stat-lose">패 <span class="num">' + losses30 + '</span>회</span>' +
                             (jokerCount > 0 ? '<span class="stat-joker">조커 <span class="num">' + jokerCount + '</span>회</span>' : '') +
-                            (count30 > 0 ? '<span class="stat-rate ' + rateClass30 + '">승률 ' + hitPct30 + '%</span>' : '') +
+                            ((count15 > 0 || count30 > 0 || count100 > 0) ? '<span class="stat-rate ' + rateClassBlend + '">승률 ' + hitPctBlend + '%</span>' : '') +
                             '</div>' +
-                            '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 메인=서버 최근 100회 · 승률/경고=최근 30회 기준</div>';
+                            '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 메인=서버 최근 100회 · 승률/경고=15·30·100 반영(50·30·20)</div>';
                         let streakTableBlock = '';
                         try {
                         if (rev.length === 0) {
