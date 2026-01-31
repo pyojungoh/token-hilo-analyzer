@@ -3,7 +3,7 @@
 필요한 정보만 추출하여 새로 작성
 """
 
-from flask import Flask, jsonify, render_template_string, request
+from flask import Flask, jsonify, render_template_string, request, redirect
 from flask_cors import CORS
 import requests
 import os
@@ -3796,13 +3796,14 @@ BETTING_HELPER_HTML = '''<!DOCTYPE html>
 <body>
     <h1>배팅 연동 테스트</h1>
     <p style="color:#888;font-size:0.9em;">메인 분석기에서 예측 픽이 갱신되면 여기서 조회됩니다. 이 페이지는 분석기와 분리되어 있습니다.</p>
+    <p style="color:#666;font-size:0.85em;">데이터가 없으면 <strong>보류</strong> / <strong>—</strong> 로 표시됩니다. <a href="/results" style="color:#64b5f6;">/results</a> 에서 분석기를 열어 두면 예측이 갱신됩니다.</p>
     <div class="card">
         <div id="pick-display" class="pick hold">—</div>
         <div id="meta-display" class="meta">회차: — | 확률: —</div>
         <div id="updated-display" class="meta">갱신: —</div>
         <div id="status-display" class="status">연결 대기 중...</div>
     </div>
-    <div class="link"><a href="/">← 메인 분석기로 이동</a></div>
+    <div class="link"><a href="/results">← 메인 분석기로 이동</a></div>
     <script>
         function fetchPick() {
             var statusEl = document.getElementById("status-display");
@@ -3959,13 +3960,8 @@ def health_check():
 
 @app.route('/', methods=['GET'])
 def index():
-    """루트 - 빠른 헬스체크용 (외부 API 호출 없음)"""
-    # Railway 헬스체크를 위해 즉시 응답
-    return jsonify({
-        'status': 'ok',
-        'message': '토큰하이로우 분석기 API',
-        'version': '1.0.0'
-    }), 200
+    """루트 - 분석기 페이지로 이동 (항상 내용이 보이도록)"""
+    return redirect('/results', code=302)
 
 @app.route('/api/test-betting', methods=['GET'])
 def test_betting():
