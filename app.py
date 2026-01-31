@@ -2430,13 +2430,17 @@ RESULTS_HTML = '''
             if (!el) return;
             const hist = calcState[id].history;
             if (hist.length === 0) {
-                el.textContent = '보유자산 - | 순익 - | 배팅중 -';
+                let text = '보유자산 - | 순익 - | 배팅중 -';
+                if (calcState[id].running) text += ' | 경과 ' + formatMmSs(calcState[id].elapsed);
+                el.textContent = text;
                 updateCalcStatus(id);
                 return;
             }
             const r = getCalcResult(id);
             const profitStr = (r.profit >= 0 ? '+' : '') + r.profit.toLocaleString() + '원';
-            el.textContent = '보유자산 ' + r.cap.toLocaleString() + '원 | 순익 ' + profitStr + ' | 배팅중 ' + r.currentBet.toLocaleString() + '원';
+            let text = '보유자산 ' + r.cap.toLocaleString() + '원 | 순익 ' + profitStr + ' | 배팅중 ' + r.currentBet.toLocaleString() + '원';
+            if (calcState[id].running) text += ' | 경과 ' + formatMmSs(calcState[id].elapsed);
+            el.textContent = text;
             updateCalcStatus(id);
         }
         function updateCalcDetail(id) {
