@@ -1564,8 +1564,19 @@ RESULTS_HTML = '''
         // 최근 150개 결과 저장 (카드 15개, 그래프는 전부 쭉 표시)
         let allResults = [];
         let isLoadingResults = false;  // 중복 요청 방지
-        // 예측 기록 (최근 30회): { round, predicted, actual }
+        // 예측 기록 (최근 30회): { round, predicted, actual } — 새로고침 후에도 유지되도록 localStorage 저장
+        const PREDICTION_HISTORY_KEY = 'tokenHiloPredictionHistory';
         let predictionHistory = [];
+        try {
+            const saved = localStorage.getItem(PREDICTION_HISTORY_KEY);
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                if (Array.isArray(parsed)) predictionHistory = parsed.slice(-30);
+            }
+        } catch (e) { /* 복원 실패 시 빈 배열 유지 */ }
+        function savePredictionHistory() {
+            try { localStorage.setItem(PREDICTION_HISTORY_KEY, JSON.stringify(predictionHistory)); } catch (e) {}
+        }
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
         let betCalcHistory = [];  // 계산기 전용: 실행 누른 시점부터만 쌓는 승/패 기록 { predicted, actual }
@@ -1865,6 +1876,7 @@ RESULTS_HTML = '''
                             if (betCalcRunning) betCalcHistory.push({ predicted: lastPrediction.value, actual: actual });
                         }
                         predictionHistory = predictionHistory.slice(-30);
+                        savePredictionHistory();  // 새로고침 후에도 승률 유지
                     }
                     
                     // 최근 15회 정/꺽 흐름으로 퐁당·줄 계산 (승패 아님)
