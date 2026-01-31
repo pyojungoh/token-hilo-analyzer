@@ -3772,6 +3772,78 @@ def api_current_pick():
         return jsonify(empty_pick if request.method == 'GET' else {'ok': False}), 200
 
 
+BETTING_HELPER_HTML = '''<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>배팅 연동 테스트</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: "Noto Sans KR", sans-serif; margin: 20px; background: #1a1a2e; color: #eee; }
+        h1 { font-size: 1.2em; margin-bottom: 8px; }
+        .card { background: #16213e; border-radius: 8px; padding: 16px; margin-bottom: 12px; max-width: 360px; }
+        .pick { font-size: 1.5em; font-weight: bold; }
+        .pick.red { color: #e57373; }
+        .pick.black { color: #90a4ae; }
+        .pick.hold { color: #ffb74d; }
+        .meta { font-size: 0.9em; color: #aaa; margin-top: 8px; }
+        .link { margin-top: 16px; }
+        .link a { color: #64b5f6; }
+        .status { font-size: 0.85em; color: #666; margin-top: 8px; }
+    </style>
+</head>
+<body>
+    <h1>배팅 연동 테스트</h1>
+    <p style="color:#888;font-size:0.9em;">메인 분석기에서 예측 픽이 갱신되면 여기서 조회됩니다. 이 페이지는 분석기와 분리되어 있습니다.</p>
+    <div class="card">
+        <div id="pick-display" class="pick hold">—</div>
+        <div id="meta-display" class="meta">회차: — | 확률: —</div>
+        <div id="updated-display" class="meta">갱신: —</div>
+        <div id="status-display" class="status">연결 대기 중...</div>
+    </div>
+    <div class="link"><a href="/">← 메인 분석기로 이동</a></div>
+    <script>
+        function fetchPick() {
+            var statusEl = document.getElementById("status-display");
+            fetch("/api/current-pick")
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    var pickEl = document.getElementById("pick-display");
+                    var metaEl = document.getElementById("meta-display");
+                    var upEl = document.getElementById("updated-display");
+                    if (data.pick_color === "RED") {
+                        pickEl.textContent = "RED (빨강)";
+                        pickEl.className = "pick red";
+                    } else if (data.pick_color === "BLACK") {
+                        pickEl.textContent = "BLACK (검정)";
+                        pickEl.className = "pick black";
+                    } else {
+                        pickEl.textContent = "보류";
+                        pickEl.className = "pick hold";
+                    }
+                    metaEl.textContent = "회차: " + (data.round != null ? data.round : "—") + " | 확률: " + (data.probability != null ? data.probability.toFixed(1) + "%" : "—");
+                    upEl.textContent = "갱신: " + (data.updated_at || "—");
+                    statusEl.textContent = "마지막 조회: " + new Date().toLocaleTimeString("ko-KR");
+                })
+                .catch(function() {
+                    statusEl.textContent = "조회 실패 (다시 시도 중)";
+                });
+        }
+        fetchPick();
+        setInterval(fetchPick, 3000);
+    </script>
+</body>
+</html>
+'''
+
+
+@app.route('/betting-helper', methods=['GET'])
+def betting_helper_page():
+    """자동배팅 테스트용 별도 페이지. 메인 분석기와 분리되어 있으며 /api/current-pick 만 조회."""
+    return render_template_string(BETTING_HELPER_HTML)
+
+
 @app.route('/api/current-status', methods=['GET'])
 def get_current_status():
     """현재 게임 상태"""

@@ -13,6 +13,13 @@
 | RED 배당률 hidden | `#rate_red` | value="1.97" |
 | BLACK 배당률 hidden | `#rate_black` | value="1.97" |
 
+## 배팅 연동 테스트 페이지
+
+- **GET `/betting-helper`**  
+  자동배팅 개발·테스트용 **별도 페이지**. 메인 분석기와 분리되어 있어, 이 페이지만 수정해도 분석기에는 영향 없음.  
+  `/api/current-pick`을 3초마다 폴링하여 RED/BLACK/보류, 회차, 확률을 표시.  
+  나중에 이 페이지에 배팅 사이트 연동 로직을 추가하면 됨.
+
 ## 예측기 앱 연동 API
 
 - **GET `/api/current-pick`**  
