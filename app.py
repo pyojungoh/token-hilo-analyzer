@@ -3938,18 +3938,18 @@ BETTING_HELPER_HTML = '''<!DOCTYPE html>
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ pickColor: "RED", round: 99999, probability: 50 })
-                }).then(function(r) { return r.json(); }).then(function(postRes) {
-                    if (!postRes.ok) { resultEl.innerHTML = "<span style=\"color:#e57373\">저장 실패 (서버 반환 ok: false). DB/테이블 확인 필요.</span>"; return; }
+                }).then(function(r) { return r.json();                 }).then(function(postRes) {
+                    if (!postRes.ok) { resultEl.innerHTML = '<span style="color:#e57373">저장 실패 (서버 반환 ok: false). DB/테이블 확인 필요.</span>'; return; }
                     return fetch("/api/current-pick").then(function(r) { return r.json(); });
                 }).then(function(getData) {
                     if (!getData) return;
                     if (getData.pick_color === "RED" && getData.round === 99999) {
-                        resultEl.innerHTML = "<span style=\"color:#81c784\">저장·조회 정상.</span> 메인 분석기(/results)에서 <strong>15번 카드가 조커가 아닐 때</strong>만 RED/BLACK이 전송됩니다. 메인 화면 예측 픽이 \"보류\"면 여기도 보류로만 저장됩니다.";
+                        resultEl.innerHTML = '<span style="color:#81c784">저장·조회 정상.</span> 메인 분석기(/results)에서 <strong>15번 카드가 조커가 아닐 때</strong>만 RED/BLACK이 전송됩니다. 메인 화면 예측 픽이 보류면 여기도 보류로만 저장됩니다.';
                     } else {
-                        resultEl.innerHTML = "<span style=\"color:#ffb74d\">저장됐지만 조회가 다릅니다. (다른 서버/워커일 수 있음)</span>";
+                        resultEl.innerHTML = '<span style="color:#ffb74d">저장됐지만 조회가 다릅니다. (다른 서버/워커일 수 있음)</span>';
                     }
                 }).catch(function() {
-                    resultEl.innerHTML = "<span style=\"color:#e57373\">요청 실패. 같은 주소에서 열었는지 확인하세요.</span>";
+                    resultEl.innerHTML = '<span style="color:#e57373">요청 실패. 같은 주소에서 열었는지 확인하세요.</span>';
                 });
             });
             runDiagnostic();
