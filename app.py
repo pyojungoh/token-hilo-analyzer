@@ -1940,7 +1940,7 @@ RESULTS_HTML = '''
             const saved = localStorage.getItem(PREDICTION_HISTORY_KEY);
             if (saved) {
                 const parsed = JSON.parse(saved);
-                if (Array.isArray(parsed)) predictionHistory = parsed.slice(-30);
+                if (Array.isArray(parsed)) predictionHistory = parsed.slice(-30).filter(function(h) { return h && typeof h === 'object'; });
             }
         } catch (e) { /* 복원 실패 시 빈 배열 유지 */ }
         function savePredictionHistory() {
@@ -2212,9 +2212,9 @@ RESULTS_HTML = '''
                     if (statusEl) statusEl.textContent = '오류: ' + data.error;
                     return;
                 }
-                // 서버에 저장된 시스템 예측 기록 복원 (어디서 접속해도 동일)
+                // 서버에 저장된 시스템 예측 기록 복원 (어디서 접속해도 동일). 무효 항목 제거해 ReferenceError 방지
                 if (Object.prototype.hasOwnProperty.call(data, 'prediction_history') && Array.isArray(data.prediction_history)) {
-                    predictionHistory = data.prediction_history.slice(-30);
+                    predictionHistory = data.prediction_history.slice(-30).filter(function(h) { return h && typeof h === 'object'; });
                     savePredictionHistory();
                 }
                 
@@ -2607,10 +2607,10 @@ RESULTS_HTML = '''
                     // 연패 후 연승 2~3회: "확률 급상승" 구간 (방향 불명 → 보수적 배팅 권장)
                     let surgeUnknown = false;
                     if (predictionHistory.length >= 5) {
-                        const rev = predictionHistory.slice().reverse();
+                        const revSurge = predictionHistory.slice().reverse().filter(function(h) { return h && typeof h === 'object'; });
                         let i = 0, winRun = 0, loseRun = 0;
-                        while (i < rev.length && (rev[i].predicted === rev[i].actual ? '승' : '패') === '승') { winRun++; i++; }
-                        while (i < rev.length && (rev[i].predicted === rev[i].actual ? '승' : '패') === '패') { loseRun++; i++; }
+                        while (i < revSurge.length && revSurge[i] && (revSurge[i].predicted === revSurge[i].actual ? '승' : '패') === '승') { winRun++; i++; }
+                        while (i < revSurge.length && revSurge[i] && (revSurge[i].predicted === revSurge[i].actual ? '승' : '패') === '패') { loseRun++; i++; }
                         if (winRun >= 2 && loseRun >= 3) surgeUnknown = true;
                     }
                     
@@ -2661,13 +2661,15 @@ RESULTS_HTML = '''
                         colorClass = colorToPick === '빨강' ? 'red' : 'black';
                     }
                     
-                    // 연승/연패: 표 형식. 최신 회차가 가장 왼쪽 (reverse)
-                    const rev = predictionHistory.slice(-30).slice().reverse();
+                    // 연승/연패: 표 형식. 최신 회차가 가장 왼쪽 (reverse). 무효 항목 제외해 먹통 방지
+                    const rev = predictionHistory.slice(-30).slice().reverse().filter(function(h) { return h && typeof h === 'object'; });
                     let streakCount = 0;
                     let streakType = '';
                     for (let i = predictionHistory.length - 1; i >= 0; i--) {
-                        if (predictionHistory[i].actual === 'joker') break;
-                        const s = predictionHistory[i].predicted === predictionHistory[i].actual ? '승' : '패';
+                        const p = predictionHistory[i];
+                        if (!p || typeof p !== 'object') break;
+                        if (p.actual === 'joker') break;
+                        const s = p.predicted === p.actual ? '승' : '패';
                         if (i === predictionHistory.length - 1) { streakType = s; streakCount = 1; }
                         else if (s === streakType) streakCount++;
                         else break;
@@ -2677,15 +2679,16 @@ RESULTS_HTML = '''
                     // 예측 픽(표 왼쪽 박스, 가운데 정렬) · 적중률·연승연패·주의 사항(아래 회색 박스)
                     const pickContainer = document.getElementById('prediction-pick-container');
                     const predDiv = document.getElementById('prediction-box');
-                    const hit = predictionHistory.filter(h => h.actual !== 'joker' && h.predicted === h.actual).length;
-                    const losses = predictionHistory.filter(h => h.actual !== 'joker' && h.predicted !== h.actual).length;
-                    const jokerCount = predictionHistory.filter(h => h.actual === 'joker').length;
-                    const total = predictionHistory.length;
+                    const validHist = predictionHistory.filter(function(h) { return h && typeof h === 'object'; });
+                    const hit = validHist.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                    const losses = validHist.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                    const jokerCount = validHist.filter(function(h) { return h.actual === 'joker'; }).length;
+                    const total = validHist.length;
                     const countForPct = hit + losses;
                     const hitPctNum = countForPct > 0 ? 100 * hit / countForPct : 0;
                     const hitPct = countForPct > 0 ? hitPctNum.toFixed(1) : '-';
                     const lowWinRate = countForPct > 0 && hitPctNum <= 50;
-                    const lastEntry = predictionHistory.length > 0 ? predictionHistory[predictionHistory.length - 1] : null;
+                    const lastEntry = validHist.length > 0 ? validHist[validHist.length - 1] : null;
                     const lastIsWin = lastEntry && lastEntry.actual !== 'joker' && lastEntry.predicted === lastEntry.actual;
                     const shouldShowWinEffect = lastIsWin && lastEntry && lastWinEffectRound !== lastEntry.round;
                     if (shouldShowWinEffect) lastWinEffectRound = lastEntry.round;
@@ -2717,18 +2720,19 @@ RESULTS_HTML = '''
                             '</div>' +
                             '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 메인=서버 최근 30회 · 계산기=해당 계산기 실행 중 쌓인 기록</div>';
                         let streakTableBlock = '';
+                        try {
                         if (rev.length === 0) {
                             streakTableBlock = '<div class="prediction-streak-line">연승/연패 기록: -' + (streakNow ? ' &nbsp; <span class="streak-now">' + streakNow + '</span>' : '') + '</div>';
                         } else {
-                            const headerCells = rev.map(h => '<th>' + (h.round != null ? String(h.round).slice(-3) : '-') + '</th>').join('');
-                            const rowRound = rev.map(h => '<td>' + (h.round != null ? String(h.round).slice(-3) : '-') + '</td>').join('');
-                            const rowProb = rev.map(h => '<td>' + (h.probability != null ? Number(h.probability).toFixed(1) + '%' : '-') + '</td>').join('');
-                            const rowPick = rev.map(h => {
+                            const headerCells = rev.map(function(h) { return '<th>' + (h.round != null ? String(h.round).slice(-3) : '-') + '</th>'; }).join('');
+                            const rowRound = rev.map(function(h) { return '<td>' + (h.round != null ? String(h.round).slice(-3) : '-') + '</td>'; }).join('');
+                            const rowProb = rev.map(function(h) { return '<td>' + (h.probability != null ? Number(h.probability).toFixed(1) + '%' : '-') + '</td>'; }).join('');
+                            const rowPick = rev.map(function(h) {
                                 const pickColor = h.pickColor || h.pick_color;
                                 const c = pickColor === '빨강' ? 'pick-red' : (pickColor === '검정' ? 'pick-black' : '');
-                                return '<td class="' + c + '">' + (h.predicted || '-') + '</td>';
+                                return '<td class="' + c + '">' + (h.predicted != null ? h.predicted : '-') + '</td>';
                             }).join('');
-                            const rowOutcome = rev.map(h => {
+                            const rowOutcome = rev.map(function(h) {
                                 const out = h.actual === 'joker' ? '조커' : (h.predicted === h.actual ? '승' : '패');
                                 const c = out === '승' ? 'streak-win' : out === '패' ? 'streak-lose' : 'streak-joker';
                                 return '<td class="' + c + '">' + out + '</td>';
@@ -2740,6 +2744,10 @@ RESULTS_HTML = '''
                                 '<tr>' + rowPick + '</tr>' +
                                 '<tr>' + rowOutcome + '</tr>' +
                                 '</tbody></table></div>' + (streakNow ? '<div class="prediction-streak-line" style="margin-top:4px"><span class="streak-now">' + streakNow + '</span></div>' : '');
+                        }
+                        } catch (streakErr) {
+                            console.warn('연승/연패 표 구성 오류:', streakErr);
+                            streakTableBlock = '<div class="prediction-streak-line">연승/연패 기록: -' + (streakNow ? ' &nbsp; <span class="streak-now">' + streakNow + '</span>' : '') + '</div>';
                         }
                         let noticeBlock = '';
                         if (flowAdvice || lowWinRate) {
