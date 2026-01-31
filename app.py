@@ -2560,8 +2560,7 @@ RESULTS_HTML = '''
             const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
             const oddsIn = parseFloat(document.getElementById('calc-' + id + '-odds')?.value) || 1.97;
             const hist = calcState[id].history || [];
-            let cap = capIn, currentBet = baseIn, wins = 0, losses = 0, bust = false;
-            let maxWinStreak = 0, maxLoseStreak = 0, curWin = 0, curLose = 0;
+            let cap = capIn, currentBet = baseIn, bust = false;
             for (let i = 0; i < hist.length; i++) {
                 const isWin = hist[i].actual !== 'joker' && hist[i].predicted === hist[i].actual;
                 const bet = Math.min(currentBet, Math.floor(cap));
@@ -2569,17 +2568,31 @@ RESULTS_HTML = '''
                 if (isWin) {
                     cap += bet * (oddsIn - 1);
                     currentBet = baseIn;
-                    wins++;
-                    curWin++; curLose = 0;
-                    if (curWin > maxWinStreak) maxWinStreak = curWin;
                 } else {
                     cap -= bet;
                     currentBet = Math.min(currentBet * 2, Math.floor(cap));
-                    losses++;
-                    curLose++; curWin = 0;
-                    if (curLose > maxLoseStreak) maxLoseStreak = curLose;
                 }
                 if (cap <= 0) { bust = true; break; }
+            }
+            let wins = 0, losses = 0, maxWinStreak = 0, maxLoseStreak = 0, curWin = 0, curLose = 0;
+            for (let i = 0; i < hist.length; i++) {
+                if (hist[i].actual === 'joker') {
+                    curWin = 0;
+                    curLose = 0;
+                    continue;
+                }
+                const isWin = hist[i].predicted === hist[i].actual;
+                if (isWin) {
+                    wins++;
+                    curWin++;
+                    curLose = 0;
+                    if (curWin > maxWinStreak) maxWinStreak = curWin;
+                } else {
+                    losses++;
+                    curLose++;
+                    curWin = 0;
+                    if (curLose > maxLoseStreak) maxLoseStreak = curLose;
+                }
             }
             const profit = cap - capIn;
             const total = wins + losses;
