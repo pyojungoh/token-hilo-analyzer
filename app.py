@@ -1415,6 +1415,7 @@ RESULTS_HTML = '''
             .prediction-table-row #prediction-pick-container { order: 1; width: 100%; max-width: 320px; display: flex; justify-content: center; }
             .prediction-table-row #prediction-box { order: 2; width: 100%; }
             .prediction-table-row #graph-stats { order: 3; width: 100%; }
+            .prediction-table-row #prob-bucket-stats { order: 4; width: 100%; max-width: 320px; }
         }
         @media (max-width: 480px) {
             .cards-container { gap: 2px; padding: 8px 0; }
@@ -1442,6 +1443,14 @@ RESULTS_HTML = '''
             min-width: 200px;
             overflow-x: auto;
         }
+        #prob-bucket-stats {
+            flex: 0 1 auto;
+            min-width: 140px;
+            max-width: 220px;
+            font-size: 0.8em;
+            overflow-x: auto;
+        }
+        #prob-bucket-stats .prob-bucket-table { font-size: inherit; }
         .prediction-pick {
             position: relative;
             display: flex;
@@ -1717,6 +1726,7 @@ RESULTS_HTML = '''
         <div class="prediction-table-row">
             <div id="prediction-pick-container"></div>
             <div id="graph-stats" class="graph-stats"></div>
+            <div id="prob-bucket-stats" class="prob-bucket-stats"></div>
             <div id="prediction-box" class="prediction-box"></div>
         </div>
         <div class="bet-calc">
@@ -2782,7 +2792,13 @@ RESULTS_HTML = '''
                     const countForPct = hit + losses;
                     const hitPctNum = countForPct > 0 ? 100 * hit / countForPct : 0;
                     const hitPct = countForPct > 0 ? hitPctNum.toFixed(1) : '-';
-                    const lowWinRate = countForPct > 0 && hitPctNum <= 50;
+                    // 승률 낮음·배팅 주의: 최근 30회 기준 (룰: 최근 30회 승률 50% 이하면 주의)
+                    const validHist30 = validHist.slice(-30);
+                    const hit30 = validHist30.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                    const losses30 = validHist30.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                    const count30 = hit30 + losses30;
+                    const hitPctNum30 = count30 > 0 ? 100 * hit30 / count30 : 0;
+                    const lowWinRate = count30 > 0 && hitPctNum30 <= 50;
                     // 확률 구간별 승률 (joker 제외, probability 있는 것만)
                     const nonJokerWithProb = validHist.filter(function(h) { return h && h.actual !== 'joker' && h.probability != null; });
                     const BUCKETS = [{ min: 50, max: 55 }, { min: 55, max: 60 }, { min: 60, max: 65 }, { min: 65, max: 70 }, { min: 70, max: 75 }, { min: 75, max: 80 }, { min: 80, max: 85 }, { min: 85, max: 90 }, { min: 90, max: 101 }];
@@ -2881,14 +2897,18 @@ RESULTS_HTML = '''
                             console.warn('연승/연패 표 구성 오류:', streakErr);
                             streakTableBlock = '<div class="prediction-streak-line">연승/연패 기록: -' + (streakNow ? ' &nbsp; <span class="streak-now">' + streakNow + '</span>' : '') + '</div>';
                         }
-                        let probBucketBlock = '';
-                        if (bucketStats.length > 0) {
-                            const bucketRows = bucketStats.map(function(s) {
-                                const pctNum = s.pct !== '-' ? parseFloat(s.pct) : 0;
-                                const rowClass = pctNum >= 60 ? 'high' : pctNum >= 50 ? 'mid' : 'low';
-                                return '<tr><td>' + s.label + '</td><td>' + s.total + '회</td><td>' + s.wins + '승</td><td class="stat-rate ' + rowClass + '">' + s.pct + '%</td></tr>';
-                            }).join('');
-                            probBucketBlock = '<div class="prob-bucket-wrap" style="margin-top:8px;font-size:0.85em"><div style="margin-bottom:4px;color:#666">확률 구간별 승률 (나올 확률 기준)</div><table class="main-streak-table prob-bucket-table"><thead><tr><th>구간</th><th>횟수</th><th>승</th><th>승률</th></tr></thead><tbody>' + bucketRows + '</tbody></table></div>';
+                        const probBucketStatsDiv = document.getElementById('prob-bucket-stats');
+                        if (probBucketStatsDiv) {
+                            if (bucketStats.length > 0) {
+                                const bucketRows = bucketStats.map(function(s) {
+                                    const pctNum = s.pct !== '-' ? parseFloat(s.pct) : 0;
+                                    const rowClass = pctNum >= 60 ? 'high' : pctNum >= 50 ? 'mid' : 'low';
+                                    return '<tr><td>' + s.label + '</td><td>' + s.total + '회</td><td>' + s.wins + '승</td><td class="stat-rate ' + rowClass + '">' + s.pct + '%</td></tr>';
+                                }).join('');
+                                probBucketStatsDiv.innerHTML = '<div class="prob-bucket-wrap"><div style="margin-bottom:4px;color:#888;font-weight:bold">확률 구간별 승률</div><table class="main-streak-table prob-bucket-table"><thead><tr><th>구간</th><th>횟수</th><th>승</th><th>승률</th></tr></thead><tbody>' + bucketRows + '</tbody></table></div>';
+                            } else {
+                                probBucketStatsDiv.innerHTML = '';
+                            }
                         }
                         let noticeBlock = '';
                         if (flowAdvice || lowWinRate) {
@@ -2898,7 +2918,7 @@ RESULTS_HTML = '''
                             noticeBlock = '<div class="prediction-notice' + (lowWinRate && !flowAdvice ? ' danger' : '') + '">' + notices.join(' &nbsp; · &nbsp; ') + '</div>';
                         }
                         const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:clamp(0.75em,1.8vw,0.85em)">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
-                        predDiv.innerHTML = statsBlock + streakTableBlock + probBucketBlock + noticeBlock + extraLine;
+                        predDiv.innerHTML = statsBlock + streakTableBlock + noticeBlock + extraLine;
                     }
                     
                     // 가상 배팅 계산기 1,2,3 요약·상세 갱신 (오류 시에도 메인 화면은 유지)
@@ -2912,8 +2932,10 @@ RESULTS_HTML = '''
                     statsDiv.innerHTML = '';
                     const pickEmpty = document.getElementById('prediction-pick-container');
                     const predDivEmpty = document.getElementById('prediction-box');
+                    const probBucketEmpty = document.getElementById('prob-bucket-stats');
                     if (pickEmpty) pickEmpty.innerHTML = '';
                     if (predDivEmpty) predDivEmpty.innerHTML = '';
+                    if (probBucketEmpty) probBucketEmpty.innerHTML = '';
                 }
                 
                 // 헤더: 상단에는 회차 전체 숫자 표시 (비교용), 표에는 뒤 3자리만
