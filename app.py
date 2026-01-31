@@ -1566,6 +1566,7 @@ RESULTS_HTML = '''
                                     <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="10000"></label>
                                     <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label>
                                     <label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label>
+                                    <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label>
                                     <label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label>
                                     <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label>
             </div>
@@ -1597,6 +1598,7 @@ RESULTS_HTML = '''
                                     <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="10000"></label>
                                     <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label>
                                     <label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label>
+                                    <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label>
                                     <label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label>
                                     <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label>
                                 </div>
@@ -1628,6 +1630,7 @@ RESULTS_HTML = '''
                                     <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="10000"></label>
                                     <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label>
                                     <label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label>
+                                    <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label>
                                     <label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label>
                                     <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label>
                                 </div>
@@ -1872,6 +1875,7 @@ RESULTS_HTML = '''
                 const duration_min = (durEl && parseInt(durEl.value, 10)) || 0;
                 const duration_limit = duration_min * 60;
                 const use_duration_limit = !!(checkEl && checkEl.checked);
+                const winRateRevEl = document.getElementById('calc-' + id + '-win-rate-reverse');
                 payload[String(id)] = {
                     running: calcState[id].running,
                     started_at: calcState[id].started_at || 0,
@@ -1879,6 +1883,7 @@ RESULTS_HTML = '''
                     duration_limit: duration_limit,
                     use_duration_limit: use_duration_limit,
                     reverse: !!(revEl && revEl.checked),
+                    win_rate_reverse: !!(winRateRevEl && winRateRevEl.checked),
                     timer_completed: !!calcState[id].timer_completed,
                     max_win_streak_ever: calcState[id].maxWinStreakEver || 0,
                     max_lose_streak_ever: calcState[id].maxLoseStreakEver || 0
@@ -1930,6 +1935,8 @@ RESULTS_HTML = '''
                 if (durEl) durEl.value = Math.floor((calcState[id].duration_limit || 0) / 60);
                 if (checkEl) checkEl.checked = calcState[id].use_duration_limit;
                 if (revEl) revEl.checked = !!c.reverse;
+                const winRateRevEl = document.getElementById('calc-' + id + '-win-rate-reverse');
+                if (winRateRevEl) winRateRevEl.checked = !!c.win_rate_reverse;
             });
             const dc = calcs[DEFENSE_ID] || {};
             if (Array.isArray(dc.history)) calcState.defense.history = dc.history.slice(-500);
@@ -2423,7 +2430,7 @@ RESULTS_HTML = '''
                                 if (hasRound) return;
                                 const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
                                 var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
-                                if (document.getElementById('win-rate-reverse-check') && document.getElementById('win-rate-reverse-check').checked && lowWinRateForRecord) pred = pred === '정' ? '꺽' : '정';
+                                if (document.getElementById('calc-' + id + '-win-rate-reverse') && document.getElementById('calc-' + id + '-win-rate-reverse').checked && lowWinRateForRecord) pred = pred === '정' ? '꺽' : '정';
                                 // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
                                 let defenseBet = 0;
                                 if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
@@ -2445,7 +2452,7 @@ RESULTS_HTML = '''
                                 if (hasRound) return;
                                 const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
                                 var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
-                                if (document.getElementById('win-rate-reverse-check') && document.getElementById('win-rate-reverse-check').checked && lowWinRateForRecord) pred = pred === '정' ? '꺽' : '정';
+                                if (document.getElementById('calc-' + id + '-win-rate-reverse') && document.getElementById('calc-' + id + '-win-rate-reverse').checked && lowWinRateForRecord) pred = pred === '정' ? '꺽' : '정';
                                 // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
                                 let defenseBet = 0;
                                 if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
@@ -2807,10 +2814,8 @@ RESULTS_HTML = '''
                             if (lowWinRate) notices.push('⚠ 승률이 낮으니 배팅 주의 (합산승률: ' + blendedWinRate.toFixed(1) + '%)');
                             noticeBlock = '<div class="prediction-notice' + (lowWinRate && !flowAdvice ? ' danger' : '') + '">' + notices.join(' &nbsp; · &nbsp; ') + '</div>';
                         }
-                        var winRateReverseChecked = (document.getElementById('win-rate-reverse-check') && document.getElementById('win-rate-reverse-check').checked) || false;
-                        const winRateReverseRow = '<div class="prediction-option-row" style="margin-top:6px;font-size:0.9em"><label><input type="checkbox" id="win-rate-reverse-check"' + (winRateReverseChecked ? ' checked' : '') + '> 승률반픽</label></div>';
                         const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:clamp(0.75em,1.8vw,0.85em)">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
-                        predDiv.innerHTML = noticeBlock + winRateReverseRow + statsBlock + streakTableBlock + extraLine;
+                        predDiv.innerHTML = noticeBlock + statsBlock + streakTableBlock + extraLine;
                     }
                     
                     // 가상 배팅 계산기 1,2,3 요약·상세 갱신 (오류 시에도 메인 화면은 유지)
@@ -3731,11 +3736,12 @@ def api_calc_state():
                     'use_duration_limit': bool(c.get('use_duration_limit')),
                     'reverse': bool(c.get('reverse')),
                     'timer_completed': bool(c.get('timer_completed')),
+                    'win_rate_reverse': bool(c.get('win_rate_reverse')),
                     'max_win_streak_ever': int(c.get('max_win_streak_ever') or 0),
                     'max_lose_streak_ever': int(c.get('max_lose_streak_ever') or 0)
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0}
         c = calcs.get('defense') or {}
         if isinstance(c, dict):
             running = c.get('running', False)
