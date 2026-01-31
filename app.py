@@ -1724,6 +1724,9 @@ RESULTS_HTML = '''
                                     <label>연결 계산기 <select id="calc-defense-linked"><option value="1">계산기 1</option><option value="2">계산기 2</option><option value="3">계산기 3</option></select></label>
                                     <label>자본금 <input type="number" id="calc-defense-capital" min="0" value="1000000"></label>
                                     <label>배당 <input type="number" id="calc-defense-odds" min="1" step="0.01" value="1.97"></label>
+                                    <label title="마틴 1~N회까지 연결과 동일 금액">동일금액 <input type="number" id="calc-defense-full-steps" min="0" value="3" style="width:40px">회까지</label>
+                                    <label title="N회부터 연결금액의 1/X로 감액">감액 <input type="number" id="calc-defense-reduce-from" min="1" value="4" style="width:40px">회부터 1/<input type="number" id="calc-defense-reduce-div" min="2" value="4" style="width:40px"> 금액</label>
+                                    <label title="방어 N연승 달성 시 다음 회차부터 배팅 안 함, 0=해제">배팅중지 <input type="number" id="calc-defense-stop-streak" min="0" value="5" style="width:40px">연승부터 (0=해제)</label>
                                     <label>지속 시간(분) <input type="number" id="calc-defense-duration" min="0" value="0" placeholder="0=무제한"></label>
                                     <label class="calc-duration-check"><input type="checkbox" id="calc-defense-duration-check"> 지정 시간만 실행</label>
                                 </div>
@@ -1734,7 +1737,7 @@ RESULTS_HTML = '''
                                 </div>
                             </div>
                             <div class="calc-detail" id="calc-defense-detail">
-                                <div class="calc-streak" id="calc-defense-streak">경기결과: - (연결 반픽·마틴 1~3회 전액, 4회부터 1/4·기본금 시 미배팅)</div>
+                                <div class="calc-streak" id="calc-defense-streak">경기결과: - (연결 반픽·설정에 따라 동일/감액/미배팅)</div>
                                 <div class="calc-stats" id="calc-defense-stats">최대연승: - | 최대연패: - | 승률: -</div>
                             </div>
                         </div>
@@ -1939,6 +1942,10 @@ RESULTS_HTML = '''
             const defDurEl = document.getElementById('calc-defense-duration');
             const defCheckEl = document.getElementById('calc-defense-duration-check');
             const defLinkEl = document.getElementById('calc-defense-linked');
+            const defFullSteps = document.getElementById('calc-defense-full-steps');
+            const defReduceFrom = document.getElementById('calc-defense-reduce-from');
+            const defReduceDiv = document.getElementById('calc-defense-reduce-div');
+            const defStopStreak = document.getElementById('calc-defense-stop-streak');
             const defDurationMin = (defDurEl && parseInt(defDurEl.value, 10)) || 0;
             payload[DEFENSE_ID] = {
                 running: !!d.running,
@@ -1947,7 +1954,11 @@ RESULTS_HTML = '''
                 duration_limit: defDurationMin * 60,
                 use_duration_limit: !!(defCheckEl && defCheckEl.checked),
                 timer_completed: !!d.timer_completed,
-                linked_calc_id: (defLinkEl && parseInt(defLinkEl.value, 10)) || 1
+                linked_calc_id: (defLinkEl && parseInt(defLinkEl.value, 10)) || 1,
+                full_steps: (defFullSteps && parseInt(defFullSteps.value, 10)) || 3,
+                reduce_from: (defReduceFrom && parseInt(defReduceFrom.value, 10)) || 4,
+                reduce_div: (defReduceDiv && parseInt(defReduceDiv.value, 10)) || 4,
+                stop_streak: (defStopStreak && parseInt(defStopStreak.value, 10)) || 0
             };
             return payload;
         }
@@ -1983,9 +1994,17 @@ RESULTS_HTML = '''
             const defDurEl = document.getElementById('calc-defense-duration');
             const defCheckEl = document.getElementById('calc-defense-duration-check');
             const defLinkEl = document.getElementById('calc-defense-linked');
+            const defFullSteps = document.getElementById('calc-defense-full-steps');
+            const defReduceFrom = document.getElementById('calc-defense-reduce-from');
+            const defReduceDiv = document.getElementById('calc-defense-reduce-div');
+            const defStopStreak = document.getElementById('calc-defense-stop-streak');
             if (defDurEl) defDurEl.value = Math.floor((calcState.defense.duration_limit || 0) / 60);
             if (defCheckEl) defCheckEl.checked = calcState.defense.use_duration_limit;
             if (defLinkEl) defLinkEl.value = String(calcState.defense.linked_calc_id);
+            if (defFullSteps) defFullSteps.value = dc.full_steps !== undefined ? dc.full_steps : 3;
+            if (defReduceFrom) defReduceFrom.value = dc.reduce_from !== undefined ? dc.reduce_from : 4;
+            if (defReduceDiv) defReduceDiv.value = dc.reduce_div !== undefined ? dc.reduce_div : 4;
+            if (defStopStreak) defStopStreak.value = dc.stop_streak !== undefined ? dc.stop_streak : 5;
         }
         async function loadCalcStateFromServer() {
             try {
@@ -2685,9 +2704,24 @@ RESULTS_HTML = '''
             const linkedBet = getCalcResult(linkedId).currentBet;
             const linkedBase = parseFloat(document.getElementById('calc-' + linkedId + '-base')?.value) || 10000;
             if (!linkedBet || linkedBet <= linkedBase) return 0;
+            const fullSteps = Math.max(0, parseInt(document.getElementById('calc-defense-full-steps')?.value, 10) || 3);
+            const reduceFrom = Math.max(1, parseInt(document.getElementById('calc-defense-reduce-from')?.value, 10) || 4);
+            const reduceDiv = Math.max(2, parseInt(document.getElementById('calc-defense-reduce-div')?.value, 10) || 4);
+            const stopStreak = parseInt(document.getElementById('calc-defense-stop-streak')?.value, 10) || 0;
+            const hist = (calcState.defense && calcState.defense.history) || [];
+            let consecutiveWins = 0;
+            for (let i = hist.length - 1; i >= 0; i--) {
+                const h = hist[i];
+                if ((h.betAmount || 0) <= 0) break;
+                if (h.actual === 'joker') break;
+                if (h.predicted === h.actual) consecutiveWins++; else break;
+            }
+            if (stopStreak > 0 && consecutiveWins >= stopStreak) return 0;
             const ratio = linkedBet / linkedBase;
-            if (ratio <= 8) return linkedBet;
-            return Math.floor(linkedBet / 4);
+            const step = ratio <= 1 ? 0 : Math.round(Math.log2(ratio));
+            if (step <= fullSteps) return linkedBet;
+            if (step >= reduceFrom) return Math.floor(linkedBet / reduceDiv);
+            return linkedBet;
         }
         function getDefenseCalcResult() {
             try {
@@ -3384,10 +3418,14 @@ def api_calc_state():
                 'duration_limit': int(c.get('duration_limit') or 0),
                 'use_duration_limit': bool(c.get('use_duration_limit')),
                 'timer_completed': bool(c.get('timer_completed')),
-                'linked_calc_id': int(c.get('linked_calc_id') or 1)
+                'linked_calc_id': int(c.get('linked_calc_id') or 1),
+                'full_steps': int(c.get('full_steps') or 3),
+                'reduce_from': int(c.get('reduce_from') or 4),
+                'reduce_div': int(c.get('reduce_div') or 4),
+                'stop_streak': int(c.get('stop_streak') or 0)
             }
         else:
-            out['defense'] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'timer_completed': False, 'linked_calc_id': 1}
+            out['defense'] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'timer_completed': False, 'linked_calc_id': 1, 'full_steps': 3, 'reduce_from': 4, 'reduce_div': 4, 'stop_streak': 0}
         save_calc_state(session_id, out)
         return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': out}), 200
     except Exception as e:
