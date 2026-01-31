@@ -1447,10 +1447,29 @@ RESULTS_HTML = '''
             flex: 0 1 auto;
             min-width: 140px;
             max-width: 220px;
-            font-size: 0.8em;
             overflow-x: auto;
+            margin-top: 0;
+            font-size: clamp(12px, 2vw, 14px);
+            color: #fff;
         }
-        #prob-bucket-stats .prob-bucket-table { font-size: inherit; }
+        #prob-bucket-stats table {
+            border-collapse: collapse;
+            margin: 0 auto;
+            min-width: 140px;
+        }
+        #prob-bucket-stats th, #prob-bucket-stats td {
+            border: 1px solid #666;
+            padding: clamp(6px, 1.5vw, 10px) clamp(8px, 2vw, 12px);
+            text-align: center;
+            color: #fff;
+            font-size: clamp(11px, 2vw, 14px);
+        }
+        #prob-bucket-stats th { background: #444; font-weight: bold; color: #fff; }
+        #prob-bucket-stats td:first-child { text-align: left; font-weight: bold; color: #fff; }
+        #prob-bucket-stats .prob-bucket-title { margin-top: 6px; font-size: 0.85em; color: #aaa; text-align: center; }
+        #prob-bucket-stats .stat-rate.high { color: #81c784; font-weight: 600; }
+        #prob-bucket-stats .stat-rate.mid { color: #ffb74d; }
+        #prob-bucket-stats .stat-rate.low { color: #e57373; }
         .prediction-pick {
             position: relative;
             display: flex;
@@ -2848,15 +2867,17 @@ RESULTS_HTML = '''
                         }
                     } catch (e) {}
                     if (predDiv) {
-                        const rateClass = countForPct > 0 ? (hitPctNum >= 60 ? 'high' : hitPctNum >= 50 ? 'mid' : 'low') : '';
+                        // 표시 승률·경고 기준: 최근 30회 (룰 준수)
+                        const hitPct30 = count30 > 0 ? hitPctNum30.toFixed(1) : '-';
+                        const rateClass30 = count30 > 0 ? (hitPctNum30 >= 60 ? 'high' : hitPctNum30 >= 50 ? 'mid' : 'low') : '';
                         const statsBlock = '<div class="prediction-stats-row">' +
                             '<span class="stat-total">전체 <span class="num">' + total + '</span>회</span>' +
-                            '<span class="stat-win">승 <span class="num">' + hit + '</span>회</span>' +
-                            '<span class="stat-lose">패 <span class="num">' + losses + '</span>회</span>' +
+                            '<span class="stat-win">승 <span class="num">' + hit30 + '</span>회</span>' +
+                            '<span class="stat-lose">패 <span class="num">' + losses30 + '</span>회</span>' +
                             (jokerCount > 0 ? '<span class="stat-joker">조커 <span class="num">' + jokerCount + '</span>회</span>' : '') +
-                            (countForPct > 0 ? '<span class="stat-rate ' + rateClass + '">승률 ' + hitPct + '%</span>' : '') +
+                            (count30 > 0 ? '<span class="stat-rate ' + rateClass30 + '">승률 ' + hitPct30 + '%</span>' : '') +
                             '</div>' +
-                            '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 메인=서버 최근 100회 · 계산기=해당 계산기 실행 중 쌓인 기록</div>';
+                            '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 메인=서버 최근 100회 · 승률/경고=최근 30회 기준</div>';
                         let blendTableBlock = '';
                         if (blendData.newProb != null) {
                             var row15 = blendData.p15 != null ? (Number(blendData.p15).toFixed(1) + '%') : '-';
@@ -2905,7 +2926,7 @@ RESULTS_HTML = '''
                                     const rowClass = pctNum >= 60 ? 'high' : pctNum >= 50 ? 'mid' : 'low';
                                     return '<tr><td>' + s.label + '</td><td>' + s.total + '회</td><td>' + s.wins + '승</td><td class="stat-rate ' + rowClass + '">' + s.pct + '%</td></tr>';
                                 }).join('');
-                                probBucketStatsDiv.innerHTML = '<div class="prob-bucket-wrap"><div style="margin-bottom:4px;color:#888;font-weight:bold">확률 구간별 승률</div><table class="main-streak-table prob-bucket-table"><thead><tr><th>구간</th><th>횟수</th><th>승</th><th>승률</th></tr></thead><tbody>' + bucketRows + '</tbody></table></div>';
+                                probBucketStatsDiv.innerHTML = '<div class="prob-bucket-wrap"><table><thead><tr><th>구간</th><th>횟수</th><th>승</th><th>승률</th></tr></thead><tbody>' + bucketRows + '</tbody></table><p class="prob-bucket-title">확률 구간별 승률</p></div>';
                             } else {
                                 probBucketStatsDiv.innerHTML = '';
                             }
@@ -2918,7 +2939,7 @@ RESULTS_HTML = '''
                             noticeBlock = '<div class="prediction-notice' + (lowWinRate && !flowAdvice ? ' danger' : '') + '">' + notices.join(' &nbsp; · &nbsp; ') + '</div>';
                         }
                         const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:clamp(0.75em,1.8vw,0.85em)">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
-                        predDiv.innerHTML = statsBlock + streakTableBlock + noticeBlock + extraLine;
+                        predDiv.innerHTML = noticeBlock + statsBlock + streakTableBlock + extraLine;
                     }
                     
                     // 가상 배팅 계산기 1,2,3 요약·상세 갱신 (오류 시에도 메인 화면은 유지)
