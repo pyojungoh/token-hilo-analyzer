@@ -240,10 +240,10 @@ def save_game_result(game_data):
 
 
 def save_prediction_record(round_num, predicted, actual, probability=None, pick_color=None):
-    """시스템 예측 기록 1건 저장 (round 기준 중복 시 업데이트). 어디서 접속해도 동일 기록 유지."""
+    """시스템 예측 기록 1건 저장. statement_timeout으로 먹통 방지."""
     if not DB_AVAILABLE or not DATABASE_URL:
         return False
-    conn = get_db_connection()
+    conn = get_db_connection(statement_timeout_sec=5)
     if not conn:
         return False
     try:
@@ -271,12 +271,12 @@ def save_prediction_record(round_num, predicted, actual, probability=None, pick_
 _calc_state_memory = {}
 
 def get_calc_state(session_id):
-    """계산기 세션 상태 조회. 없으면 None. 반환: { '1': { running, started_at, history, duration_limit, use_duration_limit }, ... }"""
+    """계산기 세션 상태 조회. 없으면 None. statement_timeout으로 먹통 방지."""
     if not session_id:
         return None
     sk = str(session_id)[:64]
     if DB_AVAILABLE and DATABASE_URL:
-        conn = get_db_connection()
+        conn = get_db_connection(statement_timeout_sec=5)
         if conn:
             try:
                 cur = conn.cursor()
@@ -296,13 +296,13 @@ def get_calc_state(session_id):
 
 
 def save_calc_state(session_id, state_dict):
-    """계산기 세션 상태 저장. state_dict = { '1': { running, started_at, history, duration_limit, use_duration_limit }, ... }"""
+    """계산기 세션 상태 저장. statement_timeout으로 먹통 방지."""
     if not session_id:
         return False
     sk = str(session_id)[:64]
     _calc_state_memory[sk] = state_dict
     if DB_AVAILABLE and DATABASE_URL:
-        conn = get_db_connection()
+        conn = get_db_connection(statement_timeout_sec=5)
         if conn:
             try:
                 cur = conn.cursor()
@@ -670,7 +670,7 @@ game_data_cache = None
 streaks_cache = None
 results_cache = None
 last_update_time = 0
-CACHE_TTL = 1000
+CACHE_TTL = 2000
 
 # 게임 상태 (Socket.IO 제거 후 기본값만 사용)
 current_status_data = {
@@ -4081,29 +4081,50 @@ def _build_results_payload():
         return None
 
 
+_results_refresh_lock = threading.Lock()
+_results_refreshing = False
+
+def _refresh_results_background():
+    """백그라운드에서 캐시 갱신 (요청 스레드 블로킹 없음)"""
+    global results_cache, last_update_time, _results_refreshing
+    if not _results_refresh_lock.acquire(blocking=False):
+        return
+    _results_refreshing = True
+    try:
+        payload = _build_results_payload()
+        if payload is not None:
+            results_cache = payload
+            last_update_time = time.time() * 1000
+    except Exception as e:
+        print(f"[API] 백그라운드 갱신 오류: {str(e)[:150]}")
+    finally:
+        _results_refreshing = False
+        try:
+            _results_refresh_lock.release()
+        except Exception:
+            pass
+
 @app.route('/api/results', methods=['GET'])
 def get_results():
-    """경기 결과 API - 전체 로직을 스레드+18초 타임아웃으로 감싸 요청 스레드 먹통 방지"""
+    """경기 결과 API - 요청 스레드는 절대 블로킹 안 함. 캐시 있으면 즉시 반환, 없으면 이전 캐시/빈값 반환 후 백그라운드 갱신."""
     try:
         global results_cache, last_update_time
         current_time = time.time() * 1000
         if results_cache and (current_time - last_update_time) < CACHE_TTL:
             return jsonify(results_cache)
-        ref = [None]
-        t = threading.Thread(target=lambda: ref.__setitem__(0, _build_results_payload()), daemon=True)
-        t.start()
-        t.join(timeout=18)
-        if ref[0] is not None:
-            results_cache = ref[0]
-            last_update_time = current_time
-            return jsonify(results_cache)
+        # 캐시 만료 시: 즉시 응답(이전 캐시 또는 빈값), 갱신은 백그라운드에서만 (join 없음)
         if results_cache:
+            if not _results_refreshing:
+                threading.Thread(target=_refresh_results_background, daemon=True).start()
             return jsonify(results_cache)
+        # 캐시가 한 번도 없으면 갱신 중이 아닐 때만 백그라운드 갱신 후 빈값 즉시 반환
+        if not _results_refreshing:
+            threading.Thread(target=_refresh_results_background, daemon=True).start()
         return jsonify({
             'results': [],
             'count': 0,
             'timestamp': datetime.now().isoformat(),
-            'error': 'timeout',
+            'error': 'loading',
             'prediction_history': []
         }), 200
     except Exception as e:
@@ -4221,7 +4242,7 @@ def api_current_pick():
         if not bet_int or not DB_AVAILABLE or not DATABASE_URL:
             return jsonify(empty_pick if request.method == 'GET' else {'ok': False}), 200
         if request.method == 'GET':
-            conn = get_db_connection()
+            conn = get_db_connection(statement_timeout_sec=5)
             if not conn:
                 return jsonify(empty_pick), 200
             out = bet_int.get_current_pick(conn)
@@ -4233,7 +4254,7 @@ def api_current_pick():
         round_num = data.get('round')
         probability = data.get('probability')
         suggested_amount = data.get('suggestedAmount') or data.get('suggested_amount')
-        conn = get_db_connection()
+        conn = get_db_connection(statement_timeout_sec=5)
         if not conn:
             return jsonify({'ok': False}), 200
         ensure_current_pick_table(conn)
