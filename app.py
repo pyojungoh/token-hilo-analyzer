@@ -2497,18 +2497,53 @@ RESULTS_HTML = '''
                         jj, jk, kj, kk, jungDenom, kkukDenom
                     };
                 }
+                var blendData = { p15: null, p30: null, p100: null, newProb: null };
                 const statsDiv = document.getElementById('graph-stats');
                 if (statsDiv && graphValues.length >= 2) {
                     const full = calcTransitions(graphValues);
                     const recent30 = calcTransitions(graphValues.slice(0, 30));
                     const short15 = graphValues.length >= 15 ? calcTransitions(graphValues.slice(0, 15)) : null;
                     const fmt = (p, n, d) => d > 0 ? p + '% (' + n + '/' + d + ')' : '-';
+                    // 예측 이력으로 15/30/100 구간 반영값 계산 (표 맨 아랫줄 + 확률 30% 반영용)
+                    const validHistBlend = predictionHistory.filter(function(h) { return h && typeof h === 'object'; });
+                    const outcomesNewestFirst = validHistBlend.filter(function(h) { return h.actual !== 'joker'; }).map(function(h) { return h.actual === '정'; }).reverse();
+                    if (outcomesNewestFirst.length >= 2) {
+                        function transCounts(arr) {
+                            var jj = 0, jk = 0, kj = 0, kk = 0;
+                            for (var i = 0; i < arr.length - 1; i++) {
+                                var a = arr[i], b = arr[i + 1];
+                                if (a === true && b === true) jj++; else if (a === true && b === false) jk++; else if (a === false && b === true) kj++; else if (a === false && b === false) kk++;
+                            }
+                            return { jj: jj, jk: jk, kj: kj, kk: kk, jungDenom: jj + jk, kkukDenom: kk + kj };
+                        }
+                        function probFromTrans(t, lastBool) {
+                            if (lastBool === true && t.jungDenom > 0) { var sameP = t.jj / t.jungDenom, changeP = t.jk / t.jungDenom; return { sameP: sameP, changeP: changeP }; }
+                            if (lastBool === false && t.kkukDenom > 0) { var sameP = t.kk / t.kkukDenom, changeP = t.kj / t.kkukDenom; return { sameP: sameP, changeP: changeP }; }
+                            return { sameP: 0.5, changeP: 0.5 };
+                        }
+                        var lastBool = outcomesNewestFirst[0];
+                        var s15 = outcomesNewestFirst.slice(0, Math.min(15, outcomesNewestFirst.length));
+                        var s30 = outcomesNewestFirst.slice(0, Math.min(30, outcomesNewestFirst.length));
+                        var s100 = outcomesNewestFirst.slice(0, Math.min(100, outcomesNewestFirst.length));
+                        var t15 = transCounts(s15), t30 = transCounts(s30), t100 = transCounts(s100);
+                        var r15 = probFromTrans(t15, lastBool), r30 = probFromTrans(t30, lastBool), r100 = probFromTrans(t100, lastBool);
+                        blendData.p15 = s15.length >= 2 ? (r15.sameP >= r15.changeP ? r15.sameP : r15.changeP) * 100 : null;
+                        blendData.p30 = s30.length >= 2 ? (r30.sameP >= r30.changeP ? r30.sameP : r30.changeP) * 100 : null;
+                        blendData.p100 = s100.length >= 2 ? (r100.sameP >= r100.changeP ? r100.sameP : r100.changeP) * 100 : null;
+                        var w15 = s15.length >= 2 ? 0.5 : 0, w30 = s30.length >= 2 ? 0.3 : 0, w100 = s100.length >= 2 ? 0.2 : 0;
+                        var denom = w15 + w30 + w100;
+                        if (denom > 0) blendData.newProb = (w15 * (blendData.p15 || 50) + w30 * (blendData.p30 || 50) + w100 * (blendData.p100 || 50)) / denom;
+                    }
+                    var rowBlend15 = blendData.p15 != null ? Number(blendData.p15).toFixed(1) + '%' : '-';
+                    var rowBlend30 = blendData.p30 != null ? Number(blendData.p30).toFixed(1) + '%' : '-';
+                    var rowBlend100 = blendData.p100 != null ? Number(blendData.p100).toFixed(1) + '%' : '-';
                     statsDiv.innerHTML = '<table><thead><tr><th></th><th>최근 15회</th><th>최근 30회</th><th>전체</th></tr></thead><tbody>' +
                         '<tr><td><span class="jung-next">정 ↑</span></td><td>' + (short15 ? fmt(short15.pJung, short15.jj, short15.jungDenom) : '-') + '</td><td>' + fmt(recent30.pJung, recent30.jj, recent30.jungDenom) + '</td><td>' + fmt(full.pJung, full.jj, full.jungDenom) + '</td></tr>' +
                         '<tr><td><span class="kkuk-next">꺽 ↑</span></td><td>' + (short15 ? fmt(short15.pKkuk, short15.kk, short15.kkukDenom) : '-') + '</td><td>' + fmt(recent30.pKkuk, recent30.kk, recent30.kkukDenom) + '</td><td>' + fmt(full.pKkuk, full.kk, full.kkukDenom) + '</td></tr>' +
                         '<tr><td><span class="jung-kkuk">← 꺽</span></td><td>' + (short15 ? fmt(short15.pJungToKkuk, short15.jk, short15.jungDenom) : '-') + '</td><td>' + fmt(recent30.pJungToKkuk, recent30.jk, recent30.jungDenom) + '</td><td>' + fmt(full.pJungToKkuk, full.jk, full.jungDenom) + '</td></tr>' +
                         '<tr><td><span class="kkuk-jung">← 정</span></td><td>' + (short15 ? fmt(short15.pKkukToJung, short15.kj, short15.kkukDenom) : '-') + '</td><td>' + fmt(recent30.pKkukToJung, recent30.kj, recent30.kkukDenom) + '</td><td>' + fmt(full.pKkukToJung, full.kj, full.kkukDenom) + '</td></tr>' +
-                        '</tbody></table><p class="graph-stats-note">※ 단기(15회) vs 장기(30회) 비교로 흐름 전환 감지</p>';
+                        '<tr><td><span style="color:#888">반영(50/30/20)</span></td><td>' + rowBlend15 + '</td><td>' + rowBlend30 + '</td><td>' + rowBlend100 + '</td></tr>' +
+                        '</tbody></table><p class="graph-stats-note">※ 단기(15회) vs 장기(30회) 비교로 흐름 전환 감지 · 아랫줄=예측이력 15/30/100회 반영(30% 적용)</p>';
                     
                     // 회차: 비교·저장은 전체 gameID(11416052 등), 표시만 뒤 3자리(052). 숫자 높을수록 최신이므로 전체로 비교해야 035가 999보다 최신으로 인식됨
                     function fullRoundFromGameID(g) {
@@ -2757,42 +2792,8 @@ RESULTS_HTML = '''
                         const total = inBucket.length;
                         return { label: b.min + '~' + (b.max === 101 ? '100' : b.max) + '%', total: total, wins: wins, pct: total > 0 ? (100 * wins / total).toFixed(1) : '-' };
                     }).filter(function(s) { return s.total > 0; });
-                    // 15/30/100 구간 반영(50/30/20) + 기존 확률에 30% 반영
-                    const outcomesNewestFirst = validHist.filter(function(h) { return h.actual !== 'joker'; }).map(function(h) { return h.actual === '정'; }).reverse();
-                    function transCounts(arr) {
-                        var jj = 0, jk = 0, kj = 0, kk = 0;
-                        for (var i = 0; i < arr.length - 1; i++) {
-                            var a = arr[i], b = arr[i + 1];
-                            if (a === true && b === true) jj++; else if (a === true && b === false) jk++; else if (a === false && b === true) kj++; else if (a === false && b === false) kk++;
-                        }
-                        return { jj: jj, jk: jk, kj: kj, kk: kk, jungDenom: jj + jk, kkukDenom: kk + kj };
-                    }
-                    function probFromTrans(t, lastBool) {
-                        if (lastBool === true && t.jungDenom > 0) { var sameP = t.jj / t.jungDenom, changeP = t.jk / t.jungDenom; return { sameP: sameP, changeP: changeP }; }
-                        if (lastBool === false && t.kkukDenom > 0) { var sameP = t.kk / t.kkukDenom, changeP = t.kj / t.kkukDenom; return { sameP: sameP, changeP: changeP }; }
-                        return { sameP: 0.5, changeP: 0.5 };
-                    }
-                    var blendData = { p15: null, p30: null, p100: null, newProb: null };
-                    if (outcomesNewestFirst.length >= 2 && !is15Joker) {
-                        var lastBool = outcomesNewestFirst[0];
-                        var s15 = outcomesNewestFirst.slice(0, Math.min(15, outcomesNewestFirst.length));
-                        var s30 = outcomesNewestFirst.slice(0, Math.min(30, outcomesNewestFirst.length));
-                        var s100 = outcomesNewestFirst.slice(0, Math.min(100, outcomesNewestFirst.length));
-                        var t15 = transCounts(s15), t30 = transCounts(s30), t100 = transCounts(s100);
-                        var r15 = probFromTrans(t15, lastBool), r30 = probFromTrans(t30, lastBool), r100 = probFromTrans(t100, lastBool);
-                        var prob15 = (r15.sameP >= r15.changeP ? r15.sameP : r15.changeP) * 100;
-                        var prob30 = (r30.sameP >= r30.changeP ? r30.sameP : r30.changeP) * 100;
-                        var prob100 = (r100.sameP >= r100.changeP ? r100.sameP : r100.changeP) * 100;
-                        blendData.p15 = s15.length >= 2 ? prob15 : null;
-                        blendData.p30 = s30.length >= 2 ? prob30 : null;
-                        blendData.p100 = s100.length >= 2 ? prob100 : null;
-                        var w15 = s15.length >= 2 ? 0.5 : 0, w30 = s30.length >= 2 ? 0.3 : 0, w100 = s100.length >= 2 ? 0.2 : 0;
-                        var denom = w15 + w30 + w100;
-                        if (denom > 0) {
-                            blendData.newProb = (w15 * (blendData.p15 || 50) + w30 * (blendData.p30 || 50) + w100 * (blendData.p100 || 50)) / denom;
-                            predProb = 0.7 * predProb + 0.3 * blendData.newProb;
-                        }
-                    }
+                    // 기존 확률에 30% 반영 (blendData는 전이 확률 표에서 계산됨)
+                    if (blendData && blendData.newProb != null && !is15Joker) predProb = 0.7 * predProb + 0.3 * blendData.newProb;
                     const lastEntry = validHist.length > 0 ? validHist[validHist.length - 1] : null;
                     const lastIsWin = lastEntry && lastEntry.actual !== 'joker' && lastEntry.predicted === lastEntry.actual;
                     const shouldShowWinEffect = lastIsWin && lastEntry && lastWinEffectRound !== lastEntry.round;
@@ -2897,7 +2898,7 @@ RESULTS_HTML = '''
                             noticeBlock = '<div class="prediction-notice' + (lowWinRate && !flowAdvice ? ' danger' : '') + '">' + notices.join(' &nbsp; · &nbsp; ') + '</div>';
                         }
                         const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:clamp(0.75em,1.8vw,0.85em)">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
-                        predDiv.innerHTML = statsBlock + blendTableBlock + streakTableBlock + probBucketBlock + noticeBlock + extraLine;
+                        predDiv.innerHTML = statsBlock + streakTableBlock + probBucketBlock + noticeBlock + extraLine;
                     }
                     
                     // 가상 배팅 계산기 1,2,3 요약·상세 갱신 (오류 시에도 메인 화면은 유지)
