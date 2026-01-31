@@ -1546,7 +1546,8 @@ RESULTS_HTML = '''
         .calc-dropdown-header { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 10px; background: #333; cursor: pointer; }
         .calc-dropdown-header .calc-title { font-weight: bold; color: #81c784; flex-shrink: 0; }
         .calc-dropdown-header .calc-summary { flex: 1; font-size: 0.85em; color: #bbb; min-width: 0; }
-        .calc-summary-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 20px; align-items: baseline; }
+        .calc-summary-grid { display: grid; grid-template-columns: auto auto; gap: 4px 4px; align-items: baseline; }
+        .calc-summary-grid .label { margin-right: 4px; }
         .calc-summary-grid .label { color: #888; font-size: 0.9em; white-space: nowrap; }
         .calc-summary-grid .value { color: #ddd; font-weight: 500; text-align: right; min-width: 0; }
         .calc-summary-grid .value.profit-plus { color: #81c784; }
@@ -1579,11 +1580,16 @@ RESULTS_HTML = '''
         .calc-round-table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
         .calc-round-table th, .calc-round-table td { padding: 4px 6px; border: 1px solid #444; text-align: center; }
         .calc-round-table th { background: #333; color: #81c784; }
-        .calc-round-table .win { color: #81c784; }
-        .calc-round-table .lose { color: #e57373; }
+        .calc-round-table td.pick-jung { background: rgba(76, 175, 80, 0.25); color: #1b5e20; }
+        .calc-round-table td.pick-kkuk { background: rgba(229, 115, 115, 0.35); color: #b71c1c; }
+        .calc-round-table td.result-jung { background: rgba(76, 175, 80, 0.25); }
+        .calc-round-table td.result-kkuk { background: rgba(229, 115, 115, 0.35); }
+        .calc-round-table td.result-joker { background: rgba(100, 181, 246, 0.2); }
+        .calc-round-table .win { color: #c62828; font-weight: 600; }
+        .calc-round-table .lose { color: #111; font-weight: 500; }
         .calc-round-table .joker { color: #64b5f6; }
         .calc-round-table .skip { color: #666; }
-        .calc-streak { margin-bottom: 4px; word-break: break-all; }
+        .calc-streak { margin-bottom: 4px; word-break: break-all; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35; }
         .calc-streak .w { color: #81c784; }
         .calc-streak .l { color: #e57373; }
         .calc-streak .j { color: #64b5f6; }
@@ -2443,9 +2449,9 @@ RESULTS_HTML = '''
                                 // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
                                 let defenseBet = 0;
                                 if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
-                                calcState[id].history.push({ predicted: pred, actual: 'joker' });
+                                calcState[id].history.push({ predicted: pred, actual: 'joker', round: lastPrediction.round });
                                 if (calcState.defense.running && calcState.defense.linked_calc_id === id) {
-                                    calcState.defense.history.push({ predicted: pred === '정' ? '꺽' : '정', actual: 'joker', betAmount: defenseBet });
+                                    calcState.defense.history.push({ predicted: pred === '정' ? '꺽' : '정', actual: 'joker', betAmount: defenseBet, round: lastPrediction.round });
                                     updateCalcSummary(DEFENSE_ID);
                                     updateCalcDetail(DEFENSE_ID);
                                 }
@@ -2462,9 +2468,9 @@ RESULTS_HTML = '''
                                 // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
                                 let defenseBet = 0;
                                 if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
-                                calcState[id].history.push({ predicted: pred, actual: actual });
+                                calcState[id].history.push({ predicted: pred, actual: actual, round: lastPrediction.round });
                                 if (calcState.defense.running && calcState.defense.linked_calc_id === id) {
-                                    calcState.defense.history.push({ predicted: pred === '정' ? '꺽' : '정', actual: actual, betAmount: defenseBet });
+                                    calcState.defense.history.push({ predicted: pred === '정' ? '꺽' : '정', actual: actual, betAmount: defenseBet, round: lastPrediction.round });
                                     updateCalcSummary(DEFENSE_ID);
                                     updateCalcDetail(DEFENSE_ID);
                                 }
@@ -2967,18 +2973,26 @@ RESULTS_HTML = '''
                     const h = usedHist[i];
                     const bet = (h && typeof h.betAmount === 'number' ? h.betAmount : 0) || (h && parseInt(h.betAmount, 10)) || 0;
                     if (!h || (typeof h.predicted === 'undefined' && typeof h.actual === 'undefined')) continue;
-                    if (bet <= 0) { rows.push({ idx: rows.length + 1, pick: '-', result: '-', outcome: '－' }); continue; }
+                    const roundStr = h.round != null ? String(h.round).slice(-3) : '-';
+                    if (bet <= 0) { rows.push({ roundStr: roundStr, pick: '-', pickClass: '', result: '-', resultClass: '', outcome: '－' }); continue; }
                     const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
                     const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
-                    rows.push({ idx: rows.length + 1, pick: h.predicted === '정' ? '정' : '꺽', result: res, outcome: outcome });
+                    const pickVal = h.predicted === '정' ? '정' : '꺽';
+                    const pickClass = pickVal === '정' ? 'pick-jung' : 'pick-kkuk';
+                    const resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
+                    rows.push({ roundStr: roundStr, pick: pickVal, pickClass: pickClass, result: res, resultClass: resultClass, outcome: outcome });
                 }
             } else {
                 for (let i = usedHist.length - 1; i >= 0; i--) {
                     const h = usedHist[i];
                     if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                    const roundStr = h.round != null ? String(h.round).slice(-3) : '-';
                     const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
                     const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
-                    rows.push({ idx: rows.length + 1, pick: h.predicted === '정' ? '정' : '꺽', result: res, outcome: outcome });
+                    const pickVal = h.predicted === '정' ? '정' : '꺽';
+                    const pickClass = pickVal === '정' ? 'pick-jung' : 'pick-kkuk';
+                    const resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
+                    rows.push({ roundStr: roundStr, pick: pickVal, pickClass: pickClass, result: res, resultClass: resultClass, outcome: outcome });
                 }
             }
             const displayRows = rows.slice(0, 15);
@@ -2986,10 +3000,10 @@ RESULTS_HTML = '''
                 if (displayRows.length === 0) {
                     tableWrap.innerHTML = '';
                 } else {
-                    let tbl = '<table class="calc-round-table"><thead><tr><th>#</th><th>픽(걸은 것)</th><th>결과(실제)</th><th>승패</th></tr></thead><tbody>';
+                    let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽(걸은 것)</th><th>결과(실제)</th><th>승패</th></tr></thead><tbody>';
                     displayRows.forEach(function(row) {
                         const outClass = row.outcome === '승' ? 'win' : row.outcome === '패' ? 'lose' : row.outcome === '조' ? 'joker' : 'skip';
-                        tbl += '<tr><td>' + row.idx + '</td><td>' + row.pick + '</td><td>' + row.result + '</td><td class="' + outClass + '">' + row.outcome + '</td></tr>';
+                        tbl += '<tr><td>' + row.roundStr + '</td><td class="' + row.pickClass + '">' + row.pick + '</td><td class="' + row.resultClass + '">' + row.result + '</td><td class="' + outClass + '">' + row.outcome + '</td></tr>';
                     });
                     tbl += '</tbody></table>';
                     tableWrap.innerHTML = tbl;
