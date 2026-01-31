@@ -2383,6 +2383,7 @@ RESULTS_HTML = '''
                 var blendData = { p15: null, p30: null, p100: null, newProb: null };
                 const statsDiv = document.getElementById('graph-stats');
                 if (statsDiv && graphValues.length >= 2) {
+                    let symmetryLineData = null;
                     const full = calcTransitions(graphValues);
                     const recent30 = calcTransitions(graphValues.slice(0, 30));
                     const short15 = graphValues.length >= 15 ? calcTransitions(graphValues.slice(0, 15)) : null;
@@ -2625,7 +2626,40 @@ RESULTS_HTML = '''
                         flowAdvice = '확률 급상승 구간(방향 불명) → 보수적 배팅 권장';
                     }
                     
-                    // 전이 확률·예측·lastPrediction: 15번 카드가 조커가 아닐 때만
+                    // 20열 기준 좌우대칭·줄 데이터 (예측픽 보정 + 아래 표에 사용)
+                    var arr20 = (graphValues && graphValues.filter(function(v) { return v === true || v === false; }).slice(0, 20)) || [];
+                    if (arr20.length >= 20) {
+                        function getRunLengths(a) {
+                            var r = [], cur = null, c = 0, i;
+                            for (i = 0; i < a.length; i++) {
+                                if (a[i] === cur) c++;
+                                else { if (cur !== null) r.push(c); cur = a[i]; c = 1; }
+                            }
+                            if (cur !== null) r.push(c);
+                            return r;
+                        }
+                        var symCount = 0;
+                        for (var si = 0; si < 10; si++) { if (arr20[si] === arr20[19 - si]) symCount++; }
+                        var left10 = arr20.slice(0, 10), right10 = arr20.slice(10, 20);
+                        var leftRuns = getRunLengths(left10), rightRuns = getRunLengths(right10);
+                        var avgL = leftRuns.length ? leftRuns.reduce(function(s, x) { return s + x; }, 0) / leftRuns.length : 0;
+                        var avgR = rightRuns.length ? rightRuns.reduce(function(s, x) { return s + x; }, 0) / rightRuns.length : 0;
+                        var lineDiff = Math.abs(avgL - avgR);
+                        symmetryLineData = {
+                            symmetryPct: symCount / 10 * 100,
+                            avgLeft: avgL, avgRight: avgR,
+                            lineSimilarityPct: Math.max(0, 100 - Math.min(100, lineDiff * 25)),
+                            leftLineCount: leftRuns.length,
+                            rightLineCount: rightRuns.length
+                        };
+                    }
+                    
+                    // 예측픽 합산 공식: (유지확률×줄가중치) vs (바뀜확률×퐁당가중치) → 정규화 후 큰 쪽이 예측.
+                    // 가중치(lineW,pongW) 구성: ①최근15회 줄/퐁당% ②흐름전환(줄강/퐁당강) ±0.25 ③20열(줄개수 ±0.15, 대칭도 +0.05 또는 ×0.95) ④30회패턴(chunk/scatter/twoOne) → 합산 후 정규화.
+                    // 20열 반영 비중(조절 가능): 줄개수 보정 +0.15, 대칭도 높을 때 +0.05, 낮을 때 ×0.95.
+                    var SYM_LINE_PONG_BOOST = 0.15;   // 20열 줄개수: 적으면 lineW, 많으면 pongW에 더하는 값 (0~0.2 권장)
+                    var SYM_SAME_BOOST = 0.05;        // 20열 대칭도>=70%일 때 lineW에 더하는 값
+                    var SYM_LOW_MUL = 0.95;           // 20열 대칭도<=30%일 때 보수적: lineW,pongW 둘 다 곱하는 값
                     let predict = '-', predProb = 0, colorToPick = '-', colorClass = 'black';
                     if (!is15Joker) {
                         let Pjung = 0.5, Pkkuk = 0.5;
@@ -2641,6 +2675,13 @@ RESULTS_HTML = '''
                         let lineW = linePct / 100, pongW = pongPct / 100;
                         if (flowState === 'line_strong') { lineW = Math.min(1, lineW + 0.25); pongW = Math.max(0, 1 - lineW); }
                         else if (flowState === 'pong_strong') { pongW = Math.min(1, pongW + 0.25); lineW = Math.max(0, 1 - pongW); }
+                        if (symmetryLineData) {
+                            var lc = symmetryLineData.leftLineCount;
+                            if (lc <= 3) { lineW = Math.min(1, lineW + SYM_LINE_PONG_BOOST); pongW = Math.max(0, 1 - lineW); }
+                            else if (lc >= 5) { pongW = Math.min(1, pongW + SYM_LINE_PONG_BOOST); lineW = Math.max(0, 1 - pongW); }
+                            if (symmetryLineData.symmetryPct >= 70) lineW = Math.min(1, lineW + SYM_SAME_BOOST);
+                            else if (symmetryLineData.symmetryPct <= 30) { lineW *= SYM_LOW_MUL; pongW *= SYM_LOW_MUL; }
+                        }
                         lineW += chunkIdx * 0.2 + twoOneIdx * 0.1;
                         pongW += scatterIdx * 0.2;
                         const totalW = lineW + pongW;
@@ -2874,31 +2915,15 @@ RESULTS_HTML = '''
                         var symmetryLineBody = document.getElementById('symmetry-line-collapse-body');
                         var symmetryLineCollapse = document.getElementById('symmetry-line-collapse');
                         if (symmetryLineBody && symmetryLineCollapse) {
-                            var arr20 = (graphValues && graphValues.filter(function(v) { return v === true || v === false; }).slice(0, 20)) || [];
-                            if (arr20.length >= 20) {
-                                var symCount = 0;
-                                for (var si = 0; si < 10; si++) { if (arr20[si] === arr20[19 - si]) symCount++; }
-                                var symmetryPct = (symCount / 10 * 100).toFixed(1);
-                                function getRunLengths(a) {
-                                    var r = [], cur = null, c = 0, i;
-                                    for (i = 0; i < a.length; i++) {
-                                        if (a[i] === cur) c++;
-                                        else { if (cur !== null) r.push(c); cur = a[i]; c = 1; }
-                                    }
-                                    if (cur !== null) r.push(c);
-                                    return r;
-                                }
-                                var left10 = arr20.slice(0, 10), right10 = arr20.slice(10, 20);
-                                var leftRuns = getRunLengths(left10), rightRuns = getRunLengths(right10);
-                                var avgLeft = leftRuns.length ? (leftRuns.reduce(function(s, x) { return s + x; }, 0) / leftRuns.length) : 0;
-                                var avgRight = rightRuns.length ? (rightRuns.reduce(function(s, x) { return s + x; }, 0) / rightRuns.length) : 0;
-                                var lineDiff = Math.abs(avgLeft - avgRight);
-                                var lineSimilarityPct = (100 - Math.min(100, lineDiff * 25)).toFixed(1);
+                            if (symmetryLineData) {
+                                var s = symmetryLineData;
                                 symmetryLineBody.innerHTML = '<table class="prob-bucket-table"><thead><tr><th>항목</th><th>값</th><th>비고</th></tr></thead><tbody>' +
-                                    '<tr><td>좌우 대칭도</td><td>' + symmetryPct + '%</td><td>1~10열 vs 11~20열 대칭 매칭(10쌍)</td></tr>' +
-                                    '<tr><td>왼쪽(1~10열) 평균 줄길이</td><td>' + avgLeft.toFixed(2) + '</td><td>연속 정/꺽 평균</td></tr>' +
-                                    '<tr><td>오른쪽(11~20열) 평균 줄길이</td><td>' + avgRight.toFixed(2) + '</td><td>연속 정/꺽 평균</td></tr>' +
-                                    '<tr><td>줄 유사도</td><td>' + lineSimilarityPct + '%</td><td>양쪽 평균 줄길이 차이 반영</td></tr></tbody></table>';
+                                    '<tr><td>좌우 대칭도</td><td>' + s.symmetryPct.toFixed(1) + '%</td><td>1~10열 vs 11~20열 대칭 매칭(10쌍)</td></tr>' +
+                                    '<tr><td>왼쪽(1~10열) 줄 개수</td><td>' + s.leftLineCount + '</td><td>적을수록 긴 줄(추세), 많을수록 퐁당</td></tr>' +
+                                    '<tr><td>오른쪽(11~20열) 줄 개수</td><td>' + s.rightLineCount + '</td><td>적을수록 긴 줄(추세), 많을수록 퐁당</td></tr>' +
+                                    '<tr><td>왼쪽(1~10열) 평균 줄길이</td><td>' + s.avgLeft.toFixed(2) + '</td><td>연속 정/꺽 평균</td></tr>' +
+                                    '<tr><td>오른쪽(11~20열) 평균 줄길이</td><td>' + s.avgRight.toFixed(2) + '</td><td>연속 정/꺽 평균</td></tr>' +
+                                    '<tr><td>줄 유사도</td><td>' + s.lineSimilarityPct.toFixed(1) + '%</td><td>양쪽 평균 줄길이 차이 반영</td></tr></tbody></table>';
                                 symmetryLineCollapse.style.display = '';
                             } else {
                                 symmetryLineBody.innerHTML = '<p style="color:#888;font-size:0.9em">최근 20열(정/꺽) 데이터가 부족합니다.</p>';
