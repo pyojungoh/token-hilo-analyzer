@@ -3804,6 +3804,12 @@ BETTING_HELPER_HTML = '''<!DOCTYPE html>
 <body>
     <h1>배팅 연동 테스트</h1>
     <p style="color:#888;font-size:0.9em;">메인 분석기에서 예측 픽이 갱신되면 여기서 조회됩니다.</p>
+    <div class="card" style="background:#0f3460;border:1px solid #64b5f6;margin-bottom:16px;">
+        <strong style="color:#64b5f6;">보류가 계속될 때</strong>
+        <p style="margin:8px 0 0;font-size:0.9em;color:#aaa;">1) <strong>메인 분석기(<a href="/results" style="color:#64b5f6;">/results</a>) 탭을 반드시 열어 두세요.</strong> 이 탭만 있으면 픽이 서버에 저장되지 않습니다.<br>
+        2) 15번 카드가 <strong>조커</strong>인 회차는 의도적으로 보류입니다 (배팅하지 마세요).<br>
+        3) /results를 열어 두면, 15번 카드가 조커가 아닌 회차가 나올 때 RED 또는 BLACK이 여기 자동으로 뜹니다.</p>
+    </div>
     <h2>현재 예측 픽</h2>
     <div class="card" id="pick-card">
         <div id="pick-display" class="pick hold">—</div>
