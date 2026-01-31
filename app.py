@@ -2383,7 +2383,6 @@ RESULTS_HTML = '''
                 var blendData = { p15: null, p30: null, p100: null, newProb: null };
                 const statsDiv = document.getElementById('graph-stats');
                 if (statsDiv && graphValues && Array.isArray(graphValues) && graphValues.length >= 2) {
-                    try {
                     if (!Array.isArray(predictionHistory)) predictionHistory = [];
                     let symmetryLineData = null;
                     const full = calcTransitions(graphValues);
@@ -2951,10 +2950,6 @@ RESULTS_HTML = '''
                         }
                         const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:clamp(0.75em,1.8vw,0.85em)">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
                         predDiv.innerHTML = noticeBlock + statsBlock + streakTableBlock + extraLine;
-                    } catch (statsErr) {
-                        console.warn('Stats/prediction update error:', statsErr);
-                        if (statsDiv) statsDiv.innerHTML = '<p class="graph-stats-note">데이터를 불러오는 중 오류가 발생했습니다. 새로고침해 주세요.</p>';
-                    }
                     }
                     
                     // 가상 배팅 계산기 1,2,3 요약·상세 갱신 (오류 시에도 메인 화면은 유지)
