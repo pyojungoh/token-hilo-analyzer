@@ -177,22 +177,30 @@ def ensure_current_pick_table(conn):
         return False
 
 
-def get_db_connection():
-    """데이터베이스 연결 반환 (connect_timeout으로 먹통 방지)"""
+def get_db_connection(statement_timeout_sec=None):
+    """데이터베이스 연결 반환 (connect_timeout으로 먹통 방지). statement_timeout_sec 지정 시 쿼리 실행 시간 제한."""
     if not DB_AVAILABLE or not DATABASE_URL:
         return None
     try:
-        return psycopg2.connect(DATABASE_URL, connect_timeout=5)
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=5)
+        if statement_timeout_sec is not None and statement_timeout_sec > 0:
+            try:
+                cur = conn.cursor()
+                cur.execute("SET statement_timeout = %s", (str(int(statement_timeout_sec * 1000)),))
+                cur.close()
+            except Exception:
+                pass
+        return conn
     except Exception as e:
         print(f"[❌ 오류] 데이터베이스 연결 실패: {str(e)[:200]}")
         return None
 
 def save_game_result(game_data):
-    """게임 결과를 데이터베이스에 저장 (중복 체크)"""
+    """게임 결과를 데이터베이스에 저장 (중복 체크). statement_timeout으로 먹통 방지."""
     if not DB_AVAILABLE or not DATABASE_URL:
         return False
     
-    conn = get_db_connection()
+    conn = get_db_connection(statement_timeout_sec=3)
     if not conn:
         return False
     
@@ -317,10 +325,10 @@ def save_calc_state(session_id, state_dict):
 
 
 def get_prediction_history(limit=30):
-    """시스템 예측 기록 조회 (최신 N건, round 오름차순 = 과거→현재)."""
+    """시스템 예측 기록 조회 (최신 N건, round 오름차순 = 과거→현재). statement_timeout으로 먹통 방지."""
     if not DB_AVAILABLE or not DATABASE_URL:
         return []
-    conn = get_db_connection()
+    conn = get_db_connection(statement_timeout_sec=5)
     if not conn:
         return []
     try:
@@ -374,7 +382,7 @@ def calculate_and_save_color_matches(results):
     if len(results) < 16:
         return  # 최소 16개 필요
     
-    conn = get_db_connection()
+    conn = get_db_connection(statement_timeout_sec=10)
     if not conn:
         return
     
@@ -432,12 +440,37 @@ def calculate_and_save_color_matches(results):
             pass
 
 
+def get_color_matches_batch(conn, pairs):
+    """정/꺽 결과 일괄 조회 (동일 conn 사용, 먹통 방지). pairs: [(game_id, compare_game_id), ...]. 반환: {(gid, cgid): match_result}"""
+    if not conn or not pairs:
+        return {}
+    try:
+        cur = conn.cursor()
+        conditions = []
+        params = []
+        for gid, cgid in pairs:
+            conditions.append('(game_id = %s AND compare_game_id = %s)')
+            params.extend([str(gid), str(cgid)])
+        cur.execute(
+            'SELECT game_id, compare_game_id, match_result FROM color_matches WHERE ' + ' OR '.join(conditions),
+            params
+        )
+        out = {}
+        for row in cur.fetchall():
+            out[(str(row[0]), str(row[1]))] = row[2]
+        cur.close()
+        return out
+    except Exception as e:
+        print(f"[경고] get_color_matches_batch 오류: {str(e)[:100]}")
+        return {}
+
+
 def get_color_match(game_id, compare_game_id):
     """정/꺽 결과 조회 (단일)"""
     if not DB_AVAILABLE or not DATABASE_URL:
         return None
     
-    conn = get_db_connection()
+    conn = get_db_connection(statement_timeout_sec=5)
     if not conn:
         return None
     
@@ -465,11 +498,11 @@ def get_color_match(game_id, compare_game_id):
         return None
 
 def save_color_match(game_id, compare_game_id, match_result):
-    """정/꺽 결과 저장 (단일)"""
+    """정/꺽 결과 저장 (단일). statement_timeout으로 먹통 방지."""
     if not DB_AVAILABLE or not DATABASE_URL:
         return False
     
-    conn = get_db_connection()
+    conn = get_db_connection(statement_timeout_sec=3)
     if not conn:
         return False
     
@@ -508,24 +541,25 @@ def _sort_results_newest_first(results):
 
 
 def get_recent_results(hours=5):
-    """최근 N시간 데이터 조회 (정/꺽 결과 포함)"""
+    """최근 N시간 데이터 조회 (정/꺽 결과 포함). statement_timeout·LIMIT으로 먹통 방지."""
     if not DB_AVAILABLE or not DATABASE_URL:
         return []
     
-    conn = get_db_connection()
+    conn = get_db_connection(statement_timeout_sec=12)
     if not conn:
         return []
     
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # 최근 N시간 데이터 조회 (created_at 최신순 → 이후 gameID 기준 재정렬)
+        # 최근 N시간 데이터 조회, LIMIT 2000으로 과부하 방지
         cur.execute('''
-            SELECT game_id as "gameID", result, hi, lo, red, black, jqka, joker, 
+            SELECT game_id as "gameID", result, hi, lo, red, black, jqka, joker,
                    hash_value as hash, salt_value as salt
             FROM game_results
             WHERE created_at >= NOW() - (INTERVAL '1 hour' * %s)
             ORDER BY created_at DESC
+            LIMIT 2000
         ''', (int(hours),))
         
         results = []
@@ -543,32 +577,59 @@ def get_recent_results(hours=5):
                 'salt': row['salt'] or ''
             })
         
-        # 정/꺽 결과 계산 및 저장 (30개 이상일 때만)
         if len(results) >= 16:
             calculate_and_save_color_matches(results)
         
-        # 각 결과에 정/꺽 정보 추가
+        # 정/꺽 정보: 동일 conn으로 일괄 조회 (15회 개별 쿼리 제거)
+        pairs = []
+        pair_to_idx = {}
         for i in range(min(15, len(results))):
-            if i + 15 < len(results):
-                current_game_id = results[i].get('gameID')
-                compare_game_id = results[i + 15].get('gameID')
-                
-                # 조커 카드는 비교 불가
-                if results[i].get('joker') or results[i + 15].get('joker'):
-                    results[i]['colorMatch'] = None
+            if i + 15 >= len(results):
+                break
+            if results[i].get('joker') or results[i + 15].get('joker'):
+                results[i]['colorMatch'] = None
+                continue
+            gid = results[i].get('gameID')
+            cgid = results[i + 15].get('gameID')
+            if not gid or not cgid:
+                results[i]['colorMatch'] = None
+                continue
+            pairs.append((gid, cgid))
+            pair_to_idx[(gid, cgid)] = i
+        batch = get_color_matches_batch(conn, pairs)
+        for (gid, cgid), match_result in batch.items():
+            if (gid, cgid) in pair_to_idx:
+                results[pair_to_idx[(gid, cgid)]]['colorMatch'] = match_result
+        to_save = []
+        for (gid, cgid), idx in pair_to_idx.items():
+            if 'colorMatch' not in results[idx]:
+                current_color = parse_card_color(results[idx].get('result', ''))
+                compare_color = parse_card_color(results[idx + 15].get('result', ''))
+                if current_color is not None and compare_color is not None:
+                    results[idx]['colorMatch'] = (current_color == compare_color)
+                    to_save.append((gid, cgid, results[idx]['colorMatch']))
                 else:
-                    match_result = get_color_match(current_game_id, compare_game_id)
-                    results[i]['colorMatch'] = match_result
+                    results[idx]['colorMatch'] = None
+        if to_save:
+            try:
+                for gid, cgid, match_result in to_save:
+                    cur.execute('''
+                        INSERT INTO color_matches (game_id, compare_game_id, match_result)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (game_id, compare_game_id) DO UPDATE SET match_result = EXCLUDED.match_result
+                    ''', (gid, cgid, match_result))
+                conn.commit()
+            except Exception as e:
+                print(f"[경고] 정/꺽 일괄 저장 실패: {str(e)[:100]}")
         
         cur.close()
         conn.close()
-        # 규칙: 결과 순서는 gameID 기준 최신순. created_at 순서와 다를 수 있으므로 한 번 더 정렬
         return _sort_results_newest_first(results)
     except Exception as e:
         print(f"[❌ 오류] 게임 결과 조회 실패: {str(e)[:200]}")
         try:
             conn.close()
-        except:
+        except Exception:
             pass
         return []
 
@@ -904,10 +965,10 @@ def calculate_streaks(valid_games):
     return user_streaks
 
 def load_streaks_data():
-    """연승 데이터 로드"""
+    """연승 데이터 로드 (타임아웃으로 먹통 방지)"""
     try:
         url = f"{BASE_URL}/bet_result_log.csv?t={int(time.time() * 1000)}"
-        response = fetch_with_retry(url)
+        response = fetch_with_retry(url, timeout_sec=6)
         
         if not response:
             raise Exception("CSV 데이터 로드 실패")
@@ -4288,25 +4349,34 @@ def get_user_streak(user_id):
 
 @app.route('/api/refresh', methods=['POST'])
 def refresh_data():
-    """데이터 갱신"""
+    """데이터 갱신 (스레드+타임아웃으로 먹통 방지)"""
     global game_data_cache, streaks_cache, results_cache, last_update_time
     
-    game_data = load_game_data()
-    streaks_data = load_streaks_data()
-    results_data = load_results_data()
+    ref = [None, None, None]
+    def _do_refresh():
+        try:
+            ref[0] = load_game_data()
+            ref[1] = load_streaks_data()
+            ref[2] = load_results_data()
+        except Exception as e:
+            print(f"[api/refresh] 오류: {str(e)[:150]}")
+    t = threading.Thread(target=_do_refresh, daemon=True)
+    t.start()
+    t.join(timeout=15)
     
-    if game_data:
+    game_data, streaks_data, results_data = ref[0], ref[1], ref[2]
+    if game_data is not None:
         game_data_cache = game_data
-    if streaks_data:
+    if streaks_data is not None:
         streaks_cache = streaks_data
-    if results_data:
+    if results_data is not None:
         results_cache = {
             'results': results_data,
             'count': len(results_data),
             'timestamp': datetime.now().isoformat()
         }
-    
-    last_update_time = time.time() * 1000
+    if game_data is not None or streaks_data is not None or results_data is not None:
+        last_update_time = time.time() * 1000
     
     return jsonify({
         'success': True,
