@@ -167,6 +167,30 @@ def init_database():
         print(f"[❌ 오류] 데이터베이스 초기화 실패: {str(e)[:200]}")
         return False
 
+def ensure_current_pick_table(conn):
+    """current_pick 테이블이 없으면 생성 (POST 실패 시 재시도용)."""
+    if not conn:
+        return False
+    try:
+        cur = conn.cursor()
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS current_pick (
+                id INTEGER PRIMARY KEY,
+                pick_color VARCHAR(10),
+                round_num INTEGER,
+                probability REAL,
+                suggested_amount INTEGER,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cur.execute('INSERT INTO current_pick (id) VALUES (1) ON CONFLICT (id) DO NOTHING')
+        cur.close()
+        return True
+    except Exception as e:
+        print(f"[경고] current_pick 테이블 생성 실패: {str(e)[:100]}")
+        return False
+
+
 def get_db_connection():
     """데이터베이스 연결 반환"""
     if not DB_AVAILABLE or not DATABASE_URL:
@@ -3753,7 +3777,7 @@ def api_current_pick():
             out = bet_int.get_current_pick(conn)
             conn.close()
             return jsonify(out if out else empty_pick), 200
-        # POST
+        # POST: 테이블 없으면 생성 후 저장 (데이터 충분한데 픽 안 올 때 대비)
         data = request.get_json(force=True, silent=True) or {}
         pick_color = data.get('pickColor') or data.get('pick_color')
         round_num = data.get('round')
@@ -3762,9 +3786,12 @@ def api_current_pick():
         conn = get_db_connection()
         if not conn:
             return jsonify({'ok': False}), 200
+        ensure_current_pick_table(conn)
+        conn.commit()
         ok = bet_int.set_current_pick(conn, pick_color=pick_color, round_num=round_num, probability=probability, suggested_amount=suggested_amount)
         if ok:
             conn.commit()
+            print(f"[배팅연동] 픽 저장: {pick_color} round {round_num}")
         conn.close()
         return jsonify({'ok': ok}), 200
     except Exception as e:
@@ -3814,6 +3841,12 @@ BETTING_HELPER_HTML = '''<!DOCTYPE html>
     <div class="card" id="diagnostic-card">
         <div id="diagnostic-msg" style="font-size:0.9em;color:#aaa;">확인 중...</div>
         <button type="button" id="btn-diagnostic" style="margin-top:8px;padding:6px 12px;background:#0f3460;color:#64b5f6;border:1px solid #64b5f6;border-radius:6px;cursor:pointer;font-size:0.85em;">진단 다시 확인</button>
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid #333;">
+            <strong style="color:#64b5f6;">서버 저장 테스트</strong>
+            <p style="margin:4px 0 6px;font-size:0.85em;color:#888;">저장·조회가 되는지 확인합니다. 성공하면 메인 분석기에서 픽이 전송될 때도 저장됩니다.</p>
+            <button type="button" id="btn-save-test" style="padding:6px 12px;background:#0f3460;color:#64b5f6;border:1px solid #64b5f6;border-radius:6px;cursor:pointer;font-size:0.85em;">저장 테스트 (RED 99999회차)</button>
+            <div id="save-test-result" style="margin-top:6px;font-size:0.85em;color:#aaa;"></div>
+        </div>
     </div>
     <h2>현재 예측 픽</h2>
     <div class="card" id="pick-card">
@@ -3898,6 +3931,27 @@ BETTING_HELPER_HTML = '''<!DOCTYPE html>
                     });
             }
             document.getElementById("btn-diagnostic").addEventListener("click", runDiagnostic);
+            document.getElementById("btn-save-test").addEventListener("click", function() {
+                var resultEl = document.getElementById("save-test-result");
+                resultEl.textContent = "전송 중...";
+                fetch("/api/current-pick", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ pickColor: "RED", round: 99999, probability: 50 })
+                }).then(function(r) { return r.json(); }).then(function(postRes) {
+                    if (!postRes.ok) { resultEl.innerHTML = "<span style=\"color:#e57373\">저장 실패 (서버 반환 ok: false). DB/테이블 확인 필요.</span>"; return; }
+                    return fetch("/api/current-pick").then(function(r) { return r.json(); });
+                }).then(function(getData) {
+                    if (!getData) return;
+                    if (getData.pick_color === "RED" && getData.round === 99999) {
+                        resultEl.innerHTML = "<span style=\"color:#81c784\">저장·조회 정상.</span> 메인 분석기(/results)에서 <strong>15번 카드가 조커가 아닐 때</strong>만 RED/BLACK이 전송됩니다. 메인 화면 예측 픽이 \"보류\"면 여기도 보류로만 저장됩니다.";
+                    } else {
+                        resultEl.innerHTML = "<span style=\"color:#ffb74d\">저장됐지만 조회가 다릅니다. (다른 서버/워커일 수 있음)</span>";
+                    }
+                }).catch(function() {
+                    resultEl.innerHTML = "<span style=\"color:#e57373\">요청 실패. 같은 주소에서 열었는지 확인하세요.</span>";
+                });
+            });
             runDiagnostic();
             fetchPick();
             setInterval(fetchPick, 3000);
