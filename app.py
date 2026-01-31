@@ -1085,31 +1085,34 @@ RESULTS_HTML = '''
             background: #f44336;
             color: #fff;
         }
-        /* 정/꺽 블록 그래프: 좌=최신, 같은 타입 세로로 쌓기, 배경 있는 글씨, 쭉 표시 */
+        /* 정/꺽 블록 그래프: 좌=최신, 같은 타입 세로로 쌓기, 반응형(모바일에서 박스·간격 축소) */
         .jung-kkuk-graph {
             margin-top: 8px;
             display: flex;
             flex-direction: row;
             justify-content: flex-start;
             align-items: flex-end;
-            gap: 6px;
+            gap: clamp(3px, 1.2vw, 6px);
             flex-wrap: nowrap;
             overflow-x: auto;
             overflow-y: hidden;
             max-width: 100%;
-            padding-bottom: 4px;
+            padding-bottom: clamp(2px, 1vw, 4px);
         }
         .jung-kkuk-graph .graph-column {
             display: flex;
             flex-direction: column;
-            gap: 3px;
+            gap: clamp(2px, 0.6vw, 3px);
             align-items: center;
         }
         .jung-kkuk-graph .graph-block {
-            font-size: clamp(10px, 2vw, 14px);
+            font-size: clamp(9px, 2vw, 14px);
             font-weight: bold;
-            padding: 4px 10px;
-            border-radius: 5px;
+            padding: clamp(2px, 1vw, 4px) clamp(4px, 2vw, 10px);
+            min-width: clamp(20px, 5vw, 36px);
+            min-height: clamp(18px, 4vw, 28px);
+            box-sizing: border-box;
+            border-radius: clamp(3px, 1vw, 5px);
             white-space: nowrap;
             text-align: center;
             color: #fff;
@@ -2960,12 +2963,14 @@ RESULTS_HTML = '''
                     } catch (e) {}
                     if (predDiv) {
                         const rateClass50 = count50 > 0 ? (rate50 >= 60 ? 'high' : rate50 >= 50 ? 'mid' : 'low') : '';
+                        const blendedStr = (typeof blendedWinRate === 'number' && !isNaN(blendedWinRate)) ? blendedWinRate.toFixed(1) : '-';
                         const statsBlock = '<div class="prediction-stats-row">' +
                             '<span class="stat-total">최근 50회 결과</span>' +
                             '<span class="stat-win">승 - <span class="num">' + hit50 + '</span>회</span>' +
                             '<span class="stat-lose">패 - <span class="num">' + losses50 + '</span>회</span>' +
                             '<span class="stat-joker">조커 - <span class="num">' + joker50 + '</span>회</span>' +
-                            (count50 > 0 ? '<span class="stat-rate ' + rateClass50 + '">합산승률 : ' + rate50Str + '%</span>' : '') +
+                            (count50 > 0 ? '<span class="stat-rate ' + rateClass50 + '">승률 : ' + rate50Str + '%</span>' : '') +
+                            '<span class="stat-rate" style="color:#888;font-size:0.9em">실제 경고 합산승률 : ' + blendedStr + '%</span>' +
                             '</div>' +
                             '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 메인=서버 최근 100회 · 승률/경고=15·30·100 반영(50·30·20)</div>';
                         let streakTableBlock = '';
@@ -3264,7 +3269,12 @@ RESULTS_HTML = '''
             el.className = 'calc-status';
             if (state.running) {
                 el.classList.add('running');
-                el.textContent = '실행중';
+                var statusTxt = '실행중';
+                if (id !== DEFENSE_ID) {
+                    if (!!(state.reverse)) statusTxt += ' · 반픽';
+                    if (!!(state.win_rate_reverse)) statusTxt += ' · 승률반픽';
+                }
+                el.textContent = statusTxt;
             } else if (state.timer_completed) {
                 el.classList.add('timer-done');
                 el.textContent = '타이머 완료';
