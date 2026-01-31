@@ -3810,6 +3810,11 @@ BETTING_HELPER_HTML = '''<!DOCTYPE html>
         2) 15번 카드가 <strong>조커</strong>인 회차는 의도적으로 보류입니다 (배팅하지 마세요).<br>
         3) /results를 열어 두면, 15번 카드가 조커가 아닌 회차가 나올 때 RED 또는 BLACK이 여기 자동으로 뜹니다.</p>
     </div>
+    <h2>픽이 안 올 때 진단</h2>
+    <div class="card" id="diagnostic-card">
+        <div id="diagnostic-msg" style="font-size:0.9em;color:#aaa;">확인 중...</div>
+        <button type="button" id="btn-diagnostic" style="margin-top:8px;padding:6px 12px;background:#0f3460;color:#64b5f6;border:1px solid #64b5f6;border-radius:6px;cursor:pointer;font-size:0.85em;">진단 다시 확인</button>
+    </div>
     <h2>현재 예측 픽</h2>
     <div class="card" id="pick-card">
         <div id="pick-display" class="pick hold">—</div>
@@ -3871,6 +3876,29 @@ BETTING_HELPER_HTML = '''<!DOCTYPE html>
                         statusEl.textContent = "조회 실패 (다시 시도 중)";
                     });
             }
+            function runDiagnostic() {
+                var el = document.getElementById("diagnostic-msg");
+                if (!el) return;
+                el.textContent = "확인 중...";
+                fetch("/api/results?t=" + Date.now())
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        var results = data.results || [];
+                        var n = results.length;
+                        var msg = "분석기 결과: " + n + "회차 로드됨. ";
+                        if (n < 16) {
+                            msg += "픽이 나오려면 <strong>최소 16회차</strong> 데이터가 필요합니다. (지금 " + n + "개)";
+                        } else {
+                            msg += "데이터는 충분합니다. 15번 카드가 조커가 아니면 RED/BLACK이 갱신됩니다. /results 탭을 같은 주소에서 열어 두었는지 확인하세요.";
+                        }
+                        el.innerHTML = msg;
+                    })
+                    .catch(function() {
+                        el.textContent = "분석기 데이터 조회 실패. /results 와 이 페이지가 같은 서버(같은 주소)에서 열렸는지 확인하세요.";
+                    });
+            }
+            document.getElementById("btn-diagnostic").addEventListener("click", runDiagnostic);
+            runDiagnostic();
             fetchPick();
             setInterval(fetchPick, 3000);
         })();
