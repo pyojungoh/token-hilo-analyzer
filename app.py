@@ -2651,15 +2651,18 @@ RESULTS_HTML = '''
                         const inBucket = nonJokerWithProb.filter(function(h) { var p = Number(h.probability); return p >= b.min && p < b.max; });
                         const wins = inBucket.filter(function(h) { return h.predicted === h.actual; }).length;
                         const total = inBucket.length;
-                        return { label: b.min + '~' + (b.max === 101 ? '100' : b.max) + '%', total: total, wins: wins, pct: total > 0 ? (100 * wins / total).toFixed(1) : '-' };
+                        return { label: b.min + '~' + (b.max === 101 ? '100' : b.max) + '%', total: total, wins: wins, pct: total > 0 ? (100 * wins / total).toFixed(1) : '-', min: b.min, max: b.max };
                     }).filter(function(s) { return s.total > 0; });
                     // 기존 확률에 30% 반영 (blendData는 전이 확률 표에서 계산됨)
                     if (blendData && blendData.newProb != null && !is15Joker) predProb = 0.7 * predProb + 0.3 * blendData.newProb;
+                    // 깜빡임: 예측픽 확률이 "승률 상위 2개 구간" 안에 있을 때만 (나올 확률 높은 게 아니라, 그 구간이 실제로 많이 이긴 구간일 때만)
                     var pickInBucket = false;
-                    if (!is15Joker && predProb != null) {
-                        for (var bi = 0; bi < BUCKETS.length; bi++) {
-                            var b = BUCKETS[bi];
-                            if (predProb >= b.min && predProb < b.max) { pickInBucket = true; break; }
+                    if (!is15Joker && predProb != null && bucketStats.length > 0) {
+                        var sortedByRate = bucketStats.slice().sort(function(a, b) { return (parseFloat(b.pct) || 0) - (parseFloat(a.pct) || 0); });
+                        var top2 = sortedByRate.slice(0, 2);
+                        for (var ti = 0; ti < top2.length; ti++) {
+                            var t = top2[ti];
+                            if (predProb >= t.min && predProb < t.max) { pickInBucket = true; break; }
                         }
                     }
                     const lastEntry = validHist.length > 0 ? validHist[validHist.length - 1] : null;
