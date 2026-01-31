@@ -533,14 +533,14 @@ def get_recent_results(hours=5):
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # 최근 5시간 데이터 조회 (최신순)
+        # 최근 N시간 데이터 조회 (created_at 최신순 → 이후 gameID 기준 재정렬)
         cur.execute('''
-            SELECT game_id as "gameID", result, hi, lo, red, black, jqka, joker, 
+            SELECT game_id as "gameID", result, hi, lo, red, black, jqka, joker,
                    hash_value as hash, salt_value as salt
             FROM game_results
-            WHERE created_at >= NOW() - INTERVAL '%s hours'
+            WHERE created_at >= NOW() - (INTERVAL '1 hour' * %s)
             ORDER BY created_at DESC
-        ''', (hours,))
+        ''', (int(hours),))
         
         results = []
         for row in cur.fetchall():
@@ -576,7 +576,8 @@ def get_recent_results(hours=5):
         
         cur.close()
         conn.close()
-        return results
+        # 규칙: 결과 순서는 gameID 기준 최신순. created_at 순서와 다를 수 있으므로 한 번 더 정렬
+        return _sort_results_newest_first(results)
     except Exception as e:
         print(f"[❌ 오류] 게임 결과 조회 실패: {str(e)[:200]}")
         try:
@@ -597,11 +598,11 @@ def cleanup_old_results(hours=5):
     try:
         cur = conn.cursor()
         
-        # 5시간 이전 데이터 삭제
+        # N시간 이전 데이터 삭제
         cur.execute('''
             DELETE FROM game_results
-            WHERE created_at < NOW() - INTERVAL '%s hours'
-        ''', (hours,))
+            WHERE created_at < NOW() - (INTERVAL '1 hour' * %s)
+        ''', (int(hours),))
         
         deleted_count = cur.rowcount
         conn.commit()
