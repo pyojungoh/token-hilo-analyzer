@@ -1415,7 +1415,7 @@ RESULTS_HTML = '''
             .prediction-table-row #prediction-pick-container { order: 1; width: 100%; max-width: 320px; display: flex; justify-content: center; }
             .prediction-table-row #prediction-box { order: 2; width: 100%; }
             .prediction-table-row #graph-stats { order: 3; width: 100%; }
-            .prediction-table-row #prob-bucket-stats { order: 4; width: auto; max-width: 120px; }
+            .prediction-table-row #prob-bucket-collapse { order: 4; width: 100%; }
         }
         @media (max-width: 480px) {
             .cards-container { gap: 2px; padding: 8px 0; }
@@ -1443,44 +1443,45 @@ RESULTS_HTML = '''
             min-width: 200px;
             overflow-x: auto;
         }
-        #prob-bucket-stats {
-            flex: 0 1 auto;
-            min-width: 0;
-            max-width: 120px;
-            overflow-x: auto;
-            margin-top: 0;
-            font-size: 10px;
-            color: #fff;
-            display: flex;
-            flex-direction: column;
-            align-self: stretch;
+        .prob-bucket-collapse {
+            margin-top: 8px;
+            border: 1px solid #444;
+            border-radius: 8px;
+            background: rgba(255,255,255,0.03);
+            overflow: hidden;
         }
-        #prob-bucket-stats .prob-bucket-wrap {
-            flex: 1;
-            min-height: 0;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
+        .prob-bucket-collapse-header {
+            padding: 6px 10px;
+            font-size: 0.85em;
+            color: #aaa;
+            cursor: pointer;
+            user-select: none;
         }
-        #prob-bucket-stats table {
+        .prob-bucket-collapse-header:hover { background: rgba(255,255,255,0.06); color: #fff; }
+        .prob-bucket-collapse.collapsed .prob-bucket-collapse-header::before { content: '▶ '; }
+        .prob-bucket-collapse:not(.collapsed) .prob-bucket-collapse-header::before { content: '▼ '; }
+        .prob-bucket-collapse-body {
+            display: none;
+            padding: 8px;
+            border-top: 1px solid #333;
+        }
+        .prob-bucket-collapse:not(.collapsed) .prob-bucket-collapse-body { display: block; }
+        #prob-bucket-collapse-body table {
             border-collapse: collapse;
             margin: 0 auto;
-            min-width: 0;
-            font-size: inherit;
-        }
-        #prob-bucket-stats th, #prob-bucket-stats td {
-            border: 1px solid #555;
-            padding: 1px 3px;
-            text-align: center;
+            font-size: 10px;
             color: #fff;
-            font-size: inherit;
         }
-        #prob-bucket-stats th { background: #444; font-weight: bold; color: #aaa; }
-        #prob-bucket-stats td:first-child { text-align: left; font-weight: bold; color: #fff; }
-        #prob-bucket-stats .prob-bucket-title { margin-top: 2px; font-size: 0.9em; color: #888; text-align: center; }
-        #prob-bucket-stats .stat-rate.high { color: #81c784; font-weight: 600; }
-        #prob-bucket-stats .stat-rate.mid { color: #ffb74d; }
-        #prob-bucket-stats .stat-rate.low { color: #e57373; }
+        #prob-bucket-collapse-body th, #prob-bucket-collapse-body td {
+            border: 1px solid #555;
+            padding: 2px 6px;
+            text-align: center;
+        }
+        #prob-bucket-collapse-body th { background: #444; color: #aaa; }
+        #prob-bucket-collapse-body td:first-child { text-align: left; font-weight: bold; }
+        #prob-bucket-collapse-body .stat-rate.high { color: #81c784; font-weight: 600; }
+        #prob-bucket-collapse-body .stat-rate.mid { color: #ffb74d; }
+        #prob-bucket-collapse-body .stat-rate.low { color: #e57373; }
         .prediction-pick {
             position: relative;
             display: flex;
@@ -1756,8 +1757,11 @@ RESULTS_HTML = '''
         <div class="prediction-table-row">
             <div id="prediction-pick-container"></div>
             <div id="graph-stats" class="graph-stats"></div>
-            <div id="prob-bucket-stats" class="prob-bucket-stats"></div>
         <div id="prediction-box" class="prediction-box"></div>
+        </div>
+        <div id="prob-bucket-collapse" class="prob-bucket-collapse collapsed">
+            <div class="prob-bucket-collapse-header" id="prob-bucket-collapse-header" role="button" tabindex="0">예측 확률 구간별 승률</div>
+            <div class="prob-bucket-collapse-body" id="prob-bucket-collapse-body"></div>
         </div>
         <div class="bet-calc">
             <h4>가상 배팅 계산기</h4>
@@ -2840,6 +2844,14 @@ RESULTS_HTML = '''
                     const rate100 = count100 > 0 ? 100 * hit100 / count100 : 50;
                     const blendedWinRate = 0.5 * rate15 + 0.3 * hitPctNum30 + 0.2 * rate100;
                     const lowWinRate = (count15 > 0 || count30 > 0 || count100 > 0) && blendedWinRate <= 50;
+                    // 표시용: 최근 50회 결과 (승/패/조커/합산승률)
+                    const validHist50 = validHist.slice(-50);
+                    const hit50 = validHist50.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                    const losses50 = validHist50.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                    const joker50 = validHist50.filter(function(h) { return h.actual === 'joker'; }).length;
+                    const count50 = hit50 + losses50;
+                    const rate50 = count50 > 0 ? 100 * hit50 / count50 : 0;
+                    const rate50Str = count50 > 0 ? rate50.toFixed(1) : '-';
                     // 확률 구간별 승률 (joker 제외, probability 있는 것만)
                     const nonJokerWithProb = validHist.filter(function(h) { return h && h.actual !== 'joker' && h.probability != null; });
                     const BUCKETS = [{ min: 50, max: 55 }, { min: 55, max: 60 }, { min: 60, max: 65 }, { min: 65, max: 70 }, { min: 70, max: 75 }, { min: 75, max: 80 }, { min: 80, max: 85 }, { min: 85, max: 90 }, { min: 90, max: 101 }];
@@ -2889,15 +2901,13 @@ RESULTS_HTML = '''
                         }
                     } catch (e) {}
                     if (predDiv) {
-                        // 표시 승률·경고: 15·30·100 반영(50·30·20) (룰 준수)
-                        const hitPctBlend = (count15 > 0 || count30 > 0 || count100 > 0) ? blendedWinRate.toFixed(1) : '-';
-                        const rateClassBlend = (count15 > 0 || count30 > 0 || count100 > 0) ? (blendedWinRate >= 60 ? 'high' : blendedWinRate >= 50 ? 'mid' : 'low') : '';
+                        const rateClass50 = count50 > 0 ? (rate50 >= 60 ? 'high' : rate50 >= 50 ? 'mid' : 'low') : '';
                         const statsBlock = '<div class="prediction-stats-row">' +
-                            '<span class="stat-total">전체 <span class="num">' + total + '</span>회</span>' +
-                            '<span class="stat-win">승 <span class="num">' + hit30 + '</span>회</span>' +
-                            '<span class="stat-lose">패 <span class="num">' + losses30 + '</span>회</span>' +
-                            (jokerCount > 0 ? '<span class="stat-joker">조커 <span class="num">' + jokerCount + '</span>회</span>' : '') +
-                            ((count15 > 0 || count30 > 0 || count100 > 0) ? '<span class="stat-rate ' + rateClassBlend + '">승률 ' + hitPctBlend + '%</span>' : '') +
+                            '<span class="stat-total">최근 50회 결과</span>' +
+                            '<span class="stat-win">승 - <span class="num">' + hit50 + '</span>회</span>' +
+                            '<span class="stat-lose">패 - <span class="num">' + losses50 + '</span>회</span>' +
+                            '<span class="stat-joker">조커 - <span class="num">' + joker50 + '</span>회</span>' +
+                            (count50 > 0 ? '<span class="stat-rate ' + rateClass50 + '">합산승률 : ' + rate50Str + '%</span>' : '') +
                             '</div>' +
                             '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 메인=서버 최근 100회 · 승률/경고=15·30·100 반영(50·30·20)</div>';
                         let streakTableBlock = '';
@@ -2928,18 +2938,29 @@ RESULTS_HTML = '''
                             console.warn('연승/연패 표 구성 오류:', streakErr);
                             streakTableBlock = '<div class="prediction-streak-line">연승/연패 기록: -' + (streakNow ? ' &nbsp; <span class="streak-now">' + streakNow + '</span>' : '') + '</div>';
                         }
-                        const probBucketStatsDiv = document.getElementById('prob-bucket-stats');
-                        if (probBucketStatsDiv) {
+                        const probBucketBody = document.getElementById('prob-bucket-collapse-body');
+                        const probBucketCollapse = document.getElementById('prob-bucket-collapse');
+                        if (probBucketBody && probBucketCollapse) {
                             if (bucketStats.length > 0) {
                                 const bucketRows = bucketStats.map(function(s) {
                                     const pctNum = s.pct !== '-' ? parseFloat(s.pct) : 0;
                                     const rowClass = pctNum >= 60 ? 'high' : pctNum >= 50 ? 'mid' : 'low';
                                     return '<tr><td>' + s.label + '</td><td>' + s.total + '</td><td>' + s.wins + '</td><td class="stat-rate ' + rowClass + '">' + s.pct + '%</td></tr>';
                                 }).join('');
-                                probBucketStatsDiv.innerHTML = '<div class="prob-bucket-wrap"><table><thead><tr><th>구간</th><th>n</th><th>승</th><th>%</th></tr></thead><tbody>' + bucketRows + '</tbody></table><p class="prob-bucket-title">구간별 승률</p></div>';
+                                probBucketBody.innerHTML = '<table><thead><tr><th>구간</th><th>n</th><th>승</th><th>%</th></tr></thead><tbody>' + bucketRows + '</tbody></table>';
+                                probBucketCollapse.style.display = '';
                             } else {
-                                probBucketStatsDiv.innerHTML = '';
+                                probBucketBody.innerHTML = '';
+                                probBucketCollapse.style.display = 'none';
                             }
+                        }
+                        var collapseHeader = document.getElementById('prob-bucket-collapse-header');
+                        if (collapseHeader && !collapseHeader.getAttribute('data-bound')) {
+                            collapseHeader.setAttribute('data-bound', '1');
+                            collapseHeader.addEventListener('click', function() {
+                                var el = document.getElementById('prob-bucket-collapse');
+                                if (el) el.classList.toggle('collapsed');
+                            });
                         }
                         let noticeBlock = '';
                         if (flowAdvice || lowWinRate) {
@@ -2963,10 +2984,12 @@ RESULTS_HTML = '''
                     statsDiv.innerHTML = '';
                     const pickEmpty = document.getElementById('prediction-pick-container');
                     const predDivEmpty = document.getElementById('prediction-box');
-                    const probBucketEmpty = document.getElementById('prob-bucket-stats');
+                    const probBucketBodyEmpty = document.getElementById('prob-bucket-collapse-body');
+                    const probBucketCollapseEmpty = document.getElementById('prob-bucket-collapse');
                     if (pickEmpty) pickEmpty.innerHTML = '';
                     if (predDivEmpty) predDivEmpty.innerHTML = '';
-                    if (probBucketEmpty) probBucketEmpty.innerHTML = '';
+                    if (probBucketBodyEmpty) probBucketBodyEmpty.innerHTML = '';
+                    if (probBucketCollapseEmpty) probBucketCollapseEmpty.style.display = 'none';
                 }
                 
                 // 헤더: 상단에는 회차 전체 숫자 표시 (비교용), 표에는 뒤 3자리만
