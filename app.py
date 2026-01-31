@@ -3772,6 +3772,9 @@ def api_current_pick():
         return jsonify(empty_pick if request.method == 'GET' else {'ok': False}), 200
 
 
+# 배팅 사이트 URL (토큰하이로우). 필요 시 환경변수로 오버라이드 가능
+BETTING_SITE_URL = os.getenv('BETTING_SITE_URL', 'https://nhs900.com')
+
 BETTING_HELPER_HTML = '''<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -3782,7 +3785,9 @@ BETTING_HELPER_HTML = '''<!DOCTYPE html>
         * { box-sizing: border-box; }
         body { font-family: "Noto Sans KR", sans-serif; margin: 20px; background: #1a1a2e; color: #eee; }
         h1 { font-size: 1.2em; margin-bottom: 8px; }
-        .card { background: #16213e; border-radius: 8px; padding: 16px; margin-bottom: 12px; max-width: 360px; }
+        h2 { font-size: 1em; color: #aaa; margin: 16px 0 8px; }
+        .card { background: #16213e; border-radius: 8px; padding: 16px; margin-bottom: 12px; max-width: 400px; }
+        .card.highlight { border: 2px solid #64b5f6; }
         .pick { font-size: 1.5em; font-weight: bold; }
         .pick.red { color: #e57373; }
         .pick.black { color: #90a4ae; }
@@ -3791,48 +3796,72 @@ BETTING_HELPER_HTML = '''<!DOCTYPE html>
         .link { margin-top: 16px; }
         .link a { color: #64b5f6; }
         .status { font-size: 0.85em; color: #666; margin-top: 8px; }
+        .btn-open { display: inline-block; margin: 8px 0; padding: 12px 20px; background: #0f3460; color: #64b5f6; border: 1px solid #64b5f6; border-radius: 8px; text-decoration: none; font-weight: bold; }
+        .btn-open:hover { background: #16213e; }
+        .steps { font-size: 0.9em; color: #888; margin-top: 12px; line-height: 1.6; }
     </style>
 </head>
 <body>
     <h1>배팅 연동 테스트</h1>
-    <p style="color:#888;font-size:0.9em;">메인 분석기에서 예측 픽이 갱신되면 여기서 조회됩니다. 이 페이지는 분석기와 분리되어 있습니다.</p>
-    <p style="color:#666;font-size:0.85em;">데이터가 없으면 <strong>보류</strong> / <strong>—</strong> 로 표시됩니다. <a href="/results" style="color:#64b5f6;">/results</a> 에서 분석기를 열어 두면 예측이 갱신됩니다.</p>
-    <div class="card">
+    <p style="color:#888;font-size:0.9em;">메인 분석기에서 예측 픽이 갱신되면 여기서 조회됩니다.</p>
+    <h2>현재 예측 픽</h2>
+    <div class="card" id="pick-card">
         <div id="pick-display" class="pick hold">—</div>
         <div id="meta-display" class="meta">회차: — | 확률: —</div>
         <div id="updated-display" class="meta">갱신: —</div>
         <div id="status-display" class="status">연결 대기 중...</div>
     </div>
+    <h2>배팅 사이트 연동</h2>
+    <div class="card">
+        <p style="margin:0 0 8px;">토큰하이로우 게임 페이지를 열고, 위 픽에 맞는 RED 또는 BLACK 버튼을 눌러주세요.</p>
+        <a id="btn-open-site" class="btn-open" href="#" target="_blank" rel="noopener">배팅 사이트(토큰하이로우) 열기</a>
+        <div class="steps">
+            1. 아래 버튼으로 배팅 사이트 열기<br>
+            2. 배팅금 입력 후, 위 <strong id="step-pick">픽</strong>에 맞는 RED 또는 BLACK 클릭
+        </div>
+    </div>
     <div class="link"><a href="/results">← 메인 분석기로 이동</a></div>
     <script>
-        function fetchPick() {
-            var statusEl = document.getElementById("status-display");
-            fetch("/api/current-pick")
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    var pickEl = document.getElementById("pick-display");
-                    var metaEl = document.getElementById("meta-display");
-                    var upEl = document.getElementById("updated-display");
-                    if (data.pick_color === "RED") {
-                        pickEl.textContent = "RED (빨강)";
-                        pickEl.className = "pick red";
-                    } else if (data.pick_color === "BLACK") {
-                        pickEl.textContent = "BLACK (검정)";
-                        pickEl.className = "pick black";
-                    } else {
-                        pickEl.textContent = "보류";
-                        pickEl.className = "pick hold";
-                    }
-                    metaEl.textContent = "회차: " + (data.round != null ? data.round : "—") + " | 확률: " + (data.probability != null ? data.probability.toFixed(1) + "%" : "—");
-                    upEl.textContent = "갱신: " + (data.updated_at || "—");
-                    statusEl.textContent = "마지막 조회: " + new Date().toLocaleTimeString("ko-KR");
-                })
-                .catch(function() {
-                    statusEl.textContent = "조회 실패 (다시 시도 중)";
-                });
-        }
-        fetchPick();
-        setInterval(fetchPick, 3000);
+        (function() {
+            var siteUrl = ''' + json.dumps(BETTING_SITE_URL) + ''';
+            document.getElementById("btn-open-site").href = siteUrl;
+            function fetchPick() {
+                var statusEl = document.getElementById("status-display");
+                var cardEl = document.getElementById("pick-card");
+                var stepPick = document.getElementById("step-pick");
+                fetch("/api/current-pick")
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        var pickEl = document.getElementById("pick-display");
+                        var metaEl = document.getElementById("meta-display");
+                        var upEl = document.getElementById("updated-display");
+                        if (data.pick_color === "RED") {
+                            pickEl.textContent = "RED (빨강)";
+                            pickEl.className = "pick red";
+                            cardEl.classList.add("highlight");
+                            if (stepPick) stepPick.textContent = "RED(빨강)";
+                        } else if (data.pick_color === "BLACK") {
+                            pickEl.textContent = "BLACK (검정)";
+                            pickEl.className = "pick black";
+                            cardEl.classList.add("highlight");
+                            if (stepPick) stepPick.textContent = "BLACK(검정)";
+                        } else {
+                            pickEl.textContent = "보류";
+                            pickEl.className = "pick hold";
+                            cardEl.classList.remove("highlight");
+                            if (stepPick) stepPick.textContent = "픽(보류 시 배팅 안 함)";
+                        }
+                        metaEl.textContent = "회차: " + (data.round != null ? data.round : "—") + " | 확률: " + (data.probability != null ? data.probability.toFixed(1) + "%" : "—");
+                        upEl.textContent = "갱신: " + (data.updated_at || "—");
+                        statusEl.textContent = "마지막 조회: " + new Date().toLocaleTimeString("ko-KR");
+                    })
+                    .catch(function() {
+                        statusEl.textContent = "조회 실패 (다시 시도 중)";
+                    });
+            }
+            fetchPick();
+            setInterval(fetchPick, 3000);
+        })();
     </script>
 </body>
 </html>
