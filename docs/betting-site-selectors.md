@@ -16,9 +16,13 @@
 ## 배팅 연동 테스트 페이지
 
 - **GET `/betting-helper`**  
-  자동배팅 개발·테스트용 **별도 페이지**. 메인 분석기와 분리되어 있어, 이 페이지만 수정해도 분석기에는 영향 없음.  
+  자동배팅 개발·테스트용 **별도 페이지**. 목표는 **실제 배팅 사이트에서 예측 픽에 따라 자동 배팅**할 수 있게 하는 것.  
   `/api/current-pick`을 3초마다 폴링하여 RED/BLACK/보류, 회차, 확률을 표시.  
-  나중에 이 페이지에 배팅 사이트 연동 로직을 추가하면 됨.
+  자동 배팅은 우리 앱과 배팅 사이트가 다른 도메인이므로, **배팅 사이트에서 동작하는 Tampermonkey 스크립트**로 구현 (아래 참고).
+
+- **GET `/docs/tampermonkey-auto-bet.user.js`**  
+  Tampermonkey용 자동배팅 스크립트. nhs900 페이지에서 우리 앱 `/api/current-pick`을 조회해 RED/BLACK에 따라 `#unit` 입력·`button.btn_red`/`button.btn_black` 클릭.  
+  스크립트 내 `APP_BASE_URL`, `DEFAULT_AMOUNT`, `AUTO_CLICK_ENABLED` 수정 후 사용.
 
 ## 예측기 앱 연동 API
 

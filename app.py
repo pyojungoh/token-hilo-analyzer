@@ -2798,7 +2798,6 @@ RESULTS_HTML = '''
                             streakTableBlock = '<div class="prediction-streak-line">연승/연패 기록: -' + (streakNow ? ' &nbsp; <span class="streak-now">' + streakNow + '</span>' : '') + '</div>';
                         } else {
                             const headerCells = rev.map(function(h) { return '<th>' + displayRound3(h.round) + '</th>'; }).join('');
-                            const rowRound = rev.map(function(h) { return '<td>' + displayRound3(h.round) + '</td>'; }).join('');
                             const rowProb = rev.map(function(h) { return '<td>' + (h.probability != null ? Number(h.probability).toFixed(1) + '%' : '-') + '</td>'; }).join('');
                             const rowPick = rev.map(function(h) {
                                 const pickColor = h.pickColor || h.pick_color;
@@ -2812,7 +2811,6 @@ RESULTS_HTML = '''
                             }).join('');
                             streakTableBlock = '<div class="main-streak-table-wrap"><table class="main-streak-table">' +
                                 '<thead><tr>' + headerCells + '</tr></thead><tbody>' +
-                                '<tr>' + rowRound + '</tr>' +
                                 '<tr>' + rowProb + '</tr>' +
                                 '<tr>' + rowPick + '</tr>' +
                                 '<tr>' + rowOutcome + '</tr>' +
@@ -3861,6 +3859,17 @@ BETTING_HELPER_HTML = '''<!DOCTYPE html>
         <div id="updated-display" class="meta">갱신: —</div>
         <div id="status-display" class="status">연결 대기 중...</div>
     </div>
+    <h2>자동 배팅 (목표)</h2>
+    <div class="card" style="border-left: 4px solid #81c784;">
+        <p style="margin:0 0 8px;">이 테스트 페이지의 <strong>목표</strong>는 실제 배팅 사이트(nhs900 등)에서 <strong>예측 픽에 따라 자동으로 배팅</strong>할 수 있게 하는 것입니다.</p>
+        <p style="margin:8px 0 0;font-size:0.9em;color:#aaa;">우리 앱과 배팅 사이트는 서로 다른 도메인이라, 브라우저 보안상 우리 페이지에서 배팅 사이트 버튼을 직접 누를 수 없습니다. 따라서 <strong>배팅 사이트 페이지에서 동작하는 스크립트</strong>(Tampermonkey 등)가 우리 API를 조회한 뒤 해당 페이지의 입력·버튼을 제어하는 방식이 필요합니다.</p>
+    </div>
+    <h3 style="font-size:1em;color:#64b5f6;margin-top:12px;">Tampermonkey 스크립트 (자동 배팅)</h3>
+    <div class="card" style="background:#1a1a2e;">
+        <p style="margin:0 0 8px;font-size:0.9em;">배팅 사이트(nhs900)에서만 동작하는 스크립트입니다. Tampermonkey 확장 설치 후 아래 링크로 스크립트를 추가하고, 스크립트 안에서 <strong>APP_BASE_URL</strong>(이 앱 주소), <strong>DEFAULT_AMOUNT</strong>(배팅금), 필요 시 <strong>AUTO_CLICK_ENABLED = true</strong> 로 수정하세요.</p>
+        <p style="margin:8px 0 4px;"><a href="/docs/tampermonkey-auto-bet.user.js" style="color:#64b5f6;">/docs/tampermonkey-auto-bet.user.js</a> ← Tampermonkey에서 “새 스크립트” → URL에서 가져오기로 설치</p>
+        <p style="margin:0;font-size:0.85em;color:#888;">※ 같은 회차 중복 클릭 방지·보류 시 미클릭 등은 스크립트에 포함되어 있습니다. 사용·약관·리스크는 사용자 책임입니다.</p>
+    </div>
     <h2>배팅 사이트 연동</h2>
     <div class="card">
         <p style="margin:0 0 8px;">토큰하이로우 게임 페이지를 열고, 위 픽에 맞는 RED 또는 BLACK 버튼을 눌러주세요.</p>
@@ -3972,6 +3981,19 @@ BETTING_HELPER_HTML = '''<!DOCTYPE html>
 def betting_helper_page():
     """자동배팅 테스트용 별도 페이지. 메인 분석기와 분리되어 있으며 /api/current-pick 만 조회."""
     return render_template_string(BETTING_HELPER_HTML)
+
+
+@app.route('/docs/tampermonkey-auto-bet.user.js', methods=['GET'])
+def serve_tampermonkey_script():
+    """Tampermonkey 자동배팅 스크립트 제공 (배팅 사이트에서 우리 API 픽으로 자동 입력·클릭)."""
+    path = os.path.join(os.path.dirname(__file__), 'docs', 'tampermonkey-auto-bet.user.js')
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            body = f.read()
+        from flask import Response
+        return Response(body, mimetype='application/javascript')
+    except FileNotFoundError:
+        return Response('// Script file not found', status=404, mimetype='application/javascript')
 
 
 @app.route('/api/current-status', methods=['GET'])
