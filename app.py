@@ -1562,6 +1562,10 @@ RESULTS_HTML = '''
             <div class="prob-bucket-collapse-header" id="prob-bucket-collapse-header" role="button" tabindex="0">예측 확률 구간별 승률</div>
             <div class="prob-bucket-collapse-body" id="prob-bucket-collapse-body"></div>
         </div>
+        <div id="symmetry-line-collapse" class="prob-bucket-collapse collapsed">
+            <div class="prob-bucket-collapse-header" id="symmetry-line-collapse-header" role="button" tabindex="0">좌우 대칭 / 줄 유사도 (20열 기준)</div>
+            <div class="prob-bucket-collapse-body" id="symmetry-line-collapse-body"></div>
+        </div>
         <div class="bet-calc">
             <h4>가상 배팅 계산기</h4>
             <div class="bet-calc-tabs">
@@ -2867,6 +2871,48 @@ RESULTS_HTML = '''
                                 if (el) el.classList.toggle('collapsed');
                             });
                         }
+                        var symmetryLineBody = document.getElementById('symmetry-line-collapse-body');
+                        var symmetryLineCollapse = document.getElementById('symmetry-line-collapse');
+                        if (symmetryLineBody && symmetryLineCollapse) {
+                            var arr20 = (graphValues && graphValues.filter(function(v) { return v === true || v === false; }).slice(0, 20)) || [];
+                            if (arr20.length >= 20) {
+                                var symCount = 0;
+                                for (var si = 0; si < 10; si++) { if (arr20[si] === arr20[19 - si]) symCount++; }
+                                var symmetryPct = (symCount / 10 * 100).toFixed(1);
+                                function getRunLengths(a) {
+                                    var r = [], cur = null, c = 0, i;
+                                    for (i = 0; i < a.length; i++) {
+                                        if (a[i] === cur) c++;
+                                        else { if (cur !== null) r.push(c); cur = a[i]; c = 1; }
+                                    }
+                                    if (cur !== null) r.push(c);
+                                    return r;
+                                }
+                                var left10 = arr20.slice(0, 10), right10 = arr20.slice(10, 20);
+                                var leftRuns = getRunLengths(left10), rightRuns = getRunLengths(right10);
+                                var avgLeft = leftRuns.length ? (leftRuns.reduce(function(s, x) { return s + x; }, 0) / leftRuns.length) : 0;
+                                var avgRight = rightRuns.length ? (rightRuns.reduce(function(s, x) { return s + x; }, 0) / rightRuns.length) : 0;
+                                var lineDiff = Math.abs(avgLeft - avgRight);
+                                var lineSimilarityPct = (100 - Math.min(100, lineDiff * 25)).toFixed(1);
+                                symmetryLineBody.innerHTML = '<table class="prob-bucket-table"><thead><tr><th>항목</th><th>값</th><th>비고</th></tr></thead><tbody>' +
+                                    '<tr><td>좌우 대칭도</td><td>' + symmetryPct + '%</td><td>1~10열 vs 11~20열 대칭 매칭(10쌍)</td></tr>' +
+                                    '<tr><td>왼쪽(1~10열) 평균 줄길이</td><td>' + avgLeft.toFixed(2) + '</td><td>연속 정/꺽 평균</td></tr>' +
+                                    '<tr><td>오른쪽(11~20열) 평균 줄길이</td><td>' + avgRight.toFixed(2) + '</td><td>연속 정/꺽 평균</td></tr>' +
+                                    '<tr><td>줄 유사도</td><td>' + lineSimilarityPct + '%</td><td>양쪽 평균 줄길이 차이 반영</td></tr></tbody></table>';
+                                symmetryLineCollapse.style.display = '';
+                            } else {
+                                symmetryLineBody.innerHTML = '<p style="color:#888;font-size:0.9em">최근 20열(정/꺽) 데이터가 부족합니다.</p>';
+                                symmetryLineCollapse.style.display = '';
+                            }
+                        }
+                        var symmetryLineHeader = document.getElementById('symmetry-line-collapse-header');
+                        if (symmetryLineHeader && !symmetryLineHeader.getAttribute('data-bound')) {
+                            symmetryLineHeader.setAttribute('data-bound', '1');
+                            symmetryLineHeader.addEventListener('click', function() {
+                                var el = document.getElementById('symmetry-line-collapse');
+                                if (el) el.classList.toggle('collapsed');
+                            });
+                        }
                         let noticeBlock = '';
                         if (flowAdvice || lowWinRate) {
                             const notices = [];
@@ -2892,11 +2938,15 @@ RESULTS_HTML = '''
                     const predDivEmpty = document.getElementById('prediction-box');
                     const probBucketBodyEmpty = document.getElementById('prob-bucket-collapse-body');
                     const probBucketCollapseEmpty = document.getElementById('prob-bucket-collapse');
+                    const symmetryLineBodyEmpty = document.getElementById('symmetry-line-collapse-body');
+                    const symmetryLineCollapseEmpty = document.getElementById('symmetry-line-collapse');
                     if (resultBarEmpty) resultBarEmpty.innerHTML = '';
                     if (pickEmpty) pickEmpty.innerHTML = '';
                     if (predDivEmpty) predDivEmpty.innerHTML = '';
                     if (probBucketBodyEmpty) probBucketBodyEmpty.innerHTML = '';
                     if (probBucketCollapseEmpty) probBucketCollapseEmpty.style.display = 'none';
+                    if (symmetryLineBodyEmpty) symmetryLineBodyEmpty.innerHTML = '';
+                    if (symmetryLineCollapseEmpty) symmetryLineCollapseEmpty.style.display = 'none';
                 }
                 
                 // 헤더: 상단에는 회차 전체 숫자 표시 (비교용), 표에는 뒤 3자리만
