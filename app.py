@@ -1550,6 +1550,9 @@ RESULTS_HTML = '''
         .main-streak-table td.streak-lose { color: #c62828; font-weight: 500; }
         .main-streak-table td.streak-joker { color: #64b5f6; }
         .main-streak-table-wrap { overflow-x: auto; max-width: 100%; }
+        .prob-bucket-table .stat-rate.high { color: #81c784; font-weight: 600; }
+        .prob-bucket-table .stat-rate.mid { color: #ffb74d; }
+        .prob-bucket-table .stat-rate.low { color: #e57373; }
         .prediction-notice {
             margin-top: 10px;
             padding: 10px 12px;
@@ -2745,6 +2748,15 @@ RESULTS_HTML = '''
                     const hitPctNum = countForPct > 0 ? 100 * hit / countForPct : 0;
                     const hitPct = countForPct > 0 ? hitPctNum.toFixed(1) : '-';
                     const lowWinRate = countForPct > 0 && hitPctNum <= 50;
+                    // 확률 구간별 승률 (joker 제외, probability 있는 것만)
+                    const nonJokerWithProb = validHist.filter(function(h) { return h && h.actual !== 'joker' && h.probability != null; });
+                    const BUCKETS = [{ min: 50, max: 55 }, { min: 55, max: 60 }, { min: 60, max: 65 }, { min: 65, max: 70 }, { min: 70, max: 75 }, { min: 75, max: 80 }, { min: 80, max: 85 }, { min: 85, max: 90 }, { min: 90, max: 101 }];
+                    const bucketStats = BUCKETS.map(function(b) {
+                        const inBucket = nonJokerWithProb.filter(function(h) { var p = Number(h.probability); return p >= b.min && p < b.max; });
+                        const wins = inBucket.filter(function(h) { return h.predicted === h.actual; }).length;
+                        const total = inBucket.length;
+                        return { label: b.min + '~' + (b.max === 101 ? '100' : b.max) + '%', total: total, wins: wins, pct: total > 0 ? (100 * wins / total).toFixed(1) : '-' };
+                    }).filter(function(s) { return s.total > 0; });
                     const lastEntry = validHist.length > 0 ? validHist[validHist.length - 1] : null;
                     const lastIsWin = lastEntry && lastEntry.actual !== 'joker' && lastEntry.predicted === lastEntry.actual;
                     const shouldShowWinEffect = lastIsWin && lastEntry && lastWinEffectRound !== lastEntry.round;
@@ -2820,6 +2832,15 @@ RESULTS_HTML = '''
                             console.warn('연승/연패 표 구성 오류:', streakErr);
                             streakTableBlock = '<div class="prediction-streak-line">연승/연패 기록: -' + (streakNow ? ' &nbsp; <span class="streak-now">' + streakNow + '</span>' : '') + '</div>';
                         }
+                        let probBucketBlock = '';
+                        if (bucketStats.length > 0) {
+                            const bucketRows = bucketStats.map(function(s) {
+                                const pctNum = s.pct !== '-' ? parseFloat(s.pct) : 0;
+                                const rowClass = pctNum >= 60 ? 'high' : pctNum >= 50 ? 'mid' : 'low';
+                                return '<tr><td>' + s.label + '</td><td>' + s.total + '회</td><td>' + s.wins + '승</td><td class="stat-rate ' + rowClass + '">' + s.pct + '%</td></tr>';
+                            }).join('');
+                            probBucketBlock = '<div class="prob-bucket-wrap" style="margin-top:8px;font-size:0.85em"><div style="margin-bottom:4px;color:#666">확률 구간별 승률 (나올 확률 기준)</div><table class="main-streak-table prob-bucket-table"><thead><tr><th>구간</th><th>횟수</th><th>승</th><th>승률</th></tr></thead><tbody>' + bucketRows + '</tbody></table></div>';
+                        }
                         let noticeBlock = '';
                         if (flowAdvice || lowWinRate) {
                             const notices = [];
@@ -2828,7 +2849,7 @@ RESULTS_HTML = '''
                             noticeBlock = '<div class="prediction-notice' + (lowWinRate && !flowAdvice ? ' danger' : '') + '">' + notices.join(' &nbsp; · &nbsp; ') + '</div>';
                         }
                         const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:clamp(0.75em,1.8vw,0.85em)">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
-                        predDiv.innerHTML = statsBlock + streakTableBlock + noticeBlock + extraLine;
+                        predDiv.innerHTML = statsBlock + streakTableBlock + probBucketBlock + noticeBlock + extraLine;
                     }
                     
                     // 가상 배팅 계산기 1,2,3 요약·상세 갱신 (오류 시에도 메인 화면은 유지)
