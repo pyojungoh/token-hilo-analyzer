@@ -1492,16 +1492,16 @@ RESULTS_HTML = '''
         .prediction-stats-row .stat-rate.low { color: #e57373; }
         .prediction-stats-row .stat-rate.mid { color: #ffb74d; }
         .prediction-streak-line { margin-top: 8px; font-size: clamp(0.9em, 2vw, 1em); color: #bbb; text-align: center; }
-        .prediction-streak-line .streak-win { color: #81c784; font-weight: bold; }
-        .prediction-streak-line .streak-lose { color: #ffeb3b; font-weight: bold; }
+        .prediction-streak-line .streak-win { color: #ffeb3b; font-weight: bold; }
+        .prediction-streak-line .streak-lose { color: #c62828; font-weight: bold; }
         .prediction-streak-line .streak-joker { color: #64b5f6; }
         .main-streak-table { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: clamp(0.65em, 1.5vw, 0.75em); }
         .main-streak-table th, .main-streak-table td { padding: 3px 5px; border: 1px solid #444; text-align: center; background: #2a2a2a; }
         .main-streak-table th { color: #81c784; background: #333; white-space: nowrap; }
         .main-streak-table td.pick-red { background: #b71c1c; color: #fff; }
         .main-streak-table td.pick-black { background: #111; color: #fff; }
-        .main-streak-table td.streak-win { color: #c62828; font-weight: 600; }
-        .main-streak-table td.streak-lose { color: #ffeb3b; font-weight: 500; }
+        .main-streak-table td.streak-win { color: #ffeb3b; font-weight: 600; }
+        .main-streak-table td.streak-lose { color: #c62828; font-weight: 500; }
         .main-streak-table td.streak-joker { color: #64b5f6; }
         .main-streak-table-wrap { overflow-x: auto; max-width: 100%; }
         .prediction-notice {
@@ -1610,13 +1610,13 @@ RESULTS_HTML = '''
         .calc-round-table th { background: #333; color: #81c784; }
         .calc-round-table td.pick-jung { background: #111; color: #fff; }
         .calc-round-table td.pick-kkuk { background: #b71c1c; color: #fff; }
-        .calc-round-table .win { color: #c62828; font-weight: 600; }
-        .calc-round-table .lose { color: #ffeb3b; font-weight: 500; }
+        .calc-round-table .win { color: #ffeb3b; font-weight: 600; }
+        .calc-round-table .lose { color: #c62828; font-weight: 500; }
         .calc-round-table .joker { color: #64b5f6; }
         .calc-round-table .skip { color: #666; }
         .calc-streak { margin-bottom: 4px; word-break: break-all; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35; }
-        .calc-streak .w { color: #81c784; }
-        .calc-streak .l { color: #e57373; }
+        .calc-streak .w { color: #ffeb3b; }
+        .calc-streak .l { color: #c62828; }
         .calc-streak .j { color: #64b5f6; }
         .calc-streak .defense-skip { color: #666; }
         .calc-stats { color: #aaa; }
@@ -1637,6 +1637,8 @@ RESULTS_HTML = '''
         .bet-calc-log .log-detail.open { display: block; }
         .bet-calc-log .log-detail table { width: 100%; border-collapse: collapse; font-size: 0.75em; }
         .bet-calc-log .log-detail th, .bet-calc-log .log-detail td { padding: 3px 6px; border: 1px solid #444; text-align: center; }
+        .bet-calc-log .log-detail td.win { color: #ffeb3b; }
+        .bet-calc-log .log-detail td.lose { color: #c62828; }
         .bet-log-actions { margin-bottom: 8px; }
         .bet-log-actions button { padding: 4px 10px; font-size: 0.8em; border-radius: 4px; border: 1px solid #555; background: #2a2a2a; color: #bbb; cursor: pointer; }
         .status {
