@@ -1551,6 +1551,7 @@ RESULTS_HTML = '''
         .calc-dropdown-header .calc-status.running::before { content: ''; display: inline-block; width: 6px; height: 6px; background: #4caf50; border-radius: 50%; margin-right: 4px; vertical-align: middle; animation: blink 1s ease-in-out infinite; }
         @keyframes blink { 50% { opacity: 0.6; } }
         .calc-dropdown-header .calc-status.stopped { color: #e57373; }
+        .calc-dropdown-header .calc-status.timer-done { color: #64b5f6; font-weight: bold; }
         .calc-dropdown-header .calc-status.idle { color: #888; }
         .calc-dropdown-header .calc-toggle { font-size: 0.8em; color: #888; }
         .calc-dropdown.collapsed .calc-dropdown-body { display: none !important; }
@@ -1633,7 +1634,7 @@ RESULTS_HTML = '''
                                     <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="10000"></label>
                                     <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label>
                                     <label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label>
-                                    <label>지속 시간(초) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label>
+                                    <label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label>
                                     <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label>
                                 </div>
                                 <div class="calc-buttons">
@@ -1663,7 +1664,7 @@ RESULTS_HTML = '''
                                     <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="10000"></label>
                                     <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label>
                                     <label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label>
-                                    <label>지속 시간(초) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label>
+                                    <label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label>
                                     <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label>
                                 </div>
                                 <div class="calc-buttons">
@@ -1693,7 +1694,7 @@ RESULTS_HTML = '''
                                     <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="10000"></label>
                                     <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label>
                                     <label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label>
-                                    <label>지속 시간(초) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label>
+                                    <label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label>
                                     <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label>
                                 </div>
                                 <div class="calc-buttons">
@@ -1868,6 +1869,7 @@ RESULTS_HTML = '''
                 elapsed: 0,
                 duration_limit: 0,
                 use_duration_limit: false,
+                timer_completed: false,
                 timerId: null
             };
         });
@@ -1878,14 +1880,18 @@ RESULTS_HTML = '''
             CALC_IDS.forEach(id => {
                 const durEl = document.getElementById('calc-' + id + '-duration');
                 const checkEl = document.getElementById('calc-' + id + '-duration-check');
-                const duration_limit = (durEl && parseInt(durEl.value, 10)) || 0;
+                const revEl = document.getElementById('calc-' + id + '-reverse');
+                const duration_min = (durEl && parseInt(durEl.value, 10)) || 0;
+                const duration_limit = duration_min * 60;
                 const use_duration_limit = !!(checkEl && checkEl.checked);
                 payload[String(id)] = {
                     running: calcState[id].running,
                     started_at: calcState[id].started_at || 0,
                     history: (calcState[id].history || []).slice(-500),
                     duration_limit: duration_limit,
-                    use_duration_limit: use_duration_limit
+                    use_duration_limit: use_duration_limit,
+                    reverse: !!(revEl && revEl.checked),
+                    timer_completed: !!calcState[id].timer_completed
                 };
             });
             return payload;
@@ -1900,11 +1906,14 @@ RESULTS_HTML = '''
                 calcState[id].started_at = c.started_at || 0;
                 calcState[id].duration_limit = parseInt(c.duration_limit, 10) || 0;
                 calcState[id].use_duration_limit = !!c.use_duration_limit;
+                calcState[id].timer_completed = !!c.timer_completed;
                 calcState[id].elapsed = calcState[id].running && calcState[id].started_at ? Math.max(0, st - calcState[id].started_at) : 0;
                 const durEl = document.getElementById('calc-' + id + '-duration');
                 const checkEl = document.getElementById('calc-' + id + '-duration-check');
-                if (durEl) durEl.value = calcState[id].duration_limit || 0;
+                const revEl = document.getElementById('calc-' + id + '-reverse');
+                if (durEl) durEl.value = Math.floor((calcState[id].duration_limit || 0) / 60);
                 if (checkEl) checkEl.checked = calcState[id].use_duration_limit;
+                if (revEl) revEl.checked = !!c.reverse;
             });
         }
         async function loadCalcStateFromServer() {
@@ -2586,6 +2595,9 @@ RESULTS_HTML = '''
             if (calcState[id].running) {
                 el.classList.add('running');
                 el.textContent = '실행중';
+            } else if (calcState[id].timer_completed) {
+                el.classList.add('timer-done');
+                el.textContent = '타이머 완료';
             } else if (calcState[id].history.length > 0) {
                 el.classList.add('stopped');
                 el.textContent = '정지중';
@@ -2603,6 +2615,7 @@ RESULTS_HTML = '''
             if (hist.length === 0) {
                 let text = '보유자산 - | 순익 - | 배팅중 -';
                 if (calcState[id].running) text += ' | 경과 ' + formatMmSs(calcState[id].elapsed);
+                if (calcState[id].timer_completed) text = '타이머 완료 | ' + text;
                 el.textContent = text;
                 updateCalcStatus(id);
                 return;
@@ -2611,9 +2624,24 @@ RESULTS_HTML = '''
             const profitStr = (r.profit >= 0 ? '+' : '') + r.profit.toLocaleString() + '원';
             let text = '보유자산 ' + r.cap.toLocaleString() + '원 | 순익 ' + profitStr + ' | 배팅중 ' + r.currentBet.toLocaleString() + '원';
             if (calcState[id].running && typeof formatMmSs === 'function') text += ' | 경과 ' + formatMmSs(calcState[id].elapsed || 0);
+            if (calcState[id].timer_completed) text = '타이머 완료 | ' + text;
             el.textContent = text;
             updateCalcStatus(id);
             } catch (e) { console.warn('updateCalcSummary', id, e); }
+        }
+        function appendCalcLog(id) {
+            if (!calcState[id] || calcState[id].history.length === 0) return;
+            const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
+            const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
+            const r = getCalcResult(id);
+            const now = new Date();
+            const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
+            const pickType = rev ? '반픽' : '정픽';
+            const resultStr = '순익' + (r.profit >= 0 ? '+' : '') + r.profit + '원_승' + r.wins + '패' + r.losses + '_승률' + r.winRate + '%_최대연승' + r.maxWinStreak + '_최대연패' + r.maxLoseStreak;
+            const logLine = dateStr + '_' + pickType + '_배팅' + baseIn + '원_' + resultStr;
+            betCalcLog.unshift(logLine);
+            const logEl = document.getElementById('bet-calc-log');
+            if (logEl) logEl.insertAdjacentHTML('afterbegin', '<div>' + logLine + '</div>');
         }
         function updateCalcDetail(id) {
             try {
@@ -2661,13 +2689,13 @@ RESULTS_HTML = '''
                 updateCalcSummary(id);
                 if (calcState[id].use_duration_limit && calcState[id].duration_limit > 0 && calcState[id].elapsed >= calcState[id].duration_limit) {
                     calcState[id].running = false;
+                    calcState[id].timer_completed = true;
+                    if (calcState[id].history.length > 0) appendCalcLog(id);
                     saveCalcStateToServer();
                     updateCalcSummary(id);
                     updateCalcStatus(id);
-                    if (calcState[id].history.length > 0) {
-                        const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
-                        if (saveBtn) saveBtn.style.display = 'inline-block';
-                    }
+                    const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
+                    if (saveBtn) saveBtn.style.display = 'none';
                 }
             });
         }, 1000);
@@ -2681,8 +2709,10 @@ RESULTS_HTML = '''
                 }
                 const durEl = document.getElementById('calc-' + id + '-duration');
                 const checkEl = document.getElementById('calc-' + id + '-duration-check');
-                calcState[id].duration_limit = (durEl && parseInt(durEl.value, 10)) || 0;
+                const durationMin = (durEl && parseInt(durEl.value, 10)) || 0;
+                calcState[id].duration_limit = durationMin * 60;
                 calcState[id].use_duration_limit = !!(checkEl && checkEl.checked);
+                calcState[id].timer_completed = false;
                 calcState[id].running = true;
                 calcState[id].history = [];
                 calcState[id].started_at = 0;
@@ -2709,6 +2739,7 @@ RESULTS_HTML = '''
             btn.addEventListener('click', function() {
                 const id = parseInt(this.getAttribute('data-calc'), 10);
                 calcState[id].running = false;
+                calcState[id].timer_completed = false;
                 if (calcState[id].timerId) { clearInterval(calcState[id].timerId); calcState[id].timerId = null; }
                 saveCalcStateToServer();
                 updateCalcSummary(id);
@@ -2720,6 +2751,7 @@ RESULTS_HTML = '''
             btn.addEventListener('click', function() {
                 const id = parseInt(this.getAttribute('data-calc'), 10);
                 calcState[id].running = false;
+                calcState[id].timer_completed = false;
                 if (calcState[id].timerId) { clearInterval(calcState[id].timerId); calcState[id].timerId = null; }
                 calcState[id].history = [];
                 calcState[id].elapsed = 0;
@@ -2734,19 +2766,7 @@ RESULTS_HTML = '''
             btn.addEventListener('click', function() {
                 const id = parseInt(this.getAttribute('data-calc'), 10);
                 if (calcState[id].history.length === 0) return;
-                const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
-                const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
-                const r = getCalcResult(id);
-                const now = new Date();
-                const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
-                const pickType = rev ? '반픽' : '정픽';
-                const resultStr = '순익' + (r.profit >= 0 ? '+' : '') + r.profit + '원_승' + r.wins + '패' + r.losses + '_승률' + r.winRate + '%_최대연승' + r.maxWinStreak + '_최대연패' + r.maxLoseStreak;
-                const logLine = dateStr + '_' + pickType + '_배팅' + baseIn + '원_' + resultStr;
-                betCalcLog.unshift(logLine);
-                const logEl = document.getElementById('bet-calc-log');
-                if (logEl) {
-                    logEl.insertAdjacentHTML('afterbegin', '<div>' + logLine + '</div>');
-                }
+                appendCalcLog(id);
                 this.style.display = 'none';
             });
         });
@@ -3133,10 +3153,12 @@ def api_calc_state():
                     'started_at': started_at,
                     'history': c.get('history') if isinstance(c.get('history'), list) else [],
                     'duration_limit': int(c.get('duration_limit') or 0),
-                    'use_duration_limit': bool(c.get('use_duration_limit'))
+                    'use_duration_limit': bool(c.get('use_duration_limit')),
+                    'reverse': bool(c.get('reverse')),
+                    'timer_completed': bool(c.get('timer_completed'))
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False}
         save_calc_state(session_id, out)
         return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': out}), 200
     except Exception as e:
