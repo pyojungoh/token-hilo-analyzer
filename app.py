@@ -33,6 +33,11 @@ except ImportError as e:
     print(f"[❌ 경고] psycopg2가 설치되지 않았습니다: {e}")
     print("[❌ 경고] pip install psycopg2-binary로 설치하세요")
 
+try:
+    import betting_integration as bet_int
+except ImportError:
+    bet_int = None
+
 app = Flask(__name__)
 CORS(app)
 
@@ -136,6 +141,22 @@ def init_database():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # current_pick: 배팅 연동용 현재 예측 픽 1건 (RED/BLACK, 회차, 확률)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS current_pick (
+                id INTEGER PRIMARY KEY,
+                pick_color VARCHAR(10),
+                round_num INTEGER,
+                probability REAL,
+                suggested_amount INTEGER,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        try:
+            cur.execute('INSERT INTO current_pick (id) VALUES (1) ON CONFLICT (id) DO NOTHING')
+        except Exception:
+            pass
         
         conn.commit()
         cur.close()
@@ -2709,6 +2730,22 @@ RESULTS_HTML = '''
                         '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + predictedRound + '회</div>' +
                         '</div>');
                     if (pickContainer) pickContainer.innerHTML = leftBlock;
+                    // 배팅 연동: 현재 픽을 서버에 저장 (GET /api/current-pick 으로 외부 조회 가능)
+                    try {
+                        if (is15Joker) {
+                            fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pickColor: null, round: predictedRound, probability: null }) }).catch(function() {});
+                        } else if (lastPrediction && (colorToPick === '빨강' || colorToPick === '검정')) {
+                            fetch('/api/current-pick', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    pickColor: colorToPick === '빨강' ? 'RED' : 'BLACK',
+                                    round: predictedRound,
+                                    probability: predProb
+                                })
+                            }).catch(function() {});
+                        }
+                    } catch (e) {}
                     if (predDiv) {
                         const rateClass = countForPct > 0 ? (hitPctNum >= 60 ? 'high' : hitPctNum >= 50 ? 'mid' : 'low') : '';
                         const statsBlock = '<div class="prediction-stats-row">' +
@@ -3694,6 +3731,39 @@ def api_save_prediction_history():
     except Exception as e:
         print(f"[❌ 오류] 예측 기록 API 실패: {str(e)[:200]}")
         return jsonify({'ok': False, 'error': str(e)[:200]}), 500
+
+
+@app.route('/api/current-pick', methods=['GET', 'POST'])
+def api_current_pick():
+    """GET: 배팅 연동 현재 예측 픽 조회. POST: 프론트엔드가 픽 갱신 시 저장."""
+    empty_pick = {'pick_color': None, 'round': None, 'probability': None, 'suggested_amount': None, 'updated_at': None}
+    try:
+        if not bet_int or not DB_AVAILABLE or not DATABASE_URL:
+            return jsonify(empty_pick if request.method == 'GET' else {'ok': False}), 200
+        if request.method == 'GET':
+            conn = get_db_connection()
+            if not conn:
+                return jsonify(empty_pick), 200
+            out = bet_int.get_current_pick(conn)
+            conn.close()
+            return jsonify(out if out else empty_pick), 200
+        # POST
+        data = request.get_json(force=True, silent=True) or {}
+        pick_color = data.get('pickColor') or data.get('pick_color')
+        round_num = data.get('round')
+        probability = data.get('probability')
+        suggested_amount = data.get('suggestedAmount') or data.get('suggested_amount')
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({'ok': False}), 200
+        ok = bet_int.set_current_pick(conn, pick_color=pick_color, round_num=round_num, probability=probability, suggested_amount=suggested_amount)
+        if ok:
+            conn.commit()
+        conn.close()
+        return jsonify({'ok': ok}), 200
+    except Exception as e:
+        print(f"[❌ 오류] current-pick 실패: {str(e)[:200]}")
+        return jsonify(empty_pick if request.method == 'GET' else {'ok': False}), 200
 
 
 @app.route('/api/current-status', methods=['GET'])
