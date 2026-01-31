@@ -1481,6 +1481,15 @@ RESULTS_HTML = '''
         .prediction-streak-line .streak-win { color: #81c784; font-weight: bold; }
         .prediction-streak-line .streak-lose { color: #e57373; font-weight: bold; }
         .prediction-streak-line .streak-joker { color: #64b5f6; }
+        .main-streak-table { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: clamp(0.75em, 1.8vw, 0.9em); }
+        .main-streak-table th, .main-streak-table td { padding: 4px 6px; border: 1px solid #444; text-align: center; background: #2a2a2a; }
+        .main-streak-table th { color: #81c784; background: #333; white-space: nowrap; }
+        .main-streak-table td.pick-jung { background: rgba(76, 175, 80, 0.3); color: #1b5e20; }
+        .main-streak-table td.pick-kkuk { background: rgba(229, 115, 115, 0.35); color: #b71c1c; }
+        .main-streak-table td.streak-win { color: #c62828; font-weight: 600; }
+        .main-streak-table td.streak-lose { color: #111; font-weight: 500; }
+        .main-streak-table td.streak-joker { color: #64b5f6; }
+        .main-streak-table-wrap { overflow-x: auto; max-width: 100%; }
         .prediction-notice {
             margin-top: 10px;
             padding: 10px 12px;
@@ -2446,7 +2455,7 @@ RESULTS_HTML = '''
                     if (lastPrediction && currentRound === lastPrediction.round) {
                         const isActualJoker = displayResults.length > 0 && !!displayResults[0].joker;
                         if (isActualJoker) {
-                            predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: 'joker' });
+                            predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: 'joker', probability: lastPrediction.prob != null ? lastPrediction.prob : null });
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
                                 const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
@@ -2465,7 +2474,7 @@ RESULTS_HTML = '''
                             savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, 'joker');
                         } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
                             const actual = graphValues[0] ? '정' : '꺽';
-                            predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: actual });
+                            predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: actual, probability: lastPrediction.prob != null ? lastPrediction.prob : null });
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
                                 const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
@@ -2629,21 +2638,19 @@ RESULTS_HTML = '''
                         const adjChangeN = adjChange / sum;
                         predict = adjSameN >= adjChangeN ? (last === true ? '정' : '꺽') : (last === true ? '꺽' : '정');
                         predProb = (predict === (last === true ? '정' : '꺽') ? adjSameN : adjChangeN) * 100;
-                        lastPrediction = { value: predict, round: predictedRound };
+                        lastPrediction = { value: predict, round: predictedRound, prob: predProb };
                         const card15 = displayResults.length >= 15 ? parseCardValue(displayResults[14].result || '') : null;
                         const is15Red = card15 ? card15.isRed : false;
                         colorToPick = predict === '정' ? (is15Red ? '빨강' : '검정') : (is15Red ? '검정' : '빨강');
                         colorClass = colorToPick === '빨강' ? 'red' : 'black';
                     }
                     
-                    // 연승/연패: 승/패/조커(조커는 승패에 넣지 않음). 최근이 왼쪽으로 (reverse)
-                    const last15 = predictionHistory.slice(-15).map(h => h.actual === 'joker' ? '조커' : (h.predicted === h.actual ? '승' : '패'));
-                    const streakArr = last15.slice().reverse();
-                    const streakStr = streakArr.join(' ') || '-';
+                    // 연승/연패: 표 형식. 최신 회차가 가장 왼쪽 (reverse)
+                    const rev = predictionHistory.slice(-30).slice().reverse();
                     let streakCount = 0;
                     let streakType = '';
                     for (let i = predictionHistory.length - 1; i >= 0; i--) {
-                        if (predictionHistory[i].actual === 'joker') break;  // 조커 나오면 연승/연패 끊김
+                        if (predictionHistory[i].actual === 'joker') break;
                         const s = predictionHistory[i].predicted === predictionHistory[i].actual ? '승' : '패';
                         if (i === predictionHistory.length - 1) { streakType = s; streakCount = 1; }
                         else if (s === streakType) streakCount++;
@@ -2693,8 +2700,30 @@ RESULTS_HTML = '''
                             (countForPct > 0 ? '<span class="stat-rate ' + rateClass + '">승률 ' + hitPct + '%</span>' : '') +
                             '</div>' +
                             '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 메인=서버 최근 30회 · 계산기=해당 계산기 실행 중 쌓인 기록</div>';
-                        const streakDisplay = streakArr.map(s => s === '승' ? '<span class="streak-win">승</span>' : (s === '패' ? '<span class="streak-lose">패</span>' : '<span class="streak-joker">조커</span>')).join(' ');
-                        const streakLineBlock = '<div class="prediction-streak-line">연승/연패 기록: ' + (streakDisplay || '-') + (streakNow ? ' &nbsp; <span class="streak-now">' + streakNow + '</span>' : '') + '</div>';
+                        let streakTableBlock = '';
+                        if (rev.length === 0) {
+                            streakTableBlock = '<div class="prediction-streak-line">연승/연패 기록: -' + (streakNow ? ' &nbsp; <span class="streak-now">' + streakNow + '</span>' : '') + '</div>';
+                        } else {
+                            const headerCells = rev.map(h => '<th>' + (h.round != null ? String(h.round).slice(-3) : '-') + '</th>').join('');
+                            const rowRound = rev.map(h => '<td>' + (h.round != null ? String(h.round).slice(-3) : '-') + '</td>').join('');
+                            const rowProb = rev.map(h => '<td>' + (h.probability != null ? Number(h.probability).toFixed(1) + '%' : '-') + '</td>').join('');
+                            const rowPick = rev.map(h => {
+                                const c = h.predicted === '정' ? 'pick-jung' : (h.predicted === '꺽' ? 'pick-kkuk' : '');
+                                return '<td class="' + c + '">' + (h.predicted || '-') + '</td>';
+                            }).join('');
+                            const rowOutcome = rev.map(h => {
+                                const out = h.actual === 'joker' ? '조커' : (h.predicted === h.actual ? '승' : '패');
+                                const c = out === '승' ? 'streak-win' : out === '패' ? 'streak-lose' : 'streak-joker';
+                                return '<td class="' + c + '">' + out + '</td>';
+                            }).join('');
+                            streakTableBlock = '<div class="main-streak-table-wrap"><table class="main-streak-table">' +
+                                '<thead><tr><th></th>' + headerCells + '</tr></thead><tbody>' +
+                                '<tr><th>몇회</th>' + rowRound + '</tr>' +
+                                '<tr><th>나올확률</th>' + rowProb + '</tr>' +
+                                '<tr><th>예측픽</th>' + rowPick + '</tr>' +
+                                '<tr><th>승/패</th>' + rowOutcome + '</tr>' +
+                                '</tbody></table></div>' + (streakNow ? '<div class="prediction-streak-line" style="margin-top:4px"><span class="streak-now">' + streakNow + '</span></div>' : '');
+                        }
                         let noticeBlock = '';
                         if (flowAdvice || lowWinRate) {
                             const notices = [];
@@ -2703,7 +2732,7 @@ RESULTS_HTML = '''
                             noticeBlock = '<div class="prediction-notice' + (lowWinRate && !flowAdvice ? ' danger' : '') + '">' + notices.join(' &nbsp; · &nbsp; ') + '</div>';
                         }
                         const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:clamp(0.75em,1.8vw,0.85em)">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
-                        predDiv.innerHTML = statsBlock + streakLineBlock + noticeBlock + extraLine;
+                        predDiv.innerHTML = statsBlock + streakTableBlock + noticeBlock + extraLine;
                     }
                     
                     // 가상 배팅 계산기 1,2,3 요약·상세 갱신 (오류 시에도 메인 화면은 유지)
