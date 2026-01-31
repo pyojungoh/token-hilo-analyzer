@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         토큰하이로우 자동배팅 (nhs900)
 // @namespace    https://github.com/
-// @version      0.4
+// @version      0.5
 // @description  설정값을 사이트에 입력·클릭 테스트 → (선택) 예측기 API 연동 자동배팅
 // @match        https://nhs900.com/*
 // @match        http://nhs900.com/*
@@ -22,12 +22,37 @@
     var AUTO_CLICK_ENABLED = false;
     var lastAppliedRound = null;
 
+    var UNIT_SELECTORS = ['#unit', 'input[name="unit"]', 'input[name="Unit"]', '#Unit', 'input[id="unit"]', 'input.bet_amount', '.unit input', 'input[placeholder*="배팅"]', 'input[placeholder*="금액"]'];
+    var RED_SELECTORS = ['button.btn_red', '.btn_red', 'button[class*="red"]', '.bet_red', '[data-bet="red"]', 'a.btn_red'];
+    var BLACK_SELECTORS = ['button.btn_black', '.btn_black', 'button[class*="black"]', '.bet_black', '[data-bet="black"]', 'a.btn_black'];
+
     function makeDocHelpers(doc) {
         doc = doc || document;
         return {
-            getUnit: function() { return doc.querySelector('#unit'); },
-            getRed: function() { return doc.querySelector('button.btn_red') || doc.querySelector('.btn_red'); },
-            getBlack: function() { return doc.querySelector('button.btn_black') || doc.querySelector('.btn_black'); }
+            getUnit: function() {
+                for (var i = 0; i < UNIT_SELECTORS.length; i++) {
+                    var el = doc.querySelector(UNIT_SELECTORS[i]);
+                    if (!el) continue;
+                    if (el.tagName === 'INPUT' || el.tagName === 'input') return el;
+                    var inp = el.querySelector && el.querySelector('input');
+                    if (inp) return inp;
+                }
+                return doc.querySelector('#unit') || doc.querySelector('input[name="unit"]');
+            },
+            getRed: function() {
+                for (var j = 0; j < RED_SELECTORS.length; j++) {
+                    var r = doc.querySelector(RED_SELECTORS[j]);
+                    if (r) return r;
+                }
+                return null;
+            },
+            getBlack: function() {
+                for (var k = 0; k < BLACK_SELECTORS.length; k++) {
+                    var b = doc.querySelector(BLACK_SELECTORS[k]);
+                    if (b) return b;
+                }
+                return null;
+            }
         };
     }
 
