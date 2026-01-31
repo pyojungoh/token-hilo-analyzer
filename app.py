@@ -2507,20 +2507,21 @@ RESULTS_HTML = '''
                         '<tr><td><span class="kkuk-jung">← 정</span></td><td>' + (short15 ? fmt(short15.pKkukToJung, short15.kj, short15.kkukDenom) : '-') + '</td><td>' + fmt(recent30.pKkukToJung, recent30.kj, recent30.kkukDenom) + '</td><td>' + fmt(full.pKkukToJung, full.kj, full.kkukDenom) + '</td></tr>' +
                         '</tbody></table><p class="graph-stats-note">※ 단기(15회) vs 장기(30회) 비교로 흐름 전환 감지</p>';
                     
-                    // 회차: gameID가 11416043 등 길 때 뒤 3자리만 사용 (043 → 43). 규칙 통일
-                    function roundFromGameID(g) {
+                    // 회차: 비교·저장은 전체 gameID(11416052 등), 표시만 뒤 3자리(052). 숫자 높을수록 최신이므로 전체로 비교해야 035가 999보다 최신으로 인식됨
+                    function fullRoundFromGameID(g) {
                         var s = String(g != null && g !== '' ? g : '0');
-                        return parseInt(s.slice(-3), 10) || 0;
+                        var n = parseInt(s, 10);
+                        return isNaN(n) ? 0 : n;
                     }
+                    function displayRound3(r) { return r != null ? String(r).slice(-3) : '-'; }
                     const latestGameID = displayResults[0]?.gameID;
-                    const currentRound = roundFromGameID(latestGameID);
-                    const predictedRound = currentRound + 1;
+                    const currentRoundFull = fullRoundFromGameID(latestGameID);
+                    const predictedRoundFull = currentRoundFull + 1;
                     const is15Joker = displayResults.length >= 15 && !!displayResults[14].joker;  // 15번 카드 조커면 픽/배팅 보류
                     
-                    // 직전 예측의 실제 결과 반영: 예측했던 회차가 지금 나왔으면 기록. 결과가 조커면 actual='joker'(승패 제외, 배팅은 마틴)
-                    // 중복 방지: 이미 이 회차를 기록했으면 푸시하지 않음 (같은 데이터로 loadResults 여러 번 호출 시 승패 꼬임 방지)
+                    // 직전 예측의 실제 결과 반영: 예측했던 회차(전체 ID)가 지금 나왔으면 기록
                     const alreadyRecordedRound = lastPrediction ? predictionHistory.some(function(h) { return h && h.round === lastPrediction.round; }) : true;
-                    if (lastPrediction && currentRound === lastPrediction.round && !alreadyRecordedRound) {
+                    if (lastPrediction && currentRoundFull === lastPrediction.round && !alreadyRecordedRound) {
                         const isActualJoker = displayResults.length > 0 && !!displayResults[0].joker;
                         if (isActualJoker) {
                             predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: 'joker', probability: lastPrediction.prob != null ? lastPrediction.prob : null, pickColor: lastPrediction.color || null });
@@ -2713,7 +2714,7 @@ RESULTS_HTML = '''
                         const card15 = displayResults.length >= 15 ? parseCardValue(displayResults[14].result || '') : null;
                         const is15Red = card15 ? card15.isRed : false;
                         colorToPick = predict === '정' ? (is15Red ? '빨강' : '검정') : (is15Red ? '검정' : '빨강');
-                        lastPrediction = { value: predict, round: predictedRound, prob: predProb, color: colorToPick };
+                        lastPrediction = { value: predict, round: predictedRoundFull, prob: predProb, color: colorToPick };
                         colorClass = colorToPick === '빨강' ? 'red' : 'black';
                     }
                     
@@ -2755,27 +2756,27 @@ RESULTS_HTML = '''
                         '<span class="pred-value-big" style="color:#fff;font-size:1.2em">보류</span>' +
                         '</div>' +
                         '<div class="prediction-prob-under" style="color:#ffb74d">15번 카드 조커 · 배팅하지 마세요</div>' +
-                        '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + predictedRound + '회</div>' +
+                        '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + displayRound3(predictedRoundFull) + '회</div>' +
                         '</div>') : ('<div class="prediction-pick">' +
                         '<div class="prediction-pick-title">예측 픽 · ' + colorToPick + '</div>' +
                         '<div class="prediction-card card-' + colorClass + '">' +
                         '<span class="pred-value-big">' + predict + '</span>' +
                         '</div>' + winOverlay +
                         '<div class="prediction-prob-under">나올 확률 ' + predProb.toFixed(1) + '%</div>' +
-                        '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + predictedRound + '회</div>' +
+                        '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + displayRound3(predictedRoundFull) + '회</div>' +
                         '</div>');
                     if (pickContainer) pickContainer.innerHTML = leftBlock;
                     // 배팅 연동: 현재 픽을 서버에 저장 (GET /api/current-pick 으로 외부 조회 가능)
                     try {
                         if (is15Joker) {
-                            fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pickColor: null, round: predictedRound, probability: null }) }).catch(function() {});
+                            fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pickColor: null, round: predictedRoundFull, probability: null }) }).catch(function() {});
                         } else if (lastPrediction && (colorToPick === '빨강' || colorToPick === '검정')) {
                             fetch('/api/current-pick', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
                                     pickColor: colorToPick === '빨강' ? 'RED' : 'BLACK',
-                                    round: predictedRound,
+                                    round: predictedRoundFull,
                                     probability: predProb
                                 })
                             }).catch(function() {});
@@ -2796,8 +2797,8 @@ RESULTS_HTML = '''
                         if (rev.length === 0) {
                             streakTableBlock = '<div class="prediction-streak-line">연승/연패 기록: -' + (streakNow ? ' &nbsp; <span class="streak-now">' + streakNow + '</span>' : '') + '</div>';
                         } else {
-                            const headerCells = rev.map(function(h) { return '<th>' + (h.round != null ? String(h.round).slice(-3) : '-') + '</th>'; }).join('');
-                            const rowRound = rev.map(function(h) { return '<td>' + (h.round != null ? String(h.round).slice(-3) : '-') + '</td>'; }).join('');
+                            const headerCells = rev.map(function(h) { return '<th>' + displayRound3(h.round) + '</th>'; }).join('');
+                            const rowRound = rev.map(function(h) { return '<td>' + displayRound3(h.round) + '</td>'; }).join('');
                             const rowProb = rev.map(function(h) { return '<td>' + (h.probability != null ? Number(h.probability).toFixed(1) + '%' : '-') + '</td>'; }).join('');
                             const rowPick = rev.map(function(h) {
                                 const pickColor = h.pickColor || h.pick_color;
@@ -2847,14 +2848,13 @@ RESULTS_HTML = '''
                     if (predDivEmpty) predDivEmpty.innerHTML = '';
                 }
                 
-                // 헤더 정보 업데이트 (gameID 길면 뒤 3자리만 표시, 예: 11416043 → 043)
+                // 헤더: 상단에는 회차 전체 숫자 표시 (비교용), 표에는 뒤 3자리만
                 if (displayResults.length > 0) {
                     const latest = displayResults[0];
-                    const rawGameID = latest.gameID != null && latest.gameID !== '' ? String(latest.gameID) : '';
-                    const roundDisplay = rawGameID ? rawGameID.slice(-3) : '--';
+                    const fullGameID = latest.gameID != null && latest.gameID !== '' ? String(latest.gameID) : '--';
                     const prevRoundElement = document.getElementById('prev-round');
                     if (prevRoundElement) {
-                        prevRoundElement.textContent = '이전회차: ' + roundDisplay;
+                        prevRoundElement.textContent = '이전회차: ' + fullGameID;
                     }
                 }
                 } catch (renderErr) {
