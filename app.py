@@ -1145,6 +1145,21 @@ RESULTS_HTML = '''
         .graph-stats .jung-kkuk { color: #ffb74d; }
         .graph-stats .kkuk-jung { color: #64b5f6; }
         .graph-stats-note { margin-top: 6px; font-size: 0.85em; color: #aaa; text-align: center; }
+        /* 성공/실패 결과: 예측 박스와 완전 분리(아웃) */
+        .prediction-result-section {
+            width: 100%;
+            margin-top: 8px;
+            margin-bottom: 6px;
+        }
+        .prediction-result-bar-wrap {
+            width: 100%;
+            min-height: 0;
+        }
+        .prediction-result-bar-wrap .pick-result-bar {
+            max-width: none;
+            width: 100%;
+            box-sizing: border-box;
+        }
         .prediction-table-row {
             display: flex;
             align-items: stretch;
@@ -1152,26 +1167,12 @@ RESULTS_HTML = '''
             margin-top: 8px;
             flex-wrap: wrap;
         }
-        /* 예측 박스 밖 별도 가로 박스: 성공/실패 결과 */
-        .prediction-result-bar-wrap {
-            width: 100%;
-            flex: 1 1 100%;
-            order: -1;
-            min-height: 0;
-            margin-bottom: 4px;
-        }
-        .prediction-result-bar-wrap .pick-result-bar {
-            max-width: none;
-            width: 100%;
-            box-sizing: border-box;
-        }
         .prediction-table-row #prediction-box {
             flex: 1 1 100%;
             min-width: 0;
         }
         @media (max-width: 768px) {
             .prediction-table-row { flex-direction: column; align-items: center; gap: 8px; }
-            .prediction-table-row #prediction-result-bar { order: 0; width: 100%; }
             .prediction-table-row #prediction-pick-container { order: 1; width: 100%; max-width: 320px; display: flex; justify-content: center; }
             .prediction-table-row #prediction-box { order: 2; width: 100%; }
             .prediction-table-row #graph-stats { order: 3; width: 100%; }
@@ -1531,8 +1532,10 @@ RESULTS_HTML = '''
         </div>
         <div class="cards-container" id="cards"></div>
         <div id="jung-kkuk-graph" class="jung-kkuk-graph"></div>
-        <div class="prediction-table-row">
+        <div class="prediction-result-section">
             <div id="prediction-result-bar" class="prediction-result-bar-wrap"></div>
+        </div>
+        <div class="prediction-table-row">
             <div id="prediction-pick-container"></div>
             <div id="graph-stats" class="graph-stats"></div>
         <div id="prediction-box" class="prediction-box"></div>
