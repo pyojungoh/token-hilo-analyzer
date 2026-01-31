@@ -1256,52 +1256,27 @@ RESULTS_HTML = '''
             text-align: center;
             width: 100%;
         }
-        .pick-win-overlay {
-            position: absolute;
-            top: 0; left: 0; right: 0; bottom: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: rgba(76, 175, 80, 0.9);
-            border-radius: clamp(10px, 2vw, 14px);
-            font-size: clamp(1.2em, 4vw, 2em);
-            font-weight: 900;
-            color: #fff;
-            text-shadow: 0 2px 8px rgba(0,0,0,0.4);
-            animation: pickWinFade 2s ease-out forwards;
-            pointer-events: none;
+        /* 예측 박스 위 얇은 가로 결과 바 (몇 회차 성공/실패, 정·꺽 / 빨강·검정) */
+        .pick-result-bar {
+            width: 100%;
+            max-width: 320px;
+            padding: 6px 12px;
+            margin-bottom: 8px;
+            border-radius: 6px;
+            font-size: clamp(0.8em, 1.8vw, 0.95em);
+            font-weight: 600;
+            text-align: center;
+            box-sizing: border-box;
         }
-        @keyframes pickWinFade {
-            0% { opacity: 0; transform: scale(0.7); }
-            15% { opacity: 1; transform: scale(1.15); }
-            50% { opacity: 1; transform: scale(1.05); }
-            85% { opacity: 1; }
-            100% { opacity: 0; transform: scale(1); }
+        .pick-result-bar.result-win {
+            background: rgba(76, 175, 80, 0.25);
+            border: 1px solid rgba(76, 175, 80, 0.6);
+            color: #a5d6a7;
         }
-        .pick-lose-overlay {
-            position: absolute;
-            top: 0; left: 0; right: 0; bottom: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: rgba(120, 30, 40, 0.92);
-            border-radius: clamp(10px, 2vw, 14px);
-            font-size: clamp(1.2em, 4vw, 2em);
-            font-weight: 900;
-            color: #ffcdd2;
-            text-shadow: 0 0 12px rgba(255,80,80,0.8), 0 2px 6px rgba(0,0,0,0.6);
-            animation: pickLoseFade 2.2s ease-out forwards;
-            pointer-events: none;
-            border: 2px solid rgba(239, 83, 80, 0.6);
-        }
-        @keyframes pickLoseFade {
-            0% { opacity: 0; transform: scale(0.8); }
-            12% { opacity: 1; transform: scale(1.1); }
-            25% { opacity: 1; transform: scale(1.05) rotate(-1deg); }
-            37% { opacity: 1; transform: scale(1.05) rotate(1deg); }
-            50% { opacity: 1; transform: scale(1.05); }
-            85% { opacity: 1; }
-            100% { opacity: 0; transform: scale(1); }
+        .pick-result-bar.result-lose {
+            background: rgba(198, 40, 40, 0.2);
+            border: 1px solid rgba(239, 83, 80, 0.5);
+            color: #ef9a9a;
         }
         .prediction-pick-title {
             font-size: clamp(0.85em, 2vw, 0.95em);
@@ -2672,21 +2647,30 @@ RESULTS_HTML = '''
                     const shouldShowLoseEffect = lastIsLose && lastEntry && lastLoseEffectRound !== lastEntry.round;
                     if (shouldShowWinEffect) lastWinEffectRound = lastEntry.round;
                     if (shouldShowLoseEffect) lastLoseEffectRound = lastEntry.round;
-                    const winOverlay = shouldShowWinEffect ? '<div class="pick-win-overlay">승리!</div>' : '';
-                    const loseOverlay = shouldShowLoseEffect ? '<div class="pick-lose-overlay">실패</div>' : '';
+                    var resultBarHtml = '';
+                    if (lastEntry && lastEntry.actual !== 'joker') {
+                        var lastPickColor = (lastEntry.pickColor || lastEntry.pick_color || '').toString();
+                        if (lastPickColor === 'RED') lastPickColor = '빨강';
+                        else if (lastPickColor === 'BLACK') lastPickColor = '검정';
+                        else if (!lastPickColor && lastEntry.predicted) lastPickColor = lastEntry.predicted === '정' ? '빨강' : '검정';
+                        else lastPickColor = lastPickColor || '-';
+                        var resultBarClass = lastIsWin ? 'pick-result-bar result-win' : 'pick-result-bar result-lose';
+                        var resultBarText = displayRound3(lastEntry.round) + '회 ' + (lastIsWin ? '성공' : '실패') + ' (' + (lastEntry.predicted || '-') + ' / ' + lastPickColor + ')';
+                        resultBarHtml = '<div class="' + resultBarClass + '">' + resultBarText + '</div>';
+                    }
                     const pickWrapClass = 'prediction-pick' + (pickInBucket ? ' pick-in-bucket' : '');
-                    const leftBlock = is15Joker ? ('<div class="prediction-pick">' +
+                    const leftBlock = is15Joker ? (resultBarHtml + '<div class="prediction-pick">' +
                         '<div class="prediction-pick-title">예측 픽</div>' +
                         '<div class="prediction-card" style="background:#455a64;border-color:#78909c">' +
                         '<span class="pred-value-big" style="color:#fff;font-size:1.2em">보류</span>' +
                         '</div>' +
                         '<div class="prediction-prob-under" style="color:#ffb74d">15번 카드 조커 · 배팅하지 마세요</div>' +
                         '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + displayRound3(predictedRoundFull) + '회</div>' +
-                        '</div>') : ('<div class="' + pickWrapClass + '">' +
+                        '</div>') : (resultBarHtml + '<div class="' + pickWrapClass + '">' +
                         '<div class="prediction-pick-title">예측 픽 · ' + colorToPick + '</div>' +
                         '<div class="prediction-card card-' + colorClass + '">' +
                         '<span class="pred-value-big">' + predict + '</span>' +
-                        '</div>' + winOverlay + loseOverlay +
+                        '</div>' +
                         '<div class="prediction-prob-under">나올 확률 ' + predProb.toFixed(1) + '%</div>' +
                         '<div class="pred-round" style="margin-top:4px;font-size:0.85em;color:#888">' + displayRound3(predictedRoundFull) + '회</div>' +
                         '</div>');
