@@ -2713,12 +2713,20 @@ RESULTS_HTML = '''
                             var avgL = leftRuns.length ? leftRuns.reduce(function(s, x) { return s + x; }, 0) / leftRuns.length : 0;
                             var avgR = rightRuns.length ? rightRuns.reduce(function(s, x) { return s + x; }, 0) / rightRuns.length : 0;
                             var lineDiff = Math.abs(avgL - avgR);
+                            var maxLeftRun = (leftRuns && leftRuns.length) ? Math.max.apply(null, leftRuns) : 0;
+                            var recentRunLen = 1;
+                            if (arr20 && arr20.length >= 2) {
+                                var v0 = arr20[0];
+                                for (var ri = 1; ri < arr20.length; ri++) { if (arr20[ri] === v0) recentRunLen++; else break; }
+                            }
                             symmetryLineData = {
                                 symmetryPct: symCount / 10 * 100,
                                 avgLeft: avgL, avgRight: avgR,
                                 lineSimilarityPct: Math.max(0, 100 - Math.min(100, lineDiff * 25)),
                                 leftLineCount: leftRuns.length,
-                                rightLineCount: rightRuns.length
+                                rightLineCount: rightRuns.length,
+                                maxLeftRunLength: maxLeftRun,
+                                recentRunLength: recentRunLen
                             };
                         }
                     } catch (symErr) { symmetryLineData = null; console.warn('20열 symmetry/line calc:', symErr); }
@@ -2765,7 +2773,15 @@ RESULTS_HTML = '''
                                 symmetryBoostNotice = true;
                             } else {
                                 if (lc <= 3) { lineW = Math.min(1, lineW + SYM_LINE_PONG_BOOST); pongW = Math.max(0, 1 - lineW); symmetryBoostNotice = true; }
-                                else if (lc >= 5) { pongW = Math.min(1, pongW + SYM_LINE_PONG_BOOST); lineW = Math.max(0, 1 - pongW); symmetryBoostNotice = true; }
+                                else if (lc >= 5) {
+                                    var maxRun = (symmetryLineData && typeof symmetryLineData.maxLeftRunLength === 'number') ? symmetryLineData.maxLeftRunLength : 4;
+                                    var recentRun = (symmetryLineData && typeof symmetryLineData.recentRunLength === 'number') ? symmetryLineData.recentRunLength : 0;
+                                    var calmOrRunStart = (maxRun <= 3) || (recentRun >= 2);
+                                    var pongBoost = calmOrRunStart ? 0.06 : SYM_LINE_PONG_BOOST;
+                                    pongW = Math.min(1, pongW + pongBoost);
+                                    lineW = Math.max(0, 1 - pongW);
+                                    symmetryBoostNotice = true;
+                                }
                                 if (sp >= 70) { lineW = Math.min(1, lineW + SYM_SAME_BOOST); symmetryBoostNotice = true; }
                                 else if (sp <= 30) { lineW *= SYM_LOW_MUL; pongW *= SYM_LOW_MUL; }
                             }
