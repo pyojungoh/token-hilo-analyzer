@@ -142,21 +142,21 @@ def init_database():
             )
         ''')
         
-        # current_pick: 배팅 연동용 현재 예측 픽 1건 (RED/BLACK, 회차, 확률)
-        cur.execute('''
-            CREATE TABLE IF NOT EXISTS current_pick (
-                id INTEGER PRIMARY KEY,
-                pick_color VARCHAR(10),
-                round_num INTEGER,
-                probability REAL,
-                suggested_amount INTEGER,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+        # current_pick: 배팅 연동용 현재 예측 픽 1건 (RED/BLACK, 회차, 확률). 실패해도 서버는 기동
         try:
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS current_pick (
+                    id INTEGER PRIMARY KEY,
+                    pick_color VARCHAR(10),
+                    round_num INTEGER,
+                    probability REAL,
+                    suggested_amount INTEGER,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
             cur.execute('INSERT INTO current_pick (id) VALUES (1) ON CONFLICT (id) DO NOTHING')
-        except Exception:
-            pass
+        except Exception as ex:
+            print(f"[경고] current_pick 테이블 생성/초기화 건너뜀 (서버는 계속 기동): {str(ex)[:100]}")
         
         conn.commit()
         cur.close()
@@ -2489,12 +2489,16 @@ RESULTS_HTML = '''
                     const is15Joker = displayResults.length >= 15 && !!displayResults[14].joker;  // 15번 카드 조커면 픽/배팅 보류
                     
                     // 직전 예측의 실제 결과 반영: 예측했던 회차가 지금 나왔으면 기록. 결과가 조커면 actual='joker'(승패 제외, 배팅은 마틴)
-                    if (lastPrediction && currentRound === lastPrediction.round) {
+                    // 중복 방지: 이미 이 회차를 기록했으면 푸시하지 않음 (같은 데이터로 loadResults 여러 번 호출 시 승패 꼬임 방지)
+                    const alreadyRecordedRound = lastPrediction ? predictionHistory.some(function(h) { return h && h.round === lastPrediction.round; }) : true;
+                    if (lastPrediction && currentRound === lastPrediction.round && !alreadyRecordedRound) {
                         const isActualJoker = displayResults.length > 0 && !!displayResults[0].joker;
                         if (isActualJoker) {
                             predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: 'joker', probability: lastPrediction.prob != null ? lastPrediction.prob : null, pickColor: lastPrediction.color || null });
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
+                                const hasRound = calcState[id].history.some(function(h) { return h && h.round === lastPrediction.round; });
+                                if (hasRound) return;
                                 const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
                                 const pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
                                 // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
@@ -2514,6 +2518,8 @@ RESULTS_HTML = '''
                             predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: actual, probability: lastPrediction.prob != null ? lastPrediction.prob : null, pickColor: lastPrediction.color || null });
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
+                                const hasRound = calcState[id].history.some(function(h) { return h && h.round === lastPrediction.round; });
+                                if (hasRound) return;
                                 const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
                                 const pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
                                 // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
