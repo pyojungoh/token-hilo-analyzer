@@ -2878,18 +2878,6 @@ RESULTS_HTML = '''
                             (count30 > 0 ? '<span class="stat-rate ' + rateClass30 + '">승률 ' + hitPct30 + '%</span>' : '') +
                             '</div>' +
                             '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 메인=서버 최근 100회 · 승률/경고=최근 30회 기준</div>';
-                        let blendTableBlock = '';
-                        if (blendData.newProb != null) {
-                            var row15 = blendData.p15 != null ? (Number(blendData.p15).toFixed(1) + '%') : '-';
-                            var row30 = blendData.p30 != null ? (Number(blendData.p30).toFixed(1) + '%') : '-';
-                            var row100 = blendData.p100 != null ? (Number(blendData.p100).toFixed(1) + '%') : '-';
-                            blendTableBlock = '<div class="prob-bucket-wrap" style="margin-top:6px;font-size:0.8em"><div style="margin-bottom:4px;color:#666">구간별 반영 (기존 70% + 신규 30%)</div><table class="main-streak-table prob-bucket-table"><thead><tr><th>구간</th><th>확률</th><th>반영비율</th></tr></thead><tbody>' +
-                                '<tr><td>최근 15회</td><td>' + row15 + '</td><td>50%</td></tr>' +
-                                '<tr><td>최근 30회</td><td>' + row30 + '</td><td>30%</td></tr>' +
-                                '<tr><td>전체(100회)</td><td>' + row100 + '</td><td>20%</td></tr>' +
-                                '<tr style="border-top:1px solid #555"><td>신규 반영값</td><td>' + Number(blendData.newProb).toFixed(1) + '%</td><td>30% 반영</td></tr>' +
-                                '</tbody></table></div>';
-                        }
                         let streakTableBlock = '';
                         try {
                         if (rev.length === 0) {
