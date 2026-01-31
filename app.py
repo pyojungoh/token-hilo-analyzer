@@ -47,7 +47,7 @@ def init_database():
         return False
     
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=5)
         cur = conn.cursor()
         
         # game_results 테이블 생성
@@ -178,11 +178,11 @@ def ensure_current_pick_table(conn):
 
 
 def get_db_connection():
-    """데이터베이스 연결 반환"""
+    """데이터베이스 연결 반환 (connect_timeout으로 먹통 방지)"""
     if not DB_AVAILABLE or not DATABASE_URL:
         return None
     try:
-        return psycopg2.connect(DATABASE_URL)
+        return psycopg2.connect(DATABASE_URL, connect_timeout=5)
     except Exception as e:
         print(f"[❌ 오류] 데이터베이스 연결 실패: {str(e)[:200]}")
         return None
@@ -622,15 +622,14 @@ current_status_data = {
     'timestamp': datetime.now().isoformat()
 }
 
-def fetch_with_retry(url, max_retries=MAX_RETRIES, silent=False):
-    """재시도 로직 포함 fetch (기존 파일과 동일한 방식)"""
+def fetch_with_retry(url, max_retries=MAX_RETRIES, silent=False, timeout_sec=None):
+    """재시도 로직 포함 fetch. timeout_sec 지정 시 해당 초 단위 타임아웃 사용 (먹통 방지)."""
+    timeout = timeout_sec if timeout_sec is not None else TIMEOUT
     for attempt in range(max_retries):
         try:
-            # 기존 railway_server_example.py와 동일한 헤더 사용
-            # 하지만 더 완전한 브라우저 헤더 추가
             response = requests.get(
                 url,
-                timeout=TIMEOUT,
+                timeout=timeout,
                 headers={
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                     'Cache-Control': 'no-cache',
@@ -709,18 +708,20 @@ def ensure_database_initialized():
         print(f"[❌ 오류] 트레이스백:\n{traceback.format_exc()}")
         return False
 
-# 모듈 로드 시 즉시 초기화 시도 (강제 실행)
-print("[🔄] 모듈 로드 시 데이터베이스 초기화 시작...")
-if DB_AVAILABLE:
-    if DATABASE_URL:
-        print(f"[📋] DATABASE_URL 설정됨 (길이: {len(DATABASE_URL)} 문자)")
-        # 즉시 초기화 시도
-        try:
-            ensure_database_initialized()
-        except Exception as e:
-            print(f"[❌ 오류] 모듈 로드 시 초기화 실패: {str(e)}")
-    else:
-        print("[❌ 경고] DATABASE_URL이 None입니다. 환경 변수를 확인하세요.")
+# 모듈 로드 시 DB 초기화는 백그라운드 스레드에서 (앱 시작 블로킹 방지)
+def _run_db_init():
+    try:
+        time.sleep(1)
+        ensure_database_initialized()
+    except Exception as e:
+        print(f"[❌ 오류] DB 초기화 실패: {str(e)}")
+
+print("[🔄] 모듈 로드 시 데이터베이스 초기화는 백그라운드에서 실행됩니다.")
+if DB_AVAILABLE and DATABASE_URL:
+    _db_init_thread = threading.Thread(target=_run_db_init, daemon=True)
+    _db_init_thread.start()
+elif not DATABASE_URL:
+    print("[❌ 경고] DATABASE_URL이 None입니다. 환경 변수를 확인하세요.")
 else:
     print("[❌ 경고] DB_AVAILABLE이 False입니다. psycopg2를 설치하세요.")
 
@@ -734,21 +735,28 @@ def load_game_data():
         'timestamp': current_status_data.get('timestamp', datetime.now().isoformat())
     }
 
+# 외부 result.json 요청 시 타임아웃 (먹통 방지, 초 단위)
+RESULTS_FETCH_TIMEOUT = 5
+RESULTS_FETCH_MAX_RETRIES = 1
+
 def load_results_data():
-    """경기 결과 데이터 로드 (result.json) - 실제 URL 사용"""
-    # 실제 확인된 URL 경로
+    """경기 결과 데이터 로드 (result.json) - 짧은 타임아웃으로 먹통 방지"""
     possible_paths = [
-        f"{BASE_URL}/frame/hilo/result.json",  # 실제 확인된 경로
+        f"{BASE_URL}/frame/hilo/result.json",
         f"{BASE_URL}/result.json",
         f"{BASE_URL}/hilo/result.json",
         f"{BASE_URL}/frame/result.json",
     ]
-    
     for url_path in possible_paths:
         try:
             url = f"{url_path}?t={int(time.time() * 1000)}"
             print(f"[결과 데이터 요청 시도] {url}")
-            response = fetch_with_retry(url, silent=True)
+            response = fetch_with_retry(
+                url,
+                max_retries=RESULTS_FETCH_MAX_RETRIES,
+                silent=True,
+                timeout_sec=RESULTS_FETCH_TIMEOUT,
+            )
             
             if response:
                 print(f"[✅ 결과 데이터 성공] {url}")
@@ -957,17 +965,6 @@ RESULTS_HTML = '''
         }
         .header-info div {
             margin: 0 10px;
-        }
-        .status-banner {
-            background: #b71c1c;
-            color: #fff;
-            text-align: center;
-            padding: 12px 16px;
-            font-weight: bold;
-            font-size: clamp(0.95em, 2.2vw, 1.1em);
-            margin-bottom: 12px;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(183,28,28,0.4);
         }
         .remaining-time {
             font-weight: bold;
@@ -1494,7 +1491,6 @@ RESULTS_HTML = '''
 </head>
 <body>
     <div class="container">
-        <div class="status-banner">⚠️ 현재 먹통</div>
         <div class="header-info">
             <div id="prev-round">이전회차: --</div>
             <div>
@@ -3386,9 +3382,18 @@ def get_results():
         if results_cache and (current_time - last_update_time) < CACHE_TTL:
             return jsonify(results_cache)
         
-        # 최신 데이터 먼저 가져오기 (항상 최신 데이터 우선)
-        latest_results = load_results_data()
-        print(f"[API] 최신 데이터 로드: {len(latest_results) if latest_results else 0}개")
+        # 최신 데이터: 스레드에서 로드, 최대 8초만 대기 (먹통 방지)
+        _latest_ref = [None]
+        def _fetch_latest():
+            try:
+                _latest_ref[0] = load_results_data()
+            except Exception as e:
+                print(f"[API] load_results_data 오류: {str(e)[:150]}")
+        _t = threading.Thread(target=_fetch_latest, daemon=True)
+        _t.start()
+        _t.join(timeout=8)
+        latest_results = _latest_ref[0] if _latest_ref[0] is not None else []
+        print(f"[API] 최신 데이터 로드: {len(latest_results)}개")
         
         # 데이터베이스가 있으면 DB에서 조회하고 최신 데이터와 병합
         if DB_AVAILABLE and DATABASE_URL:
