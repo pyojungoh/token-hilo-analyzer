@@ -545,7 +545,7 @@ def get_recent_results(hours=5):
     if not DB_AVAILABLE or not DATABASE_URL:
         return []
     
-    conn = get_db_connection(statement_timeout_sec=12)
+    conn = get_db_connection(statement_timeout_sec=8)
     if not conn:
         return []
     
@@ -3903,32 +3903,13 @@ def results_page():
     """경기 결과 웹페이지"""
     return render_template_string(RESULTS_HTML)
 
-@app.route('/api/results', methods=['GET'])
-def get_results():
-    """경기 결과 API - 데이터베이스에서 최근 5시간 데이터 조회"""
+def _build_results_payload():
+    """경기 결과 페이로드 생성 (스레드에서 호출, 먹통 시 None 반환)."""
     try:
-        global results_cache, last_update_time
-        
-        current_time = time.time() * 1000
-        
-        # 캐시 사용 (1초) - DB 여부와 관계없이 캐시 먼저 확인
-        if results_cache and (current_time - last_update_time) < CACHE_TTL:
-            return jsonify(results_cache)
-        
-        # 최신 데이터: 스레드에서 로드, 최대 8초만 대기 (먹통 방지)
-        _latest_ref = [None]
-        def _fetch_latest():
-            try:
-                _latest_ref[0] = load_results_data()
-            except Exception as e:
-                print(f"[API] load_results_data 오류: {str(e)[:150]}")
-        _t = threading.Thread(target=_fetch_latest, daemon=True)
-        _t.start()
-        _t.join(timeout=8)
-        latest_results = _latest_ref[0] if _latest_ref[0] is not None else []
+        latest_results = load_results_data()
+        if latest_results is None:
+            latest_results = []
         print(f"[API] 최신 데이터 로드: {len(latest_results)}개")
-        
-        # 데이터베이스가 있으면 DB에서 조회하고 최신 데이터와 병합
         if DB_AVAILABLE and DATABASE_URL:
             # 데이터베이스에서 최근 5시간 데이터 조회
             db_results = get_recent_results(hours=5)
@@ -3985,11 +3966,11 @@ def get_results():
                             pairs_to_lookup.append((current_game_id, compare_game_id))
                             pairs_index_map[(current_game_id, compare_game_id)] = i
                     
-                    # 일괄 조회 (성능 최적화)
+                    # 일괄 조회 (성능 최적화, statement_timeout으로 먹통 방지)
                     batch_results = {}
                     if pairs_to_lookup and DB_AVAILABLE and DATABASE_URL:
                         try:
-                            conn = get_db_connection()
+                            conn = get_db_connection(statement_timeout_sec=5)
                             if conn:
                                 cur = conn.cursor()
                                 # PostgreSQL에서 튜플 비교는 여러 방법이 있지만, 간단하게 OR 조건 사용
@@ -4046,16 +4027,13 @@ def get_results():
             
             # 그래프/표시 순서 일관성: 항상 gameID 기준 최신순으로 정렬
             results = _sort_results_newest_first(results)
-            
-            results_cache = {
+            return {
                 'results': results,
                 'count': len(results),
                 'timestamp': datetime.now().isoformat(),
                 'source': 'database+json',
                 'prediction_history': get_prediction_history(100)
             }
-            last_update_time = current_time
-            return jsonify(results_cache)
         else:
             # 데이터베이스가 없으면 기존 방식 (result.json에서 가져오기)
             results = latest_results if latest_results else []
@@ -4090,23 +4068,48 @@ def get_results():
                         else:
                             results[i]['colorMatch'] = None
             
-            results_cache = {
+            return {
                 'results': results,
                 'count': len(results),
                 'timestamp': datetime.now().isoformat(),
                 'source': 'json',
                 'prediction_history': get_prediction_history(100)
             }
+    except Exception as e:
+        print(f"[❌ 오류] _build_results_payload 실패: {str(e)[:200]}")
+        return None
+
+
+@app.route('/api/results', methods=['GET'])
+def get_results():
+    """경기 결과 API - 전체 로직을 스레드+18초 타임아웃으로 감싸 요청 스레드 먹통 방지"""
+    try:
+        global results_cache, last_update_time
+        current_time = time.time() * 1000
+        if results_cache and (current_time - last_update_time) < CACHE_TTL:
+            return jsonify(results_cache)
+        ref = [None]
+        t = threading.Thread(target=lambda: ref.__setitem__(0, _build_results_payload()), daemon=True)
+        t.start()
+        t.join(timeout=18)
+        if ref[0] is not None:
+            results_cache = ref[0]
             last_update_time = current_time
             return jsonify(results_cache)
+        if results_cache:
+            return jsonify(results_cache)
+        return jsonify({
+            'results': [],
+            'count': 0,
+            'timestamp': datetime.now().isoformat(),
+            'error': 'timeout',
+            'prediction_history': []
+        }), 200
     except Exception as e:
-        # 에러 발생 시 상세 로그 출력
         import traceback
         error_msg = str(e)[:200]
         print(f"[❌ 오류] 결과 로드 실패: {error_msg}")
-        print(f"[❌ 오류] 트레이스백:\n{traceback.format_exc()[:500]}")
-        
-        # 에러 발생 시에도 빈 결과 반환 (서버 크래시 방지)
+        print(traceback.format_exc()[:500])
         return jsonify({
             'results': [],
             'count': 0,
