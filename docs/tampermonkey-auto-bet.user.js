@@ -1,9 +1,13 @@
 // ==UserScript==
 // @name         토큰하이로우 자동배팅 (nhs900)
 // @namespace    https://github.com/
-// @version      0.2
+// @version      0.3
 // @description  설정값을 사이트에 입력·클릭 테스트 → (선택) 예측기 API 연동 자동배팅
 // @match        https://nhs900.com/*
+// @match        http://nhs900.com/*
+// @match        https://www.nhs900.com/*
+// @match        http://www.nhs900.com/*
+// @run-at       document-end
 // @grant        GM_xmlhttpRequest
 // @connect      *
 // ==/UserScript==
@@ -63,8 +67,8 @@
 
         var panel = document.createElement('div');
         panel.id = 'token-hilo-bet-panel';
-        panel.style.cssText = 'position:fixed;top:12px;right:12px;z-index:999999;width:200px;padding:10px;' +
-            'background:#1a1a2e;border:1px solid #64b5f6;border-radius:8px;font-family:sans-serif;font-size:12px;color:#eee;';
+        panel.style.cssText = 'position:fixed !important;top:12px !important;right:12px !important;z-index:2147483647 !important;width:220px;padding:10px;' +
+            'background:#1a1a2e !important;border:2px solid #64b5f6 !important;border-radius:8px;font-family:sans-serif;font-size:12px;color:#eee !important;box-shadow:0 4px 20px rgba(0,0,0,0.5) !important;';
         panel.innerHTML =
             '<div style="margin-bottom:6px;color:#64b5f6;font-weight:bold;">배팅 테스트</div>' +
             '<label style="display:block;margin-bottom:4px;">배팅금 <input type="text" id="th-bet-amount" value="1000" style="width:80px;margin-left:4px;padding:4px;background:#333;color:#fff;border:1px solid #555;" /></label>' +
@@ -75,7 +79,8 @@
             '</div>' +
             '<div id="th-status" style="font-size:11px;color:#81c784;min-height:14px;"></div>';
 
-        document.body.appendChild(panel);
+        var target = document.body || document.documentElement;
+        if (target) target.appendChild(panel);
 
         var amountInput = document.getElementById('th-bet-amount');
         var statusEl = document.getElementById('th-status');
@@ -94,14 +99,15 @@
         });
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', injectTestPanel);
-    } else {
-        injectTestPanel();
+    function tryInject() {
+        if (document.body || document.documentElement) injectTestPanel();
     }
-
-    // 페이지가 동적일 수 있으므로 짧은 지연 후 한 번 더 시도
-    setTimeout(injectTestPanel, 1500);
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', tryInject);
+    } else {
+        tryInject();
+    }
+    [500, 1000, 2000, 4000, 8000, 12000].forEach(function(ms) { setTimeout(tryInject, ms); });
 
     // ----- 1-2) 왼쪽 설정 → 오른쪽 사이트: 부모/iframe에서 오는 postMessage 수신 -----
     window.addEventListener('message', function(e) {
