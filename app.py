@@ -1450,6 +1450,9 @@ RESULTS_HTML = '''
         .calc-dropdown-header .calc-status.stopped { color: #e57373; }
         .calc-dropdown-header .calc-status.timer-done { color: #64b5f6; font-weight: bold; }
         .calc-dropdown-header .calc-status.idle { color: #888; }
+        .calc-current-card { display: inline-block; width: 22px; height: 18px; line-height: 18px; text-align: center; font-size: 0.75em; margin-left: 6px; vertical-align: middle; border: 1px solid #555; box-sizing: border-box; }
+        .calc-current-card.card-jung { background: #b71c1c; color: #fff; }
+        .calc-current-card.card-kkuk { background: #111; color: #fff; }
         .calc-dropdown-header .calc-toggle { font-size: 0.8em; color: #888; }
         .calc-dropdown.collapsed .calc-dropdown-body { display: none !important; }
         .calc-dropdown:not(.collapsed) .calc-dropdown-header .calc-toggle { transform: rotate(180deg); }
@@ -1475,8 +1478,8 @@ RESULTS_HTML = '''
         .calc-round-table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
         .calc-round-table th, .calc-round-table td { padding: 4px 6px; border: 1px solid #444; text-align: center; }
         .calc-round-table th { background: #333; color: #81c784; }
-        .calc-round-table td.pick-jung { background: #111; color: #fff; }
-        .calc-round-table td.pick-kkuk { background: #b71c1c; color: #fff; }
+        .calc-round-table td.pick-jung { background: #b71c1c; color: #fff; }
+        .calc-round-table td.pick-kkuk { background: #111; color: #fff; }
         .calc-round-table .win { color: #ffeb3b; font-weight: 600; }
         .calc-round-table .lose { color: #c62828; font-weight: 500; }
         .calc-round-table .joker { color: #64b5f6; }
@@ -1556,6 +1559,7 @@ RESULTS_HTML = '''
                         <div class="calc-dropdown-header">
                             <span class="calc-title">계산기 1</span>
                             <span class="calc-status idle" id="calc-1-status">대기중</span>
+                            <span class="calc-current-card" id="calc-1-current-card"></span>
                             <div class="calc-summary" id="calc-1-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
                 </div>
@@ -1588,6 +1592,7 @@ RESULTS_HTML = '''
                         <div class="calc-dropdown-header">
                             <span class="calc-title">계산기 2</span>
                             <span class="calc-status idle" id="calc-2-status">대기중</span>
+                            <span class="calc-current-card" id="calc-2-current-card"></span>
                             <div class="calc-summary" id="calc-2-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
                         </div>
@@ -1620,6 +1625,7 @@ RESULTS_HTML = '''
                         <div class="calc-dropdown-header">
                             <span class="calc-title">계산기 3</span>
                             <span class="calc-status idle" id="calc-3-status">대기중</span>
+                            <span class="calc-current-card" id="calc-3-current-card"></span>
                             <div class="calc-summary" id="calc-3-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
                         </div>
@@ -3028,6 +3034,40 @@ RESULTS_HTML = '''
             } else {
                 el.classList.add('idle');
                 el.textContent = '대기중';
+            }
+            // 계산기 1,2,3: 실행중일 때 현재 배팅 카드(정/꺽) 표시
+            if (id !== DEFENSE_ID) {
+                const cardEl = document.getElementById('calc-' + id + '-current-card');
+                if (cardEl) {
+                    if (state.running && lastPrediction && lastPrediction.value) {
+                        var pred = lastPrediction.value;
+                        const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
+                        if (rev) pred = pred === '정' ? '꺽' : '정';
+                        var lowWinRate = false;
+                        try {
+                            var vh = (typeof predictionHistory !== 'undefined' && predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
+                            var v15 = vh.slice(-15), v30 = vh.slice(-30), v100 = vh.slice(-100);
+                            var hit15r = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                            var loss15 = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                            var c15 = hit15r + loss15, r15 = c15 > 0 ? 100 * hit15r / c15 : 50;
+                            var hit30r = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                            var loss30 = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                            var c30 = hit30r + loss30, r30 = c30 > 0 ? 100 * hit30r / c30 : 50;
+                            var hit100r = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                            var loss100 = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                            var c100 = hit100r + loss100, r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
+                            var blended = 0.5 * r15 + 0.3 * r30 + 0.2 * r100;
+                            lowWinRate = (c15 > 0 || c30 > 0 || c100 > 0) && blended <= 50;
+                        } catch (e2) {}
+                        const winRateRevEl = document.getElementById('calc-' + id + '-win-rate-reverse');
+                        if (winRateRevEl && winRateRevEl.checked && lowWinRate) pred = pred === '정' ? '꺽' : '정';
+                        cardEl.textContent = pred;
+                        cardEl.className = 'calc-current-card card-' + (pred === '정' ? 'jung' : 'kkuk');
+                    } else {
+                        cardEl.textContent = '';
+                        cardEl.className = 'calc-current-card';
+                    }
+                }
             }
             } catch (e) { console.warn('updateCalcStatus', id, e); }
         }
