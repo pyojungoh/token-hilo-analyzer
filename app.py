@@ -535,7 +535,7 @@ def get_recent_results(hours=5):
         
         # 최근 N시간 데이터 조회 (created_at 최신순 → 이후 gameID 기준 재정렬)
         cur.execute('''
-            SELECT game_id as "gameID", result, hi, lo, red, black, jqka, joker,
+            SELECT game_id as "gameID", result, hi, lo, red, black, jqka, joker, 
                    hash_value as hash, salt_value as salt
             FROM game_results
             WHERE created_at >= NOW() - (INTERVAL '1 hour' * %s)
@@ -1415,7 +1415,7 @@ RESULTS_HTML = '''
             .prediction-table-row #prediction-pick-container { order: 1; width: 100%; max-width: 320px; display: flex; justify-content: center; }
             .prediction-table-row #prediction-box { order: 2; width: 100%; }
             .prediction-table-row #graph-stats { order: 3; width: 100%; }
-            .prediction-table-row #prob-bucket-stats { order: 4; width: 100%; max-width: 320px; }
+            .prediction-table-row #prob-bucket-stats { order: 4; width: auto; max-width: 120px; }
         }
         @media (max-width: 480px) {
             .cards-container { gap: 2px; padding: 8px 0; }
@@ -1445,28 +1445,29 @@ RESULTS_HTML = '''
         }
         #prob-bucket-stats {
             flex: 0 1 auto;
-            min-width: 140px;
-            max-width: 220px;
+            min-width: 0;
+            max-width: 120px;
             overflow-x: auto;
             margin-top: 0;
-            font-size: clamp(12px, 2vw, 14px);
+            font-size: 10px;
             color: #fff;
         }
         #prob-bucket-stats table {
             border-collapse: collapse;
             margin: 0 auto;
-            min-width: 140px;
+            min-width: 0;
+            font-size: inherit;
         }
         #prob-bucket-stats th, #prob-bucket-stats td {
-            border: 1px solid #666;
-            padding: clamp(6px, 1.5vw, 10px) clamp(8px, 2vw, 12px);
+            border: 1px solid #555;
+            padding: 1px 3px;
             text-align: center;
             color: #fff;
-            font-size: clamp(11px, 2vw, 14px);
+            font-size: inherit;
         }
-        #prob-bucket-stats th { background: #444; font-weight: bold; color: #fff; }
+        #prob-bucket-stats th { background: #444; font-weight: bold; color: #aaa; }
         #prob-bucket-stats td:first-child { text-align: left; font-weight: bold; color: #fff; }
-        #prob-bucket-stats .prob-bucket-title { margin-top: 6px; font-size: 0.85em; color: #aaa; text-align: center; }
+        #prob-bucket-stats .prob-bucket-title { margin-top: 2px; font-size: 0.9em; color: #888; text-align: center; }
         #prob-bucket-stats .stat-rate.high { color: #81c784; font-weight: 600; }
         #prob-bucket-stats .stat-rate.mid { color: #ffb74d; }
         #prob-bucket-stats .stat-rate.low { color: #e57373; }
@@ -1746,7 +1747,7 @@ RESULTS_HTML = '''
             <div id="prediction-pick-container"></div>
             <div id="graph-stats" class="graph-stats"></div>
             <div id="prob-bucket-stats" class="prob-bucket-stats"></div>
-            <div id="prediction-box" class="prediction-box"></div>
+        <div id="prediction-box" class="prediction-box"></div>
         </div>
         <div class="bet-calc">
             <h4>가상 배팅 계산기</h4>
@@ -1762,7 +1763,7 @@ RESULTS_HTML = '''
                             <span class="calc-status idle" id="calc-1-status">대기중</span>
                             <div class="calc-summary" id="calc-1-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
-                        </div>
+                </div>
                         <div class="calc-dropdown-body" id="calc-1-body">
                             <div class="calc-body-row">
                                 <div class="calc-inputs">
@@ -1772,7 +1773,7 @@ RESULTS_HTML = '''
                                     <label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label>
                                     <label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label>
                                     <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label>
-                                </div>
+            </div>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="1">실행</button>
                                     <button type="button" class="calc-stop" data-calc="1">정지</button>
@@ -2912,9 +2913,9 @@ RESULTS_HTML = '''
                                 const bucketRows = bucketStats.map(function(s) {
                                     const pctNum = s.pct !== '-' ? parseFloat(s.pct) : 0;
                                     const rowClass = pctNum >= 60 ? 'high' : pctNum >= 50 ? 'mid' : 'low';
-                                    return '<tr><td>' + s.label + '</td><td>' + s.total + '회</td><td>' + s.wins + '승</td><td class="stat-rate ' + rowClass + '">' + s.pct + '%</td></tr>';
+                                    return '<tr><td>' + s.label + '</td><td>' + s.total + '</td><td>' + s.wins + '</td><td class="stat-rate ' + rowClass + '">' + s.pct + '%</td></tr>';
                                 }).join('');
-                                probBucketStatsDiv.innerHTML = '<div class="prob-bucket-wrap"><table><thead><tr><th>구간</th><th>횟수</th><th>승</th><th>승률</th></tr></thead><tbody>' + bucketRows + '</tbody></table><p class="prob-bucket-title">확률 구간별 승률</p></div>';
+                                probBucketStatsDiv.innerHTML = '<div class="prob-bucket-wrap"><table><thead><tr><th>구간</th><th>n</th><th>승</th><th>%</th></tr></thead><tbody>' + bucketRows + '</tbody></table><p class="prob-bucket-title">구간별 승률</p></div>';
                             } else {
                                 probBucketStatsDiv.innerHTML = '';
                             }
@@ -3317,7 +3318,7 @@ RESULTS_HTML = '''
                     updateCalcStatus(DEFENSE_ID);
                 }
             }
-        }, 1000);
+            }, 1000);
         function updateAllCalcs() {
             CALC_IDS.forEach(id => { updateCalcSummary(id); updateCalcDetail(id); updateCalcStatus(id); });
             updateCalcSummary(DEFENSE_ID); updateCalcDetail(DEFENSE_ID); updateCalcStatus(DEFENSE_ID);
