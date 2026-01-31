@@ -3090,7 +3090,7 @@ RESULTS_HTML = '''
                 el.classList.add('idle');
                 el.textContent = '대기중';
             }
-            // 계산기 1,2,3: 실행중일 때 배팅중 카드(실제 걸 픽) + 예측픽 카드(원본) 표시. 반대면 정/꺽·색상 모두 반대.
+            // 계산기 1,2,3: 예측픽은 메인과 동일(정/꺽, 정=빨강 꺽=검정). 반픽/승률반픽이면 배팅만 반대로.
             if (id !== DEFENSE_ID) {
                 try {
                     const bettingCardEl = document.getElementById('calc-' + id + '-current-card');
