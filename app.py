@@ -622,6 +622,23 @@ def _detect_v_pattern(line_runs, pong_runs, graph_values_head=None):
         return long_line and short_pong_after and short_line_after
 
 
+def _detect_u_35_pattern(line_runs):
+    """
+    U자 + 줄 3~5 구간 감지: 줄 길이가 3~5로 반복되고, 그 전에 짧은 줄(1~2)이 있어 U자 모양인 구간.
+    이 구간에서는 줄(유지) 쪽 가중치를 올려서 연패를 줄임.
+    반환: (bool) U자·3~5 구간이면 True.
+    """
+    if not line_runs or len(line_runs) < 3:
+        return False
+    # 조건 A: 현재 줄 길이가 3~5
+    if line_runs[0] not in (3, 4, 5):
+        return False
+    # 조건 B: 최근에 짧은 줄(1~2)이 있었음 → U자 바닥을 지나 3~5로 올라온 형태
+    if line_runs[1] in (1, 2) or line_runs[2] in (1, 2):
+        return True
+    return False
+
+
 def _compute_blend_data(prediction_history):
     """예측 이력(actual!=joker)으로 15/30/100 구간 반영 확률."""
     valid = [h for h in (prediction_history or []) if h and isinstance(h, dict)]
@@ -856,6 +873,11 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
     if _detect_v_pattern(line_runs, pong_runs, use_for_pattern[:2] if len(use_for_pattern) >= 2 else None):
         pong_w += 0.12
         line_w = max(0.0, line_w - 0.06)
+    # U자 + 줄 3~5 구간: 연패가 많으므로 줄(유지) 쪽 가중치 보정
+    u35_detected = _detect_u_35_pattern(line_runs)
+    if u35_detected:
+        line_w += 0.10
+        pong_w = max(0.0, pong_w - 0.05)
     total_w = line_w + pong_w
     if total_w > 0:
         line_w /= total_w
@@ -875,7 +897,13 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
         color_to_pick = '검정' if predict == '정' else '빨강'
     else:
         color_to_pick = '빨강'
-    return {'value': predict, 'round': predicted_round_full, 'prob': round(pred_prob, 1), 'color': color_to_pick}
+    # U+3~5 구간이면 확률 상한 적용(과신 방지)
+    if u35_detected and pred_prob > 58:
+        pred_prob = 58.0
+    return {
+        'value': predict, 'round': predicted_round_full, 'prob': round(pred_prob, 1), 'color': color_to_pick,
+        'warning_u35': u35_detected,
+    }
 
 
 def calculate_and_save_color_matches(results):
@@ -1779,10 +1807,10 @@ RESULTS_HTML = '''
             flex: 1 1 45%;
             min-width: 200px;
             max-width: 100%;
-            padding: clamp(12px, 2.5vw, 20px);
+            padding: clamp(8px, 1.5vw, 14px);
             background: rgba(255,255,255,0.04);
             border: 1px solid #444;
-            border-radius: 12px;
+            border-radius: 10px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -1930,10 +1958,10 @@ RESULTS_HTML = '''
             color: #ef9a9a;
         }
         .prediction-pick-title {
-            font-size: clamp(0.85em, 2vw, 0.95em);
+            font-size: clamp(0.8em, 1.8vw, 0.9em);
             font-weight: bold;
             color: #81c784;
-            margin-bottom: clamp(6px, 1.5vw, 10px);
+            margin-bottom: clamp(2px, 0.6vw, 5px);
         }
         .prediction-pick-title.prediction-pick-title-betting {
             color: #ffeb3b;
@@ -1941,14 +1969,14 @@ RESULTS_HTML = '''
         }
         @keyframes prediction-blink { 50% { opacity: 0.7; } }
         .prediction-pick .pred-round {
-            margin-top: 4px;
-            font-size: 0.95em;
+            margin-top: 2px;
+            font-size: 0.9em;
             font-weight: bold;
             color: #81c784;
         }
         .prediction-card {
-            width: clamp(64px, 22vw, 140px);
-            height: clamp(64px, 22vw, 140px);
+            width: clamp(52px, 18vw, 110px);
+            height: clamp(52px, 18vw, 110px);
             background: #1a1a1a;
             border: clamp(2px, 0.4vw, 4px) solid #424242;
             border-radius: clamp(10px, 2vw, 14px);
@@ -1967,18 +1995,28 @@ RESULTS_HTML = '''
             border-color: #424242;
         }
         .prediction-card .pred-value-big {
-            font-size: clamp(1.6em, 5.5vw, 3.2em);
+            font-size: clamp(1.4em, 4.5vw, 2.6em);
             font-weight: 900;
             color: #fff;
-            text-shadow: 0 0 12px rgba(255,255,255,0.4);
+            text-shadow: 0 0 10px rgba(255,255,255,0.4);
         }
         .prediction-card.card-red .pred-value-big { color: #fff; text-shadow: 0 0 12px rgba(255,255,255,0.5); }
         .prediction-card.card-black .pred-value-big { color: #e0e0e0; }
         .prediction-prob-under {
-            margin-top: 8px;
-            font-size: clamp(0.85em, 2vw, 0.95em);
+            margin-top: 4px;
+            font-size: clamp(0.8em, 1.8vw, 0.9em);
             color: #81c784;
             font-weight: bold;
+        }
+        .prediction-warning-u35 {
+            margin-top: 4px;
+            padding: 3px 6px;
+            font-size: 0.75em;
+            font-weight: bold;
+            color: #e65100;
+            background: rgba(230, 81, 0, 0.15);
+            border-radius: 4px;
+            border: 1px solid rgba(230, 81, 0, 0.4);
         }
         .prediction-stats-row {
             width: 100%;
@@ -2224,6 +2262,7 @@ RESULTS_HTML = '''
                         <li><strong>30회 패턴</strong> · «덩어리»(줄이 2개 이상 이어짐) 비율·«띄엄»(줄 1개씩)·«두줄한개» 비율을 지수로 계산. 덩어리/두줄한개는 줄 가중치에, 띄엄은 퐁당 가중치에 반영.</li>
                         <li><strong>가중치 정규화</strong> · 위에서 나온 줄 가중치(lineW)와 퐁당 가중치(pongW)를 더한 뒤 1이 되도록 나눔.</li>
                         <li><strong>V자 패턴 보정</strong> · 그래프가 «긴 줄 → 퐁당 1~2개 → 짧은 줄 → 퐁당 → …» 형태(V자 밸런스)일 때 연패가 많아서, 퐁당(바뀜) 가중치를 올려 이 구간을 넘기기 쉽게 보정함.</li>
+                        <li><strong>U자 + 줄 3~5 보정</strong> · 그래프가 «높은 줄 → 낮은 줄(1~2) → 다시 3~5 길이 줄» 형태(U자 박스)를 만들 때 연패가 많음. 이 구간을 감지하면(현재 줄 길이 3~5이고 직전에 짧은 줄 1~2가 있었을 때) 줄(유지) 가중치를 +0.10 올리고 퐁당 가중치를 줄여, 유지 쪽 픽을 내도록 보정함. 예측 확률은 58% 상한 적용.</li>
                         <li><strong>유지 vs 바뀜</strong> · «유지 확률 = 전이에서 구한 유지 확률», «바뀜 확률 = 전이에서 구한 바뀜 확률». 각각 lineW, pongW를 곱해 <em>adjSame</em>, <em>adjChange</em> 계산 후 다시 합으로 나누어 0~1로 만듦.</li>
                         <li><strong>최종 픽</strong> · adjSame ≥ adjChange 이면 직전과 <strong>같은 방향</strong>(직전 정→정, 직전 꺽→꺽), 아니면 <strong>반대</strong>(직전 정→꺽, 직전 꺽→정). 15번 카드가 빨강이면 정=빨강/꺽=검정, 검정이면 정=검정/꺽=빨강으로 <em>배팅 색</em> 결정.</li>
                     </ol>
@@ -2539,6 +2578,7 @@ RESULTS_HTML = '''
         }
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         var lastServerPrediction = null;  // 서버 예측 (있으면 표시·pending 동기화용)
+        var lastWarningU35 = false;       // U자+줄 3~5 구간 감지 시 서버가 보낸 경고
         let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
         let lastLoseEffectRound = null;  // 실패 이펙트를 이미 보여준 회차 (한 번만 표시)
         var prevSymmetryCounts = { left: null, right: null };  // 이전 시점 20열 줄 개수 (새 구간 빨리 캐치용)
@@ -2923,6 +2963,7 @@ RESULTS_HTML = '''
                 if (resultsUpdated) {
                     const sp = data.server_prediction;
                     lastServerPrediction = (sp && (sp.value === '정' || sp.value === '꺽')) ? sp : null;
+                    lastWarningU35 = !!(lastServerPrediction && sp && sp.warning_u35);
                     if (lastServerPrediction) {
                         lastPrediction = { value: lastServerPrediction.value, round: lastServerPrediction.round, prob: lastServerPrediction.prob != null ? lastServerPrediction.prob : 0, color: lastServerPrediction.color || null };
                     }
@@ -3656,6 +3697,7 @@ RESULTS_HTML = '''
                     }
                     const pickWrapClass = 'prediction-pick' + (pickInBucket ? ' pick-in-bucket' : '');
                     if (resultBarContainer) resultBarContainer.innerHTML = resultBarHtml;
+                    const u35WarningBlock = lastWarningU35 ? ('<div class="prediction-warning-u35">⚠ U자+줄 3~5 구간 · 줄(유지) 보정 적용</div>') : '';
                     const leftBlock = is15Joker ? ('<div class="prediction-pick">' +
                         '<div class="prediction-pick-title">예측 픽</div>' +
                         '<div class="prediction-card" style="background:#455a64;border-color:#78909c">' +
@@ -3670,6 +3712,7 @@ RESULTS_HTML = '''
                         '</div>' +
                         '<div class="prediction-prob-under">예측 확률 ' + predProb.toFixed(1) + '%</div>' +
                         '<div class="pred-round">' + displayRound3(predictedRoundFull) + '회</div>' +
+                        u35WarningBlock +
                         '</div>');
                     if (pickContainer) pickContainer.innerHTML = leftBlock;
                     // 배팅 연동: 현재 픽을 서버에 저장 (GET /api/current-pick 으로 외부 조회 가능)
@@ -4763,7 +4806,7 @@ def _build_results_payload():
             # 그래프/표시 순서 일관성: 항상 gameID 기준 최신순으로 정렬
             results = _sort_results_newest_first(results)
             ph = get_prediction_history(100)
-            server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None}
+            server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
             return {
                 'results': results,
                 'count': len(results),
@@ -4807,7 +4850,7 @@ def _build_results_payload():
                             results[i]['colorMatch'] = None
             
             ph = get_prediction_history(100)
-            server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None}
+            server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
             return {
                 'results': results,
                 'count': len(results),
@@ -4885,7 +4928,7 @@ def get_results():
             'timestamp': datetime.now().isoformat(),
             'error': 'loading',
             'prediction_history': [],
-            'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None}
+            'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
         }), 200
     except Exception as e:
         import traceback
@@ -4898,7 +4941,7 @@ def get_results():
             'timestamp': datetime.now().isoformat(),
             'error': error_msg,
             'prediction_history': [],
-            'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None}
+            'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
         }), 200
 
 
