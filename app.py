@@ -4669,6 +4669,14 @@ RESULTS_HTML = '''
             }
         }, 280);
         
+        // 계산기 실행 중일 때 서버 상태 주기적으로 가져와 UI 실시간 반영 (멈춰 보이는 현상 방지)
+        setInterval(() => {
+            const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running) || (calcState.defense && calcState.defense.running);
+            if (anyRunning) {
+                loadCalcStateFromServer().then(function() { updateAllCalcs(); }).catch(function(e) { console.warn('계산기 상태 폴링:', e); });
+            }
+        }, 2000);
+        
         // 0.2초마다 타이머 업데이트 (UI만 업데이트, 서버 요청은 1초마다)
         setInterval(updateTimer, 200);
     </script>
