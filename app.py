@@ -1141,7 +1141,7 @@ game_data_cache = None
 streaks_cache = None
 results_cache = None
 last_update_time = 0
-CACHE_TTL = 2000
+CACHE_TTL = 1000
 
 # 게임 상태 (Socket.IO 제거 후 기본값만 사용)
 current_status_data = {
@@ -1373,9 +1373,9 @@ def _scheduler_fetch_results():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=5, id='fetch_results', max_instances=1)
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=2, id='fetch_results', max_instances=1)
     _scheduler.start()
-    print("[✅] 결과 수집 스케줄러 시작 (5초마다, 창/브라우저 없이 동작)")
+    print("[✅] 결과 수집 스케줄러 시작 (2초마다, 창/브라우저 없이 동작)")
 else:
     print("[⚠] APScheduler 미설치 - 결과 수집은 브라우저 요청 시에만 동작합니다. pip install APScheduler")
 
@@ -1783,6 +1783,13 @@ RESULTS_HTML = '''
             border-top: 1px solid #333;
         }
         .prob-bucket-collapse:not(.collapsed) .prob-bucket-collapse-body { display: block; }
+        .formula-explanation { font-size: clamp(13px, 1.8vw, 15px); color: #ccc; line-height: 1.55; max-width: 720px; margin: 0 auto; }
+        .formula-explanation .formula-intro { margin-bottom: 12px; color: #ddd; }
+        .formula-explanation .formula-steps { margin: 0 0 12px 0; padding-left: 1.4em; }
+        .formula-explanation .formula-steps li { margin-bottom: 10px; }
+        .formula-explanation .formula-steps strong { color: #81c784; }
+        .formula-explanation .formula-steps em { color: #ffb74d; font-style: normal; }
+        .formula-explanation .formula-note { margin-top: 14px; padding-top: 10px; border-top: 1px solid #444; font-size: 0.92em; color: #999; }
         #prob-bucket-collapse-body .prob-bucket-table {
             border-collapse: collapse;
             margin: 0 auto;
@@ -2169,6 +2176,26 @@ RESULTS_HTML = '''
         <div class="prediction-table-row">
             <div id="prediction-pick-container"></div>
             <div id="prediction-box" class="prediction-box"></div>
+        </div>
+        <div id="formula-collapse" class="prob-bucket-collapse collapsed">
+            <div class="prob-bucket-collapse-header" id="formula-collapse-header" role="button" tabindex="0">예측 픽 계산 공식 (접기/펼치기)</div>
+            <div class="prob-bucket-collapse-body" id="formula-collapse-body">
+                <div class="formula-explanation">
+                    <p class="formula-intro">위에 표시되는 <strong>정/꺽</strong> 예측은 아래 단계로 계산됩니다. (서버와 동일 공식)</p>
+                    <ol class="formula-steps">
+                        <li><strong>그래프값</strong> · 최근 결과에서 카드 i번과 (i+15)번 색상이 같으면 <em>정</em>, 다르면 <em>꺽</em>. 이걸 배열로 만듦 (0번이 가장 최신).</li>
+                        <li><strong>전이 확률</strong> · 인접한 두 회차 쌍(정→정, 정→꺽, 꺽→정, 꺽→꺽) 비율을 최근 15회·30회·전체로 계산. 직전이 정이면 «정 유지/정→꺽», 꺽이면 «꺽 유지/꺽→정» 확률 사용.</li>
+                        <li><strong>퐁당 / 줄</strong> · 최근 15회에서 «바뀜» 비율 = 퐁당%, «유지» 비율 = 줄%. 퐁당%·줄%로 각각 가중치 초기값 설정.</li>
+                        <li><strong>흐름 보정</strong> · 15회 vs 30회 유지 확률 차이가 15%p 이상이면 «줄 강함» 또는 «퐁당 강함»으로 판단. 줄 강함이면 줄 가중치 +0.25, 퐁당 강함이면 퐁당 가중치 +0.25.</li>
+                        <li><strong>20열 대칭·줄</strong> · 최근 20개를 왼쪽 10 / 오른쪽 10으로 나누어 대칭도·줄 개수 계산. 새 구간 감지(우측 줄 많고 좌측 줄 적음)면 줄 가중치 +0.22. 대칭 70% 이상·우측 줄 적으면 줄 +0.28 등으로 보정.</li>
+                        <li><strong>30회 패턴</strong> · «덩어리»(줄이 2개 이상 이어짐) 비율·«띄엄»(줄 1개씩)·«두줄한개» 비율을 지수로 계산. 덩어리/두줄한개는 줄 가중치에, 띄엄은 퐁당 가중치에 반영.</li>
+                        <li><strong>가중치 정규화</strong> · 위에서 나온 줄 가중치(lineW)와 퐁당 가중치(pongW)를 더한 뒤 1이 되도록 나눔.</li>
+                        <li><strong>유지 vs 바뀜</strong> · «유지 확률 = 전이에서 구한 유지 확률», «바뀜 확률 = 전이에서 구한 바뀜 확률». 각각 lineW, pongW를 곱해 <em>adjSame</em>, <em>adjChange</em> 계산 후 다시 합으로 나누어 0~1로 만듦.</li>
+                        <li><strong>최종 픽</strong> · adjSame ≥ adjChange 이면 직전과 <strong>같은 방향</strong>(직전 정→정, 직전 꺽→꺽), 아니면 <strong>반대</strong>(직전 정→꺽, 직전 꺽→정). 15번 카드가 빨강이면 정=빨강/꺽=검정, 검정이면 정=검정/꺽=빨강으로 <em>배팅 색</em> 결정.</li>
+                    </ol>
+                    <p class="formula-note">※ 15번 카드가 조커면 예측 픽은 보류(배팅 보류). ※ 반픽·승률반픽은 계산기에서만 적용되며, 위 공식은 «정/꺽» 자체의 계산만 설명합니다.</p>
+                </div>
+            </div>
         </div>
         <div id="graph-stats-collapse" class="prob-bucket-collapse collapsed">
             <div class="prob-bucket-collapse-header" id="graph-stats-collapse-header" role="button" tabindex="0">최근 15회/30회/전체 정꺽 승률</div>
@@ -3688,11 +3715,21 @@ RESULTS_HTML = '''
                         }
                         var graphStatsCollapse = document.getElementById('graph-stats-collapse');
                         if (graphStatsCollapse) graphStatsCollapse.style.display = '';
+                        var formulaCollapse = document.getElementById('formula-collapse');
+                        if (formulaCollapse) formulaCollapse.style.display = '';
                         var graphStatsCollapseHeader = document.getElementById('graph-stats-collapse-header');
                         if (graphStatsCollapseHeader && !graphStatsCollapseHeader.getAttribute('data-bound')) {
                             graphStatsCollapseHeader.setAttribute('data-bound', '1');
                             graphStatsCollapseHeader.addEventListener('click', function() {
                                 var el = document.getElementById('graph-stats-collapse');
+                                if (el) el.classList.toggle('collapsed');
+                            });
+                        }
+                        var formulaCollapseHeader = document.getElementById('formula-collapse-header');
+                        if (formulaCollapseHeader && !formulaCollapseHeader.getAttribute('data-bound')) {
+                            formulaCollapseHeader.setAttribute('data-bound', '1');
+                            formulaCollapseHeader.addEventListener('click', function() {
+                                var el = document.getElementById('formula-collapse');
                                 if (el) el.classList.toggle('collapsed');
                             });
                         }
@@ -3734,6 +3771,8 @@ RESULTS_HTML = '''
                     if (symmetryLineBodyEmpty) symmetryLineBodyEmpty.innerHTML = '';
                     if (symmetryLineCollapseEmpty) symmetryLineCollapseEmpty.style.display = 'none';
                     if (graphStatsCollapseEmpty) graphStatsCollapseEmpty.style.display = 'none';
+                    var formulaCollapseEmpty = document.getElementById('formula-collapse');
+                    if (formulaCollapseEmpty) formulaCollapseEmpty.style.display = 'none';
                 }
                 
                 // 헤더: 상단에는 회차 전체 숫자 표시 (비교용), 표에는 뒤 3자리만
@@ -4513,9 +4552,9 @@ RESULTS_HTML = '''
         
         initialLoad();
         
-        // 데이터 없을 때 0.5초마다, 있으면 1초마다 (10초 경기 안에 결과 보기)
+        // 데이터 없을 때 0.5초마다, 있으면 0.7초마다 (결과·예측픽 빨리 반영)
         setInterval(() => {
-            const interval = allResults.length === 0 ? 500 : 1000;
+            const interval = allResults.length === 0 ? 500 : 700;
             if (Date.now() - lastResultsUpdate > interval) {
                 loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
                 lastResultsUpdate = Date.now();
