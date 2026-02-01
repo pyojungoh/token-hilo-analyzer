@@ -152,13 +152,6 @@ def _js_set_value_inner():
         "el.dispatchEvent(new Event('input',{bubbles:true}));"
         "el.dispatchEvent(new Event('change',{bubbles:true}));"
         "el.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,key:'0'}));"
-        "setTimeout(function(){"
-        "try{var d=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');"
-        "if(d&&d.set)d.set.call(el,s);else el.value=s;"
-        "el.dispatchEvent(new Event('input',{bubbles:true}));"
-        "el.dispatchEvent(new Event('change',{bubbles:true}));"
-        "}catch(e){}}"
-        ",120);"
         "return true;"
         "}"
     )
@@ -1266,18 +1259,8 @@ class MacroWindow(QMainWindow):
             else:
                 ax, ay = amount_parsed[1], amount_parsed[2]
                 page.runJavaScript(js_set_value_at_xy(ax, ay, amount_str))
-            # 1-2) 200ms 후 금액 재입력 (React 등 비동기 반영 대비)
-            def _retry():
-                p = self.web.page() if self.web else None
-                if not p:
-                    return
-                if amount_parsed[0] == "selector":
-                    p.runJavaScript(js_set_value_by_selector(amount_parsed[1], amount_str))
-                else:
-                    p.runJavaScript(js_set_value_at_xy(amount_parsed[1], amount_parsed[2], amount_str))
-            QTimer.singleShot(200, _retry)
-            # 2) 1초 대기 후 RED/BLACK 클릭 (금액 반영 시간 확보)
-            QTimer.singleShot(1000, lambda: self._do_click_in_page(pick_color))
+            # 2) 0.7초 대기 후 RED/BLACK 클릭 (금액 반영 시간 확보)
+            QTimer.singleShot(700, lambda: self._do_click_in_page(pick_color))
             self.set_status("마지막: %s 회차" % pick_color)
         except Exception as e:
             self.log("[배팅 실패] %s" % e)
