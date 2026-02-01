@@ -130,29 +130,42 @@ def js_click_xy(x, y, intended_color=None):
     )
 
 def _js_set_value_inner():
-    """React/Vue 제어 컴포넌트 대응: 네이티브 setter + input/change 이벤트."""
+    """React/Vue 제어 컴포넌트 대응: 클리어→네이티브 setter→input/change→paste 폴백."""
     return (
         "function setInputValue(el, v){"
         "if(!el)return false;"
         "var s=String(v);"
+        "el.scrollIntoView&&el.scrollIntoView({block:'center'});"
         "el.focus();"
         "el.click&&el.click();"
+        "if(el.isContentEditable){"
+        "el.textContent=s;el.innerHTML=s;"
+        "el.dispatchEvent(new Event('input',{bubbles:true}));"
+        "return true;"
+        "}"
+        "el.select&&el.select();"
         "try{"
-        "var nativeSetter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');"
-        "if(nativeSetter&&nativeSetter.set){"
-        "nativeSetter.set.call(el,s);"
-        "}else{el.value=s;}"
-        "}catch(e){el.value=s;}"
+        "var desc=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');"
+        "if(desc&&desc.set){desc.set.call(el,'');desc.set.call(el,s);}"
+        "else{el.value='';el.value=s;}"
+        "}catch(e){el.value='';el.value=s;}"
         "el.dispatchEvent(new Event('input',{bubbles:true}));"
         "el.dispatchEvent(new Event('change',{bubbles:true}));"
         "el.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,key:'0'}));"
+        "setTimeout(function(){"
+        "try{var d=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');"
+        "if(d&&d.set)d.set.call(el,s);else el.value=s;"
+        "el.dispatchEvent(new Event('input',{bubbles:true}));"
+        "el.dispatchEvent(new Event('change',{bubbles:true}));"
+        "}catch(e){}}"
+        ",120);"
         "return true;"
         "}"
     )
 
 
 def js_set_value_at_xy(x, y, value_str):
-    """(x,y) 위치의 input에 값 넣기. label이면 연결된 input 사용. React/Vue 대응."""
+    """(x,y) 위치의 input에 값 넣기. label/contenteditable 포함. React/Vue 대응."""
     v = str(value_str) if value_str is not None else ""
     return (
         "(function(x,y,v){"
@@ -160,8 +173,10 @@ def js_set_value_at_xy(x, y, value_str):
         "var el=document.elementFromPoint(x,y);"
         "if(!el)return;"
         "if(el.tagName==='LABEL'&&el.htmlFor)el=document.getElementById(el.htmlFor)||el;"
-        "else if(el.tagName!=='INPUT'&&el.tagName!=='TEXTAREA'){var inp=el.querySelector('input,textarea');if(inp)el=inp;}"
-        "if(el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA')){setInputValue(el,v);}"
+        "else if(el.tagName!=='INPUT'&&el.tagName!=='TEXTAREA'&&!el.isContentEditable){"
+        "var inp=el.querySelector('input,textarea,[contenteditable=true]');if(inp)el=inp;"
+        "}"
+        "if(el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable)){setInputValue(el,v);}"
         "})(%s,%s,%s);"
     ) % (x, y, json.dumps(v))
 
@@ -1251,8 +1266,18 @@ class MacroWindow(QMainWindow):
             else:
                 ax, ay = amount_parsed[1], amount_parsed[2]
                 page.runJavaScript(js_set_value_at_xy(ax, ay, amount_str))
-            # 2) 0.5초 대기 후 RED/BLACK 클릭 (금액 반영 시간 확보)
-            QTimer.singleShot(500, lambda: self._do_click_in_page(pick_color))
+            # 1-2) 200ms 후 금액 재입력 (React 등 비동기 반영 대비)
+            def _retry():
+                p = self.web.page() if self.web else None
+                if not p:
+                    return
+                if amount_parsed[0] == "selector":
+                    p.runJavaScript(js_set_value_by_selector(amount_parsed[1], amount_str))
+                else:
+                    p.runJavaScript(js_set_value_at_xy(amount_parsed[1], amount_parsed[2], amount_str))
+            QTimer.singleShot(200, _retry)
+            # 2) 1초 대기 후 RED/BLACK 클릭 (금액 반영 시간 확보)
+            QTimer.singleShot(1000, lambda: self._do_click_in_page(pick_color))
             self.set_status("마지막: %s 회차" % pick_color)
         except Exception as e:
             self.log("[배팅 실패] %s" % e)
