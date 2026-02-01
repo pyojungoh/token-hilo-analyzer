@@ -93,9 +93,10 @@ def fetch_results(analyzer_url, timeout=5):
             "server_prediction": data.get("server_prediction") or {},
             "prediction_history": data.get("prediction_history") or [],
             "blended_win_rate": data.get("blended_win_rate"),
+            "round_actuals": data.get("round_actuals") or {},
         }
     except Exception as e:
-        return {"ok": False, "server_prediction": {}, "prediction_history": [], "blended_win_rate": None, "error": str(e)}
+        return {"ok": False, "server_prediction": {}, "prediction_history": [], "blended_win_rate": None, "round_actuals": {}, "error": str(e)}
 
 
 # 클릭용 JavaScript (값은 runJavaScript 호출 시 문자열에 삽입)
@@ -380,10 +381,10 @@ class MacroWindow(QMainWindow):
         self.black_capture_btn.clicked.connect(lambda: self._start_capture("BLACK"))
         fl3.addRow(self.black_capture_btn)
         self.poll_interval_edit = QLineEdit()
-        self.poll_interval_edit.setText("0.5")
+        self.poll_interval_edit.setText("0.3")
         self.poll_interval_edit.setMaximumWidth(60)
         fl3.addRow("픽 확인 주기(초):", self.poll_interval_edit)
-        poll_hint = QLabel("= Analyzer에 몇 초마다 픽/결과 조회. 0.5초 권장(결과 지연 감소)")
+        poll_hint = QLabel("= Analyzer 픽/결과 조회 간격. 0.2~0.3초 권장(예측 빨리 반영)")
         poll_hint.setStyleSheet("color: #888; font-size: 11px;")
         poll_hint.setWordWrap(True)
         fl3.addRow(poll_hint)
@@ -569,28 +570,41 @@ class MacroWindow(QMainWindow):
                 elif msg[0] == "history":
                     ph = msg[1]
                     blended = msg[2] if len(msg) > 2 else None
+                    round_actuals = msg[3] if len(msg) > 3 else {}
                     for b in self.bet_log:
                         if b.get("actual") is not None:
                             continue
-                        for h in (ph or []):
-                            if not isinstance(h, dict):
-                                continue
-                            if int(h.get("round") or 0) != int(b.get("round") or 0) or h.get("actual") in (None, "joker"):
-                                continue
-                            raw = (h.get("actual") or "").strip()
-                            h_pick = (h.get("pickColor") or h.get("pick_color") or "").strip().upper()
-                            h_pick = "RED" if h_pick in ("RED", "빨강") else "BLACK" if h_pick in ("BLACK", "검정") else None
-                            our_pick = (b.get("pick_color") or "").strip().upper()
+                        rid = str(int(b.get("round") or 0))
+                        our_pick = (b.get("pick_color") or "").strip().upper()
+                        ra = (round_actuals or {}).get(rid) if isinstance(round_actuals, dict) else None
+                        if ra:
+                            raw = ra.get("actual") or ""
                             b["actual"] = raw
-                            if raw.upper() in ("RED", "빨강", "BLACK", "검정"):
-                                actual_color = "RED" if raw.upper() in ("RED", "빨강") else "BLACK"
-                                b["result"] = our_pick == actual_color
-                            elif raw in ("정", "꺽") and h_pick:
-                                actual_color = h_pick if raw == "정" else ("BLACK" if h_pick == "RED" else "RED")
-                                b["result"] = our_pick == actual_color
+                            if raw == "joker":
+                                b["result"] = None
+                            elif ra.get("color"):
+                                b["result"] = our_pick == ra.get("color")
                             else:
-                                b["result"] = (b.get("predicted") or "").strip() == raw
-                            break
+                                b["result"] = None
+                        else:
+                            for h in (ph or []):
+                                if not isinstance(h, dict):
+                                    continue
+                                if int(h.get("round") or 0) != int(b.get("round") or 0) or h.get("actual") in (None, "joker"):
+                                    continue
+                                raw = (h.get("actual") or "").strip()
+                                h_pick = (h.get("pickColor") or h.get("pick_color") or "").strip().upper()
+                                h_pick = "RED" if h_pick in ("RED", "빨강") else "BLACK" if h_pick in ("BLACK", "검정") else None
+                                b["actual"] = raw
+                                if raw.upper() in ("RED", "빨강", "BLACK", "검정"):
+                                    actual_color = "RED" if raw.upper() in ("RED", "빨강") else "BLACK"
+                                    b["result"] = our_pick == actual_color
+                                elif raw in ("정", "꺽") and h_pick:
+                                    actual_color = h_pick if raw == "정" else ("BLACK" if h_pick == "RED" else "RED")
+                                    b["result"] = our_pick == actual_color
+                                else:
+                                    b["result"] = (b.get("predicted") or "").strip() == raw
+                                break
                     try:
                         odds = max(1.0, float(self.odds_edit.text().strip().replace(",", ".") or 1.97))
                     except (ValueError, TypeError):
@@ -974,8 +988,8 @@ class MacroWindow(QMainWindow):
             return
         try:
             interval = float(self.poll_interval_edit.text().strip())
-            if interval < 0.5 or interval > 60:
-                raise ValueError("0.5 ~ 60 사이로 입력하세요.")
+            if interval < 0.2 or interval > 60:
+                raise ValueError("0.2 ~ 60 사이로 입력하세요.")
         except ValueError as e:
             QMessageBox.warning(self, "입력", f"폴링 간격: {e}")
             return
@@ -1042,8 +1056,9 @@ class MacroWindow(QMainWindow):
                     blended = data.get("blended_win_rate")
                     if blended is None and ph:
                         blended = _blended_win_rate_from_ph(ph)
+                    round_actuals = data.get("round_actuals") or {}
                     self.update_queue.put(("pick", sp))
-                    self.update_queue.put(("history", ph, blended))
+                    self.update_queue.put(("history", ph, blended, round_actuals))
 
                     pick_color = None
                     if sp.get("color") in ("빨강", "RED"):
@@ -1057,7 +1072,7 @@ class MacroWindow(QMainWindow):
                         if not getattr(self, "_wait_log_count", 0) % 10:
                             self.update_queue.put(("log", "[대기] 픽 없음 - Analyzer 결과 페이지 열어두고 픽 나오는지 확인"))
                         self._wait_log_count = getattr(self, "_wait_log_count", 0) + 1
-                        time.sleep(interval)
+                        time.sleep(min(interval, 0.25))  # 픽 대기 시 더 자주 폴링
                         continue
                     if self.last_clicked_round == round_num:
                         time.sleep(interval)
@@ -1070,12 +1085,17 @@ class MacroWindow(QMainWindow):
                     if round_num <= self._start_round:
                         time.sleep(interval)
                         continue
-                    # 결과 대기: 직전 배팅(last_clicked_round) 결과가 ph에 있어야 마틴/승률반픽 정상 동작
+                    round_actuals = data.get("round_actuals") or {}
+                    # 결과 대기: 직전 배팅(last_clicked_round) 결과가 round_actuals 또는 ph에 있어야 마틴/승률반픽 정상 동작
                     if self.last_clicked_round is not None:
-                        has_prev_result = any(
-                            isinstance(h, dict) and h.get("round") == self.last_clicked_round
-                            and h.get("actual") not in (None, "joker")
-                            for h in (ph or [])
+                        rid = str(int(self.last_clicked_round))
+                        has_prev_result = (
+                            (rid in round_actuals and round_actuals.get(rid, {}).get("actual") not in (None, "joker"))
+                            or any(
+                                isinstance(h, dict) and int(h.get("round") or 0) == int(self.last_clicked_round or 0)
+                                and h.get("actual") not in (None, "joker")
+                                for h in (ph or [])
+                            )
                         )
                         if not has_prev_result:
                             if not getattr(self, "_wait_result_log_count", 0) % 5:
@@ -1091,33 +1111,37 @@ class MacroWindow(QMainWindow):
                     consecutive_losses = 0
                     results_from_ph = []
                     if self.bet_log:
-                        # bet_log 각 건의 결과를 ph에서 조회 (우리 pick_color vs 실제 카드색, 반픽/승률반픽 반영)
                         for b in self.bet_log:
-                            rnd = int(b.get("round") or 0)
+                            rid = str(int(b.get("round") or 0))
                             our_pick = (b.get("pick_color") or "").strip().upper()
-                            raw = None
-                            h_pick = None
-                            for h in (ph or []):
-                                if not isinstance(h, dict):
-                                    continue
-                                if int(h.get("round") or 0) != rnd or h.get("actual") in (None, "joker"):
-                                    continue
-                                raw = (h.get("actual") or "").strip()
-                                hp = (h.get("pickColor") or h.get("pick_color") or "").strip().upper()
-                                h_pick = "RED" if hp in ("RED", "빨강") else "BLACK" if hp in ("BLACK", "검정") else None
-                                break
-                            if raw is None:
-                                results_from_ph.append(b.get("result"))
-                                continue
-                            raw_upper = raw.upper()
-                            if raw_upper in ("RED", "빨강", "BLACK", "검정"):
-                                actual_color = "RED" if raw_upper in ("RED", "빨강") else "BLACK"
-                                results_from_ph.append(our_pick == actual_color)
-                            elif raw in ("정", "꺽") and h_pick:
-                                actual_color = h_pick if raw == "정" else ("BLACK" if h_pick == "RED" else "RED")
-                                results_from_ph.append(our_pick == actual_color)
+                            ra = round_actuals.get(rid) if isinstance(round_actuals, dict) else None
+                            if ra:
+                                if ra.get("actual") == "joker":
+                                    results_from_ph.append(None)
+                                elif ra.get("color"):
+                                    results_from_ph.append(our_pick == ra.get("color"))
+                                else:
+                                    results_from_ph.append(b.get("result"))
                             else:
-                                results_from_ph.append((b.get("predicted") or "").strip() == raw)
+                                raw, h_pick = None, None
+                                for h in (ph or []):
+                                    if not isinstance(h, dict) or int(h.get("round") or 0) != int(b.get("round") or 0) or h.get("actual") in (None, "joker"):
+                                        continue
+                                    raw = (h.get("actual") or "").strip()
+                                    hp = (h.get("pickColor") or h.get("pick_color") or "").strip().upper()
+                                    h_pick = "RED" if hp in ("RED", "빨강") else "BLACK" if hp in ("BLACK", "검정") else None
+                                    break
+                                if raw is None:
+                                    results_from_ph.append(b.get("result"))
+                                    continue
+                                if raw.upper() in ("RED", "빨강", "BLACK", "검정"):
+                                    actual_color = "RED" if raw.upper() in ("RED", "빨강") else "BLACK"
+                                    results_from_ph.append(our_pick == actual_color)
+                                elif raw in ("정", "꺽") and h_pick:
+                                    actual_color = h_pick if raw == "정" else ("BLACK" if h_pick == "RED" else "RED")
+                                    results_from_ph.append(our_pick == actual_color)
+                                else:
+                                    results_from_ph.append((b.get("predicted") or "").strip() == raw)
                     # 승률반픽: 합산승률(API 또는 ph 폴백)이 기준 % 이하일 때 반대로 배팅
                     if self._win_rate_reverse and blended is not None and blended <= self._win_rate_threshold:
                         orig = pick_color

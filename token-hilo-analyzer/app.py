@@ -376,6 +376,29 @@ def _get_actual_for_round(results, round_id):
     return None
 
 
+def _build_round_actuals(results):
+    """results(최신순)에서 회차별 실제 결과 추출. 매크로가 prediction_history 없이도 결과 사용."""
+    out = {}
+    if not results or len(results) < 16:
+        return out
+    gv = _build_graph_values(results)
+    for i in range(min(15, len(results) - 15, len(gv))):
+        r = results[i]
+        rid = str(r.get('gameID', ''))
+        if not rid:
+            continue
+        if r.get('joker') or results[i + 15].get('joker'):
+            out[rid] = {'actual': 'joker', 'color': None}
+            continue
+        if gv[i] is None:
+            continue
+        actual = '정' if gv[i] else '꺽'
+        c = parse_card_color(r.get('result', ''))
+        color = 'RED' if c is True else 'BLACK' if c is False else None
+        out[rid] = {'actual': actual, 'color': color}
+    return out
+
+
 def _blended_win_rate(prediction_history):
     """예측 이력으로 15/30/100 가중 승률. (0.5*15 + 0.3*30 + 0.2*100).
     프론트엔드와 동일: 위치 기준 마지막 N개에서 조커 제외 후 승률 계산."""
@@ -1203,7 +1226,7 @@ game_data_cache = None
 streaks_cache = None
 results_cache = None
 last_update_time = 0
-CACHE_TTL = 80  # 결과 나오면 예측픽 빠르게 반영 (ms, 짧을수록 매크로 지연 감소)
+CACHE_TTL = 50  # 결과 나오면 예측픽 빠르게 반영 (ms). 스케줄러 0.2초마다 선제 갱신으로 지연 최소화
 
 # 게임 상태 (Socket.IO 제거 후 기본값만 사용)
 current_status_data = {
@@ -1422,9 +1445,9 @@ def load_results_data():
 
 
 def _scheduler_fetch_results():
-    """스케줄러에서 호출: 외부 결과 수집·DB 저장 후 실행 중인 계산기 회차 반영."""
+    """스케줄러에서 호출: results_cache 갱신 + DB 저장 + 실행 중인 계산기 회차 반영. API 대기 없이 선제적 갱신."""
     try:
-        load_results_data()
+        _refresh_results_background()
         if DB_AVAILABLE and DATABASE_URL:
             results = get_recent_results(hours=1)
             if results and len(results) >= 16:
@@ -1435,9 +1458,9 @@ def _scheduler_fetch_results():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.3, id='fetch_results', max_instances=1)
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.2, id='fetch_results', max_instances=1)
     _scheduler.start()
-    print("[✅] 결과 수집 스케줄러 시작 (0.3초마다, 예측픽 빠른 반영)")
+    print("[✅] 결과 수집 스케줄러 시작 (0.2초마다, 예측픽 선제적 갱신)")
 else:
     print("[⚠] APScheduler 미설치 - 결과 수집은 브라우저 요청 시에만 동작합니다. pip install APScheduler")
 
@@ -4817,6 +4840,7 @@ def _build_results_payload():
             ph = get_prediction_history(100)
             server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
             blended = _blended_win_rate(ph)
+            round_actuals = _build_round_actuals(results)
             return {
                 'results': results,
                 'count': len(results),
@@ -4824,7 +4848,8 @@ def _build_results_payload():
                 'source': 'database+json',
                 'prediction_history': ph,
                 'server_prediction': server_pred,
-                'blended_win_rate': round(blended, 1) if blended is not None else None
+                'blended_win_rate': round(blended, 1) if blended is not None else None,
+                'round_actuals': round_actuals
             }
         else:
             # 데이터베이스가 없으면 기존 방식 (result.json에서 가져오기)
@@ -4863,6 +4888,7 @@ def _build_results_payload():
             ph = get_prediction_history(100)
             server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
             blended = _blended_win_rate(ph)
+            round_actuals = _build_round_actuals(results)
             return {
                 'results': results,
                 'count': len(results),
@@ -4870,7 +4896,8 @@ def _build_results_payload():
                 'source': 'json',
                 'prediction_history': ph,
                 'server_prediction': server_pred,
-                'blended_win_rate': round(blended, 1) if blended is not None else None
+                'blended_win_rate': round(blended, 1) if blended is not None else None,
+                'round_actuals': round_actuals
             }
     except Exception as e:
         print(f"[❌ 오류] _build_results_payload 실패: {str(e)[:200]}")
@@ -4942,7 +4969,8 @@ def get_results():
             'error': 'loading',
             'prediction_history': [],
             'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
-            'blended_win_rate': None
+            'blended_win_rate': None,
+            'round_actuals': {}
         }), 200
     except Exception as e:
         import traceback
@@ -4956,7 +4984,8 @@ def get_results():
             'error': error_msg,
             'prediction_history': [],
             'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
-            'blended_win_rate': None
+            'blended_win_rate': None,
+            'round_actuals': {}
         }), 200
 
 
@@ -5227,16 +5256,18 @@ def refresh_data():
         if payload is not None:
             results_cache = payload
         else:
-            # 폴백: 최소 구조 + blended_win_rate
+            # 폴백: 최소 구조 + blended_win_rate + round_actuals
             ph = get_prediction_history(100)
             blended = _blended_win_rate(ph)
+            round_actuals = _build_round_actuals(results_data) if results_data else {}
             results_cache = {
                 'results': results_data,
                 'count': len(results_data),
                 'timestamp': datetime.now().isoformat(),
                 'prediction_history': ph,
                 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
-                'blended_win_rate': round(blended, 1) if blended is not None else None
+                'blended_win_rate': round(blended, 1) if blended is not None else None,
+                'round_actuals': round_actuals
             }
     if game_data is not None or streaks_data is not None or results_data is not None:
     last_update_time = time.time() * 1000
