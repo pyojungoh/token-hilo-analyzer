@@ -1584,6 +1584,15 @@ RESULTS_HTML = '''
         .calc-inputs label { display: flex; align-items: center; gap: 4px; font-size: 0.9em; flex-shrink: 0; }
         .calc-inputs input[type="number"] { width: 80px; min-width: 0; padding: 4px 6px; border-radius: 4px; border: 1px solid #555; background: #1a1a1a; color: #fff; }
         .calc-inputs select { padding: 4px 6px; border-radius: 4px; border: 1px solid #555; background: #1a1a1a; color: #fff; font-size: 0.9em; }
+        .calc-settings-table { width: 100%; max-width: 560px; border: none; border-collapse: collapse; font-size: 0.9em; }
+        .calc-settings-table td { padding: 6px 10px 6px 0; vertical-align: middle; border: none; }
+        .calc-settings-table tr td:first-child { white-space: nowrap; color: #aaa; width: 1%; min-width: 72px; }
+        .calc-settings-table tr td:last-child { line-height: 1.5; }
+        .calc-settings-table label { display: inline-flex; align-items: center; gap: 4px; margin-right: 12px; margin-bottom: 2px; }
+        .calc-settings-table input[type="number"] { width: 72px; padding: 4px 6px; border-radius: 4px; border: 1px solid #555; background: #1a1a1a; color: #fff; }
+        .calc-settings-table input[type="checkbox"] { margin: 0; }
+        .calc-settings-table select { padding: 4px 6px; border-radius: 4px; border: 1px solid #555; background: #1a1a1a; color: #fff; }
+        .calc-target-hint { margin-left: 4px; }
         @media (max-width: 520px) {
             .calc-dropdown-body { flex-direction: column; }
             .calc-body-row { flex: 1 1 auto; max-width: none; }
@@ -1704,18 +1713,13 @@ RESULTS_HTML = '''
                 </div>
                         <div class="calc-dropdown-body" id="calc-1-body">
                             <div class="calc-body-row">
-                                <div class="calc-inputs">
-                                    <label>자본금 <input type="number" id="calc-1-capital" min="0" value="1000000"></label>
-                                    <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="10000"></label>
-                                    <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label>
-                                    <label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label>
-                                    <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label>
-                                    <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label>
-                                    <label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label>
-                                    <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label>
-                                    <label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label>
-                                    <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option></select></label>
-            </div>
+                                <table class="calc-settings-table">
+                                    <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-1-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label></td></tr>
+                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                    <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
+                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option></select></label></td></tr>
+                                    <tr><td>목표</td><td><label><input type="checkbox" id="calc-1-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-1-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-1-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
+                                </table>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="1">실행</button>
                                     <button type="button" class="calc-stop" data-calc="1">정지</button>
@@ -1743,18 +1747,13 @@ RESULTS_HTML = '''
                         </div>
                         <div class="calc-dropdown-body" id="calc-2-body">
                             <div class="calc-body-row">
-                                <div class="calc-inputs">
-                                    <label>자본금 <input type="number" id="calc-2-capital" min="0" value="1000000"></label>
-                                    <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="10000"></label>
-                                    <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label>
-                                    <label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label>
-                                    <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label>
-                                    <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label>
-                                    <label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label>
-                                    <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label>
-                                    <label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label>
-                                    <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option></select></label>
-                                </div>
+                                <table class="calc-settings-table">
+                                    <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-2-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label></td></tr>
+                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                    <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
+                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option></select></label></td></tr>
+                                    <tr><td>목표</td><td><label><input type="checkbox" id="calc-2-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-2-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-2-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
+                                </table>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="2">실행</button>
                                     <button type="button" class="calc-stop" data-calc="2">정지</button>
@@ -1782,18 +1781,13 @@ RESULTS_HTML = '''
                         </div>
                         <div class="calc-dropdown-body" id="calc-3-body">
                             <div class="calc-body-row">
-                                <div class="calc-inputs">
-                                    <label>자본금 <input type="number" id="calc-3-capital" min="0" value="1000000"></label>
-                                    <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="10000"></label>
-                                    <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label>
-                                    <label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label>
-                                    <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label>
-                                    <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label>
-                                    <label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label>
-                                    <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label>
-                                    <label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label>
-                                    <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option></select></label>
-                                </div>
+                                <table class="calc-settings-table">
+                                    <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-3-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label></td></tr>
+                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                    <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
+                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option></select></label></td></tr>
+                                    <tr><td>목표</td><td><label><input type="checkbox" id="calc-3-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-3-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-3-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
+                                </table>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="3">실행</button>
                                     <button type="button" class="calc-stop" data-calc="3">정지</button>
@@ -2011,6 +2005,8 @@ RESULTS_HTML = '''
                 win_rate_threshold: 50,
                 martingale: false,
                 martingale_type: 'pyo',
+                target_enabled: false,
+                target_amount: 0,
                 timer_completed: false,
                 timerId: null,
                 maxWinStreakEver: 0,
@@ -2061,6 +2057,8 @@ RESULTS_HTML = '''
                     win_rate_threshold: winRateThr,
                     martingale: !!(martingaleEl && martingaleEl.checked),
                     martingale_type: (martingaleTypeEl && martingaleTypeEl.value) || 'pyo',
+                    target_enabled: !!(document.getElementById('calc-' + id + '-target-enabled') && document.getElementById('calc-' + id + '-target-enabled').checked),
+                    target_amount: Math.max(0, parseInt(document.getElementById('calc-' + id + '-target-amount')?.value, 10) || 0),
                     timer_completed: !!calcState[id].timer_completed,
                     max_win_streak_ever: calcState[id].maxWinStreakEver || 0,
                     max_lose_streak_ever: calcState[id].maxLoseStreakEver || 0,
@@ -2129,6 +2127,12 @@ RESULTS_HTML = '''
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 if (martingaleEl) martingaleEl.checked = !!calcState[id].martingale;
                 if (martingaleTypeEl) martingaleTypeEl.value = calcState[id].martingale_type || 'pyo';
+                calcState[id].target_enabled = !!c.target_enabled;
+                calcState[id].target_amount = Math.max(0, parseInt(c.target_amount, 10) || 0);
+                const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
+                const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
+                if (targetEnabledEl) targetEnabledEl.checked = !!calcState[id].target_enabled;
+                if (targetAmountEl) targetAmountEl.value = String(calcState[id].target_amount || 0);
             });
             const dc = calcs[DEFENSE_ID] || {};
             if (Array.isArray(dc.history)) calcState.defense.history = dc.history.slice(-500);
@@ -2678,6 +2682,22 @@ RESULTS_HTML = '''
                                         calcState.defense.history.push({ predicted: pred === '정' ? '꺽' : '정', actual: actual, betAmount: defenseBet, round: lastPrediction.round });
                                         updateCalcSummary(DEFENSE_ID);
                                         updateCalcDetail(DEFENSE_ID);
+                                    }
+                                }
+                                updateCalcSummary(id);
+                                updateCalcDetail(id);
+                                var targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
+                                var targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
+                                var targetEnabled = !!(targetEnabledEl && targetEnabledEl.checked);
+                                var targetAmount = Math.max(0, parseInt(targetAmountEl && targetAmountEl.value, 10) || 0);
+                                if (targetEnabled && targetAmount > 0) {
+                                    var res = getCalcResult(id);
+                                    if (res.profit >= targetAmount) {
+                                        calcState[id].running = false;
+                                        calcState[id].timer_completed = true;
+                                        updateCalcSummary(id);
+                                        updateCalcStatus(id);
+                                        saveCalcStateToServer();
                                     }
                                 }
                             });
@@ -3476,7 +3496,15 @@ RESULTS_HTML = '''
             const elapsedStr = state.running && typeof formatMmSs === 'function' ? formatMmSs(state.elapsed || 0) : '-';
             const timerNote = state.timer_completed ? '<span class="calc-timer-note" style="color:#64b5f6;font-weight:bold;grid-column:1/-1">타이머 완료</span>' : '';
             if (hist.length === 0) {
-                el.innerHTML = '<div class="calc-summary-grid">' + timerNote +
+                var targetNoteEmpty = '';
+                if (id !== DEFENSE_ID) {
+                    const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
+                    const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
+                    const targetEnabled = !!(targetEnabledEl && targetEnabledEl.checked);
+                    const targetAmount = Math.max(0, parseInt(targetAmountEl?.value, 10) || 0);
+                    if (targetEnabled && targetAmount > 0) targetNoteEmpty = '<span class="calc-timer-note" style="grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 목표까지: ' + targetAmount.toLocaleString() + '원 남음</span>';
+                }
+                el.innerHTML = '<div class="calc-summary-grid">' + timerNote + targetNoteEmpty +
                     '<span class="label">보유자산</span><span class="value">-</span>' +
                     '<span class="label">순익</span><span class="value">-</span>' +
                     '<span class="label">배팅중</span><span class="value">-</span>' +
@@ -3487,7 +3515,19 @@ RESULTS_HTML = '''
             const r = id === DEFENSE_ID ? getDefenseCalcResult() : getCalcResult(id);
             const profitStr = (r.profit >= 0 ? '+' : '') + r.profit.toLocaleString() + '원';
             const profitClass = r.profit > 0 ? 'profit-plus' : (r.profit < 0 ? 'profit-minus' : '');
-            el.innerHTML = '<div class="calc-summary-grid">' + timerNote +
+            var targetNote = '';
+            if (id !== DEFENSE_ID) {
+                const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
+                const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
+                const targetEnabled = !!(targetEnabledEl && targetEnabledEl.checked);
+                const targetAmount = Math.max(0, parseInt(targetAmountEl?.value, 10) || 0);
+                if (targetEnabled && targetAmount > 0) {
+                    const remain = targetAmount - r.profit;
+                    if (remain <= 0) targetNote = '<span class="calc-timer-note" style="color:#81c784;font-weight:bold;grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 달성</span>';
+                    else targetNote = '<span class="calc-timer-note" style="grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 목표까지: ' + remain.toLocaleString() + '원 남음</span>';
+                }
+            }
+            el.innerHTML = '<div class="calc-summary-grid">' + timerNote + targetNote +
                 '<span class="label">보유자산</span><span class="value">' + r.cap.toLocaleString() + '원</span>' +
                 '<span class="label">순익</span><span class="value ' + profitClass + '">' + profitStr + '</span>' +
                 '<span class="label">배팅중</span><span class="value">' + r.currentBet.toLocaleString() + '원</span>' +
@@ -3839,10 +3879,12 @@ RESULTS_HTML = '''
             });
         });
         CALC_IDS.forEach(id => {
-            ['capital', 'base', 'odds'].forEach(f => {
+            ['capital', 'base', 'odds', 'target-amount'].forEach(f => {
                 const el = document.getElementById('calc-' + id + '-' + f);
                 if (el) el.addEventListener('input', () => { updateCalcSummary(id); updateCalcDetail(id); });
             });
+            const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
+            if (targetEnabledEl) targetEnabledEl.addEventListener('change', () => { updateCalcSummary(id); });
         });
         
         let timerData = { elapsed: 0, lastFetch: 0, round: 0, serverTime: 0 };
@@ -4261,12 +4303,14 @@ def api_calc_state():
                     'win_rate_threshold': max(0, min(100, int(c.get('win_rate_threshold') or 50))),
                     'martingale': bool(c.get('martingale')),
                     'martingale_type': str(c.get('martingale_type') or 'pyo'),
+                    'target_enabled': bool(c.get('target_enabled')),
+                    'target_amount': max(0, int(c.get('target_amount') or 0)),
                     'max_win_streak_ever': int(c.get('max_win_streak_ever') or 0),
                     'max_lose_streak_ever': int(c.get('max_lose_streak_ever') or 0),
                     'first_bet_round': max(0, int(c.get('first_bet_round') or 0))
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'martingale': False, 'martingale_type': 'pyo', 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0}
         c = calcs.get('defense') or {}
         if isinstance(c, dict):
             running = c.get('running', False)
