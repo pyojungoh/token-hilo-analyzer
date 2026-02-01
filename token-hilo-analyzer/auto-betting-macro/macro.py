@@ -583,6 +583,33 @@ class MacroWindow(QMainWindow):
                             continue
                         rid = str(int(b.get("round") or 0))
                         our_pick = (b.get("pick_color") or "").strip().upper()
+                        matched = False
+                        for h in (ph or []):
+                            if not isinstance(h, dict) or int(h.get("round") or 0) != int(b.get("round") or 0) or h.get("actual") in (None, "joker"):
+                                continue
+                            raw = (h.get("actual") or "").strip()
+                            b["actual"] = raw
+                            ac = (h.get("actualColor") or h.get("actual_color") or "").strip().upper()
+                            actual_color = "RED" if ac in ("RED", "빨강") else "BLACK" if ac in ("BLACK", "검정") else None
+                            if actual_color:
+                                b["actual_color"] = actual_color
+                                b["result"] = our_pick == actual_color
+                                matched = True
+                                break
+                            h_pick = (h.get("pickColor") or h.get("pick_color") or "").strip().upper()
+                            h_pick = "RED" if h_pick in ("RED", "빨강") else "BLACK" if h_pick in ("BLACK", "검정") else None
+                            if raw.upper() in ("RED", "빨강", "BLACK", "검정"):
+                                actual_color = "RED" if raw.upper() in ("RED", "빨강") else "BLACK"
+                            elif raw in ("정", "꺽") and h_pick:
+                                actual_color = h_pick if raw == "정" else ("BLACK" if h_pick == "RED" else "RED")
+                            else:
+                                actual_color = None
+                            b["actual_color"] = actual_color
+                            b["result"] = our_pick == actual_color if actual_color else ((b.get("predicted") or "").strip() == raw)
+                            matched = True
+                            break
+                        if matched:
+                            continue
                         ra = (round_actuals or {}).get(rid) if isinstance(round_actuals, dict) else None
                         if ra:
                             raw = ra.get("actual") or ""
@@ -596,28 +623,6 @@ class MacroWindow(QMainWindow):
                                 b["result"] = our_pick == actual_color
                             else:
                                 b["result"] = None
-                        else:
-                            for h in (ph or []):
-                                if not isinstance(h, dict):
-                                    continue
-                                if int(h.get("round") or 0) != int(b.get("round") or 0) or h.get("actual") in (None, "joker"):
-                                    continue
-                                raw = (h.get("actual") or "").strip()
-                                h_pick = (h.get("pickColor") or h.get("pick_color") or "").strip().upper()
-                                h_pick = "RED" if h_pick in ("RED", "빨강") else "BLACK" if h_pick in ("BLACK", "검정") else None
-                                b["actual"] = raw
-                                if raw.upper() in ("RED", "빨강", "BLACK", "검정"):
-                                    actual_color = "RED" if raw.upper() in ("RED", "빨강") else "BLACK"
-                                    b["actual_color"] = actual_color
-                                    b["result"] = our_pick == actual_color
-                                elif raw in ("정", "꺽") and h_pick:
-                                    actual_color = h_pick if raw == "정" else ("BLACK" if h_pick == "RED" else "RED")
-                                    b["actual_color"] = actual_color
-                                    b["result"] = our_pick == actual_color
-                                else:
-                                    b["actual_color"] = None
-                                    b["result"] = (b.get("predicted") or "").strip() == raw
-                                break
                     try:
                         odds = max(1.0, float(self.odds_edit.text().strip().replace(",", ".") or 1.97))
                     except (ValueError, TypeError):
@@ -1129,6 +1134,30 @@ class MacroWindow(QMainWindow):
                         for b in self.bet_log:
                             rid = str(int(b.get("round") or 0))
                             our_pick = (b.get("pick_color") or "").strip().upper()
+                            res_val = None
+                            for h in (ph or []):
+                                if not isinstance(h, dict) or int(h.get("round") or 0) != int(b.get("round") or 0) or h.get("actual") in (None, "joker"):
+                                    continue
+                                raw = (h.get("actual") or "").strip()
+                                ac = (h.get("actualColor") or h.get("actual_color") or "").strip().upper()
+                                actual_color = "RED" if ac in ("RED", "빨강") else "BLACK" if ac in ("BLACK", "검정") else None
+                                if actual_color:
+                                    res_val = our_pick == actual_color
+                                    break
+                                hp = (h.get("pickColor") or h.get("pick_color") or "").strip().upper()
+                                h_pick = "RED" if hp in ("RED", "빨강") else "BLACK" if hp in ("BLACK", "검정") else None
+                                if raw.upper() in ("RED", "빨강", "BLACK", "검정"):
+                                    actual_color = "RED" if raw.upper() in ("RED", "빨강") else "BLACK"
+                                elif raw in ("정", "꺽") and h_pick:
+                                    actual_color = h_pick if raw == "정" else ("BLACK" if h_pick == "RED" else "RED")
+                                if actual_color:
+                                    res_val = our_pick == actual_color
+                                else:
+                                    res_val = (b.get("predicted") or "").strip() == raw
+                                break
+                            if res_val is not None:
+                                results_from_ph.append(res_val)
+                                continue
                             ra = round_actuals.get(rid) if isinstance(round_actuals, dict) else None
                             if ra:
                                 if ra.get("actual") == "joker":
@@ -1136,30 +1165,9 @@ class MacroWindow(QMainWindow):
                                 else:
                                     ac = (ra.get("color") or "").strip().upper()
                                     ac_n = "RED" if ac in ("RED", "빨강") else "BLACK" if ac in ("BLACK", "검정") else None
-                                    if ac_n:
-                                        results_from_ph.append(our_pick == ac_n)
-                                    else:
-                                        results_from_ph.append(b.get("result"))
+                                    results_from_ph.append(our_pick == ac_n if ac_n else b.get("result"))
                             else:
-                                raw, h_pick = None, None
-                                for h in (ph or []):
-                                    if not isinstance(h, dict) or int(h.get("round") or 0) != int(b.get("round") or 0) or h.get("actual") in (None, "joker"):
-                                        continue
-                                    raw = (h.get("actual") or "").strip()
-                                    hp = (h.get("pickColor") or h.get("pick_color") or "").strip().upper()
-                                    h_pick = "RED" if hp in ("RED", "빨강") else "BLACK" if hp in ("BLACK", "검정") else None
-                                    break
-                                if raw is None:
-                                    results_from_ph.append(b.get("result"))
-                                    continue
-                                if raw.upper() in ("RED", "빨강", "BLACK", "검정"):
-                                    actual_color = "RED" if raw.upper() in ("RED", "빨강") else "BLACK"
-                                    results_from_ph.append(our_pick == actual_color)
-                                elif raw in ("정", "꺽") and h_pick:
-                                    actual_color = h_pick if raw == "정" else ("BLACK" if h_pick == "RED" else "RED")
-                                    results_from_ph.append(our_pick == actual_color)
-                                else:
-                                    results_from_ph.append((b.get("predicted") or "").strip() == raw)
+                                results_from_ph.append(b.get("result"))
                     # 승률반픽: 합산승률(API 또는 ph 폴백)이 기준 % 이하일 때 반대로 배팅
                     if self._win_rate_reverse and blended is not None and blended <= self._win_rate_threshold:
                         orig = pick_color

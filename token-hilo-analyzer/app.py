@@ -504,14 +504,23 @@ def get_prediction_history(limit=30):
         rows = cur.fetchall()
         cur.close()
         conn.close()
-        # 프론트와 맞추기: 과거→현재 순 (round 오름차순)
+        # 프론트와 맞추기: 과거→현재 순 (round 오름차순). actualColor = 분석기 승/패 표시와 동일
         out = []
         for r in reversed(rows):
             o = {'round': r['round'], 'predicted': r['predicted'], 'actual': r['actual']}
             if r.get('probability') is not None:
                 o['probability'] = float(r['probability'])
-            if r.get('pick_color'):
-                o['pickColor'] = str(r['pick_color'])
+            pick_color = str(r.get('pick_color') or '').strip()
+            if pick_color:
+                o['pickColor'] = pick_color
+                pc = 'RED' if pick_color.upper() in ('RED', '빨강') else 'BLACK' if pick_color.upper() in ('BLACK', '검정') else None
+                raw = str(r.get('actual') or '').strip()
+                if raw == 'joker':
+                    o['actualColor'] = None
+                elif raw in ('정', '꺽') and pc:
+                    o['actualColor'] = pc if raw == '정' else ('BLACK' if pc == 'RED' else 'RED')
+                else:
+                    o['actualColor'] = None
             out.append(o)
         return out
     except Exception as e:
