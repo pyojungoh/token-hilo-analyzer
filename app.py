@@ -2861,18 +2861,17 @@ RESULTS_HTML = '''
                         return gb.localeCompare(ga);  // 문자열이면 역순
                     });
                 }
-                // 새로운 결과를 기존 결과와 병합 (중복 제거, 최신 150개 유지 - 그래프 쭉 표시용)
+                // 새로운 결과를 기존 결과와 병합 (중복 제거, 최신 150개 유지). 이전보다 오래된 회차로 덮지 않음 (깜빡임 방지)
                 if (newResults.length > 0) {
-                    // 새로운 결과의 gameID들
                     const newGameIDs = new Set(newResults.map(r => r.gameID).filter(id => id));
-                    
-                    // 기존 결과에서 새로운 결과에 없는 것만 유지
                     const oldResults = allResults.filter(r => !newGameIDs.has(r.gameID));
-                    
-                    // 새로운 결과 + 기존 결과 (최신 150개) → gameID 기준 정렬로 그래프 순서 고정
-                    allResults = sortResultsNewestFirst([...newResults, ...oldResults].slice(0, 150));
+                    const merged = sortResultsNewestFirst([...newResults, ...oldResults].slice(0, 150));
+                    const prevLatest = allResults.length > 0 ? (parseInt(String(allResults[0].gameID || '0'), 10) || 0) : 0;
+                    const newLatest = merged.length > 0 ? (parseInt(String(merged[0].gameID || '0'), 10) || 0) : 0;
+                    if (merged.length === 0 || newLatest >= prevLatest) {
+                        allResults = merged;
+                    }
                 } else {
-                    // 새로운 결과가 없으면 기존 결과 유지 (순서만 정렬)
                     if (allResults.length === 0) {
                         allResults = sortResultsNewestFirst(newResults);
                     } else {
@@ -4760,16 +4759,33 @@ _results_refresh_lock = threading.Lock()
 _results_refreshing = False
 
 def _refresh_results_background():
-    """백그라운드에서 캐시 갱신 (요청 스레드 블로킹 없음)"""
+    """백그라운드에서 캐시 갱신 (요청 스레드 블로킹 없음). 이전보다 오래된 데이터로는 덮어쓰지 않음."""
     global results_cache, last_update_time, _results_refreshing
     if not _results_refresh_lock.acquire(blocking=False):
         return
     _results_refreshing = True
     try:
         payload = _build_results_payload()
-        if payload is not None:
-            results_cache = payload
-            last_update_time = time.time() * 1000
+        if payload is not None and payload.get('results'):
+            new_results = payload['results']
+            new_latest = str(new_results[0].get('gameID') or '0') if new_results else '0'
+            try:
+                new_latest_num = int(new_latest)
+            except (ValueError, TypeError):
+                new_latest_num = 0
+            should_update = True
+            if results_cache and results_cache.get('results'):
+                cur_results = results_cache['results']
+                cur_latest = str(cur_results[0].get('gameID') or '0') if cur_results else '0'
+                try:
+                    cur_latest_num = int(cur_latest)
+                except (ValueError, TypeError):
+                    cur_latest_num = 0
+                if new_latest_num < cur_latest_num:
+                    should_update = False
+            if should_update:
+                results_cache = payload
+                last_update_time = time.time() * 1000
     except Exception as e:
         print(f"[API] 백그라운드 갱신 오류: {str(e)[:150]}")
     finally:
