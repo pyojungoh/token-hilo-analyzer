@@ -593,6 +593,35 @@ def _get_line_pong_runs(arr):
     return line_runs, pong_runs
 
 
+def _detect_v_pattern(line_runs, pong_runs, graph_values_head=None):
+    """
+    V자 패턴 감지: 긴 줄 → 한두 개 퐁당 → 짧은 줄 → 퐁당 → … → 다시 긴 줄로 가는 그래프.
+    이 구간에서는 연패가 많아서, 퐁당(바뀜) 쪽 가중치를 올려서 넘기기 쉽게 함.
+    graph_values_head: [v0, v1] 최신 2개 (같으면 첫 run이 줄, 다르면 퐁당). 없으면 줄 먼저로 가정.
+    반환: (bool) V자 밸런스 구간에 해당하면 True.
+    """
+    if not line_runs or not pong_runs:
+        return False
+    first_is_line = True
+    if graph_values_head is not None and len(graph_values_head) >= 2:
+        a, b = graph_values_head[0], graph_values_head[1]
+        if a is True or a is False:
+            first_is_line = (a == b)
+    # 시간 순서(최신→과거): 첫 run이 줄이면 [line0, pong0, line1, pong1, ...], 퐁당이면 [pong0, line0, pong1, line1, ...]
+    if first_is_line:
+        long_line = line_runs[0] >= 4
+        short_pong_after = len(pong_runs) >= 1 and 1 <= pong_runs[0] <= 2
+        short_line_after = len(line_runs) >= 2 and line_runs[1] <= 2
+        return long_line and short_pong_after and short_line_after
+    else:
+        if len(line_runs) < 2 or len(pong_runs) < 2:
+            return False
+        long_line = line_runs[0] >= 4
+        short_pong_after = 1 <= pong_runs[1] <= 2
+        short_line_after = line_runs[1] <= 2
+        return long_line and short_pong_after and short_line_after
+
+
 def _compute_blend_data(prediction_history):
     """예측 이력(actual!=joker)으로 15/30/100 구간 반영 확률."""
     valid = [h for h in (prediction_history or []) if h and isinstance(h, dict)]
@@ -823,6 +852,10 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
 
     line_w += chunk_idx * 0.2 + two_one_idx * 0.1
     pong_w += scatter_idx * 0.2
+    # V자 패턴(긴 줄→퐁당 1~2→짧은 줄→…) 구간에서는 연패가 많으므로 퐁당(바뀜) 쪽 가중치 보정
+    if _detect_v_pattern(line_runs, pong_runs, use_for_pattern[:2] if len(use_for_pattern) >= 2 else None):
+        pong_w += 0.12
+        line_w = max(0.0, line_w - 0.06)
     total_w = line_w + pong_w
     if total_w > 0:
         line_w /= total_w
@@ -2190,6 +2223,7 @@ RESULTS_HTML = '''
                         <li><strong>20열 대칭·줄</strong> · 최근 20개를 왼쪽 10 / 오른쪽 10으로 나누어 대칭도·줄 개수 계산. 새 구간 감지(우측 줄 많고 좌측 줄 적음)면 줄 가중치 +0.22. 대칭 70% 이상·우측 줄 적으면 줄 +0.28 등으로 보정.</li>
                         <li><strong>30회 패턴</strong> · «덩어리»(줄이 2개 이상 이어짐) 비율·«띄엄»(줄 1개씩)·«두줄한개» 비율을 지수로 계산. 덩어리/두줄한개는 줄 가중치에, 띄엄은 퐁당 가중치에 반영.</li>
                         <li><strong>가중치 정규화</strong> · 위에서 나온 줄 가중치(lineW)와 퐁당 가중치(pongW)를 더한 뒤 1이 되도록 나눔.</li>
+                        <li><strong>V자 패턴 보정</strong> · 그래프가 «긴 줄 → 퐁당 1~2개 → 짧은 줄 → 퐁당 → …» 형태(V자 밸런스)일 때 연패가 많아서, 퐁당(바뀜) 가중치를 올려 이 구간을 넘기기 쉽게 보정함.</li>
                         <li><strong>유지 vs 바뀜</strong> · «유지 확률 = 전이에서 구한 유지 확률», «바뀜 확률 = 전이에서 구한 바뀜 확률». 각각 lineW, pongW를 곱해 <em>adjSame</em>, <em>adjChange</em> 계산 후 다시 합으로 나누어 0~1로 만듦.</li>
                         <li><strong>최종 픽</strong> · adjSame ≥ adjChange 이면 직전과 <strong>같은 방향</strong>(직전 정→정, 직전 꺽→꺽), 아니면 <strong>반대</strong>(직전 정→꺽, 직전 꺽→정). 15번 카드가 빨강이면 정=빨강/꺽=검정, 검정이면 정=검정/꺽=빨강으로 <em>배팅 색</em> 결정.</li>
                     </ol>
@@ -3307,6 +3341,14 @@ RESULTS_HTML = '''
                     }
                     const useForPattern = graphValues.slice(0, 30);  // 최근 30회 = 30개 값 → 29쌍
                     const { lineRuns, pongRuns } = getLinePongRuns(useForPattern);
+                    function detectVPattern(lineRuns, pongRuns, head) {
+                        if (!lineRuns || !lineRuns.length || !pongRuns || !pongRuns.length) return false;
+                        const firstIsLine = !head || head.length < 2 ? true : (head[0] === true || head[0] === false) && (head[0] === head[1]);
+                        if (firstIsLine) {
+                            return lineRuns[0] >= 4 && pongRuns[0] >= 1 && pongRuns[0] <= 2 && lineRuns.length >= 2 && lineRuns[1] <= 2;
+                        }
+                        return lineRuns.length >= 2 && pongRuns.length >= 2 && lineRuns[0] >= 4 && pongRuns[1] >= 1 && pongRuns[1] <= 2 && lineRuns[1] <= 2;
+                    }
                     const totalLineRuns = lineRuns.length;
                     const totalPongRuns = pongRuns.length;
                     const lineTwoPlus = totalLineRuns > 0 ? lineRuns.filter(l => l >= 2).length : 0;
@@ -3476,6 +3518,10 @@ RESULTS_HTML = '''
                         }
                         lineW += chunkIdx * 0.2 + twoOneIdx * 0.1;
                         pongW += scatterIdx * 0.2;
+                        if (detectVPattern(lineRuns, pongRuns, useForPattern.slice(0, 2))) {
+                            pongW += 0.12;
+                            lineW = Math.max(0, lineW - 0.06);
+                        }
                         const totalW = lineW + pongW;
                         if (totalW > 0) { lineW = lineW / totalW; pongW = pongW / totalW; }
                         const adjSame = probSame * lineW;
