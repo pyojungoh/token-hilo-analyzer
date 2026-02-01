@@ -377,23 +377,28 @@ def _get_actual_for_round(results, round_id):
 
 
 def _build_round_actuals(results):
-    """results(최신순)에서 회차별 실제 결과 추출. 매크로가 prediction_history 없이도 결과 사용."""
+    """results(최신순)에서 회차별 실제 결과 추출. 프론트엔드 getCategory와 동일한 색상 로직."""
     out = {}
     if not results or len(results) < 16:
         return out
     gv = _build_graph_values(results)
     for i in range(min(15, len(results) - 15, len(gv))):
         r = results[i]
+        r15 = results[i + 15]
         rid = str(r.get('gameID', ''))
         if not rid:
             continue
-        if r.get('joker') or results[i + 15].get('joker'):
+        if r.get('joker') or r15.get('joker'):
             out[rid] = {'actual': 'joker', 'color': None}
             continue
         if gv[i] is None:
             continue
         actual = '정' if gv[i] else '꺽'
-        c = parse_card_color(r.get('result', ''))
+        c = get_card_color_from_result(r)
+        if c is None:
+            c15 = get_card_color_from_result(r15)
+            if c15 is not None:
+                c = c15 if gv[i] else (not c15)
         color = 'RED' if c is True else 'BLACK' if c is False else None
         out[rid] = {'actual': actual, 'color': color}
     return out
@@ -519,17 +524,33 @@ def get_prediction_history(limit=30):
 
 
 def parse_card_color(result_str):
-    """카드 결과 문자열에서 색상 추출 (빨강/검정)"""
+    """카드 결과 문자열에서 색상 추출. H,D,♥,♦=빨강 / S,C,♠,♣=검정. 앞뒤 모두 확인."""
     if not result_str:
         return None
-    
-    # 첫 글자가 문양인지 확인
-    first_char = result_str[0].upper()
-    if first_char in ['H', 'D']:  # 하트, 다이아몬드 = 빨강
+    s = str(result_str).upper().strip()
+    for c in s:
+        if c in ('H', 'D') or c in ('♥', '♦'):
+            return True
+        if c in ('S', 'C') or c in ('♠', '♣'):
+            return False
+    if 'RED' in s or 'HEART' in s or 'DIAMOND' in s:
         return True
-    elif first_char in ['S', 'C']:  # 스페이드, 클럽 = 검정
+    if 'BLACK' in s or 'SPADE' in s or 'CLUB' in s:
         return False
     return None
+
+
+def get_card_color_from_result(r):
+    """프론트엔드 getCategory와 동일: result 객체에서 카드 색상 추출. True=RED, False=BLACK, None=미확인.
+    red/black 우선(게임 제공값), parse_card_color 보조, 정/꺽+비교카드 유도까지 적용."""
+    if not r or r.get('joker'):
+        return None
+    if r.get('red') and not r.get('black'):
+        return True
+    if r.get('black') and not r.get('red'):
+        return False
+    c = parse_card_color(r.get('result', ''))
+    return c
 
 
 def _build_graph_values(results):
@@ -542,8 +563,8 @@ def _build_graph_values(results):
         if r0.get('joker') or r15.get('joker'):
             out.append(None)
             continue
-        c0 = parse_card_color(r0.get('result', ''))
-        c15 = parse_card_color(r15.get('result', ''))
+        c0 = get_card_color_from_result(r0)
+        c15 = get_card_color_from_result(r15)
         if c0 is None or c15 is None:
             out.append(None)
             continue
@@ -913,8 +934,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
     adj_change_n = adj_change / s
     predict = ('정' if last is True else '꺽') if adj_same_n >= adj_change_n else ('꺽' if last is True else '정')
     pred_prob = (adj_same_n if predict == ('정' if last is True else '꺽') else adj_change_n) * 100
-    card15_result = results[14].get('result', '') if len(results) >= 15 else ''
-    is_15_red = parse_card_color(card15_result) if card15_result else None
+    is_15_red = get_card_color_from_result(results[14]) if len(results) >= 15 else None
     if is_15_red is True:
         color_to_pick = '빨강' if predict == '정' else '검정'
     elif is_15_red is False:
@@ -962,9 +982,8 @@ def calculate_and_save_color_matches(results):
                 continue
             
             # 색상 비교
-            current_color = parse_card_color(current_result.get('result', ''))
-            compare_color = parse_card_color(compare_result.get('result', ''))
-            
+            current_color = get_card_color_from_result(current_result)
+            compare_color = get_card_color_from_result(compare_result)
             if current_color is None or compare_color is None:
                 continue
             
@@ -1089,10 +1108,9 @@ def _sort_results_newest_first(results):
         return results
     def key_fn(r):
         g = str(r.get('gameID') or '')
-        try:
-            return (-int(g), '')  # 숫자면 높은 ID가 앞으로
-        except ValueError:
-            return (0, g)  # 문자열이면 그대로
+        nums = re.findall(r'\d+', g)
+        n = int(nums[0]) if nums else 0
+        return (-n, g)  # 숫자 추출해서 높은 ID가 앞으로
     return sorted(results, key=key_fn)
 
 
@@ -1159,8 +1177,8 @@ def get_recent_results(hours=5):
         to_save = []
         for (gid, cgid), idx in pair_to_idx.items():
             if 'colorMatch' not in results[idx]:
-                current_color = parse_card_color(results[idx].get('result', ''))
-                compare_color = parse_card_color(results[idx + 15].get('result', ''))
+                current_color = get_card_color_from_result(results[idx])
+                compare_color = get_card_color_from_result(results[idx + 15])
                 if current_color is not None and compare_color is not None:
                     results[idx]['colorMatch'] = (current_color == compare_color)
                     to_save.append((gid, cgid, results[idx]['colorMatch']))
@@ -1356,13 +1374,16 @@ def load_game_data():
 RESULTS_FETCH_TIMEOUT = 5
 RESULTS_FETCH_MAX_RETRIES = 1
 
-def load_results_data():
-    """경기 결과 데이터 로드 (result.json) - 짧은 타임아웃으로 먹통 방지"""
+def load_results_data(base_url=None):
+    """경기 결과 데이터 로드 (result.json). base_url 없으면 BASE_URL 사용. 짧은 타임아웃으로 먹통 방지"""
+    base = (base_url or '').rstrip('/') or BASE_URL
     possible_paths = [
-        f"{BASE_URL}/frame/hilo/result.json",
-        f"{BASE_URL}/result.json",
-        f"{BASE_URL}/hilo/result.json",
-        f"{BASE_URL}/frame/result.json",
+        f"{base}/frame/hilo/result.json",
+        f"{base}/result.json",
+        f"{base}/hilo/result.json",
+        f"{base}/frame/result.json",
+        f"{base}/api/result.json",
+        f"{base}/game/result.json",
     ]
     for url_path in possible_paths:
         try:
@@ -1395,14 +1416,16 @@ def load_results_data():
                             else:
                                 json_data = json_str
                             
-                            # 실제 데이터 구조에 맞게 파싱 (boolean 값)
+                            # red/black: json 안에도, 상위에도 있을 수 있음 (게임마다 구조 다름)
+                            red_val = json_data.get('red') or game.get('red', False)
+                            black_val = json_data.get('black') or game.get('black', False)
                             results.append({
                                 'gameID': str(game_id),  # 문자열로 변환
                                 'result': result,
                                 'hi': json_data.get('hi', False),
                                 'lo': json_data.get('lo', False),
-                                'red': json_data.get('red', False),
-                                'black': json_data.get('black', False),
+                                'red': red_val,
+                                'black': black_val,
                                 'jqka': json_data.get('jqka', False),
                                 'joker': json_data.get('joker', False),
                                 'hash': game.get('hash', ''),
@@ -1413,10 +1436,10 @@ def load_results_data():
                             print(f"[결과 파싱 오류] {str(e)[:100]}")
                             continue
                     
-                    print(f"[결과 데이터 최종] {len(results)}개 게임 결과 파싱 완료")
+                    print(f"[결과 데이터 최종] {len(results)}개 게임 결과 파싱 완료 (소스: {base})")
                     
-                    # 데이터베이스에 저장 (비동기로 처리하지 않음 - 순차적으로 저장)
-                    if DB_AVAILABLE and DATABASE_URL:
+                    # 데이터베이스에 저장 (base_url 지정 시 스킵 - 베팅 사이트별 결과만 조회용)
+                    if DB_AVAILABLE and DATABASE_URL and base == BASE_URL:
                         saved_count = 0
                         for game_data in results:
                             if save_game_result(game_data):
@@ -4948,30 +4971,45 @@ def _refresh_results_background():
 
 @app.route('/api/results', methods=['GET'])
 def get_results():
-    """경기 결과 API - 요청 스레드는 절대 블로킹 안 함. 캐시 있으면 즉시 반환, 없으면 이전 캐시/빈값 반환 후 백그라운드 갱신."""
+    """경기 결과 API. result_source=URL 쿼리 있으면 해당 URL에서 결과 조회(베팅 사이트와 동일 소스)."""
     try:
         global results_cache, last_update_time
-        current_time = time.time() * 1000
-        if results_cache and (current_time - last_update_time) < CACHE_TTL:
-            return jsonify(results_cache)
-        # 캐시 만료 시: 즉시 응답(이전 캐시 또는 빈값), 갱신은 백그라운드에서만 (join 없음)
-        if results_cache:
+        result_source = request.args.get('result_source', '').strip()
+        
+        # 기본 응답 (캐시 또는 빈값)
+        payload = None
+        if results_cache and (time.time() * 1000 - last_update_time) < CACHE_TTL:
+            payload = results_cache.copy()
+        elif results_cache:
+            payload = results_cache.copy()
             if not _results_refreshing:
                 threading.Thread(target=_refresh_results_background, daemon=True).start()
-            return jsonify(results_cache)
-        # 캐시가 한 번도 없으면 갱신 중이 아닐 때만 백그라운드 갱신 후 빈값 즉시 반환
-        if not _results_refreshing:
-            threading.Thread(target=_refresh_results_background, daemon=True).start()
-        return jsonify({
-            'results': [],
-            'count': 0,
-            'timestamp': datetime.now().isoformat(),
-            'error': 'loading',
-            'prediction_history': [],
-            'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
-            'blended_win_rate': None,
-            'round_actuals': {}
-        }), 200
+        else:
+            if not _results_refreshing:
+                threading.Thread(target=_refresh_results_background, daemon=True).start()
+            payload = {
+                'results': [], 'count': 0, 'timestamp': datetime.now().isoformat(),
+                'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
+                'blended_win_rate': None, 'round_actuals': {}
+            }
+        
+        # result_source 지정 시: 베팅 사이트와 동일한 결과 소스에서 round_actuals 재조회
+        if result_source:
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(result_source)
+                base = f"{parsed.scheme or 'https'}://{parsed.netloc}" if parsed.netloc else result_source.rstrip('/')
+                results_from_source = load_results_data(base_url=base)
+                if results_from_source and len(results_from_source) >= 16:
+                    ra = _build_round_actuals(_sort_results_newest_first(results_from_source))
+                    payload = dict(payload)
+                    payload['round_actuals'] = ra
+                    payload['result_source_used'] = base
+                    print(f"[API] result_source 적용: {base} → round_actuals {len(ra)}건")
+            except Exception as e:
+                print(f"[API] result_source 조회 실패: {result_source} - {str(e)[:100]}")
+        
+        return jsonify(payload)
     except Exception as e:
         import traceback
         error_msg = str(e)[:200]

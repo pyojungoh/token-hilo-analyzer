@@ -80,10 +80,13 @@ def _blended_win_rate_from_ph(ph):
     return 0.5 * rate(v15) + 0.3 * rate(v30) + 0.2 * rate(v100)
 
 
-def fetch_results(analyzer_url, timeout=5):
-    """GET {analyzer_url}/api/results -> server_prediction, prediction_history"""
+def fetch_results(analyzer_url, timeout=5, result_source=None):
+    """GET {analyzer_url}/api/results. result_source 있으면 해당 URL에서 결과 조회(베팅 사이트와 동일 소스)."""
     base = normalize_analyzer_url(analyzer_url)
     url = (base or analyzer_url.rstrip("/")) + "/api/results"
+    if result_source:
+        from urllib.parse import urlencode, quote
+        url = url + "?" + urlencode({"result_source": result_source})
     try:
         r = requests.get(url, timeout=timeout)
         r.raise_for_status()
@@ -343,6 +346,10 @@ class MacroWindow(QMainWindow):
         self.betting_url_edit.setPlaceholderText("https://nhs900.com 또는 테스트 페이지")
         self.betting_url_edit.setText("https://nhs900.com")
         fl2.addRow("URL:", self.betting_url_edit)
+        self.result_source_edit = QLineEdit()
+        self.result_source_edit.setPlaceholderText("비우면 Analyzer 기본 사용 (같은 게임)")
+        self.result_source_edit.setText("")
+        fl2.addRow("결과 소스 URL:", self.result_source_edit)
         self.go_btn = QPushButton("사이트 열기(이동)")
         self.go_btn.clicked.connect(self._on_go_site)
         fl2.addRow(self.go_btn)
@@ -463,7 +470,7 @@ class MacroWindow(QMainWindow):
         # 세팅 잠금용 위젯 목록 (시작 시 비활성화, 정지 시 활성화)
         self._settings_widgets = [
             self.analyzer_url_edit, self.connect_btn,
-            self.betting_url_edit, self.go_btn, self.test_page_btn,
+            self.betting_url_edit, self.result_source_edit, self.go_btn, self.test_page_btn,
             self.amount_edit, self.amount_capture_btn,
             self.red_edit, self.red_capture_btn, self.black_edit, self.black_capture_btn,
             self.poll_interval_edit,
@@ -579,11 +586,14 @@ class MacroWindow(QMainWindow):
                         ra = (round_actuals or {}).get(rid) if isinstance(round_actuals, dict) else None
                         if ra:
                             raw = ra.get("actual") or ""
+                            ac = (ra.get("color") or "").strip().upper()
+                            actual_color = "RED" if ac in ("RED", "빨강") else "BLACK" if ac in ("BLACK", "검정") else None
                             b["actual"] = raw
+                            b["actual_color"] = actual_color
                             if raw == "joker":
                                 b["result"] = None
-                            elif ra.get("color"):
-                                b["result"] = our_pick == ra.get("color")
+                            elif actual_color:
+                                b["result"] = our_pick == actual_color
                             else:
                                 b["result"] = None
                         else:
@@ -598,11 +608,14 @@ class MacroWindow(QMainWindow):
                                 b["actual"] = raw
                                 if raw.upper() in ("RED", "빨강", "BLACK", "검정"):
                                     actual_color = "RED" if raw.upper() in ("RED", "빨강") else "BLACK"
+                                    b["actual_color"] = actual_color
                                     b["result"] = our_pick == actual_color
                                 elif raw in ("정", "꺽") and h_pick:
                                     actual_color = h_pick if raw == "정" else ("BLACK" if h_pick == "RED" else "RED")
+                                    b["actual_color"] = actual_color
                                     b["result"] = our_pick == actual_color
                                 else:
+                                    b["actual_color"] = None
                                     b["result"] = (b.get("predicted") or "").strip() == raw
                                 break
                     try:
@@ -696,9 +709,10 @@ class MacroWindow(QMainWindow):
             pick_bg = "#e53935" if pick_color == "RED" else "#212121" if pick_color == "BLACK" else None
             self.bet_table.setItem(i, 1, _cell_item(pick_color or "-", pick_bg))
 
-            # 실제: 실제로 나온 색으로 셀배경+흰색폰트
+            # 실제: 실제로 나온 카드 색으로 셀배경. actual_color 있으면 그대로 사용(반픽 시에도 정확)
             actual_val = b.get("actual", "-") or "-"
-            actual_bg = _actual_to_color(actual_val, pick_color)
+            actual_color = b.get("actual_color")
+            actual_bg = "#e53935" if actual_color == "RED" else "#212121" if actual_color == "BLACK" else _actual_to_color(actual_val, pick_color)
             self.bet_table.setItem(i, 2, _cell_item(actual_val, actual_bg))
 
             # 배팅금액, 누적: 천단위 쉼표
@@ -1045,7 +1059,8 @@ class MacroWindow(QMainWindow):
                         self.update_queue.put(("log", "[목표시간] %s분 경과 → 자동 중지" % self._duration_min))
                         self.update_queue.put(("auto_save_log", None))
                         break
-                    data = fetch_results(analyzer_url)
+                    result_src = (self.result_source_edit.text() or "").strip() or None
+                    data = fetch_results(analyzer_url, result_source=result_src)
                     ok = data.get("ok", False)
                     self.update_queue.put(("connection", ok))
                     if not ok:
@@ -1118,10 +1133,13 @@ class MacroWindow(QMainWindow):
                             if ra:
                                 if ra.get("actual") == "joker":
                                     results_from_ph.append(None)
-                                elif ra.get("color"):
-                                    results_from_ph.append(our_pick == ra.get("color"))
                                 else:
-                                    results_from_ph.append(b.get("result"))
+                                    ac = (ra.get("color") or "").strip().upper()
+                                    ac_n = "RED" if ac in ("RED", "빨강") else "BLACK" if ac in ("BLACK", "검정") else None
+                                    if ac_n:
+                                        results_from_ph.append(our_pick == ac_n)
+                                    else:
+                                        results_from_ph.append(b.get("result"))
                             else:
                                 raw, h_pick = None, None
                                 for h in (ph or []):
