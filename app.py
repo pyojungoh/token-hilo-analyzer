@@ -1583,6 +1583,7 @@ RESULTS_HTML = '''
         .calc-inputs { display: flex; flex-direction: row; flex-wrap: wrap; gap: 6px 12px; align-items: center; min-width: 0; }
         .calc-inputs label { display: flex; align-items: center; gap: 4px; font-size: 0.9em; flex-shrink: 0; }
         .calc-inputs input[type="number"] { width: 80px; min-width: 0; padding: 4px 6px; border-radius: 4px; border: 1px solid #555; background: #1a1a1a; color: #fff; }
+        .calc-inputs select { padding: 4px 6px; border-radius: 4px; border: 1px solid #555; background: #1a1a1a; color: #fff; font-size: 0.9em; }
         @media (max-width: 520px) {
             .calc-dropdown-body { flex-direction: column; }
             .calc-body-row { flex: 1 1 auto; max-width: none; }
@@ -1708,6 +1709,8 @@ RESULTS_HTML = '''
                                     <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label>
                                     <label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label>
                                     <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label>
+                                    <label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label>
+                                    <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option></select></label>
             </div>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="1">실행</button>
@@ -1745,6 +1748,8 @@ RESULTS_HTML = '''
                                     <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label>
                                     <label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label>
                                     <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label>
+                                    <label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label>
+                                    <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option></select></label>
                                 </div>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="2">실행</button>
@@ -1782,6 +1787,8 @@ RESULTS_HTML = '''
                                     <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label>
                                     <label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label>
                                     <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label>
+                                    <label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label>
+                                    <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option></select></label>
                                 </div>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="3">실행</button>
@@ -1986,6 +1993,7 @@ RESULTS_HTML = '''
         const CALC_SESSION_KEY = 'tokenHiloCalcSessionId';
         const CALC_STATE_BACKUP_KEY = 'tokenHiloCalcStateBackup';
         const calcState = {};
+        var TABLE_MARTIN_PYO = [10000, 15000, 25000, 40000, 70000, 120000, 200000, 400000, 120000];
         CALC_IDS.forEach(id => {
             calcState[id] = {
                 running: false,
@@ -1997,6 +2005,8 @@ RESULTS_HTML = '''
                 reverse: false,
                 win_rate_reverse: false,
                 win_rate_threshold: 50,
+                martingale: false,
+                martingale_type: 'pyo',
                 timer_completed: false,
                 timerId: null,
                 maxWinStreakEver: 0,
@@ -2034,6 +2044,8 @@ RESULTS_HTML = '''
                 const winRateThrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
                 var winRateThr = (winRateThrEl && !isNaN(parseFloat(winRateThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(winRateThrEl.value))) : 50;
                 if (typeof winRateThr !== 'number' || isNaN(winRateThr)) winRateThr = 50;
+                const martingaleEl = document.getElementById('calc-' + id + '-martingale');
+                const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 payload[String(id)] = {
                     running: calcState[id].running,
                     started_at: calcState[id].started_at || 0,
@@ -2043,6 +2055,8 @@ RESULTS_HTML = '''
                     reverse: !!(revEl && revEl.checked),
                     win_rate_reverse: !!(winRateRevEl && winRateRevEl.checked),
                     win_rate_threshold: winRateThr,
+                    martingale: !!(martingaleEl && martingaleEl.checked),
+                    martingale_type: (martingaleTypeEl && martingaleTypeEl.value) || 'pyo',
                     timer_completed: !!calcState[id].timer_completed,
                     max_win_streak_ever: calcState[id].maxWinStreakEver || 0,
                     max_lose_streak_ever: calcState[id].maxLoseStreakEver || 0,
@@ -2101,10 +2115,16 @@ RESULTS_HTML = '''
                 calcState[id].win_rate_reverse = !!c.win_rate_reverse;
                 var thr = (typeof c.win_rate_threshold === 'number' && c.win_rate_threshold >= 0 && c.win_rate_threshold <= 100) ? c.win_rate_threshold : 50;
                 calcState[id].win_rate_threshold = thr;
+                calcState[id].martingale = !!c.martingale;
+                calcState[id].martingale_type = (c.martingale_type === 'pyo' ? 'pyo' : 'pyo');
                 const winRateRevEl = document.getElementById('calc-' + id + '-win-rate-reverse');
                 if (winRateRevEl) winRateRevEl.checked = !!c.win_rate_reverse;
                 const winRateThrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
                 if (winRateThrEl) { winRateThrEl.value = String(Math.round(thr)); }
+                const martingaleEl = document.getElementById('calc-' + id + '-martingale');
+                const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
+                if (martingaleEl) martingaleEl.checked = !!calcState[id].martingale;
+                if (martingaleTypeEl) martingaleTypeEl.value = calcState[id].martingale_type || 'pyo';
             });
             const dc = calcs[DEFENSE_ID] || {};
             if (Array.isArray(dc.history)) calcState.defense.history = dc.history.slice(-500);
@@ -3235,32 +3255,43 @@ RESULTS_HTML = '''
             const capIn = parseFloat(document.getElementById('calc-' + id + '-capital')?.value) || 1000000;
             const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
             const oddsIn = parseFloat(document.getElementById('calc-' + id + '-odds')?.value) || 1.97;
+            const martingaleEl = document.getElementById('calc-' + id + '-martingale');
+            const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
+            const useMartingale = !!(martingaleEl && martingaleEl.checked);
+            const martingaleType = (martingaleTypeEl && martingaleTypeEl.value) || 'pyo';
             const hist = calcState[id].history || [];
             let cap = capIn, currentBet = baseIn, bust = false;
+            let martingaleStep = 0;
             let wins = 0, losses = 0, maxWinStreak = 0, maxLoseStreak = 0, curWin = 0, curLose = 0;
             let processedCount = 0;
             for (let i = 0; i < hist.length; i++) {
                 const h = hist[i];
                 if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                if (useMartingale && martingaleType === 'pyo') {
+                    currentBet = TABLE_MARTIN_PYO[Math.min(martingaleStep, TABLE_MARTIN_PYO.length - 1)];
+                }
                 const bet = Math.min(currentBet, Math.floor(cap));
                 if (cap < bet || cap <= 0) { bust = true; processedCount = i; break; }
                 const isJoker = h.actual === 'joker';
                 const isWin = !isJoker && h.predicted === h.actual;
                 if (isJoker) {
                     cap -= bet;
-                    currentBet = Math.min(currentBet * 2, Math.floor(cap));
+                    if (useMartingale && martingaleType === 'pyo') martingaleStep = Math.min(martingaleStep + 1, TABLE_MARTIN_PYO.length - 1);
+                    else currentBet = Math.min(currentBet * 2, Math.floor(cap));
                     curWin = 0;
                     curLose = 0;
                 } else if (isWin) {
                     cap += bet * (oddsIn - 1);
-                    currentBet = baseIn;
+                    if (useMartingale && martingaleType === 'pyo') martingaleStep = 0;
+                    else currentBet = baseIn;
                     wins++;
                     curWin++;
                     curLose = 0;
                     if (curWin > maxWinStreak) maxWinStreak = curWin;
                 } else {
                     cap -= bet;
-                    currentBet = Math.min(currentBet * 2, Math.floor(cap));
+                    if (useMartingale && martingaleType === 'pyo') martingaleStep = Math.min(martingaleStep + 1, TABLE_MARTIN_PYO.length - 1);
+                    else currentBet = Math.min(currentBet * 2, Math.floor(cap));
                     losses++;
                     curLose++;
                     curWin = 0;
@@ -3268,6 +3299,9 @@ RESULTS_HTML = '''
                 }
                 processedCount = i + 1;
                 if (cap <= 0) { bust = true; break; }
+            }
+            if (useMartingale && martingaleType === 'pyo') {
+                currentBet = bust ? 0 : TABLE_MARTIN_PYO[Math.min(martingaleStep, TABLE_MARTIN_PYO.length - 1)];
             }
             if (calcState[id]) {
                 calcState[id].maxWinStreakEver = Math.max(calcState[id].maxWinStreakEver || 0, maxWinStreak);
@@ -4179,12 +4213,14 @@ def api_calc_state():
                     'timer_completed': bool(c.get('timer_completed')),
                     'win_rate_reverse': bool(c.get('win_rate_reverse')),
                     'win_rate_threshold': max(0, min(100, int(c.get('win_rate_threshold') or 50))),
+                    'martingale': bool(c.get('martingale')),
+                    'martingale_type': str(c.get('martingale_type') or 'pyo'),
                     'max_win_streak_ever': int(c.get('max_win_streak_ever') or 0),
                     'max_lose_streak_ever': int(c.get('max_lose_streak_ever') or 0),
                     'first_bet_round': max(0, int(c.get('first_bet_round') or 0))
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'martingale': False, 'martingale_type': 'pyo', 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0}
         c = calcs.get('defense') or {}
         if isinstance(c, dict):
             running = c.get('running', False)
