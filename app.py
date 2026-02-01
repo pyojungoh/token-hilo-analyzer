@@ -29,6 +29,12 @@ try:
 except ImportError:
     bet_int = None
 
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    SCHEDULER_AVAILABLE = True
+except ImportError:
+    SCHEDULER_AVAILABLE = False
+
 app = Flask(__name__)
 CORS(app)
 
@@ -886,6 +892,23 @@ def load_results_data():
     # 모든 경로 실패
     print(f"[경고] 모든 경로에서 결과 데이터를 가져올 수 없음")
     return []
+
+
+def _scheduler_fetch_results():
+    """스케줄러에서 호출: 외부 결과 수집·DB 저장 (창/브라우저 없이 주기 실행용)"""
+    try:
+        load_results_data()
+    except Exception as e:
+        print(f"[스케줄러] 결과 수집 오류: {str(e)[:150]}")
+
+
+if SCHEDULER_AVAILABLE:
+    _scheduler = BackgroundScheduler()
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=5, id='fetch_results', max_instances=1)
+    _scheduler.start()
+    print("[✅] 결과 수집 스케줄러 시작 (5초마다, 창/브라우저 없이 동작)")
+else:
+    print("[⚠] APScheduler 미설치 - 결과 수집은 브라우저 요청 시에만 동작합니다. pip install APScheduler")
 
 def parse_csv_data(csv_text):
     """CSV 데이터 파싱 (bet_result_log.csv)"""
