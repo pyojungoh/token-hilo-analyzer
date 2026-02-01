@@ -1,0 +1,40 @@
+# 1. 의존성 라이브러리 (가장 메모리를 많이 먹음)
+node_modules/
+vendor/
+venv/
+.venv/
+target/
+
+# 2. 빌드 및 배포 결과물 (AI가 학습할 필요 없음)
+dist/
+build/
+out/
+.next/
+.nuxt/
+bin/
+obj/
+
+# 3. 대용량 데이터 및 미디어 파일
+*.json
+*.csv
+*.sql
+*.svg
+*.png
+*.jpg
+*.jpeg
+*.mp4
+*.pdf
+
+# 4. 설정 및 잠금 파일 (코드 로직과 무관함)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+composer.lock
+Cargo.lock
+
+# 5. 로그 및 시스템 파일
+*.log
+.DS_Store
+.git/
+.idea/
+.vscode/

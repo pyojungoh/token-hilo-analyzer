@@ -1,0 +1,18 @@
+# 무거운/불필요한 폴더 (푸시 시 메모리·용량 절약)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+node_modules/
+venv/
+.venv/
+env/
+ENV/
+.env
+*.log
+.DS_Store
+.idea/
+.vscode/
+*.sqlite
+*.db
