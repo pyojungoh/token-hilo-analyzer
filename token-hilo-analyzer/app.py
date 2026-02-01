@@ -1203,7 +1203,7 @@ game_data_cache = None
 streaks_cache = None
 results_cache = None
 last_update_time = 0
-CACHE_TTL = 120  # 결과 나오면 예측픽 바로 반영 (ms)
+CACHE_TTL = 80  # 결과 나오면 예측픽 빠르게 반영 (ms, 짧을수록 매크로 지연 감소)
 
 # 게임 상태 (Socket.IO 제거 후 기본값만 사용)
 current_status_data = {
@@ -1435,9 +1435,9 @@ def _scheduler_fetch_results():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.5, id='fetch_results', max_instances=1)
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.3, id='fetch_results', max_instances=1)
     _scheduler.start()
-    print("[✅] 결과 수집 스케줄러 시작 (0.5초마다, 예측픽 빠른 반영)")
+    print("[✅] 결과 수집 스케줄러 시작 (0.3초마다, 예측픽 빠른 반영)")
 else:
     print("[⚠] APScheduler 미설치 - 결과 수집은 브라우저 요청 시에만 동작합니다. pip install APScheduler")
 

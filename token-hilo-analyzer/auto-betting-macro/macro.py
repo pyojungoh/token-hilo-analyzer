@@ -125,26 +125,51 @@ def js_click_xy(x, y, intended_color=None):
         "})(" + str(x) + "," + str(y) + "," + color_arg + ");"
     )
 
+def _js_set_value_inner():
+    """React/Vue 제어 컴포넌트 대응: 네이티브 setter + input/change 이벤트."""
+    return (
+        "function setInputValue(el, v){"
+        "if(!el)return false;"
+        "var s=String(v);"
+        "el.focus();"
+        "el.click&&el.click();"
+        "try{"
+        "var nativeSetter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');"
+        "if(nativeSetter&&nativeSetter.set){"
+        "nativeSetter.set.call(el,s);"
+        "}else{el.value=s;}"
+        "}catch(e){el.value=s;}"
+        "el.dispatchEvent(new Event('input',{bubbles:true}));"
+        "el.dispatchEvent(new Event('change',{bubbles:true}));"
+        "el.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,key:'0'}));"
+        "return true;"
+        "}"
+    )
+
+
 def js_set_value_at_xy(x, y, value_str):
-    """(x,y) 위치의 input에 값 넣기. label이면 연결된 input 사용 (실제/테스트 페이지 공통)."""
+    """(x,y) 위치의 input에 값 넣기. label이면 연결된 input 사용. React/Vue 대응."""
     v = str(value_str) if value_str is not None else ""
     return (
         "(function(x,y,v){"
+        + _js_set_value_inner() +
         "var el=document.elementFromPoint(x,y);"
         "if(!el)return;"
         "if(el.tagName==='LABEL'&&el.htmlFor)el=document.getElementById(el.htmlFor)||el;"
         "else if(el.tagName!=='INPUT'&&el.tagName!=='TEXTAREA'){var inp=el.querySelector('input,textarea');if(inp)el=inp;}"
-        "if(el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA')){el.focus();el.value=String(v);el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}"
+        "if(el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA')){setInputValue(el,v);}"
         "})(%s,%s,%s);"
     ) % (x, y, json.dumps(v))
 
 def js_set_value_by_selector(sel, value_str):
-    """셀렉터로 input 찾아서 값 넣기 (테스트 페이지 등)."""
+    """셀렉터로 input 찾아서 값 넣기. React/Vue 대응."""
     v = str(value_str) if value_str is not None else ""
     return (
-        "(function(s,v){var el=document.querySelector(s);"
-        "if(el){el.focus();el.value=String(v);el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}}"
-        ")(%s,%s);"
+        "(function(s,v){"
+        + _js_set_value_inner() +
+        "var el=document.querySelector(s);"
+        "if(el){setInputValue(el,v);}"
+        "})(%s,%s);"
     ) % (json.dumps(sel), json.dumps(v))
 
 def js_set_value_then_click(amount_x, amount_y, amount_str, pick_x, pick_y):
@@ -355,10 +380,10 @@ class MacroWindow(QMainWindow):
         self.black_capture_btn.clicked.connect(lambda: self._start_capture("BLACK"))
         fl3.addRow(self.black_capture_btn)
         self.poll_interval_edit = QLineEdit()
-        self.poll_interval_edit.setText("1")
+        self.poll_interval_edit.setText("0.5")
         self.poll_interval_edit.setMaximumWidth(60)
         fl3.addRow("픽 확인 주기(초):", self.poll_interval_edit)
-        poll_hint = QLabel("= Analyzer에 몇 초마다 픽을 물어볼지. 기본 1초")
+        poll_hint = QLabel("= Analyzer에 몇 초마다 픽/결과 조회. 0.5초 권장(결과 지연 감소)")
         poll_hint.setStyleSheet("color: #888; font-size: 11px;")
         poll_hint.setWordWrap(True)
         fl3.addRow(poll_hint)
@@ -385,6 +410,14 @@ class MacroWindow(QMainWindow):
         self.base_bet_edit.setText("1000")
         self.base_bet_edit.setMaximumWidth(100)
         fl_calc.addRow("초기 배팅 금액:", self.base_bet_edit)
+        self.odds_edit = QLineEdit()
+        self.odds_edit.setText("1.97")
+        self.odds_edit.setPlaceholderText("배당 (순익 계산용)")
+        self.odds_edit.setMaximumWidth(80)
+        fl_calc.addRow("배당:", self.odds_edit)
+        odds_hint = QLabel("※ 승리 시 수익 = 배팅금액×(배당-1), 패배 시 = -배팅금액")
+        odds_hint.setStyleSheet("color: #888; font-size: 10px;")
+        fl_calc.addRow("", odds_hint)
         self.martingale_check = QCheckBox("마틴 적용")
         self.martingale_check.setChecked(False)
         fl_calc.addRow(self.martingale_check)
@@ -433,7 +466,7 @@ class MacroWindow(QMainWindow):
             self.amount_edit, self.amount_capture_btn,
             self.red_edit, self.red_capture_btn, self.black_edit, self.black_capture_btn,
             self.poll_interval_edit,
-            self.seed_money_edit, self.base_bet_edit,
+            self.seed_money_edit, self.base_bet_edit, self.odds_edit,
             self.martingale_check, self.martingale_type_combo,
             self.duration_edit, self.reverse_check, self.win_rate_reverse_check,
             self.win_rate_threshold_spin, self.target_enabled_check, self.target_edit,
@@ -542,16 +575,31 @@ class MacroWindow(QMainWindow):
                         for h in (ph or []):
                             if not isinstance(h, dict):
                                 continue
-                            if h.get("round") == b.get("round") and h.get("actual") != "joker":
-                                b["actual"] = h.get("actual", "")
-                                pred = b.get("predicted", "")
-                                b["result"] = pred == b["actual"]
-                                break
+                            if int(h.get("round") or 0) != int(b.get("round") or 0) or h.get("actual") in (None, "joker"):
+                                continue
+                            raw = (h.get("actual") or "").strip()
+                            h_pick = (h.get("pickColor") or h.get("pick_color") or "").strip().upper()
+                            h_pick = "RED" if h_pick in ("RED", "빨강") else "BLACK" if h_pick in ("BLACK", "검정") else None
+                            our_pick = (b.get("pick_color") or "").strip().upper()
+                            b["actual"] = raw
+                            if raw.upper() in ("RED", "빨강", "BLACK", "검정"):
+                                actual_color = "RED" if raw.upper() in ("RED", "빨강") else "BLACK"
+                                b["result"] = our_pick == actual_color
+                            elif raw in ("정", "꺽") and h_pick:
+                                actual_color = h_pick if raw == "정" else ("BLACK" if h_pick == "RED" else "RED")
+                                b["result"] = our_pick == actual_color
+                            else:
+                                b["result"] = (b.get("predicted") or "").strip() == raw
+                            break
+                    try:
+                        odds = max(1.0, float(self.odds_edit.text().strip().replace(",", ".") or 1.97))
+                    except (ValueError, TypeError):
+                        odds = 1.97
                     cum = 0
                     for b in self.bet_log:
                         if b.get("result") is not None:
                             amt = b.get("amount") or 0
-                            cum += amt if b["result"] else -amt
+                            cum += amt * (odds - 1) if b["result"] else -amt
                         b["cumulative"] = cum
                     self._refresh_bet_table()
                     # 합산승률 표시 (API에서 받은 동일 값, 50% 이하 빨강)
@@ -959,6 +1007,10 @@ class MacroWindow(QMainWindow):
             self._duration_min = max(0, float(self.duration_edit.text().strip() or 0))
         except ValueError:
             self._duration_min = 0
+        try:
+            self._odds = max(1.0, float(self.odds_edit.text().strip().replace(",", ".") or 1.97))
+        except (ValueError, TypeError):
+            self._odds = 1.97
         self._start_time = time.time()
         self._target_enabled = self.target_enabled_check.isChecked()
         self.set_status("픽 폴링 중...")
@@ -1029,7 +1081,7 @@ class MacroWindow(QMainWindow):
                             if not getattr(self, "_wait_result_log_count", 0) % 5:
                                 self.update_queue.put(("log", "[대기] 직전 회차(%s) 결과 수신 대기 중..." % self.last_clicked_round))
                             self._wait_result_log_count = getattr(self, "_wait_result_log_count", 0) + 1
-                            time.sleep(interval)
+                            time.sleep(min(interval, 0.3))  # 결과 대기 시 더 자주 폴링 (지연 감소)
                             continue
                     # 반픽: 픽과 반대 색으로 클릭
                     if self._reverse:
@@ -1039,36 +1091,38 @@ class MacroWindow(QMainWindow):
                     consecutive_losses = 0
                     results_from_ph = []
                     if self.bet_log:
-                        # bet_log 각 건의 결과를 방금 받은 ph에서 조회 (연패 수 + 현재금액 계산용)
-                        # API는 actual을 "정"/"꺽"(예측 맞음/틀림) 또는 색상으로 반환
+                        # bet_log 각 건의 결과를 ph에서 조회 (우리 pick_color vs 실제 카드색, 반픽/승률반픽 반영)
                         for b in self.bet_log:
-                            rnd = b.get("round")
-                            pred_val = (b.get("predicted") or "").strip()
-                            pick = (b.get("pick_color") or "").strip().upper()
+                            rnd = int(b.get("round") or 0)
+                            our_pick = (b.get("pick_color") or "").strip().upper()
                             raw = None
+                            h_pick = None
                             for h in (ph or []):
                                 if not isinstance(h, dict):
                                     continue
-                                if h.get("round") == rnd and h.get("actual") not in (None, "joker"):
-                                    raw = (h.get("actual") or "").strip()
-                                    break
+                                if int(h.get("round") or 0) != rnd or h.get("actual") in (None, "joker"):
+                                    continue
+                                raw = (h.get("actual") or "").strip()
+                                hp = (h.get("pickColor") or h.get("pick_color") or "").strip().upper()
+                                h_pick = "RED" if hp in ("RED", "빨강") else "BLACK" if hp in ("BLACK", "검정") else None
+                                break
                             if raw is None:
                                 results_from_ph.append(b.get("result"))
                                 continue
                             raw_upper = raw.upper()
-                            if raw in ("정", "꺽"):
-                                # API가 정/꺽으로 반환: predicted와 같으면 승
-                                results_from_ph.append(pred_val == raw)
-                            elif raw_upper in ("RED", "빨강", "BLACK", "검정"):
-                                # API가 색상으로 반환: pick_color와 비교
+                            if raw_upper in ("RED", "빨강", "BLACK", "검정"):
                                 actual_color = "RED" if raw_upper in ("RED", "빨강") else "BLACK"
-                                results_from_ph.append(pick == actual_color)
+                                results_from_ph.append(our_pick == actual_color)
+                            elif raw in ("정", "꺽") and h_pick:
+                                actual_color = h_pick if raw == "정" else ("BLACK" if h_pick == "RED" else "RED")
+                                results_from_ph.append(our_pick == actual_color)
                             else:
-                                results_from_ph.append(pred_val == raw)
-                    # 승률반픽: API에서 받은 합산승률이 기준 % 이하일 때 반대로 배팅
-                    blended = data.get("blended_win_rate")
+                                results_from_ph.append((b.get("predicted") or "").strip() == raw)
+                    # 승률반픽: 합산승률(API 또는 ph 폴백)이 기준 % 이하일 때 반대로 배팅
                     if self._win_rate_reverse and blended is not None and blended <= self._win_rate_threshold:
+                        orig = pick_color
                         pick_color = "BLACK" if pick_color == "RED" else "RED"
+                        self.update_queue.put(("log", "[승률반픽] 합산 %.1f%% ≤ %s%% → %s 대신 %s 배팅" % (blended, self._win_rate_threshold, orig, pick_color)))
                     if self._martingale:
                         for res in reversed(results_from_ph):
                             if res is None:
@@ -1088,14 +1142,15 @@ class MacroWindow(QMainWindow):
                             if self._martingale_type == "pyo_half":
                                 amount = amount // 2
 
-                    # 시드머니 기준 현재금액으로 배팅금액 상한 (금액에 맞게 배팅)
+                    # 시드머니 기준 현재금액으로 배팅금액 상한 (배당 반영 순익)
                     seed = getattr(self, "_seed_money", 0) or 0
+                    odds = getattr(self, "_odds", 1.97) or 1.97
                     cum = 0
                     if self.bet_log and results_from_ph and len(results_from_ph) == len(self.bet_log):
                         for b, res in zip(self.bet_log, results_from_ph):
                             if res is not None:
                                 amt = b.get("amount") or 0
-                                cum += amt if res else -amt
+                                cum += amt * (odds - 1) if res else -amt
                     current_balance = seed + cum
                     if current_balance < amount and current_balance >= 0:
                         amount = current_balance
@@ -1134,18 +1189,20 @@ class MacroWindow(QMainWindow):
         if not pick_parsed:
             self.log("[배팅] %s 버튼 좌표/셀렉터 없음." % pick_color)
             return
+        if not amount_parsed:
+            self.log("[배팅] 금액 칸 좌표/셀렉터 없음. '금액 칸 클릭해서 좌표 잡기'로 설정하세요.")
+            return
         self.log("[배팅] 실행: 금액=%s, %s" % (amount, pick_color))
         try:
             # 1) 금액 입력 (셀렉터 또는 좌표) — 반드시 문자열로 전달
             amount_str = str(int(amount)) if amount is not None else "0"
-            if amount_parsed:
-                if amount_parsed[0] == "selector":
-                    page.runJavaScript(js_set_value_by_selector(amount_parsed[1], amount_str))
-                else:
-                    ax, ay = amount_parsed[1], amount_parsed[2]
-                    page.runJavaScript(js_set_value_at_xy(ax, ay, amount_str))
-            # 2) 0.3초 후 RED/BLACK 클릭 (메인 스레드에서 실행되므로 QTimer로 지연)
-            QTimer.singleShot(300, lambda: self._do_click_in_page(pick_color))
+            if amount_parsed[0] == "selector":
+                page.runJavaScript(js_set_value_by_selector(amount_parsed[1], amount_str))
+            else:
+                ax, ay = amount_parsed[1], amount_parsed[2]
+                page.runJavaScript(js_set_value_at_xy(ax, ay, amount_str))
+            # 2) 0.5초 대기 후 RED/BLACK 클릭 (금액 반영 시간 확보)
+            QTimer.singleShot(500, lambda: self._do_click_in_page(pick_color))
             self.set_status("마지막: %s 회차" % pick_color)
         except Exception as e:
             self.log("[배팅 실패] %s" % e)
@@ -1190,8 +1247,14 @@ class MacroWindow(QMainWindow):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self._set_settings_locked(False)
+        # 배팅 초기화 (이어하기 아님, 새로 시작)
+        self.bet_log = []
+        self.last_clicked_round = None
+        self.last_pick = None
+        self._start_round = None
+        self._refresh_bet_table()
         self.set_status("중지됨")
-        self.log("[중지] 매크로 중지.")
+        self.log("[중지] 매크로 중지. 배팅 기록 초기화됨.")
 
     def closeEvent(self, event):
         if self.running:
