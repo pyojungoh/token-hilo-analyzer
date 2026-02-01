@@ -802,8 +802,11 @@ def load_game_data():
         'timestamp': current_status_data.get('timestamp', datetime.now().isoformat())
     }
 
+# 10초 게임: 결과를 빠르게 가져오고 예측 타이밍을 맞추기 위한 설정
+GAME_ROUND_SECONDS = 10          # 한 라운드 약 10초
+SCHEDULER_INTERVAL_SECONDS = 5   # 5초마다 수집 → 한 라운드에 2번 체크로 결과 빠른 반영
 # 외부 result.json 요청 시 타임아웃 (먹통 방지, 초 단위)
-RESULTS_FETCH_TIMEOUT = 5
+RESULTS_FETCH_TIMEOUT = 3
 RESULTS_FETCH_MAX_RETRIES = 1
 
 def load_results_data():
@@ -894,19 +897,365 @@ def load_results_data():
     return []
 
 
+# ----- 서버용 예측 공식 (10초 게임 타이밍에 맞춰 스케줄러에서 실행) -----
+def _server_graph_values(results):
+    """results(최신순)에서 정/꺽 배열. i번째 = results[i] vs results[i+15] 색상 일치 여부."""
+    if not results or len(results) < 16:
+        return []
+    out = []
+    for i in range(len(results) - 15):
+        cur, cmp = results[i], results[i + 15]
+        if cur.get('joker') or cmp.get('joker'):
+            out.append(None)
+            continue
+        cm = cur.get('colorMatch')
+        if cm is not None:
+            out.append(bool(cm))
+            continue
+        c1 = parse_card_color(cur.get('result', ''))
+        c2 = parse_card_color(cmp.get('result', ''))
+        out.append(c1 is not None and c2 is not None and c1 == c2)
+    return out
+
+
+def _server_calc_transitions(arr):
+    """정/꺽 배열에서 전이 확률 (jj,jk,kj,kk, jungDenom, kkukDenom)."""
+    jj = jk = kj = kk = 0
+    for i in range(len(arr) - 1):
+        a, b = arr[i], arr[i + 1]
+        if a is None or b is None:
+            continue
+        if a is True and b is True:
+            jj += 1
+        elif a is True and b is False:
+            jk += 1
+        elif a is False and b is True:
+            kj += 1
+        else:
+            kk += 1
+    jung_denom = jj + jk
+    kkuk_denom = kk + kj
+    return {'jj': jj, 'jk': jk, 'kj': kj, 'kk': kk, 'jungDenom': jung_denom, 'kkukDenom': kkuk_denom}
+
+
+def _server_pong_line_pct(arr):
+    """최근 15개 정/꺽에서 퐁당%/줄%."""
+    v = [x for x in arr if x is True or x is False]
+    if len(v) < 2:
+        return 50.0, 50.0
+    alt = same = 0
+    for i in range(len(v) - 1):
+        if v[i] != v[i + 1]:
+            alt += 1
+        else:
+            same += 1
+    tot = alt + same
+    pong_pct = 100.0 * alt / tot if tot else 50.0
+    line_pct = 100.0 * same / tot if tot else 50.0
+    return pong_pct, line_pct
+
+
+def _server_line_pong_runs(arr):
+    """1=줄, 0=퐁당 쌍으로 run 길이 리스트."""
+    pairs = []
+    for i in range(len(arr) - 1):
+        a, b = arr[i], arr[i + 1]
+        if a not in (True, False) or b not in (True, False):
+            continue
+        pairs.append(1 if a == b else 0)
+    line_runs, pong_runs = [], []
+    idx = 0
+    while idx < len(pairs):
+        if pairs[idx] == 1:
+            c = 0
+            while idx < len(pairs) and pairs[idx] == 1:
+                c += 1
+                idx += 1
+            line_runs.append(c)
+        else:
+            c = 0
+            while idx < len(pairs) and pairs[idx] == 0:
+                c += 1
+                idx += 1
+            pong_runs.append(c)
+    return line_runs, pong_runs
+
+
+def _server_symmetry_20(arr20):
+    """20개 정/꺽에서 좌/우 줄 개수, 대칭%, maxLeftRun, recentRunLength."""
+    if not arr20 or len(arr20) < 20:
+        return None
+    valid = [x for x in arr20[:20] if x is True or x is False]
+    if len(valid) < 20:
+        return None
+    sym_count = sum(1 for si in range(10) if valid[si] == valid[19 - si])
+    left10, right10 = valid[:10], valid[10:20]
+
+    def run_lengths(a):
+        r, cur, c = [], None, 0
+        for x in a:
+            if x == cur:
+                c += 1
+            else:
+                if cur is not None:
+                    r.append(c)
+                cur = x
+                c = 1
+        if cur is not None:
+            r.append(c)
+        return r
+
+    left_runs = run_lengths(left10)
+    right_runs = run_lengths(right10)
+    avg_l = sum(left_runs) / len(left_runs) if left_runs else 0
+    avg_r = sum(right_runs) / len(right_runs) if right_runs else 0
+    max_left_run = max(left_runs) if left_runs else 0
+    recent_run = 1
+    for ri in range(1, len(valid)):
+        if valid[ri] == valid[0]:
+            recent_run += 1
+        else:
+            break
+    return {
+        'symmetryPct': sym_count / 10.0 * 100,
+        'leftLineCount': len(left_runs),
+        'rightLineCount': len(right_runs),
+        'avgLeft': avg_l,
+        'avgRight': avg_r,
+        'maxLeftRunLength': max_left_run,
+        'recentRunLength': recent_run,
+    }
+
+
+def compute_server_prediction(results, prediction_history):
+    """서버에서 다음 회차 예측 (정/꺽). results=최신순, prediction_history=과거 예측 기록 리스트. 반환: (predict, pred_prob, is15joker, predicted_round)."""
+    try:
+        if not results or len(results) < 16:
+            return None
+        graph_values = _server_graph_values(results)
+        if not graph_values:
+            return None
+        # 15번 카드 조커면 보류
+        is15joker = len(results) >= 15 and bool(results[14].get('joker'))
+        if is15joker:
+            try:
+                latest_gid = results[0].get('gameID') or '0'
+                predicted_round = int(latest_gid) + 1
+            except (TypeError, ValueError):
+                predicted_round = 0
+            return ('정', 50.0, True, predicted_round)
+
+        full = _server_calc_transitions(graph_values)
+        recent30 = _server_calc_transitions(graph_values[:30]) if len(graph_values) >= 30 else full
+        short15 = _server_calc_transitions(graph_values[:15]) if len(graph_values) >= 15 else None
+        last = graph_values[0]
+        pong_pct, line_pct = _server_pong_line_pct(graph_values[:15])
+        line_pct = min(100, max(0, line_pct))
+        pong_pct = min(100, max(0, pong_pct))
+
+        # flowState: 단기 vs 장기 유지 확률 차이
+        flow_state = ''
+        if short15 and recent30:
+            if last is True:
+                long_same = 100 * recent30['jj'] / recent30['jungDenom'] if recent30['jungDenom'] else 50
+                short_same = 100 * short15['jj'] / short15['jungDenom'] if short15['jungDenom'] else 50
+            else:
+                long_same = 100 * recent30['kk'] / recent30['kkukDenom'] if recent30['kkukDenom'] else 50
+                short_same = 100 * short15['kk'] / short15['kkukDenom'] if short15['kkukDenom'] else 50
+            if short_same - long_same >= 15:
+                flow_state = 'line_strong'
+            elif long_same - short_same >= 15:
+                flow_state = 'pong_strong'
+
+        # 30회 패턴 지수
+        use30 = graph_values[:30] if len(graph_values) >= 30 else graph_values
+        line_runs, pong_runs = _server_line_pong_runs(use30)
+        total_line = len(line_runs)
+        total_pong = len(pong_runs)
+        line_two_plus = sum(1 for l in line_runs if l >= 2)
+        line_one = sum(1 for l in line_runs if l == 1)
+        line_two = sum(1 for l in line_runs if l == 2)
+        pong_one = sum(1 for p in pong_runs if p == 1)
+        chunk_idx = line_two_plus / total_line if total_line else 0
+        scatter_idx = (line_one / total_line * pong_one / total_pong) if total_line and total_pong else 0
+        two_one_idx = (line_two / total_line * pong_one / total_pong) if total_line and total_pong else 0
+
+        # 전이 확률 (직전이 정이면 정 유지/꺽 전이)
+        Pjung = Pkkuk = 0.5
+        if last is True and recent30['jungDenom'] > 0:
+            Pjung = recent30['jj'] / recent30['jungDenom']
+            Pkkuk = recent30['jk'] / recent30['jungDenom']
+        elif last is False and recent30['kkukDenom'] > 0:
+            Pjung = recent30['kj'] / recent30['kkukDenom']
+            Pkkuk = recent30['kk'] / recent30['kkukDenom']
+        prob_same = Pjung if last is True else Pkkuk
+        prob_change = Pkkuk if last is True else Pjung
+
+        line_w = line_pct / 100.0
+        pong_w = pong_pct / 100.0
+        if flow_state == 'line_strong':
+            line_w = min(1, line_w + 0.25)
+            pong_w = max(0, 1 - line_w)
+        elif flow_state == 'pong_strong':
+            pong_w = min(1, pong_w + 0.25)
+            line_w = max(0, 1 - pong_w)
+
+        sym = _server_symmetry_20(graph_values[:20]) if len(graph_values) >= 20 else None
+        if sym:
+            lc, rc, sp = sym['leftLineCount'], sym['rightLineCount'], sym['symmetryPct']
+            if (rc >= 5 and lc <= 3):
+                line_w = min(1, line_w + 0.22)
+                pong_w = max(0, 1 - line_w)
+            elif sp >= 70 and rc <= 3:
+                line_w = min(1, line_w + 0.28)
+                pong_w = max(0, 1 - line_w)
+            else:
+                if lc <= 3:
+                    line_w = min(1, line_w + 0.15)
+                    pong_w = max(0, 1 - line_w)
+                elif lc >= 5:
+                    max_run = sym.get('maxLeftRunLength', 4)
+                    recent_run = sym.get('recentRunLength', 0)
+                    boost = 0.06 if (max_run <= 3 or recent_run >= 2) else 0.15
+                    pong_w = min(1, pong_w + boost)
+                    line_w = max(0, 1 - pong_w)
+                if sp >= 70:
+                    line_w = min(1, line_w + 0.05)
+                elif sp <= 30:
+                    line_w *= 0.95
+                    pong_w *= 0.95
+
+        line_w += chunk_idx * 0.2 + two_one_idx * 0.1
+        pong_w += scatter_idx * 0.2
+        total_w = line_w + pong_w
+        if total_w > 0:
+            line_w /= total_w
+            pong_w /= total_w
+        adj_same = prob_same * line_w
+        adj_change = prob_change * pong_w
+        s = adj_same + adj_change or 1
+        adj_same_n = adj_same / s
+        adj_change_n = adj_change / s
+        predict = ('정' if last is True else '꺽') if adj_same_n >= adj_change_n else ('꺽' if last is True else '정')
+        pred_prob = (adj_same_n if predict == ('정' if last is True else '꺽') else adj_change_n) * 100
+
+        try:
+            latest_gid = results[0].get('gameID') or '0'
+            predicted_round = int(latest_gid) + 1
+        except (TypeError, ValueError):
+            predicted_round = 0
+        return (predict, min(100, max(0, pred_prob)), False, predicted_round)
+    except Exception as e:
+        print(f"[서버예측] 오류: {str(e)[:150]}")
+        return None
+
+
+def _process_calc_rounds_after_results():
+    """결과 수집 후 실행: 실행 중인 계산기의 pending 회차 반영 + 다음 예측 계산·저장."""
+    try:
+        results = get_recent_results(hours=1)
+        if not results or len(results) < 16:
+            return
+        prediction_history = get_prediction_history(100)
+        pred_out = compute_server_prediction(results, prediction_history)
+        if not pred_out:
+            return
+        predict, pred_prob, is15joker, predicted_round = pred_out
+        latest_round = int(results[0].get('gameID') or 0) if results else 0
+
+        # 모든 세션의 계산기 상태 조회 (DB 또는 메모리)
+        sessions_to_check = []
+        if DB_AVAILABLE and DATABASE_URL:
+            conn = get_db_connection(statement_timeout_sec=5)
+            if conn:
+                try:
+                    cur = conn.cursor()
+                    cur.execute('SELECT session_id, state_json FROM calc_sessions')
+                    for row in cur.fetchall():
+                        if row[0] and row[1]:
+                            try:
+                                sessions_to_check.append((row[0], json.loads(row[1])))
+                            except (TypeError, ValueError):
+                                pass
+                    cur.close()
+                    conn.close()
+                except Exception as e:
+                    print(f"[서버계산기] DB 조회 오류: {str(e)[:100]}")
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+        for sk, state in _calc_state_memory.items():
+            sessions_to_check.append((sk, state))
+
+        for session_id, state in sessions_to_check:
+            if not isinstance(state, dict):
+                continue
+            updated = False
+            for cid in ('1', '2', '3'):
+                c = state.get(cid)
+                if not c or not c.get('running'):
+                    continue
+                hist = c.get('history') or []
+                pending_round = c.get('pending_round')
+                pending_predicted = c.get('pending_predicted')
+
+                if pending_round is not None and pending_predicted and latest_round == pending_round:
+                    # 이번 결과가 pending 회차 → 기록
+                    is_joker = results[0].get('joker') if results else False
+                    actual = 'joker' if is_joker else ('정' if results[0].get('colorMatch') else '꺽')
+                    rev = bool(c.get('reverse'))
+                    pred = ('꺽' if pending_predicted == '정' else '정') if rev else pending_predicted
+                    thr = max(0, min(100, int(c.get('win_rate_threshold') or 50)))
+                    use_wr = bool(c.get('win_rate_reverse'))
+                    if use_wr and prediction_history:
+                        vh = [h for h in prediction_history if h and isinstance(h, dict)]
+                        v15 = vh[-15:]
+                        hit = sum(1 for h in v15 if h.get('actual') != 'joker' and h.get('predicted') == h.get('actual'))
+                        loss = sum(1 for h in v15 if h.get('actual') != 'joker' and h.get('predicted') != h.get('actual'))
+                        r15 = 100 * hit / (hit + loss) if (hit + loss) else 50
+                        blended = r15
+                        if blended <= thr:
+                            pred = '꺽' if pred == '정' else '정'
+                    hist = list(hist) + [{'predicted': pred, 'actual': actual, 'round': pending_round}]
+                    c['history'] = hist[-500:]
+                    save_prediction_record(pending_round, pending_predicted, actual, probability=pred_prob if not is_joker else None, pick_color=None)
+                    updated = True
+
+                if not is15joker:
+                    c['pending_round'] = predicted_round
+                    c['pending_predicted'] = predict
+                else:
+                    c['pending_round'] = predicted_round
+                    c['pending_predicted'] = '정'
+                updated = True
+
+            if updated:
+                save_calc_state(session_id, state)
+    except Exception as e:
+        print(f"[서버계산기] 회차 반영 오류: {str(e)[:200]}")
+
+
 def _scheduler_fetch_results():
-    """스케줄러에서 호출: 외부 결과 수집·DB 저장 (창/브라우저 없이 주기 실행용)"""
+    """스케줄러에서 호출: 외부 결과 수집·DB 저장 후 즉시 예측·pending 반영 (10초 게임 타이밍)"""
     try:
         load_results_data()
+        _process_calc_rounds_after_results()
     except Exception as e:
-        print(f"[스케줄러] 결과 수집 오류: {str(e)[:150]}")
+        print(f"[스케줄러] 결과 수집/예측 반영 오류: {str(e)[:150]}")
 
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=5, id='fetch_results', max_instances=1)
+    _scheduler.add_job(
+        _scheduler_fetch_results,
+        'interval',
+        seconds=SCHEDULER_INTERVAL_SECONDS,
+        id='fetch_results',
+        max_instances=1,
+    )
     _scheduler.start()
-    print("[✅] 결과 수집 스케줄러 시작 (5초마다, 창/브라우저 없이 동작)")
+    print(f"[✅] 10초 게임 결과 수집 스케줄러 시작 ({SCHEDULER_INTERVAL_SECONDS}초마다, 결과·예측 타이밍 반영)")
 else:
     print("[⚠] APScheduler 미설치 - 결과 수집은 브라우저 요청 시에만 동작합니다. pip install APScheduler")
 
