@@ -1202,7 +1202,7 @@ game_data_cache = None
 streaks_cache = None
 results_cache = None
 last_update_time = 0
-CACHE_TTL = 280
+CACHE_TTL = 120  # 결과 나오면 예측픽 바로 반영 (ms)
 
 # 게임 상태 (Socket.IO 제거 후 기본값만 사용)
 current_status_data = {
@@ -1434,9 +1434,9 @@ def _scheduler_fetch_results():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=1, id='fetch_results', max_instances=1)
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.5, id='fetch_results', max_instances=1)
     _scheduler.start()
-    print("[✅] 결과 수집 스케줄러 시작 (1초마다, 창/브라우저 없이 동작)")
+    print("[✅] 결과 수집 스케줄러 시작 (0.5초마다, 예측픽 빠른 반영)")
 else:
     print("[⚠] APScheduler 미설치 - 결과 수집은 브라우저 요청 시에만 동작합니다. pip install APScheduler")
 
@@ -4660,14 +4660,14 @@ RESULTS_HTML = '''
         
         initialLoad();
         
-        // 예측픽·결과 더 빨리 반영 (280ms 간격으로 폴링)
+        // 예측픽·결과 나오면 바로 반영 (150ms 폴링, 결과 있으면 120ms마다 요청)
         setInterval(() => {
-            const interval = allResults.length === 0 ? 280 : 280;
+            const interval = allResults.length === 0 ? 200 : 120;
             if (Date.now() - lastResultsUpdate > interval) {
                 loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
                 lastResultsUpdate = Date.now();
             }
-        }, 280);
+        }, 150);
         
         // 계산기 실행 중일 때 서버 상태 주기적으로 가져와 UI 실시간 반영 (멈춰 보이는 현상 방지)
         setInterval(() => {
