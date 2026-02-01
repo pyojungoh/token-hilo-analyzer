@@ -1607,6 +1607,10 @@ RESULTS_HTML = '''
         .calc-round-table .lose { color: #c62828; font-weight: 500; }
         .calc-round-table .joker { color: #64b5f6; }
         .calc-round-table .skip { color: #666; }
+        .calc-round-table .calc-td-bet { text-align: right; white-space: nowrap; }
+        .calc-round-table .calc-td-profit { text-align: right; white-space: nowrap; }
+        .calc-round-table .profit-plus { color: #81c784; font-weight: 600; }
+        .calc-round-table .profit-minus { color: #e57373; font-weight: 500; }
         .calc-streak { margin-bottom: 4px; word-break: break-all; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35; }
         .calc-streak .w { color: #ffeb3b; }
         .calc-streak .l { color: #c62828; }
@@ -3532,7 +3536,43 @@ RESULTS_HTML = '''
             const r = id === DEFENSE_ID ? getDefenseCalcResult() : getCalcResult(id);
             const usedLen = (r.processedCount !== undefined && r.processedCount >= 0) ? r.processedCount : hist.length;
             const usedHist = hist.slice(0, usedLen);
-            // 회차별 픽/결과/승패용 행 목록 (유효 항목만, 최신순 = 뒤에서부터)
+            const oddsIn = parseFloat(document.getElementById(id === DEFENSE_ID ? 'calc-defense-odds' : ('calc-' + id + '-odds'))?.value) || 1.97;
+            var betAmounts = [], profits = [];
+            if (id === DEFENSE_ID) {
+                for (let i = 0; i < usedHist.length; i++) {
+                    const h = usedHist[i];
+                    const bet = (h && typeof h.betAmount === 'number' ? h.betAmount : 0) || (h && parseInt(h.betAmount, 10)) || 0;
+                    if (!h || (typeof h.predicted === 'undefined' && typeof h.actual === 'undefined')) { betAmounts[i] = null; profits[i] = null; continue; }
+                    if (bet <= 0) { betAmounts[i] = null; profits[i] = null; continue; }
+                    const isJoker = h.actual === 'joker';
+                    const isWin = !isJoker && h.predicted === h.actual;
+                    betAmounts[i] = bet;
+                    profits[i] = isJoker ? -bet : (isWin ? Math.floor(bet * (oddsIn - 1)) : -bet);
+                }
+            } else {
+                const capIn = parseFloat(document.getElementById('calc-' + id + '-capital')?.value) || 1000000;
+                const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
+                const martingaleEl = document.getElementById('calc-' + id + '-martingale');
+                const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
+                const useMartingale = !!(martingaleEl && martingaleEl.checked);
+                const martingaleType = (martingaleTypeEl && martingaleTypeEl.value) || 'pyo';
+                let cap = capIn, currentBet = baseIn, martingaleStep = 0;
+                for (let i = 0; i < usedHist.length; i++) {
+                    const h = usedHist[i];
+                    if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') { betAmounts[i] = null; profits[i] = null; continue; }
+                    if (useMartingale && martingaleType === 'pyo') currentBet = TABLE_MARTIN_PYO[Math.min(martingaleStep, TABLE_MARTIN_PYO.length - 1)];
+                    const bet = Math.min(currentBet, Math.floor(cap));
+                    if (cap < bet || cap <= 0) { betAmounts[i] = null; profits[i] = null; break; }
+                    const isJoker = h.actual === 'joker';
+                    const isWin = !isJoker && h.predicted === h.actual;
+                    betAmounts[i] = bet;
+                    profits[i] = isJoker ? -bet : (isWin ? Math.floor(bet * (oddsIn - 1)) : -bet);
+                    if (isJoker) { cap -= bet; if (useMartingale && martingaleType === 'pyo') martingaleStep = Math.min(martingaleStep + 1, TABLE_MARTIN_PYO.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
+                    else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && martingaleType === 'pyo') martingaleStep = 0; else currentBet = baseIn; }
+                    else { cap -= bet; if (useMartingale && martingaleType === 'pyo') martingaleStep = Math.min(martingaleStep + 1, TABLE_MARTIN_PYO.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
+                }
+            }
+            // 회차별 픽/결과/승패/배팅금액/수익 행 목록 (유효 항목만, 최신순 = 뒤에서부터)
             let rows = [];
             if (id === DEFENSE_ID) {
                 for (let i = usedHist.length - 1; i >= 0; i--) {
@@ -3540,13 +3580,15 @@ RESULTS_HTML = '''
                     const bet = (h && typeof h.betAmount === 'number' ? h.betAmount : 0) || (h && parseInt(h.betAmount, 10)) || 0;
                     if (!h || (typeof h.predicted === 'undefined' && typeof h.actual === 'undefined')) continue;
                     const roundStr = h.round != null ? String(h.round).slice(-3) : '-';
-                    if (bet <= 0) { rows.push({ roundStr: roundStr, pick: '-', pickClass: '', result: '-', resultClass: '', outcome: '－' }); continue; }
+                    if (bet <= 0) { rows.push({ roundStr: roundStr, pick: '-', pickClass: '', result: '-', resultClass: '', outcome: '－', betAmount: '-', profit: '-' }); continue; }
                     const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
                     const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
                     const pickVal = h.predicted === '정' ? '정' : '꺽';
                     const pickClass = pickVal === '정' ? 'pick-jung' : 'pick-kkuk';
                     const resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
-                    rows.push({ roundStr: roundStr, pick: pickVal, pickClass: pickClass, result: res, resultClass: resultClass, outcome: outcome });
+                    const profitVal = profits[i] != null ? profits[i] : '-';
+                    const profitStr = profitVal === '-' ? '-' : (profitVal >= 0 ? '+' : '') + Number(profitVal).toLocaleString();
+                    rows.push({ roundStr: roundStr, pick: pickVal, pickClass: pickClass, result: res, resultClass: resultClass, outcome: outcome, betAmount: bet.toLocaleString(), profit: profitStr });
                 }
             } else {
                 for (let i = usedHist.length - 1; i >= 0; i--) {
@@ -3558,7 +3600,10 @@ RESULTS_HTML = '''
                     const pickVal = h.predicted === '정' ? '정' : '꺽';
                     const pickClass = pickVal === '정' ? 'pick-jung' : 'pick-kkuk';
                     const resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
-                    rows.push({ roundStr: roundStr, pick: pickVal, pickClass: pickClass, result: res, resultClass: resultClass, outcome: outcome });
+                    const betStr = betAmounts[i] != null ? betAmounts[i].toLocaleString() : '-';
+                    const profitVal = profits[i] != null ? profits[i] : '-';
+                    const profitStr = profitVal === '-' ? '-' : (profitVal >= 0 ? '+' : '') + Number(profitVal).toLocaleString();
+                    rows.push({ roundStr: roundStr, pick: pickVal, pickClass: pickClass, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr });
                 }
             }
             const displayRows = rows.slice(0, 15);
@@ -3566,10 +3611,11 @@ RESULTS_HTML = '''
                 if (displayRows.length === 0) {
                     tableWrap.innerHTML = '';
                 } else {
-                    let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽(걸은 것)</th><th>승패</th></tr></thead><tbody>';
+                    let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽(걸은 것)</th><th>배팅금액</th><th>수익</th><th>승패</th></tr></thead><tbody>';
                     displayRows.forEach(function(row) {
                         const outClass = row.outcome === '승' ? 'win' : row.outcome === '패' ? 'lose' : row.outcome === '조' ? 'joker' : 'skip';
-                        tbl += '<tr><td>' + row.roundStr + '</td><td class="' + row.pickClass + '">' + row.pick + '</td><td class="' + outClass + '">' + row.outcome + '</td></tr>';
+                        const profitClass = (typeof row.profit === 'number' && row.profit > 0) || (typeof row.profit === 'string' && row.profit.indexOf('+') === 0) ? 'profit-plus' : (typeof row.profit === 'number' && row.profit < 0) || (typeof row.profit === 'string' && row.profit.indexOf('-') === 0 && row.profit !== '-') ? 'profit-minus' : '';
+                        tbl += '<tr><td>' + row.roundStr + '</td><td class="' + row.pickClass + '">' + row.pick + '</td><td class="calc-td-bet">' + row.betAmount + '</td><td class="calc-td-profit ' + profitClass + '">' + row.profit + '</td><td class="' + outClass + '">' + row.outcome + '</td></tr>';
                     });
                     tbl += '</tbody></table>';
                     tableWrap.innerHTML = tbl;
