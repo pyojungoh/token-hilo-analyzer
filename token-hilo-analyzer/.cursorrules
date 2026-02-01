@@ -1,0 +1,4 @@
+# token-hilo-analyzer 프로젝트 규칙
+- Always respond in Korean.
+- 이 프로젝트는 Flask 웹앱이며 Railway 등에 배포하는 토큰 하이로우 분석기입니다.
+- 예측·계산기 회차 반영은 서버에서 수행하고, 브라우저는 표시만 합니다.

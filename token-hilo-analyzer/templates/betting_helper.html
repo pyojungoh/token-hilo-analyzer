@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>배팅 연동</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: "Noto Sans KR", sans-serif; background: #1a1a2e; color: #eee; height: 100vh; overflow: hidden; }
+        .layout { display: flex; height: 100vh; }
+        .left { width: 340px; min-width: 300px; overflow-y: auto; padding: 16px; background: #1a1a2e; border-right: 1px solid #333; }
+        .right { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #0d0d0d; justify-content: center; align-items: center; padding: 24px; }
+        .right-panel { text-align: center; color: #888; max-width: 360px; }
+        .right-panel .btn-open { display: inline-block; margin-top: 16px; padding: 14px 24px; background: #0f3460; color: #64b5f6; border: 1px solid #64b5f6; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 1em; }
+        .right-panel .btn-open:hover { background: #16213e; }
+        .right-foot a { color: #64b5f6; }
+        h1 { font-size: 1.15em; margin: 0 0 12px; }
+        h2 { font-size: 0.95em; color: #aaa; margin: 14px 0 6px; }
+        .card { background: #16213e; border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+        .pick { font-size: 1.3em; font-weight: bold; }
+        .pick.red { color: #e57373; }
+        .pick.black { color: #90a4ae; }
+        .pick.hold { color: #ffb74d; }
+        .meta { font-size: 0.85em; color: #aaa; margin-top: 4px; }
+        .btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+        .btn { padding: 8px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9em; }
+        .btn-amount { background: #37474f; color: #90a4ae; }
+        .btn-red { background: #b71c1c; color: #fff; }
+        .btn-black { background: #212121; color: #fff; }
+        .btn:hover { opacity: 0.9; }
+        #left-status { font-size: 0.85em; color: #81c784; min-height: 18px; margin-top: 6px; }
+        #left-status.err { color: #f44336; }
+        .usage { font-size: 0.88em; line-height: 1.55; color: #bbb; }
+        .usage strong { color: #eee; }
+        .usage ol { margin: 8px 0 0; padding-left: 20px; }
+        .usage li { margin-bottom: 4px; }
+        .link a { color: #64b5f6; }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <div class="left">
+            <h1>배팅 연동</h1>
+            <div class="card" style="border-left:4px solid #64b5f6;">
+                <h2>Tampermonkey 설정</h2>
+                <div class="usage">
+                    배팅 사이트(nhs900)는 <strong>새 탭</strong>에서 열어 로그인하고, 그 탭에서 Tampermonkey 「배팅 테스트」 패널로 금액·RED/BLACK을 쓴다. 아래 순서대로 설정하면 된다.
+                    <p style="margin:10px 0 4px;"><strong>1) Tampermonkey 설치</strong></p>
+                    <ol style="margin:0 0 0 18px;padding-left:4px;">
+                        <li>Chrome: <a href="https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo" target="_blank" rel="noopener">Chrome 웹 스토어</a> → Tampermonkey 검색 → <strong>확장 프로그램 추가</strong></li>
+                        <li>Edge: <a href="https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd" target="_blank" rel="noopener">Edge 추가 기능</a> → Tampermonkey → <strong>가져오기</strong></li>
+                        <li>설치 후 브라우저 우측 상단 퍼즐 아이콘에서 Tampermonkey가 켜져 있는지 확인</li>
+                    </ol>
+                    <p style="margin:12px 0 4px;"><strong>2) 배팅 연동 스크립트 추가</strong></p>
+                    <ol style="margin:0 0 0 18px;padding-left:4px;">
+                        <li>Tampermonkey 아이콘 클릭 → <strong>새 스크립트 추가</strong></li>
+                        <li>편집 화면에서 <strong>유틸리티</strong> → <strong>URL에서 가져오기</strong> (또는 파일 메뉴에서 동일)</li>
+                        <li>URL 칸에 <strong>스크립트 주소</strong> 붙여넣기:<br>
+                            아래 주소를 복사해서 Tampermonkey 「URL에서 가져오기」에 붙여넣는다.<br>
+                            <input type="text" id="script-url" readonly style="width:100%;margin-top:6px;padding:8px;background:#333;color:#64b5f6;border:1px solid #555;border-radius:4px;font-size:0.85em;box-sizing:border-box;" />
+                            <button type="button" id="btn-copy-script-url" style="margin-top:4px;padding:6px 12px;background:#0f3460;color:#64b5f6;border:1px solid #64b5f6;border-radius:4px;cursor:pointer;font-size:0.85em;">URL 복사</button>
+                            <span id="copy-feedback" style="margin-left:6px;font-size:0.85em;color:#81c784;"></span></li>
+                        <li><strong>가져오기</strong> → <strong>저장</strong>(Ctrl+S) → 편집 창 닫기. (nhs900.com에서만 실행됨)</li>
+                    </ol>
+                    <p style="margin:12px 0 4px;"><strong>3) 동작 확인</strong></p>
+                    <ul style="margin:0 0 0 18px;padding-left:4px;">
+                        <li>오른쪽 <strong>「새 탭에서 열기」</strong>로 배팅 사이트를 연다. 로그인한 뒤, 페이지 <strong>우측 상단</strong>에 <strong>배팅 테스트</strong> 패널이 뜨면 설정 완료다.</li>
+                    </ul>
+                    <p style="margin:10px 0 0;font-size:0.85em;color:#ffb74d;"><strong>패널이 안 보일 때:</strong> ① <strong>login.asp</strong>(로그인·보안 확인 페이지)에서는 패널이 안 뜰 수 있다. 로그인을 <strong>완료한 뒤</strong> 배팅하는 <strong>게임 페이지</strong>로 들어가면 그때 우측 상단에 「배팅 테스트」 패널이 뜬다. ② 주소가 nhs900.com인지, Tampermonkey에서 스크립트가 켜짐인지 확인. ③ 게임 페이지에서 새로고침(F5).</p>
+                </div>
+            </div>
+            <div class="card" id="pick-card">
+                <h2>현재 예측 픽</h2>
+                <div id="pick-display" class="pick hold">—</div>
+                <div id="meta-display" class="meta">회차: — | 확률: —</div>
+                <div id="status-display" class="meta">연결 대기 중...</div>
+            </div>
+            <div class="card">
+                <h2>이 페이지 사용 방법</h2>
+                <div class="usage">
+                    <ol>
+                        <li>이 페이지에서 <strong>현재 예측 픽</strong>(아래 카드)을 확인한다. 3초마다 갱신된다. 보류일 때는 배팅하지 말고, RED/BLACK이 뜬 회차에만 배팅한다.</li>
+                        <li>오른쪽 <strong>「새 탭에서 열기」</strong>로 배팅 사이트를 연다. 그 탭에서 로그인한다.</li>
+                        <li>배팅 사이트 탭에 뜨는 <strong>Tampermonkey 「배팅 테스트」 패널</strong>에서 배팅금 입력 후 <strong>금액만 입력</strong> / <strong>RED</strong> / <strong>BLACK</strong>을 누른다.</li>
+                        <li>픽이 안 올라오면: /results 탭을 열어 두었는지, 16회차 이상인지 「진단 다시 확인」으로 확인한다.</li>
+                    </ol>
+                </div>
+            </div>
+            <div class="card">
+                <h2>진단</h2>
+                <div id="diagnostic-msg" style="font-size:0.85em;color:#aaa;">확인 중...</div>
+                <button type="button" id="btn-diagnostic" class="btn btn-amount" style="margin-top:6px;">진단 다시 확인</button>
+                <div style="margin-top:10px;padding-top:10px;border-top:1px solid #333;">
+                    <button type="button" id="btn-save-test" class="btn btn-amount">저장 테스트 (RED 99999회차)</button>
+                    <div id="save-test-result" style="margin-top:6px;font-size:0.85em;color:#aaa;"></div>
+                </div>
+            </div>
+            <div class="link" style="margin-top:12px;"><a href="/results">← 메인 분석기</a> · <a href="/docs/tampermonkey-auto-bet.user.js">Tampermonkey 스크립트</a></div>
+        </div>
+        <div class="right">
+            <div class="right-panel">
+                <p style="margin:0;font-size:0.95em;">배팅 사이트는 <strong>새 탭</strong>에서 열어 사용하세요.<br>그 탭에서 로그인한 뒤 Tampermonkey 「배팅 테스트」 패널로 금액·RED/BLACK을 쓰면 됩니다.</p>
+                <a id="btn-open-new-tab" href="#" class="btn-open" target="_blank" rel="noopener">새 탭에서 열기</a>
+            </div>
+        </div>
+    </div>
+    <script>
+        (function() {
+            var siteUrl = {{ betting_site_url_json | safe }};
+            document.getElementById("btn-open-new-tab").href = siteUrl;
+            var origin = window.location.origin || (window.location.protocol + "//" + window.location.host);
+            var pathBase = window.location.pathname.replace(/\/[^/]*$/, "") || "";
+            var scriptUrl = origin + (pathBase ? pathBase + "/" : "/") + "docs/tampermonkey-auto-bet.user.js";
+            var scriptUrlEl = document.getElementById("script-url");
+            if (scriptUrlEl) scriptUrlEl.value = scriptUrl;
+            document.getElementById("btn-copy-script-url").addEventListener("click", function() {
+                var el = document.getElementById("script-url");
+                if (!el) return;
+                el.select();
+                el.setSelectionRange(0, 99999);
+                try {
+                    navigator.clipboard.writeText(el.value);
+                    var fb = document.getElementById("copy-feedback");
+                    if (fb) { fb.textContent = "복사됨"; setTimeout(function() { fb.textContent = ""; }, 2000); }
+                } catch (e) {
+                    try { document.execCommand("copy"); } catch (e2) {}
+                }
+            });
+            function fetchPick() {
+                var cardEl = document.getElementById("pick-card");
+                fetch("/api/current-pick").then(function(r) { return r.json(); }).then(function(data) {
+                    var pickEl = document.getElementById("pick-display");
+                    var metaEl = document.getElementById("meta-display");
+                    var statusEl = document.getElementById("status-display");
+                    if (data.pick_color === "RED") {
+                        pickEl.textContent = "RED (빨강)";
+                        pickEl.className = "pick red";
+                        cardEl.classList.add("highlight");
+                    } else if (data.pick_color === "BLACK") {
+                        pickEl.textContent = "BLACK (검정)";
+                        pickEl.className = "pick black";
+                        cardEl.classList.add("highlight");
+                    } else {
+                        pickEl.textContent = "보류";
+                        pickEl.className = "pick hold";
+                        cardEl.classList.remove("highlight");
+                    }
+                    metaEl.textContent = "회차: " + (data.round != null ? data.round : "—") + " | 확률: " + (data.probability != null ? data.probability.toFixed(1) + "%" : "—");
+                    statusEl.textContent = "갱신: " + (data.updated_at || "—");
+                }).catch(function() {});
+            }
+            function runDiagnostic() {
+                var el = document.getElementById("diagnostic-msg");
+                if (!el) return;
+                el.textContent = "확인 중...";
+                fetch("/api/results?t=" + Date.now()).then(function(r) { return r.json(); }).then(function(data) {
+                    var n = (data.results || []).length;
+                    el.innerHTML = "분석기 결과: " + n + "회차 로드됨. " + (n < 16 ? "픽은 최소 16회차 필요." : "데이터 충분. /results 탭을 열어 두면 픽 갱신됨.");
+                }).catch(function() { el.textContent = "조회 실패"; });
+            }
+            document.getElementById("btn-diagnostic").addEventListener("click", runDiagnostic);
+            document.getElementById("btn-save-test").addEventListener("click", function() {
+                var resultEl = document.getElementById("save-test-result");
+                resultEl.textContent = "전송 중...";
+                fetch("/api/current-pick", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pickColor: "RED", round: 99999, probability: 50 }) })
+                    .then(function(r) { return r.json(); }).then(function(res) {
+                        if (!res.ok) { resultEl.innerHTML = '<span style="color:#e57373">저장 실패</span>'; return; }
+                        return fetch("/api/current-pick").then(function(r) { return r.json(); });
+                    }).then(function(getData) {
+                        if (!getData) return;
+                        resultEl.innerHTML = (getData.pick_color === "RED" && getData.round === 99999) ? '<span style="color:#81c784">저장·조회 정상</span>' : '<span style="color:#ffb74d">조회 다름</span>';
+                    }).catch(function() { resultEl.innerHTML = '<span style="color:#e57373">요청 실패</span>'; });
+            });
+            runDiagnostic();
+            fetchPick();
+            setInterval(fetchPick, 3000);
+        })();
+    </script>
+</body>
+</html>
