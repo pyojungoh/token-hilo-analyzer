@@ -1141,7 +1141,7 @@ game_data_cache = None
 streaks_cache = None
 results_cache = None
 last_update_time = 0
-CACHE_TTL = 1000
+CACHE_TTL = 800
 
 # 게임 상태 (Socket.IO 제거 후 기본값만 사용)
 current_status_data = {
@@ -2861,14 +2861,16 @@ RESULTS_HTML = '''
                         return gb.localeCompare(ga);  // 문자열이면 역순
                     });
                 }
-                // 새로운 결과를 기존 결과와 병합 (중복 제거, 최신 150개 유지). 이전보다 오래된 회차로 덮지 않음 (깜빡임 방지)
+                // 새로운 결과를 기존 결과와 병합. 이전 회차로 되돌아가거나 같은 최신인데 개수가 줄면 적용 안 함 (깜빡임 방지)
                 if (newResults.length > 0) {
                     const newGameIDs = new Set(newResults.map(r => r.gameID).filter(id => id));
                     const oldResults = allResults.filter(r => !newGameIDs.has(r.gameID));
                     const merged = sortResultsNewestFirst([...newResults, ...oldResults].slice(0, 150));
                     const prevLatest = allResults.length > 0 ? (parseInt(String(allResults[0].gameID || '0'), 10) || 0) : 0;
                     const newLatest = merged.length > 0 ? (parseInt(String(merged[0].gameID || '0'), 10) || 0) : 0;
-                    if (merged.length === 0 || newLatest >= prevLatest) {
+                    const notOlder = newLatest > prevLatest;
+                    const sameRoundNotLess = (newLatest === prevLatest && merged.length >= allResults.length);
+                    if (merged.length > 0 && (notOlder || sameRoundNotLess)) {
                         allResults = merged;
                     }
                 } else {
@@ -4551,9 +4553,9 @@ RESULTS_HTML = '''
         
         initialLoad();
         
-        // 데이터 없을 때 0.5초마다, 있으면 0.7초마다 (결과·예측픽 빨리 반영)
+        // 데이터 없을 때 0.5초마다, 있으면 0.6초마다 (결과·예측픽 빨리 반영, 깜빡임 완화)
         setInterval(() => {
-            const interval = allResults.length === 0 ? 500 : 700;
+            const interval = allResults.length === 0 ? 500 : 600;
             if (Date.now() - lastResultsUpdate > interval) {
                 loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
                 lastResultsUpdate = Date.now();
@@ -4782,6 +4784,8 @@ def _refresh_results_background():
                 except (ValueError, TypeError):
                     cur_latest_num = 0
                 if new_latest_num < cur_latest_num:
+                    should_update = False
+                elif new_latest_num == cur_latest_num and len(new_results) < len(cur_results):
                     should_update = False
             if should_update:
                 results_cache = payload
