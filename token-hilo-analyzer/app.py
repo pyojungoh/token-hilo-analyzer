@@ -377,13 +377,14 @@ def _get_actual_for_round(results, round_id):
 
 
 def _blended_win_rate(prediction_history):
-    """예측 이력으로 15/30/100 가중 승률. (0.5*15 + 0.3*30 + 0.2*100)."""
-    valid = [h for h in (prediction_history or []) if h and isinstance(h, dict) and h.get('actual') != 'joker']
-    if not valid:
+    """예측 이력으로 15/30/100 가중 승률. (0.5*15 + 0.3*30 + 0.2*100).
+    프론트엔드와 동일: 위치 기준 마지막 N개에서 조커 제외 후 승률 계산."""
+    valid_hist = [h for h in (prediction_history or []) if h and isinstance(h, dict)]
+    if not valid_hist:
         return None
-    v15 = valid[-15:]
-    v30 = valid[-30:]
-    v100 = valid[-100:]
+    v15 = [h for h in valid_hist[-15:] if h.get('actual') != 'joker']
+    v30 = [h for h in valid_hist[-30:] if h.get('actual') != 'joker']
+    v100 = [h for h in valid_hist[-100:] if h.get('actual') != 'joker']
     def rate(arr):
         hit = sum(1 for h in arr if h.get('predicted') == h.get('actual'))
         return 100 * hit / len(arr) if arr else 50
@@ -1086,7 +1087,7 @@ def get_recent_results(hours=5):
         
         # 최근 N시간 데이터 조회, LIMIT 2000으로 과부하 방지
         cur.execute('''
-            SELECT game_id as "gameID", result, hi, lo, red, black, jqka, joker,
+            SELECT game_id as "gameID", result, hi, lo, red, black, jqka, joker, 
                    hash_value as hash, salt_value as salt
             FROM game_results
             WHERE created_at >= NOW() - (INTERVAL '1 hour' * %s)
@@ -1118,8 +1119,8 @@ def get_recent_results(hours=5):
         for i in range(min(15, len(results))):
             if i + 15 >= len(results):
                 break
-            if results[i].get('joker') or results[i + 15].get('joker'):
-                results[i]['colorMatch'] = None
+                if results[i].get('joker') or results[i + 15].get('joker'):
+                    results[i]['colorMatch'] = None
                 continue
             gid = results[i].get('gameID')
             cgid = results[i + 15].get('gameID')
@@ -1305,8 +1306,8 @@ def ensure_database_initialized():
 def _run_db_init():
     try:
         time.sleep(1)
-        ensure_database_initialized()
-    except Exception as e:
+            ensure_database_initialized()
+        except Exception as e:
         print(f"[❌ 오류] DB 초기화 실패: {str(e)}")
 
 print("[🔄] 모듈 로드 시 데이터베이스 초기화는 백그라운드에서 실행됩니다.")
@@ -1314,7 +1315,7 @@ if DB_AVAILABLE and DATABASE_URL:
     _db_init_thread = threading.Thread(target=_run_db_init, daemon=True)
     _db_init_thread.start()
 elif not DATABASE_URL:
-    print("[❌ 경고] DATABASE_URL이 None입니다. 환경 변수를 확인하세요.")
+        print("[❌ 경고] DATABASE_URL이 None입니다. 환경 변수를 확인하세요.")
 else:
     print("[❌ 경고] DB_AVAILABLE이 False입니다. psycopg2를 설치하세요.")
 
@@ -2273,8 +2274,8 @@ RESULTS_HTML = '''
         <div id="graph-stats-collapse" class="prob-bucket-collapse collapsed">
             <div class="prob-bucket-collapse-header" id="graph-stats-collapse-header" role="button" tabindex="0">최근 15회/30회/전체 정꺽 승률</div>
             <div class="prob-bucket-collapse-body" id="graph-stats-collapse-body">
-                <div id="graph-stats" class="graph-stats"></div>
-            </div>
+            <div id="graph-stats" class="graph-stats"></div>
+        </div>
         </div>
         <div id="prob-bucket-collapse" class="prob-bucket-collapse collapsed">
             <div class="prob-bucket-collapse-header" id="prob-bucket-collapse-header" role="button" tabindex="0">예측 확률 구간별 승률</div>
@@ -2317,7 +2318,7 @@ RESULTS_HTML = '''
                                     <button type="button" class="calc-stop" data-calc="1">정지</button>
                                     <button type="button" class="calc-reset" data-calc="1">리셋</button>
                                     <button type="button" class="calc-save" data-calc="1" style="display:none">저장</button>
-                                </div>
+            </div>
                             </div>
                             <div class="calc-detail" id="calc-1-detail">
                                 <div class="calc-round-table-wrap" id="calc-1-round-table-wrap"></div>
@@ -4598,8 +4599,8 @@ RESULTS_HTML = '''
                             if (roundChanged || roundEnded || roundStarted) {
                                 console.log('라운드 변경 감지:', { roundChanged, roundEnded, roundStarted, prevRound, newRound: timerData.round, prevElapsed, newElapsed: data.elapsed });
                                 // 즉시 결과 로드 (승리/실패 결과 빨리 표시)
-                                loadResults();
-                                lastResultsUpdate = Date.now();
+                                    loadResults();
+                                    lastResultsUpdate = Date.now();
                                 [80, 200, 350, 550, 800, 1100].forEach(function(ms) {
                                     setTimeout(function() { loadResults(); lastResultsUpdate = Date.now(); }, ms);
                                 });
@@ -4629,7 +4630,7 @@ RESULTS_HTML = '''
                     lastResultsUpdate = now;
                 }
                 if (remaining <= 0 && now - lastResultsUpdate > 50) {
-                    loadResults();
+                        loadResults();
                     lastResultsUpdate = now;
                     [100, 200, 350, 500, 700, 950, 1200].forEach(function(ms) {
                         setTimeout(function() { loadResults(); lastResultsUpdate = Date.now(); }, ms);
@@ -4815,13 +4816,15 @@ def _build_results_payload():
             results = _sort_results_newest_first(results)
             ph = get_prediction_history(100)
             server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
+            blended = _blended_win_rate(ph)
             return {
                 'results': results,
                 'count': len(results),
                 'timestamp': datetime.now().isoformat(),
                 'source': 'database+json',
                 'prediction_history': ph,
-                'server_prediction': server_pred
+                'server_prediction': server_pred,
+                'blended_win_rate': round(blended, 1) if blended is not None else None
             }
         else:
             # 데이터베이스가 없으면 기존 방식 (result.json에서 가져오기)
@@ -4859,13 +4862,15 @@ def _build_results_payload():
             
             ph = get_prediction_history(100)
             server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
+            blended = _blended_win_rate(ph)
             return {
                 'results': results,
                 'count': len(results),
                 'timestamp': datetime.now().isoformat(),
                 'source': 'json',
                 'prediction_history': ph,
-                'server_prediction': server_pred
+                'server_prediction': server_pred,
+                'blended_win_rate': round(blended, 1) if blended is not None else None
             }
     except Exception as e:
         print(f"[❌ 오류] _build_results_payload 실패: {str(e)[:200]}")
@@ -4936,7 +4941,8 @@ def get_results():
             'timestamp': datetime.now().isoformat(),
             'error': 'loading',
             'prediction_history': [],
-            'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
+            'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
+            'blended_win_rate': None
         }), 200
     except Exception as e:
         import traceback
@@ -4949,7 +4955,8 @@ def get_results():
             'timestamp': datetime.now().isoformat(),
             'error': error_msg,
             'prediction_history': [],
-            'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
+            'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
+            'blended_win_rate': None
         }), 200
 
 
@@ -5215,13 +5222,24 @@ def refresh_data():
     if streaks_data is not None:
         streaks_cache = streaks_data
     if results_data is not None:
-        results_cache = {
-            'results': results_data,
-            'count': len(results_data),
-            'timestamp': datetime.now().isoformat()
-        }
+        # 전체 구조(blended_win_rate 등) 포함해 캐시 갱신
+        payload = _build_results_payload()
+        if payload is not None:
+            results_cache = payload
+        else:
+            # 폴백: 최소 구조 + blended_win_rate
+            ph = get_prediction_history(100)
+            blended = _blended_win_rate(ph)
+            results_cache = {
+                'results': results_data,
+                'count': len(results_data),
+                'timestamp': datetime.now().isoformat(),
+                'prediction_history': ph,
+                'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
+                'blended_win_rate': round(blended, 1) if blended is not None else None
+            }
     if game_data is not None or streaks_data is not None or results_data is not None:
-        last_update_time = time.time() * 1000
+    last_update_time = time.time() * 1000
     
     return jsonify({
         'success': True,
