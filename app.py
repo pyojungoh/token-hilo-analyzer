@@ -14,6 +14,14 @@ import traceback
 import threading
 import re
 import uuid
+
+# .env 파일 로드 (DATABASE_URL 등)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 try:
     import psycopg2
     from psycopg2.extras import RealDictCursor
@@ -149,21 +157,6 @@ def init_database():
             cur.execute('INSERT INTO current_pick (id) VALUES (1) ON CONFLICT (id) DO NOTHING')
         except Exception as ex:
             print(f"[경고] current_pick 테이블 생성/초기화 건너뜀 (서버는 계속 기동): {str(ex)[:100]}")
-        # server_current_pick: 서버 예측 픽 (브라우저 꺼져도 계속 돌게). round_num=다음 회차, predicted=정/꺽
-        try:
-            cur.execute('''
-                CREATE TABLE IF NOT EXISTS server_current_pick (
-                    id INTEGER PRIMARY KEY DEFAULT 1,
-                    round_num INTEGER,
-                    predicted VARCHAR(10),
-                    probability REAL,
-                    pick_color VARCHAR(20),
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            cur.execute('INSERT INTO server_current_pick (id, round_num) VALUES (1, NULL) ON CONFLICT (id) DO NOTHING')
-        except Exception as ex:
-            print(f"[경고] server_current_pick 테이블 생성 건너뜀: {str(ex)[:100]}")
         
         conn.commit()
         cur.close()
@@ -345,263 +338,123 @@ def save_calc_state(session_id, state_dict):
     return True
 
 
-def get_server_current_pick():
-    """서버 예측 픽 조회 (round_num=다음 회차, predicted=정/꺽). 브라우저 꺼져도 계속 돌게."""
-    if not DB_AVAILABLE or not DATABASE_URL:
-        return None
-    conn = get_db_connection(statement_timeout_sec=5)
-    if not conn:
-        return None
-    try:
-        cur = conn.cursor()
-        cur.execute('SELECT round_num, predicted, probability, pick_color FROM server_current_pick WHERE id = 1')
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
-        if row and row[0] is not None:
-            return {'round_num': row[0], 'predicted': row[1] or '', 'probability': float(row[2]) if row[2] is not None else 0, 'pick_color': row[3] or ''}
-        return None
-    except Exception as e:
-        print(f"[경고] server_current_pick 조회 실패: {str(e)[:100]}")
+def _get_all_calc_session_ids():
+    """실행 중인 계산기 세션 ID 목록 (회차 반영용). DB 사용 시 calc_sessions 전체, 미사용 시 메모리 키."""
+    if DB_AVAILABLE and DATABASE_URL:
+        conn = get_db_connection(statement_timeout_sec=5)
+        if not conn:
+            return list(_calc_state_memory.keys())
         try:
+            cur = conn.cursor()
+            cur.execute('SELECT session_id FROM calc_sessions')
+            rows = cur.fetchall()
+            cur.close()
             conn.close()
+            return [r[0] for r in rows] if rows else []
         except Exception:
-            pass
+            try:
+                conn.close()
+            except Exception:
+                pass
+            return list(_calc_state_memory.keys())
+    return list(_calc_state_memory.keys())
+
+
+def _get_actual_for_round(results, round_id):
+    """results(최신순)에서 해당 회차의 실제 결과 반환. '정'|'꺽'|'joker'|None(미수신)."""
+    if not results or round_id is None:
         return None
+    rid = str(round_id)
+    for i in range(len(results)):
+        if str(results[i].get('gameID')) == rid:
+            if results[i].get('joker'):
+                return 'joker'
+            gv = _build_graph_values(results)
+            if i < len(gv) and gv[i] is not None:
+                return '정' if gv[i] else '꺽'
+            return None
+    return None
 
 
-def set_server_current_pick(round_num, predicted, probability=None, pick_color=None):
-    """서버 예측 픽 저장."""
-    if not DB_AVAILABLE or not DATABASE_URL:
-        return False
-    conn = get_db_connection(statement_timeout_sec=5)
-    if not conn:
-        return False
-    try:
-        cur = conn.cursor()
-        cur.execute('''
-            INSERT INTO server_current_pick (id, round_num, predicted, probability, pick_color, updated_at)
-            VALUES (1, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-            ON CONFLICT (id) DO UPDATE SET round_num = EXCLUDED.round_num, predicted = EXCLUDED.predicted,
-                probability = EXCLUDED.probability, pick_color = EXCLUDED.pick_color, updated_at = CURRENT_TIMESTAMP
-        ''', (round_num, (predicted or '')[:10], probability, (pick_color or '')[:20]))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return True
-    except Exception as e:
-        print(f"[경고] server_current_pick 저장 실패: {str(e)[:100]}")
-        try:
-            conn.close()
-        except Exception:
-            pass
-        return False
+def _blended_win_rate(prediction_history):
+    """예측 이력으로 15/30/100 가중 승률. (0.5*15 + 0.3*30 + 0.2*100)."""
+    valid = [h for h in (prediction_history or []) if h and isinstance(h, dict) and h.get('actual') != 'joker']
+    if not valid:
+        return None
+    v15 = valid[-15:]
+    v30 = valid[-30:]
+    v100 = valid[-100:]
+    def rate(arr):
+        hit = sum(1 for h in arr if h.get('predicted') == h.get('actual'))
+        return 100 * hit / len(arr) if arr else 50
+    r15 = rate(v15)
+    r30 = rate(v30)
+    r100 = rate(v100)
+    return 0.5 * r15 + 0.3 * r30 + 0.2 * r100
 
 
-def _build_graph_values(results):
-    """결과 리스트(최신순)에서 정/꺽 그래프 값 리스트 생성. [0]=직전, True=정, False=꺽, None=조커."""
+def _apply_results_to_calcs(results):
+    """결과 수집 후 실행 중인 계산기 회차 반영: pending_round 결과 있으면 history 반영 후 다음 예측으로 갱신."""
     if not results or len(results) < 16:
-        return []
-    out = []
-    for i in range(min(15, len(results) - 15)):
-        cur = results[i]
-        cmp = results[i + 15]
-        if cur.get('joker') or cmp.get('joker'):
-            out.append(None)
-            continue
-        c1 = parse_card_color(cur.get('result', ''))
-        c2 = parse_card_color(cmp.get('result', ''))
-        if c1 is None or c2 is None:
-            out.append(None)
-            continue
-        out.append(c1 == c2)
-    return out
-
-
-def compute_prediction_python(results):
-    """서버 측 예측 계산 (간소화). results=최신순. 반환: dict(round_num, predicted, probability, pick_color) 또는 None."""
-    if not results or len(results) < 16:
-        return None
-    graph_values = _build_graph_values(results)
-    valid = [v for v in graph_values if v is True or v is False]
-    if len(valid) < 2:
-        return None
-    # 직전 정/꺽
-    last = graph_values[0] if graph_values[0] is not None else (valid[0] if valid else None)
-    if last is None:
-        return None
-    # 최근 15회 퐁당/줄 비율
-    last15 = [v for v in graph_values[:15] if v is not None]
-    if len(last15) < 2:
-        line_pct, pong_pct = 50.0, 50.0
-    else:
-        alt = sum(1 for i in range(len(last15) - 1) if last15[i] != last15[i + 1])
-        same = len(last15) - 1 - alt
-        tot = alt + same
-        pong_pct = 100.0 * alt / tot if tot else 50.0
-        line_pct = 100.0 * same / tot if tot else 50.0
-    # 최근 30회 유지/전환 확률 (정→정, 정→꺽, 꺽→꺽, 꺽→정)
-    use30 = [v for v in (graph_values[:30] if len(graph_values) >= 30 else graph_values) if v is not None]
-    jj = jk = kk = kj = 0
-    jung_denom = kkuk_denom = 0
-    for i in range(len(use30) - 1):
-        a, b = use30[i], use30[i + 1]
-        if a is True and b is True:
-            jj += 1
-        elif a is True and b is False:
-            jk += 1
-        elif a is False and b is False:
-            kk += 1
-        else:
-            kj += 1
-    if last is True:
-        jung_denom = jj + jk
-        kkuk_denom = kk + kj
-        Pjung = jj / jung_denom if jung_denom else 0.5
-        Pkkuk = jk / jung_denom if jung_denom else 0.5
-    else:
-        kkuk_denom = kk + kj
-        jung_denom = jj + jk
-        Pkkuk = kk / kkuk_denom if kkuk_denom else 0.5
-        Pjung = kj / kkuk_denom if kkuk_denom else 0.5
-    prob_same = Pjung if last is True else Pkkuk
-    prob_change = Pkkuk if last is True else Pjung
-    line_w = line_pct / 100.0
-    pong_w = pong_pct / 100.0
-    total_w = line_w + pong_w
-    if total_w > 0:
-        line_w /= total_w
-        pong_w /= total_w
-    adj_same = prob_same * line_w
-    adj_change = prob_change * pong_w
-    s = adj_same + adj_change
-    if s <= 0:
-        s = 1
-    adj_same_n = adj_same / s
-    adj_change_n = adj_change / s
-    predict = (last is True and adj_same_n >= adj_change_n) or (last is False and adj_change_n > adj_same_n)
-    predicted = '정' if predict else '꺽'
-    pred_prob = (adj_same_n if (predict == (last is True)) else adj_change_n) * 100.0
-    # 15번째 카드 색으로 픽 색 결정 (정=같은색, 꺽=반대색)
-    try:
-        if len(results) > 14 and results[14].get('result'):
-            fc = (results[14].get('result') or '')[0:1].upper()
-            is_15_red = fc in ('H', 'D')
-            pick_color = '빨강' if ((predicted == '정' and is_15_red) or (predicted == '꺽' and not is_15_red)) else '검정'
-        else:
-            pick_color = ''
-    except Exception:
-        pick_color = ''
-    try:
-        next_round = int(results[0].get('gameID') or 0) + 1
-    except (ValueError, TypeError):
-        next_round = None
-    if next_round is None:
-        return None
-    return {
-        'round_num': next_round,
-        'predicted': predicted,
-        'probability': round(pred_prob, 1),
-        'pick_color': pick_color or ''
-    }
-
-
-def process_server_side_round():
-    """스케줄러/결과 수집 후: 최신 결과로 계산기 history 반영 및 다음 예측 픽 갱신."""
-    if not DB_AVAILABLE or not DATABASE_URL:
         return
     try:
-        results = get_recent_results(hours=5)
-        if not results or len(results) < 16:
-            return
-        results = _sort_results_newest_first(results)
-        pick = get_server_current_pick()
-        round_num = pick.get('round_num') if pick else None
-        # 이번에 결과가 나온 회차(방금 끝난 회차) = 우리가 예측했던 round_num
-        found_result = None
-        if round_num is not None:
-            for i, r in enumerate(results):
-                if str(r.get('gameID')) == str(round_num):
-                    if i + 15 < len(results):
-                        if r.get('joker') or results[i + 15].get('joker'):
-                            found_result = ('joker', round_num)
-                        else:
-                            c1 = parse_card_color(r.get('result', ''))
-                            c2 = parse_card_color(results[i + 15].get('result', ''))
-                            if c1 is not None and c2 is not None:
-                                found_result = ('정' if c1 == c2 else '꺽', round_num)
-                            else:
-                                found_result = ('joker', round_num)
-                    break
-        if found_result is not None:
-            actual, resolved_round = found_result
-            pred = pick.get('predicted') or ''
-            save_prediction_record(resolved_round, pred, actual, pick.get('probability'), pick.get('pick_color'))
-            for session_id, state in get_all_calc_sessions():
-                if not state:
-                    continue
-                updated = False
-                for cid in ('1', '2', '3'):
-                    c = state.get(cid)
-                    if not isinstance(c, dict) or not c.get('running'):
-                        continue
-                    hist = list(c.get('history') or [])
-                    hist.append({'round': resolved_round, 'actual': actual, 'predicted': pred})
-                    state[cid] = dict(c, history=hist)
-                    updated = True
-                if updated:
-                    save_calc_state(session_id, state)
-            next_round = resolved_round + 1
-            new_pick = compute_prediction_python(results)
-            if new_pick:
-                new_pick['round_num'] = next_round
-                set_server_current_pick(next_round, new_pick['predicted'], new_pick.get('probability'), new_pick.get('pick_color'))
-            return
-        # 결과가 아직 없으면 현재 round_num 유지하며 예측만 갱신 (클라이언트 표시용)
-        new_pick = compute_prediction_python(results)
-        if new_pick:
-            rn = (round_num if round_num is not None else new_pick['round_num'])
-            set_server_current_pick(rn, new_pick['predicted'], new_pick.get('probability'), new_pick.get('pick_color'))
-    except Exception as e:
-        print(f"[경고] process_server_side_round 실패: {str(e)[:150]}")
-
-
-def get_all_calc_sessions():
-    """실행 중인 계산기가 있는 모든 세션 (session_id, state_dict) 목록. 서버 측 회차 반영용."""
-    if not DB_AVAILABLE or not DATABASE_URL:
-        return []
-    conn = get_db_connection(statement_timeout_sec=8)
-    if not conn:
-        return []
-    try:
-        cur = conn.cursor()
-        cur.execute('SELECT session_id, state_json FROM calc_sessions')
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        out = []
-        for row in rows:
-            if not row or not row[1]:
+        ph = get_prediction_history(100)
+        session_ids = _get_all_calc_session_ids()
+        for session_id in session_ids:
+            state = get_calc_state(session_id)
+            if not state or not isinstance(state, dict):
                 continue
-            try:
-                state = json.loads(row[1])
-            except Exception:
-                continue
-            has_running = False
+            updated = False
             for cid in ('1', '2', '3'):
-                if isinstance(state.get(cid), dict) and state.get(cid, {}).get('running'):
-                    has_running = True
-                    break
-            if has_running:
-                out.append((str(row[0]), state))
-        return out
+                c = state.get(cid)
+                if not c or not isinstance(c, dict) or not c.get('running'):
+                    continue
+                pending_round = c.get('pending_round')
+                pending_predicted = c.get('pending_predicted')
+                if pending_round is None or pending_predicted is None:
+                    pred = compute_prediction(results, ph)
+                    if pred.get('round') and pred.get('value') is not None:
+                        c['pending_round'] = pred['round']
+                        c['pending_predicted'] = pred['value']
+                        c['pending_prob'] = pred.get('prob')
+                        c['pending_color'] = pred.get('color')
+                        updated = True
+                    continue
+                actual = _get_actual_for_round(results, pending_round)
+                if actual is None:
+                    continue
+                first_bet = c.get('first_bet_round') or 0
+                if first_bet > 0 and pending_round < first_bet:
+                    continue
+                save_prediction_record(
+                    pending_round, pending_predicted, actual,
+                    probability=c.get('pending_prob'), pick_color=c.get('pending_color')
+                )
+                pred_for_calc = pending_predicted
+                if c.get('reverse'):
+                    pred_for_calc = '꺽' if pending_predicted == '정' else '정'
+                blended = _blended_win_rate(get_prediction_history(100))
+                thr = c.get('win_rate_threshold', 50)
+                if c.get('win_rate_reverse') and blended is not None and blended <= thr:
+                    pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
+                c['history'] = (c.get('history') or []) + [{'round': pending_round, 'predicted': pred_for_calc, 'actual': actual}]
+                ph = get_prediction_history(100)
+                next_pred = compute_prediction(results, ph)
+                c['pending_round'] = next_pred.get('round')
+                c['pending_predicted'] = next_pred.get('value')
+                c['pending_prob'] = next_pred.get('prob')
+                c['pending_color'] = next_pred.get('color')
+                updated = True
+                defense = state.get('defense')
+                if defense and isinstance(defense, dict) and defense.get('running') and defense.get('linked_calc_id') == int(cid):
+                    def_first = defense.get('first_bet_round') or 0
+                    if def_first == 0 or pending_round >= def_first:
+                        def_pred = '꺽' if pred_for_calc == '정' else '정'
+                        defense['history'] = (defense.get('history') or []) + [{'round': pending_round, 'predicted': def_pred, 'actual': actual, 'betAmount': 0}]
+            if updated:
+                save_calc_state(session_id, state)
     except Exception as e:
-        print(f"[경고] get_all_calc_sessions 실패: {str(e)[:100]}")
-        try:
-            conn.close()
-        except Exception:
-            pass
-        return []
+        print(f"[스케줄러] 회차 반영 오류: {str(e)[:200]}")
 
 
 def get_prediction_history(limit=30):
@@ -653,6 +506,344 @@ def parse_card_color(result_str):
     elif first_char in ['S', 'C']:  # 스페이드, 클럽 = 검정
         return False
     return None
+
+
+def _build_graph_values(results):
+    """결과 배열(최신순)에서 그래프용 정/꺽 배열 생성. 인덱스 0이 가장 최신. True=정, False=꺽."""
+    if not results or len(results) < 16:
+        return []
+    out = []
+    for i in range(len(results) - 15):
+        r0, r15 = results[i], results[i + 15]
+        if r0.get('joker') or r15.get('joker'):
+            out.append(None)
+            continue
+        c0 = parse_card_color(r0.get('result', ''))
+        c15 = parse_card_color(r15.get('result', ''))
+        if c0 is None or c15 is None:
+            out.append(None)
+            continue
+        out.append(c0 == c15)
+    return out
+
+
+def _calc_transitions(arr):
+    """인접 쌍 기준 전이 개수. 정-정(jj), 정-꺽(jk), 꺽-정(kj), 꺽-꺽(kk)."""
+    jj = jk = kj = kk = 0
+    for i in range(len(arr) - 1):
+        a, b = arr[i], arr[i + 1]
+        if a is not True and a is not False or b is not True and b is not False:
+            continue
+        if a is True and b is True:
+            jj += 1
+        elif a is True and b is False:
+            jk += 1
+        elif a is False and b is True:
+            kj += 1
+        else:
+            kk += 1
+    jung_denom = jj + jk
+    kkuk_denom = kk + kj
+    return {
+        'jj': jj, 'jk': jk, 'kj': kj, 'kk': kk,
+        'jungDenom': jung_denom, 'kkukDenom': kkuk_denom,
+    }
+
+
+def _pong_line_pct(arr):
+    """퐁당%/줄%. 퐁당=바뀜, 줄=유지."""
+    v = [x for x in arr if x is True or x is False]
+    if len(v) < 2:
+        return 50.0, 50.0
+    alt = same = 0
+    for i in range(len(v) - 1):
+        if v[i] != v[i + 1]:
+            alt += 1
+        else:
+            same += 1
+    tot = alt + same
+    pong_pct = round(100 * alt / tot, 1) if tot else 50.0
+    line_pct = round(100 * same / tot, 1) if tot else 50.0
+    return pong_pct, line_pct
+
+
+def _get_line_pong_runs(arr):
+    """줄(1)/퐁당(0) 쌍으로 run 길이 리스트."""
+    pairs = []
+    for i in range(len(arr) - 1):
+        a, b = arr[i], arr[i + 1]
+        if a is not True and a is not False or b is not True and b is not False:
+            continue
+        pairs.append(1 if a == b else 0)
+    line_runs, pong_runs = [], []
+    idx = 0
+    while idx < len(pairs):
+        if pairs[idx] == 1:
+            c = 0
+            while idx < len(pairs) and pairs[idx] == 1:
+                c += 1
+                idx += 1
+            line_runs.append(c)
+        else:
+            c = 0
+            while idx < len(pairs) and pairs[idx] == 0:
+                c += 1
+                idx += 1
+            pong_runs.append(c)
+    return line_runs, pong_runs
+
+
+def _compute_blend_data(prediction_history):
+    """예측 이력(actual!=joker)으로 15/30/100 구간 반영 확률."""
+    valid = [h for h in (prediction_history or []) if h and isinstance(h, dict)]
+    outcomes = [ (h.get('actual') == '정') for h in valid if h.get('actual') != 'joker' ]
+    outcomes.reverse()
+    if len(outcomes) < 2:
+        return None
+    last_bool = outcomes[0]
+    s15 = outcomes[:min(15, len(outcomes))]
+    s30 = outcomes[:min(30, len(outcomes))]
+    s100 = outcomes[:min(100, len(outcomes))]
+    def trans_counts(a):
+        jj = jk = kj = kk = 0
+        for i in range(len(a) - 1):
+            if a[i] is True and a[i+1] is True: jj += 1
+            elif a[i] is True and a[i+1] is False: jk += 1
+            elif a[i] is False and a[i+1] is True: kj += 1
+            else: kk += 1
+        return {'jj': jj, 'jk': jk, 'kj': kj, 'kk': kk, 'jungDenom': jj+jk, 'kkukDenom': kk+kj}
+    def prob_from_trans(t, last_b):
+        if last_b and t['jungDenom'] > 0:
+            return t['jj']/t['jungDenom'], t['jk']/t['jungDenom']
+        if not last_b and t['kkukDenom'] > 0:
+            return t['kk']/t['kkukDenom'], t['kj']/t['kkukDenom']
+        return 0.5, 0.5
+    t15, t30, t100 = trans_counts(s15), trans_counts(s30), trans_counts(s100)
+    r15 = prob_from_trans(t15, last_bool)
+    r30 = prob_from_trans(t30, last_bool)
+    r100 = prob_from_trans(t100, last_bool)
+    p15 = (max(r15[0], r15[1]) * 100) if len(s15) >= 2 else None
+    p30 = (max(r30[0], r30[1]) * 100) if len(s30) >= 2 else None
+    p100 = (max(r100[0], r100[1]) * 100) if len(s100) >= 2 else None
+    w15 = 0.5 if len(s15) >= 2 else 0
+    w30 = 0.3 if len(s30) >= 2 else 0
+    w100 = 0.2 if len(s100) >= 2 else 0
+    denom = w15 + w30 + w100
+    new_prob = (w15 * (p15 or 50) + w30 * (p30 or 50) + w100 * (p100 or 50)) / denom if denom > 0 else None
+    return {'p15': p15, 'p30': p30, 'p100': p100, 'newProb': new_prob}
+
+
+def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
+    """
+    서버 측 예측 공식. JS와 동일한 입력·출력.
+    results: 최신순 결과 리스트, 각 항목 dict(result, joker, gameID 등)
+    prediction_history: [{round, predicted, actual}, ...], actual이 'joker'면 제외 후 사용
+    prev_symmetry_counts: {left, right} 이전 20열 줄 개수(선택)
+    반환: {'value': '정'|'꺽'|None, 'round': int, 'prob': float, 'color': '빨강'|'검정'|None}
+    15번 카드가 조커면 value=None, color=None (픽 보류).
+    """
+    if not results or len(results) < 16:
+        return {'value': None, 'round': 0, 'prob': 0, 'color': None}
+    graph_values = _build_graph_values(results)
+    if len(graph_values) < 2:
+        return {'value': None, 'round': 0, 'prob': 0, 'color': None}
+    valid_gv = [v for v in graph_values if v is True or v is False]
+    if len(valid_gv) < 2:
+        return {'value': None, 'round': 0, 'prob': 0, 'color': None}
+
+    latest_game_id = results[0].get('gameID')
+    try:
+        current_round_full = int(str(latest_game_id or '0'), 10)
+    except (ValueError, TypeError):
+        current_round_full = 0
+    predicted_round_full = current_round_full + 1
+
+    is_15_joker = len(results) >= 15 and bool(results[14].get('joker'))
+    if is_15_joker:
+        return {'value': None, 'round': predicted_round_full, 'prob': 0, 'color': None}
+
+    full = _calc_transitions(graph_values)
+    recent30 = _calc_transitions(graph_values[:30])
+    short15 = _calc_transitions(graph_values[:15]) if len(graph_values) >= 15 else None
+    last = graph_values[0]
+    pong_pct, line_pct = 50.0, 50.0
+    if len([v for v in graph_values[:15] if v is True or v is False]) >= 2:
+        pong_pct, line_pct = _pong_line_pct(graph_values[:15])
+
+    use_for_pattern = graph_values[:30]
+    line_runs, pong_runs = _get_line_pong_runs(use_for_pattern)
+    total_line_runs = len(line_runs)
+    total_pong_runs = len(pong_runs)
+    line_two_plus = sum(1 for l in line_runs if l >= 2) if total_line_runs else 0
+    line_one = sum(1 for l in line_runs if l == 1) if total_line_runs else 0
+    line_two = sum(1 for l in line_runs if l == 2) if total_line_runs else 0
+    pong_one = sum(1 for p in pong_runs if p == 1) if total_pong_runs else 0
+    chunk_idx = line_two_plus / total_line_runs if total_line_runs else 0
+    scatter_idx = (line_one / total_line_runs * pong_one / total_pong_runs) if (total_line_runs and total_pong_runs) else 0
+    two_one_idx = (line_two / total_line_runs * pong_one / total_pong_runs) if (total_line_runs and total_pong_runs) else 0
+
+    pong_prev15 = 50.0
+    if len(graph_values) >= 30:
+        pong_prev15, _ = _pong_line_pct(graph_values[15:30])
+    line_strong_by_transition = pong_strong_by_transition = False
+    if short15:
+        long_same = (100 * recent30['jj'] / recent30['jungDenom']) if recent30['jungDenom'] and last is True else (100 * recent30['kk'] / recent30['kkukDenom']) if recent30['kkukDenom'] and last is False else 50
+        short_same = (100 * short15['jj'] / short15['jungDenom']) if short15['jungDenom'] and last is True else (100 * short15['kk'] / short15['kkukDenom']) if short15['kkukDenom'] and last is False else 50
+        if short_same - long_same >= 15:
+            line_strong_by_transition = True
+        if long_same - short_same >= 15:
+            pong_strong_by_transition = True
+    line_strong_by_pong = (pong_prev15 - pong_pct >= 20)
+    pong_strong_by_pong = (len(graph_values) >= 30 and pong_pct - pong_prev15 >= 20)
+    line_strong = line_strong_by_transition or line_strong_by_pong
+    pong_strong = pong_strong_by_transition or pong_strong_by_pong
+
+    surge_unknown = False
+    ph = prediction_history or []
+    ph_valid = [h for h in ph if h and isinstance(h, dict)]
+    if len(ph_valid) >= 5:
+        rev_surge = list(reversed(ph_valid))
+        i, win_run, lose_run = 0, 0, 0
+        while i < len(rev_surge) and rev_surge[i] and rev_surge[i].get('actual') != 'joker':
+            is_win = rev_surge[i].get('predicted') == rev_surge[i].get('actual')
+            if is_win:
+                win_run += 1
+                i += 1
+            else:
+                break
+        while i < len(rev_surge) and rev_surge[i] and rev_surge[i].get('actual') != 'joker':
+            is_win = rev_surge[i].get('predicted') == rev_surge[i].get('actual')
+            if not is_win:
+                lose_run += 1
+                i += 1
+            else:
+                break
+        if win_run >= 2 and lose_run >= 3:
+            surge_unknown = True
+
+    flow_state = ''
+    if line_strong:
+        flow_state = 'line_strong'
+    elif pong_strong:
+        flow_state = 'pong_strong'
+    elif surge_unknown:
+        flow_state = 'surge_unknown'
+
+    symmetry_line_data = None
+    arr20 = [v for v in graph_values[:20] if v is True or v is False]
+    if len(arr20) >= 20:
+        def get_run_lengths(a):
+            r, cur, c = [], None, 0
+            for x in a:
+                if x == cur:
+                    c += 1
+                else:
+                    if cur is not None:
+                        r.append(c)
+                    cur = x
+                    c = 1
+            if cur is not None:
+                r.append(c)
+            return r
+        sym_count = sum(1 for si in range(10) if arr20[si] == arr20[19 - si])
+        left10, right10 = arr20[:10], arr20[10:20]
+        left_runs = get_run_lengths(left10)
+        right_runs = get_run_lengths(right10)
+        avg_l = sum(left_runs) / len(left_runs) if left_runs else 0
+        avg_r = sum(right_runs) / len(right_runs) if right_runs else 0
+        line_diff = abs(avg_l - avg_r)
+        max_left_run = max(left_runs) if left_runs else 0
+        recent_run_len = 1
+        if len(arr20) >= 2:
+            v0 = arr20[0]
+            for ri in range(1, len(arr20)):
+                if arr20[ri] == v0:
+                    recent_run_len += 1
+                else:
+                    break
+        symmetry_line_data = {
+            'symmetryPct': sym_count / 10 * 100,
+            'avgLeft': avg_l, 'avgRight': avg_r,
+            'lineSimilarityPct': max(0, 100 - min(100, line_diff * 25)),
+            'leftLineCount': len(left_runs), 'rightLineCount': len(right_runs),
+            'maxLeftRunLength': max_left_run, 'recentRunLength': recent_run_len,
+        }
+
+    SYM_LINE_PONG_BOOST = 0.15
+    SYM_SAME_BOOST = 0.05
+    SYM_LOW_MUL = 0.95
+    Pjung = Pkkuk = 0.5
+    if last is True and recent30['jungDenom'] > 0:
+        Pjung = recent30['jj'] / recent30['jungDenom']
+        Pkkuk = recent30['jk'] / recent30['jungDenom']
+    elif last is False and recent30['kkukDenom'] > 0:
+        Pjung = recent30['kj'] / recent30['kkukDenom']
+        Pkkuk = recent30['kk'] / recent30['kkukDenom']
+    prob_same = Pjung if last is True else Pkkuk
+    prob_change = Pkkuk if last is True else Pjung
+    line_w = line_pct / 100.0
+    pong_w = pong_pct / 100.0
+    if flow_state == 'line_strong':
+        line_w = min(1.0, line_w + 0.25)
+        pong_w = max(0.0, 1.0 - line_w)
+    elif flow_state == 'pong_strong':
+        pong_w = min(1.0, pong_w + 0.25)
+        line_w = max(0.0, 1.0 - pong_w)
+
+    if symmetry_line_data:
+        lc = symmetry_line_data['leftLineCount']
+        rc = symmetry_line_data['rightLineCount']
+        sp = symmetry_line_data['symmetryPct']
+        prev_l = (prev_symmetry_counts or {}).get('left')
+        prev_r = (prev_symmetry_counts or {}).get('right')
+        is_new_segment = (rc >= 5 and lc <= 3)
+        is_new_segment_early = (prev_r and prev_r >= 5 and (prev_l is None or prev_l >= 4) and lc <= 3)
+        if is_new_segment or is_new_segment_early:
+            line_w = min(1.0, line_w + 0.22)
+            pong_w = max(0.0, 1.0 - line_w)
+        elif sp >= 70 and rc <= 3:
+            line_w = min(1.0, line_w + 0.28)
+            pong_w = max(0.0, 1.0 - line_w)
+        else:
+            if lc <= 3:
+                line_w = min(1.0, line_w + SYM_LINE_PONG_BOOST)
+                pong_w = max(0.0, 1.0 - line_w)
+            elif lc >= 5:
+                max_run = symmetry_line_data.get('maxLeftRunLength', 4)
+                recent_run = symmetry_line_data.get('recentRunLength', 0)
+                calm_or_run_start = (max_run <= 3) or (recent_run >= 2)
+                pong_boost = 0.06 if calm_or_run_start else SYM_LINE_PONG_BOOST
+                pong_w = min(1.0, pong_w + pong_boost)
+                line_w = max(0.0, 1.0 - pong_w)
+            if sp >= 70:
+                line_w = min(1.0, line_w + SYM_SAME_BOOST)
+            elif sp <= 30:
+                line_w *= SYM_LOW_MUL
+                pong_w *= SYM_LOW_MUL
+
+    line_w += chunk_idx * 0.2 + two_one_idx * 0.1
+    pong_w += scatter_idx * 0.2
+    total_w = line_w + pong_w
+    if total_w > 0:
+        line_w /= total_w
+        pong_w /= total_w
+    adj_same = prob_same * line_w
+    adj_change = prob_change * pong_w
+    s = adj_same + adj_change or 1.0
+    adj_same_n = adj_same / s
+    adj_change_n = adj_change / s
+    predict = ('정' if last is True else '꺽') if adj_same_n >= adj_change_n else ('꺽' if last is True else '정')
+    pred_prob = (adj_same_n if predict == ('정' if last is True else '꺽') else adj_change_n) * 100
+    card15_result = results[14].get('result', '') if len(results) >= 15 else ''
+    is_15_red = parse_card_color(card15_result) if card15_result else None
+    if is_15_red is True:
+        color_to_pick = '빨강' if predict == '정' else '검정'
+    elif is_15_red is False:
+        color_to_pick = '검정' if predict == '정' else '빨강'
+    else:
+        color_to_pick = '빨강'
+    return {'value': predict, 'round': predicted_round_full, 'prob': round(pred_prob, 1), 'color': color_to_pick}
+
 
 def calculate_and_save_color_matches(results):
     """정/꺽 결과 계산 및 저장 (서버 측)"""
@@ -1169,15 +1360,15 @@ def load_results_data():
 
 
 def _scheduler_fetch_results():
-    """스케줄러에서 호출: 외부 결과 수집·DB 저장 후 서버 측 예측/계산기 회차 반영."""
+    """스케줄러에서 호출: 외부 결과 수집·DB 저장 후 실행 중인 계산기 회차 반영."""
     try:
         load_results_data()
+        if DB_AVAILABLE and DATABASE_URL:
+            results = get_recent_results(hours=1)
+            if results and len(results) >= 16:
+                _apply_results_to_calcs(results)
     except Exception as e:
-        print(f"[스케줄러] 결과 수집 오류: {str(e)[:150]}")
-    try:
-        process_server_side_round()
-    except Exception as e:
-        print(f"[스케줄러] 서버 측 회차 반영 오류: {str(e)[:150]}")
+        print(f"[스케줄러] 결과 수집/회차 반영 오류: {str(e)[:150]}")
 
 
 if SCHEDULER_AVAILABLE:
@@ -2285,6 +2476,7 @@ RESULTS_HTML = '''
             fetch('/api/prediction-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(function() {});
         }
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
+        var lastServerPrediction = null;  // 서버 예측 (있으면 표시·pending 동기화용)
         let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
         let lastLoseEffectRound = null;  // 실패 이펙트를 이미 보여준 회차 (한 번만 표시)
         var prevSymmetryCounts = { left: null, right: null };  // 이전 시점 20열 줄 개수 (새 구간 빨리 캐치용)
@@ -2363,7 +2555,11 @@ RESULTS_HTML = '''
                     timer_completed: !!calcState[id].timer_completed,
                     max_win_streak_ever: calcState[id].maxWinStreakEver || 0,
                     max_lose_streak_ever: calcState[id].maxLoseStreakEver || 0,
-                    first_bet_round: calcState[id].first_bet_round || 0
+                    first_bet_round: calcState[id].first_bet_round || 0,
+                    pending_round: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.round) || calcState[id].pending_round) : null,
+                    pending_predicted: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.value) || calcState[id].pending_predicted) : null,
+                    pending_prob: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.prob != null) ? lastServerPrediction.prob : calcState[id].pending_prob) : null,
+                    pending_color: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.color) || calcState[id].pending_color) : null
                 };
             });
             const d = calcState.defense;
@@ -2430,6 +2626,10 @@ RESULTS_HTML = '''
                 if (martingaleTypeEl) martingaleTypeEl.value = calcState[id].martingale_type || 'pyo';
                 calcState[id].target_enabled = !!c.target_enabled;
                 calcState[id].target_amount = Math.max(0, parseInt(c.target_amount, 10) || 0);
+                calcState[id].pending_round = c.pending_round != null ? c.pending_round : null;
+                calcState[id].pending_predicted = c.pending_predicted != null ? c.pending_predicted : null;
+                calcState[id].pending_prob = c.pending_prob != null ? c.pending_prob : null;
+                calcState[id].pending_color = c.pending_color || null;
                 const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
                 const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
                 if (targetEnabledEl) targetEnabledEl.checked = !!calcState[id].target_enabled;
@@ -2609,16 +2809,11 @@ RESULTS_HTML = '''
                     predictionHistory = data.prediction_history.slice(-100).filter(function(h) { return h && typeof h === 'object'; });
                     savePredictionHistory();
                 }
-                // 서버 예측 픽 동기화 (브라우저 꺼져 있어도 스케줄러가 갱신한 값으로 표시)
-                try {
-                    const spRes = await fetch('/api/server-current-pick?t=' + Date.now(), { cache: 'no-cache' });
-                    if (spRes.ok) {
-                        const sp = await spRes.json();
-                        if (sp && sp.round_num != null && (sp.predicted === '정' || sp.predicted === '꺽')) {
-                            lastPrediction = { value: sp.predicted, round: sp.round_num, prob: sp.probability != null ? sp.probability : 0, color: sp.pick_color || '' };
-                        }
-                    }
-                } catch (e) { /* 무시 */ }
+                // 서버 예측이 있으면 우선 사용 (브라우저 꺼도 서버에서 회차 반영하므로 클라이언트는 표시만)
+                lastServerPrediction = (data.server_prediction && (data.server_prediction.value === '정' || data.server_prediction.value === '꺽')) ? data.server_prediction : null;
+                if (lastServerPrediction) {
+                    lastPrediction = { value: lastServerPrediction.value, round: lastServerPrediction.round, prob: lastServerPrediction.prob != null ? lastServerPrediction.prob : 0, color: lastServerPrediction.color || null };
+                }
                 
                 const newResults = data.results || [];
                 const statusElement = document.getElementById('status');
@@ -2913,7 +3108,8 @@ RESULTS_HTML = '''
                     try { window.__latestGameIDForCalc = latestGameID; } catch (e) {}
                     const is15Joker = displayResults.length >= 15 && !!displayResults[14].joker;  // 15번 카드 조커면 픽/배팅 보류
                     
-                    // 직전 예측의 실제 결과 반영: 예측했던 회차(전체 ID)가 지금 나왔으면 기록
+                    // 직전 예측의 실제 결과 반영: 서버에서 예측을 주면 서버가 회차 반영하므로 클라이언트는 생략
+                    if (!lastServerPrediction) {
                     const alreadyRecordedRound = lastPrediction ? predictionHistory.some(function(h) { return h && h.round === lastPrediction.round; }) : true;
                     var lowWinRateForRecord = false;
                     var blended = 50, c15 = 0, c30 = 0, c100 = 0;
@@ -3017,6 +3213,7 @@ RESULTS_HTML = '''
                         }
                         predictionHistory = predictionHistory.slice(-100);
                         savePredictionHistory();  // localStorage 백업
+                    }
                     }
                     
                     // 최근 15회 정/꺽 흐름으로 퐁당·줄 계산 (승패 아님)
@@ -3245,7 +3442,7 @@ RESULTS_HTML = '''
                         const card15 = displayResults.length >= 15 ? parseCardValue(displayResults[14].result || '') : null;
                         const is15Red = card15 ? card15.isRed : false;
                         colorToPick = predict === '정' ? (is15Red ? '빨강' : '검정') : (is15Red ? '검정' : '빨강');
-                        lastPrediction = { value: predict, round: predictedRoundFull, prob: predProb, color: colorToPick };
+                        if (!lastServerPrediction) lastPrediction = { value: predict, round: predictedRoundFull, prob: predProb, color: colorToPick };
                         colorClass = colorToPick === '빨강' ? 'red' : 'black';
                     }
                     
@@ -4461,12 +4658,15 @@ def _build_results_payload():
             
             # 그래프/표시 순서 일관성: 항상 gameID 기준 최신순으로 정렬
             results = _sort_results_newest_first(results)
+            ph = get_prediction_history(100)
+            server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None}
             return {
                 'results': results,
                 'count': len(results),
                 'timestamp': datetime.now().isoformat(),
                 'source': 'database+json',
-                'prediction_history': get_prediction_history(100)
+                'prediction_history': ph,
+                'server_prediction': server_pred
             }
         else:
             # 데이터베이스가 없으면 기존 방식 (result.json에서 가져오기)
@@ -4502,12 +4702,15 @@ def _build_results_payload():
                         else:
                             results[i]['colorMatch'] = None
             
+            ph = get_prediction_history(100)
+            server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None}
             return {
                 'results': results,
                 'count': len(results),
                 'timestamp': datetime.now().isoformat(),
                 'source': 'json',
-                'prediction_history': get_prediction_history(100)
+                'prediction_history': ph,
+                'server_prediction': server_pred
             }
     except Exception as e:
         print(f"[❌ 오류] _build_results_payload 실패: {str(e)[:200]}")
@@ -4558,7 +4761,8 @@ def get_results():
             'count': 0,
             'timestamp': datetime.now().isoformat(),
             'error': 'loading',
-            'prediction_history': []
+            'prediction_history': [],
+            'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None}
         }), 200
     except Exception as e:
         import traceback
@@ -4570,7 +4774,8 @@ def get_results():
             'count': 0,
             'timestamp': datetime.now().isoformat(),
             'error': error_msg,
-            'prediction_history': []
+            'prediction_history': [],
+            'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None}
         }), 200
 
 
@@ -4618,10 +4823,14 @@ def api_calc_state():
                     'target_amount': max(0, int(c.get('target_amount') or 0)),
                     'max_win_streak_ever': int(c.get('max_win_streak_ever') or 0),
                     'max_lose_streak_ever': int(c.get('max_lose_streak_ever') or 0),
-                    'first_bet_round': max(0, int(c.get('first_bet_round') or 0))
+                    'first_bet_round': max(0, int(c.get('first_bet_round') or 0)),
+                    'pending_round': c.get('pending_round'),
+                    'pending_predicted': c.get('pending_predicted'),
+                    'pending_prob': c.get('pending_prob'),
+                    'pending_color': c.get('pending_color'),
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
         c = calcs.get('defense') or {}
         if isinstance(c, dict):
             running = c.get('running', False)
@@ -4669,19 +4878,6 @@ def api_save_prediction_history():
     except Exception as e:
         print(f"[❌ 오류] 예측 기록 API 실패: {str(e)[:200]}")
         return jsonify({'ok': False, 'error': str(e)[:200]}), 500
-
-
-@app.route('/api/server-current-pick', methods=['GET'])
-def api_server_current_pick():
-    """GET: 서버 예측 픽 조회 (브라우저 꺼져도 스케줄러가 갱신한 값). UI 예측 박스 동기화용."""
-    try:
-        pick = get_server_current_pick()
-        if not pick:
-            return jsonify({'round_num': None, 'predicted': '', 'probability': 0, 'pick_color': ''}), 200
-        return jsonify(pick), 200
-    except Exception as e:
-        print(f"[❌ 오류] server-current-pick 조회 실패: {str(e)[:200]}")
-        return jsonify({'round_num': None, 'predicted': '', 'probability': 0, 'pick_color': ''}), 200
 
 
 @app.route('/api/current-pick', methods=['GET', 'POST'])
