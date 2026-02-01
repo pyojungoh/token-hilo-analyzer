@@ -1141,7 +1141,7 @@ game_data_cache = None
 streaks_cache = None
 results_cache = None
 last_update_time = 0
-CACHE_TTL = 600
+CACHE_TTL = 280
 
 # 게임 상태 (Socket.IO 제거 후 기본값만 사용)
 current_status_data = {
@@ -1373,9 +1373,9 @@ def _scheduler_fetch_results():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=2, id='fetch_results', max_instances=1)
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=1, id='fetch_results', max_instances=1)
     _scheduler.start()
-    print("[✅] 결과 수집 스케줄러 시작 (2초마다, 창/브라우저 없이 동작)")
+    print("[✅] 결과 수집 스케줄러 시작 (1초마다, 창/브라우저 없이 동작)")
 else:
     print("[⚠] APScheduler 미설치 - 결과 수집은 브라우저 요청 시에만 동작합니다. pip install APScheduler")
 
@@ -2483,6 +2483,7 @@ RESULTS_HTML = '''
         // 최근 150개 결과 저장 (카드 15개, 그래프는 전부 쭉 표시)
         let allResults = [];
         let isLoadingResults = false;  // 중복 요청 방지
+        let resultsRequestId = 0;       // 응답 순서: 늦게 도착한 응답은 적용 안 함 (깜빡임 방지)
         // 예측 기록 (최근 30회): { round, predicted, actual } — 새로고침 후에도 유지되도록 localStorage 저장
         const PREDICTION_HISTORY_KEY = 'tokenHiloPredictionHistory';
         let predictionHistory = [];
@@ -2806,6 +2807,7 @@ RESULTS_HTML = '''
             if (isLoadingResults) return;
             const statusEl = document.getElementById('status');
             if (statusEl) statusEl.textContent = '데이터 요청 중...';
+            const thisRequestId = ++resultsRequestId;
             
             try {
                 isLoadingResults = true;
@@ -2818,6 +2820,7 @@ RESULTS_HTML = '''
                 });
                 
                 clearTimeout(timeoutId);
+                if (thisRequestId !== resultsRequestId) return;
                 if (statusEl) statusEl.textContent = '결과 표시 중...';
                 
                 if (!response.ok) {
@@ -2827,23 +2830,9 @@ RESULTS_HTML = '''
                 }
                 
                 const data = await response.json();
+                if (thisRequestId !== resultsRequestId) return;
                 if (data.error) {
                     if (statusEl) statusEl.textContent = '오류: ' + data.error;
-                    return;
-                }
-                const newResults = data.results || [];
-                const statusElement = document.getElementById('status');
-                const cardsDiv = document.getElementById('cards');
-                if (!statusElement || !cardsDiv) {
-                    if (statusEl) statusEl.textContent = '화면 오류 - 새로고침 해 주세요';
-                    return;
-                }
-                // 서버 응답이 현재보다 오래된 회차면 무시 (깜빡임 근본 차단: 이전 회차로 되돌아가는 응답은 아예 적용 안 함)
-                function parseGameId(r) { return Math.max(0, parseInt(String(r && r.gameID != null ? r.gameID : '0'), 10) || 0); }
-                const incomingLatest = newResults.length > 0 ? parseGameId(newResults[0]) : 0;
-                const prevLatest = allResults.length > 0 ? parseGameId(allResults[0]) : 0;
-                if (incomingLatest < prevLatest) {
-                    if (statusElement) statusElement.textContent = '총 ' + allResults.length + '개 경기 결과 (최신 유지)';
                     return;
                 }
                 // 서버에 저장된 시스템 예측 기록 복원 (어디서 접속해도 동일). 무효 항목 제거해 ReferenceError 방지
@@ -2851,10 +2840,14 @@ RESULTS_HTML = '''
                     predictionHistory = data.prediction_history.slice(-100).filter(function(h) { return h && typeof h === 'object'; });
                     savePredictionHistory();
                 }
-                // 서버 예측이 있으면 우선 사용 (브라우저 꺼도 서버에서 회차 반영하므로 클라이언트는 표시만)
-                lastServerPrediction = (data.server_prediction && (data.server_prediction.value === '정' || data.server_prediction.value === '꺽')) ? data.server_prediction : null;
-                if (lastServerPrediction) {
-                    lastPrediction = { value: lastServerPrediction.value, round: lastServerPrediction.round, prob: lastServerPrediction.prob != null ? lastServerPrediction.prob : 0, color: lastServerPrediction.color || null };
+                // lastServerPrediction/lastPrediction은 아래에서 results 수락 시에만 설정 (깜빡임 방지)
+                
+                const newResults = data.results || [];
+                const statusElement = document.getElementById('status');
+                const cardsDiv = document.getElementById('cards');
+                if (!statusElement || !cardsDiv) {
+                    if (statusEl) statusEl.textContent = '화면 오류 - 새로고침 해 주세요';
+                    return;
                 }
                 
                 try {
@@ -2868,24 +2861,42 @@ RESULTS_HTML = '''
                         return gb.localeCompare(ga);  // 문자열이면 역순
                     });
                 }
-                // 새로운 결과를 기존 결과와 병합 (이미 오래된 응답은 위에서 걸렀으므로 여기선 최신 또는 동일만 옴)
+                // 결과 병합: 최신 회차가 앞으로만 진행. 같은 최신이면 개수가 늘 때만 반영 (앞뒤 깜빡임 제거)
+                let resultsUpdated = false;
                 if (newResults.length > 0) {
-                    const newGameIDs = new Set(newResults.map(r => r.gameID).filter(id => id));
-                    const oldResults = allResults.filter(r => !newGameIDs.has(r.gameID));
+                    const newGameIDs = new Set(newResults.map(r => String(r.gameID != null && r.gameID !== '' ? r.gameID : '')).filter(id => id !== ''));
+                    const oldResults = allResults.filter(r => !newGameIDs.has(String(r.gameID != null && r.gameID !== '' ? r.gameID : '')));
                     const merged = sortResultsNewestFirst([...newResults, ...oldResults].slice(0, 150));
-                    const newLatest = merged.length > 0 ? parseGameId(merged[0]) : 0;
-                    // 동일 회차·동일 개수로 교체하지 않음 → 결과픽 앞뒤 깜빡임 방지 (신규 회차 또는 개수 증가 시에만 반영)
+                    const prevLatest = allResults.length > 0 ? (parseInt(String(allResults[0].gameID || '0'), 10) || 0) : 0;
+                    const newLatest = merged.length > 0 ? (parseInt(String(merged[0].gameID || '0'), 10) || 0) : 0;
                     const strictlyNewer = newLatest > prevLatest;
-                    const sameRoundMore = (newLatest === prevLatest && merged.length > allResults.length);
-                    if (merged.length > 0 && (strictlyNewer || sameRoundMore)) {
+                    const sameRoundMoreOnly = (newLatest === prevLatest && merged.length > allResults.length);
+                    if (merged.length > 0 && (strictlyNewer || sameRoundMoreOnly)) {
                         allResults = merged;
+                        resultsUpdated = true;
                     }
                 } else {
                     if (allResults.length === 0) {
                         allResults = sortResultsNewestFirst(newResults);
+                        resultsUpdated = true;
                     } else {
                         allResults = sortResultsNewestFirst(allResults);
+                        resultsUpdated = true;
                     }
+                }
+                
+                // 이번 응답의 결과를 수락했을 때만 서버 예측 반영 (앞뒤 깜빡임 제거)
+                if (resultsUpdated) {
+                    const sp = data.server_prediction;
+                    lastServerPrediction = (sp && (sp.value === '정' || sp.value === '꺽')) ? sp : null;
+                    if (lastServerPrediction) {
+                        lastPrediction = { value: lastServerPrediction.value, round: lastServerPrediction.round, prob: lastServerPrediction.prob != null ? lastServerPrediction.prob : 0, color: lastServerPrediction.color || null };
+                    }
+                }
+                
+                // 결과 리스트가 바뀌지 않았으면 DOM/상태 전혀 갱신하지 않고 즉시 return (깜빡임 방지)
+                if (!resultsUpdated && allResults.length > 0) {
+                    return;
                 }
                 
                 statusElement.textContent = `총 ${allResults.length}개 경기 결과 (표시: ${newResults.length}개)`;
@@ -2971,7 +2982,7 @@ RESULTS_HTML = '''
                 }
                 
                 // 오래된 캐시 정리 (allResults에 없는 카드만 제거 - 그래프용 데이터 유지)
-                const currentGameIDs = new Set(allResults.map(r => r.gameID).filter(id => id));
+                const currentGameIDs = new Set(allResults.map(r => String(r.gameID != null && r.gameID !== '' ? r.gameID : '')).filter(id => id !== ''));
                 for (const key in colorMatchCache) {
                     const gameID = key.split('_')[0];
                     if (!currentGameIDs.has(gameID)) {
@@ -4560,14 +4571,14 @@ RESULTS_HTML = '''
         
         initialLoad();
         
-        // 예측픽·결과픽 더 빨리 반영: 0.4초마다 폴 (깜빡임 방지 로직과 함께 사용)
+        // 예측픽·결과 더 빨리 반영 (280ms 간격으로 폴링)
         setInterval(() => {
-            const interval = 400;
+            const interval = allResults.length === 0 ? 280 : 280;
             if (Date.now() - lastResultsUpdate > interval) {
                 loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
                 lastResultsUpdate = Date.now();
             }
-        }, 400);
+        }, 280);
         
         // 0.2초마다 타이머 업데이트 (UI만 업데이트, 서버 요청은 1초마다)
         setInterval(updateTimer, 200);
@@ -4793,7 +4804,6 @@ def _refresh_results_background():
                 if new_latest_num < cur_latest_num:
                     should_update = False
                 elif new_latest_num == cur_latest_num and len(new_results) <= len(cur_results):
-                    # 동일 회차·동일(이하) 개수로 덮어쓰지 않음 → 결과픽 앞뒤 깜빡임 방지
                     should_update = False
             if should_update:
                 results_cache = payload
