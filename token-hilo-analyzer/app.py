@@ -4314,8 +4314,7 @@ RESULTS_HTML = '''
                     const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
                     const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
                     const pickVal = h.predicted === '정' ? '정' : '꺽';
-                    var pickColorH = h.pickColor || h.pick_color;
-                    const pickClass = (pickColorH === '빨강' || (typeof pickColorH === 'string' && pickColorH.toUpperCase() === 'RED')) ? 'pick-jung' : ((pickColorH === '검정' || (typeof pickColorH === 'string' && pickColorH.toUpperCase() === 'BLACK')) ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : 'pick-kkuk'));
+                    const pickClass = pickVal === '정' ? 'pick-jung' : 'pick-kkuk';
                     const resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
                     const betStr = betAmounts[i] != null ? betAmounts[i].toLocaleString() : '-';
                     const profitVal = profits[i] != null ? profits[i] : '-';
