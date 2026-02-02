@@ -2781,6 +2781,20 @@ RESULTS_HTML = '''
         }
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         var lastServerPrediction = null;  // 서버 예측 (있으면 표시·pending 동기화용)
+        var roundPredictionBuffer = {};   // 회차별 예측 저장 (표 충돌 방지: 결과 반영 시 해당 회차만 조회)
+        var ROUND_PREDICTION_BUFFER_MAX = 50;
+        function setRoundPrediction(round, pred) {
+            if (round == null || !pred) return;
+            roundPredictionBuffer[String(round)] = { value: pred.value, round: round, prob: pred.prob != null ? pred.prob : 0, color: pred.color || null };
+            var keys = Object.keys(roundPredictionBuffer).map(Number).filter(function(k) { return !isNaN(k); }).sort(function(a,b) { return a - b; });
+            while (keys.length > ROUND_PREDICTION_BUFFER_MAX) {
+                delete roundPredictionBuffer[String(keys.shift())];
+            }
+        }
+        function getRoundPrediction(round) {
+            if (round == null) return null;
+            return roundPredictionBuffer[String(round)] || null;
+        }
         var lastWarningU35 = false;       // U자+줄 3~5 구간 감지 시 서버가 보낸 경고
         let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
         let lastLoseEffectRound = null;  // 실패 이펙트를 이미 보여준 회차 (한 번만 표시)
@@ -3094,6 +3108,7 @@ RESULTS_HTML = '''
                     if (lastServerPrediction) {
                         var normColor = normalizePickColor(lastServerPrediction.color) || lastServerPrediction.color || null;
                         lastPrediction = { value: lastServerPrediction.value, round: lastServerPrediction.round, prob: lastServerPrediction.prob != null ? lastServerPrediction.prob : 0, color: normColor };
+                        setRoundPrediction(lastServerPrediction.round, lastPrediction);
                     }
                     lastResultsUpdate = Date.now();  // 갱신 완료 시점에 폴링 간격 리셋
                 }
@@ -3367,7 +3382,8 @@ RESULTS_HTML = '''
                     
                     // 직전 예측의 실제 결과 반영: 서버에서 예측을 주면 서버가 회차 반영하므로 클라이언트는 생략
                     if (!lastServerPrediction) {
-                    const alreadyRecordedRound = lastPrediction ? predictionHistory.some(function(h) { return h && h.round === lastPrediction.round; }) : true;
+                    const alreadyRecordedRound = predictionHistory.some(function(h) { return h && h.round === currentRoundFull; });
+                    const predForRound = getRoundPrediction(currentRoundFull) || (lastPrediction && lastPrediction.round === currentRoundFull ? lastPrediction : null);
                     var lowWinRateForRecord = false;
                     var blended = 50, c15 = 0, c30 = 0, c100 = 0;
                     try {
@@ -3388,52 +3404,52 @@ RESULTS_HTML = '''
                         blended = 0.6 * r15 + 0.25 * r30 + 0.15 * r100;
                         lowWinRateForRecord = (c15 > 0 || c30 > 0 || c100 > 0) && blended <= 50;
                     } catch (e) {}
-                    if (lastPrediction && currentRoundFull === lastPrediction.round && !alreadyRecordedRound) {
+                    if (!alreadyRecordedRound && predForRound) {
                         const isActualJoker = displayResults.length > 0 && !!displayResults[0].joker;
                         if (isActualJoker) {
-                            predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: 'joker', probability: lastPrediction.prob != null ? lastPrediction.prob : null, pickColor: lastPrediction.color || null });
+                            predictionHistory.push({ round: predForRound.round, predicted: predForRound.value, actual: 'joker', probability: predForRound.prob != null ? predForRound.prob : null, pickColor: predForRound.color || null });
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
                                 const firstBetJoker = calcState[id].first_bet_round || 0;
-                                if (firstBetJoker > 0 && lastPrediction.round < firstBetJoker) return;
-                                const hasRound = calcState[id].history.some(function(h) { return h && h.round === lastPrediction.round; });
+                                if (firstBetJoker > 0 && predForRound.round < firstBetJoker) return;
+                                const hasRound = calcState[id].history.some(function(h) { return h && h.round === predForRound.round; });
                                 if (hasRound) return;
                                 const rev = !!(calcState[id] && calcState[id].reverse);
-                                var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
+                                var pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
                                 const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
                                 var thrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
                                 var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
                                 if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
                                 if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
-                                var betColor = normalizePickColor(lastPrediction.color);
+                                var betColor = normalizePickColor(predForRound.color);
                                 if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
                                 if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
-                                calcState[id].history.push({ predicted: pred, actual: 'joker', round: lastPrediction.round, pickColor: betColor || null });
+                                calcState[id].history.push({ predicted: pred, actual: 'joker', round: predForRound.round, pickColor: betColor || null });
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
                             });
                             saveCalcStateToServer();
-                            savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, 'joker', lastPrediction.prob, lastPrediction.color);
+                            savePredictionHistoryToServer(predForRound.round, predForRound.value, 'joker', predForRound.prob, predForRound.color);
                         } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
                             const actual = graphValues[0] ? '정' : '꺽';
-                            predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: actual, probability: lastPrediction.prob != null ? lastPrediction.prob : null, pickColor: lastPrediction.color || null });
+                            predictionHistory.push({ round: predForRound.round, predicted: predForRound.value, actual: actual, probability: predForRound.prob != null ? predForRound.prob : null, pickColor: predForRound.color || null });
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
                                 const firstBetActual = calcState[id].first_bet_round || 0;
-                                if (firstBetActual > 0 && lastPrediction.round < firstBetActual) return;
-                                const hasRound = calcState[id].history.some(function(h) { return h && h.round === lastPrediction.round; });
+                                if (firstBetActual > 0 && predForRound.round < firstBetActual) return;
+                                const hasRound = calcState[id].history.some(function(h) { return h && h.round === predForRound.round; });
                                 if (hasRound) return;
                                 const rev = !!(calcState[id] && calcState[id].reverse);
-                                var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
+                                var pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
                                 const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
                                 var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
                                 var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
                                 if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
                                 if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
-                                var betColorActual = normalizePickColor(lastPrediction.color);
+                                var betColorActual = normalizePickColor(predForRound.color);
                                 if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                 if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
-                                calcState[id].history.push({ predicted: pred, actual: actual, round: lastPrediction.round, pickColor: betColorActual || null });
-                                _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + lastPrediction.round + '_' + actual;
+                                calcState[id].history.push({ predicted: pred, actual: actual, round: predForRound.round, pickColor: betColorActual || null });
+                                _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + predForRound.round + '_' + actual;
                                 updateCalcSummary(id);
                                 updateCalcDetail(id);
                                 var targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
@@ -3452,7 +3468,7 @@ RESULTS_HTML = '''
                                 }
                             });
                             saveCalcStateToServer();
-                            savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, actual, lastPrediction.prob, lastPrediction.color);
+                            savePredictionHistoryToServer(predForRound.round, predForRound.value, actual, predForRound.prob, predForRound.color);
                         }
                         predictionHistory = predictionHistory.slice(-100);
                         savePredictionHistory();  // localStorage 백업
@@ -3697,7 +3713,10 @@ RESULTS_HTML = '''
                         const card15 = displayResults.length >= 15 ? parseCardValue(displayResults[14].result || '') : null;
                         const is15Red = card15 ? card15.isRed : false;
                         colorToPick = predict === '정' ? (is15Red ? '빨강' : '검정') : (is15Red ? '검정' : '빨강');
-                        if (!lastServerPrediction) lastPrediction = { value: predict, round: predictedRoundFull, prob: predProb, color: colorToPick };
+                        if (!lastServerPrediction) {
+                            lastPrediction = { value: predict, round: predictedRoundFull, prob: predProb, color: colorToPick };
+                            setRoundPrediction(predictedRoundFull, lastPrediction);
+                        }
                         colorClass = colorToPick === '빨강' ? 'red' : 'black';
                     }
                     
