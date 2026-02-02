@@ -3305,8 +3305,7 @@ RESULTS_HTML = '''
                     try { window.__latestGameIDForCalc = latestGameID; } catch (e) {}
                     const is15Joker = displayResults.length >= 15 && !!displayResults[14].joker;  // 15번 카드 조커면 픽/배팅 보류
                     
-                    // 직전 예측의 실제 결과 반영: 서버에서 예측을 주면 서버가 회차 반영하므로 클라이언트는 생략
-                    if (!lastServerPrediction) {
+                    // 직전 예측의 실제 결과 반영: 계산기(calc) history는 서버/클라이언트 예측 구분 없이 항상 반영. predictionHistory는 서버 예측 시 서버가 반영하므로 클라이언트는 생략
                     const alreadyRecordedRound = lastPrediction ? predictionHistory.some(function(h) { return h && h.round === lastPrediction.round; }) : true;
                     var lowWinRateForRecord = false;
                     var blended = 50, c15 = 0, c30 = 0, c100 = 0;
@@ -3328,10 +3327,10 @@ RESULTS_HTML = '''
                         blended = 0.6 * r15 + 0.25 * r30 + 0.15 * r100;
                         lowWinRateForRecord = (c15 > 0 || c30 > 0 || c100 > 0) && blended <= 50;
                     } catch (e) {}
-                    if (lastPrediction && currentRoundFull === lastPrediction.round && !alreadyRecordedRound) {
+                    if (lastPrediction && currentRoundFull === lastPrediction.round) {
                         const isActualJoker = displayResults.length > 0 && !!displayResults[0].joker;
                         if (isActualJoker) {
-                            predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: 'joker', probability: lastPrediction.prob != null ? lastPrediction.prob : null, pickColor: lastPrediction.color || null });
+                            if (!lastServerPrediction && !alreadyRecordedRound) predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: 'joker', probability: lastPrediction.prob != null ? lastPrediction.prob : null, pickColor: lastPrediction.color || null });
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
                                 const firstBetJoker = calcState[id].first_bet_round || 0;
@@ -3354,7 +3353,7 @@ RESULTS_HTML = '''
                                 calcState[id].history.push({ predicted: pred, actual: 'joker', round: lastPrediction.round });
                             });
                             saveCalcStateToServer();
-                            savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, 'joker', lastPrediction.prob, lastPrediction.color);
+                            if (!lastServerPrediction && !alreadyRecordedRound) savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, 'joker', lastPrediction.prob, lastPrediction.color);
                         } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
                             const actual = graphValues[0] ? '정' : '꺽';
                             var teukTop2ForResult = [];
@@ -3412,13 +3411,16 @@ RESULTS_HTML = '''
                                     }
                                 }
                             });
-                            predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: actual, probability: lastPrediction.prob != null ? lastPrediction.prob : null, pickColor: lastPrediction.color || null });
+                            if (!lastServerPrediction && !alreadyRecordedRound) {
+                                predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: actual, probability: lastPrediction.prob != null ? lastPrediction.prob : null, pickColor: lastPrediction.color || null });
+                                savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, actual, lastPrediction.prob, lastPrediction.color);
+                            }
                             saveCalcStateToServer();
-                            savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, actual, lastPrediction.prob, lastPrediction.color);
                         }
+                    }
+                    if (!lastServerPrediction) {
                         predictionHistory = predictionHistory.slice(-100);
                         savePredictionHistory();  // localStorage 백업
-                    }
                     }
                     
                     // 최근 15회 정/꺽 흐름으로 퐁당·줄 계산 (승패 아님)
