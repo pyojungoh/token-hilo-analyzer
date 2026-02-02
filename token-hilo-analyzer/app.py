@@ -162,7 +162,14 @@ def init_database():
                 (col,)
             )
             if cur.fetchone() is None:
-                cur.execute('ALTER TABLE prediction_history ADD COLUMN ' + col + ' ' + typ)
+                try:
+                    cur.execute('SAVEPOINT add_col_prediction_history')
+                    cur.execute('ALTER TABLE prediction_history ADD COLUMN ' + col + ' ' + typ)
+                except Exception as alter_err:
+                    if 'already exists' in str(alter_err).lower():
+                        cur.execute('ROLLBACK TO SAVEPOINT add_col_prediction_history')
+                    else:
+                        raise
         
         # calc_sessions: 계산기 상태 서버 저장 (새로고침/재접속 후에도 실행중 유지)
         cur.execute('''
@@ -2973,7 +2980,8 @@ RESULTS_HTML = '''
         }
         
         async function loadResults() {
-            // 중복 요청 차단 제거: 느린 응답이 있어도 새 요청이 들어와 최신 응답만 적용되도록 (resultsRequestId로 구분)
+            // 한 번에 하나만 요청: 동시 요청이 쌓여 서버 먹통·pending 폭증 방지
+            if (isLoadingResults) return;
             const statusEl = document.getElementById('status');
             if (statusEl) statusEl.textContent = '데이터 요청 중...';
             const thisRequestId = ++resultsRequestId;
@@ -3319,13 +3327,13 @@ RESULTS_HTML = '''
                         '<tr><td><span style="color:#888">구간반영</span></td><td>' + rowBlend15 + '</td><td>' + rowBlend30 + '</td><td>' + rowBlend100 + '</td></tr>' +
                         '</tbody></table><p class="graph-stats-note">※ 단기(15회) vs 장기(30회) 비교로 흐름 전환 감지<br>· 아랫줄=구간반영(예측이력 15/30/100회, 30% 적용)<br>· % 높을수록 예측 픽(정/꺽)에 대한 확신↑</p>';
                     
-                    // 회차: 비교·저장은 전체 gameID(11416052 등), 표시만 뒤 3자리(052). 숫자 높을수록 최신이므로 전체로 비교해야 035가 999보다 최신으로 인식됨
+                    // 회차: 비교·저장·표시 모두 전체 gameID(11416052 등) 사용. 끝 3자리만 쓰면 11423052/11424052가 둘 다 052로 겹침 → 충돌 방지를 위해 전체 표시
                     function fullRoundFromGameID(g) {
                         var s = String(g != null && g !== '' ? g : '0');
                         var n = parseInt(s, 10);
                         return isNaN(n) ? 0 : n;
                     }
-                    function displayRound3(r) { return r != null ? String(r).slice(-3) : '-'; }
+                    function displayRound(r) { return r != null ? String(r) : '-'; }
                     const latestGameID = displayResults[0]?.gameID;
                     const currentRoundFull = fullRoundFromGameID(latestGameID);
                     const predictedRoundFull = currentRoundFull + 1;
@@ -3795,7 +3803,7 @@ RESULTS_HTML = '''
                         else if (!lastPickColor && lastEntry.predicted) lastPickColor = lastEntry.predicted === '정' ? '빨강' : '검정';
                         else lastPickColor = lastPickColor || '-';
                         var resultBarClass = lastIsWin ? 'pick-result-bar result-win' : 'pick-result-bar result-lose';
-                        var resultBarText = displayRound3(lastEntry.round) + '회 ' + (lastIsWin ? '성공' : '실패') + ' (' + (lastEntry.predicted || '-') + ' / ' + lastPickColor + ')';
+                        var resultBarText = displayRound(lastEntry.round) + '회 ' + (lastIsWin ? '성공' : '실패') + ' (' + (lastEntry.predicted || '-') + ' / ' + lastPickColor + ')';
                         resultBarHtml = '<div class="' + resultBarClass + '">' + resultBarText + '</div>';
                     }
                     const pickWrapClass = 'prediction-pick' + (pickInBucket ? ' pick-in-bucket' : '');
@@ -3807,14 +3815,14 @@ RESULTS_HTML = '''
                         '<span class="pred-value-big" style="color:#fff;font-size:1.2em">보류</span>' +
                         '</div>' +
                         '<div class="prediction-prob-under" style="color:#ffb74d">15번 카드 조커 · 배팅하지 마세요</div>' +
-                        '<div class="pred-round">' + displayRound3(predictedRoundFull) + '회</div>' +
+                        '<div class="pred-round">' + displayRound(predictedRoundFull) + '회</div>' +
                         '</div>') : ('<div class="' + pickWrapClass + '">' +
                         '<div class="prediction-pick-title prediction-pick-title-betting">배팅중<br>' + (colorToPick === '빨강' ? 'RED' : 'BLACK') + '</div>' +
                         '<div class="prediction-card card-' + colorClass + '">' +
                         '<span class="pred-value-big">' + predict + '</span>' +
                         '</div>' +
                         '<div class="prediction-prob-under">예측 확률 ' + predProb.toFixed(1) + '%</div>' +
-                        '<div class="pred-round">' + displayRound3(predictedRoundFull) + '회</div>' +
+                        '<div class="pred-round">' + displayRound(predictedRoundFull) + '회</div>' +
                         u35WarningBlock +
                         '</div>');
                     if (pickContainer) pickContainer.innerHTML = leftBlock;
@@ -3851,7 +3859,7 @@ RESULTS_HTML = '''
                         if (rev.length === 0) {
                             streakTableBlock = '<div class="prediction-streak-line">최근 100회 기준 · <span class="streak-now">' + streakLine100 + '</span></div>';
                         } else {
-                            const headerCells = rev.map(function(h) { return '<th>' + displayRound3(h.round) + '</th>'; }).join('');
+                            const headerCells = rev.map(function(h) { return '<th>' + displayRound(h.round) + '</th>'; }).join('');
                             const rowProb = rev.map(function(h) { return '<td>' + (h.probability != null ? Number(h.probability).toFixed(1) + '%' : '-') + '</td>'; }).join('');
                             const rowPick = rev.map(function(h) {
                                 const pickColor = h.pickColor || h.pick_color;
@@ -3985,7 +3993,8 @@ RESULTS_HTML = '''
                     var formulaCollapseEmpty = document.getElementById('formula-collapse');
                     if (formulaCollapseEmpty) formulaCollapseEmpty.style.display = 'none';
                 }
-                // 이전회차는 위에서 이미 적용 (예외 시에도 현재 회차 표시 보장)
+                // 요청 완료 시점에만 갱신 → 다음 폴링이 완료 후 2.2초 뒤에만 실행 (pending 폭증 방지)
+                lastResultsUpdate = Date.now();
                 } catch (renderErr) {
                     if (statusEl) statusEl.textContent = '표시 오류 - 새로고침 해 주세요';
                     console.error('표시 오류:', renderErr);
@@ -4368,7 +4377,7 @@ RESULTS_HTML = '''
                     const h = usedHist[i];
                     const bet = (h && typeof h.betAmount === 'number' ? h.betAmount : 0) || (h && parseInt(h.betAmount, 10)) || 0;
                     if (!h || (typeof h.predicted === 'undefined' && typeof h.actual === 'undefined')) continue;
-                    const roundStr = h.round != null ? String(h.round).slice(-3) : '-';
+                    const roundStr = h.round != null ? String(h.round) : '-';
                     if (bet <= 0) { rows.push({ roundStr: roundStr, pick: '-', pickClass: '', result: '-', resultClass: '', outcome: '－', betAmount: '-', profit: '-' }); continue; }
                     const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
                     const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
@@ -4383,7 +4392,7 @@ RESULTS_HTML = '''
                 for (let i = usedHist.length - 1; i >= 0; i--) {
                     const h = usedHist[i];
                     if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
-                    const roundStr = h.round != null ? String(h.round).slice(-3) : '-';
+                    const roundStr = h.round != null ? String(h.round) : '-';
                     const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
                     const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
                     const pickVal = h.predicted === '정' ? '정' : '꺽';
@@ -4691,12 +4700,7 @@ RESULTS_HTML = '''
                             
                             if (roundChanged || roundEnded || roundStarted) {
                                 console.log('라운드 변경 감지:', { roundChanged, roundEnded, roundStarted, prevRound, newRound: timerData.round, prevElapsed, newElapsed: data.elapsed });
-                                // 즉시 결과 로드 (승리/실패 결과 빨리 표시)
-                                    loadResults();
-                                    lastResultsUpdate = Date.now();
-                                [80, 200, 350, 550, 800, 1100].forEach(function(ms) {
-                                    setTimeout(function() { loadResults(); lastResultsUpdate = Date.now(); }, ms);
-                                });
+                                if (now - lastResultsUpdate > 800) { loadResults(); lastResultsUpdate = now; }
                             }
                             // updateBettingInfo는 별도로 실행하므로 여기서 제거
                         }
@@ -4717,17 +4721,14 @@ RESULTS_HTML = '''
                     timeElement.classList.add('warning');
                 }
                 
-                // 타이머가 거의 0이 되면 경기 결과 즉시·반복 새로고침 (승리/실패 결과 빨리 표시)
-                if (remaining <= 1.5 && now - lastResultsUpdate > 100) {
+                // 타이머가 거의 0이 되면 결과 한 번만 요청 (반복 호출로 pending 폭증 방지)
+                if (remaining <= 1.5 && now - lastResultsUpdate > 1000) {
                     loadResults();
                     lastResultsUpdate = now;
                 }
-                if (remaining <= 0 && now - lastResultsUpdate > 50) {
-                        loadResults();
+                if (remaining <= 0 && now - lastResultsUpdate > 1000) {
+                    loadResults();
                     lastResultsUpdate = now;
-                    [100, 200, 350, 500, 700, 950, 1200].forEach(function(ms) {
-                        setTimeout(function() { loadResults(); lastResultsUpdate = Date.now(); }, ms);
-                    });
                 }
             } catch (error) {
                 console.error('타이머 업데이트 오류:', error);
@@ -4754,14 +4755,13 @@ RESULTS_HTML = '''
         
         initialLoad();
         
-        // 예측픽·결과 나오면 바로 반영 (150ms 폴링, 결과 있으면 120ms마다 요청)
+        // 결과 폴링: 한 번에 하나만 요청, 간격 넉넉히 (서버 부하·pending 폭증 방지)
         setInterval(() => {
-            const interval = allResults.length === 0 ? 200 : 120;
+            const interval = allResults.length === 0 ? 800 : 2200;
             if (Date.now() - lastResultsUpdate > interval) {
                 loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
-                lastResultsUpdate = Date.now();
             }
-        }, 150);
+        }, 500);
         
         // 계산기 실행 중일 때 서버 상태 주기적으로 가져와 UI 실시간 반영 (멈춰 보이는 현상 방지)
         setInterval(() => {
@@ -4790,6 +4790,10 @@ def _build_results_payload_db_only(hours=1):
             return None
         results = get_recent_results(hours=hours)
         results = _sort_results_newest_first(results)
+        # 응답 크기·처리 시간 제한 (760+건 → 300건, 먹통·pending 방지)
+        RESULTS_PAYLOAD_LIMIT = 300
+        if len(results) > RESULTS_PAYLOAD_LIMIT:
+            results = results[:RESULTS_PAYLOAD_LIMIT]
         ph = get_prediction_history(100)
         server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
         blended = _blended_win_rate(ph)
