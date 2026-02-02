@@ -22,8 +22,9 @@
 ## 5. 환경 변수
 - **Variables** 탭에서 `DATABASE_URL` 등 필요한 환경 변수가 설정되어 있는지 확인 (`.env.example` 참고)
 
-## 6. 루트 디렉터리
-- 이 저장소는 **루트에** `app.py`, `Procfile`, `requirements.txt` 가 있음. **Root Directory**는 비워 두거나 `/` 로 두면 됨 (서브폴더가 아님).
+## 6. 루트 디렉터리 (중요)
+- 이 저장소는 **서브폴더** `token-hilo-analyzer/` 안에 `app.py`, `Procfile`, `requirements.txt` 가 있음.
+- **Settings** → **Root Directory** 를 **`token-hilo-analyzer`** 로 설정해야 함. (비워 두면 빌드/실행 실패)
 
 ---
 
