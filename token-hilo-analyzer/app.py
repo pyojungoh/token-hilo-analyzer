@@ -41,6 +41,9 @@ except ImportError:
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
     SCHEDULER_AVAILABLE = True
+    import logging
+    logging.getLogger('apscheduler.scheduler').setLevel(logging.WARNING)
+    logging.getLogger('apscheduler.executors.default').setLevel(logging.WARNING)
 except ImportError:
     SCHEDULER_AVAILABLE = False
 
@@ -53,6 +56,16 @@ DATA_PATH = ''
 TIMEOUT = int(os.getenv('TIMEOUT', '10'))
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))
 DATABASE_URL = os.getenv('DATABASE_URL', None)
+
+# 반복 로그 억제용 (키 -> 마지막 출력 시각)
+_log_throttle_last = {}
+
+def _log_throttle(key, interval_sec, message):
+    """같은 key로 interval_sec 초에 한 번만 출력."""
+    now = time.time()
+    if key not in _log_throttle_last or (now - _log_throttle_last[key]) >= interval_sec:
+        _log_throttle_last[key] = now
+        print(message)
 
 # 데이터베이스 연결 및 초기화
 def init_database():
@@ -1016,7 +1029,7 @@ def calculate_and_save_color_matches(results):
         conn.close()
         
         if saved_count > 0:
-            print(f"[✅] 정/꺽 결과 {saved_count}개 저장 완료")
+            _log_throttle('color_matches', 5.0, f"[✅] 정/꺽 결과 {saved_count}개 저장 완료")
     except Exception as e:
         print(f"[❌ 오류] 정/꺽 결과 계산 실패: {str(e)[:200]}")
         try:
@@ -1467,7 +1480,7 @@ def load_results_data(base_url=None):
                             if save_game_result(game_data):
                                 saved_count += 1
                         if saved_count > 0:
-                            print(f"[💾] 데이터베이스에 {saved_count}개 결과 저장 완료")
+                            _log_throttle('db_save', 5.0, f"[💾] 데이터베이스에 {saved_count}개 결과 저장 완료")
                         if len(results) >= 16:
                             calculate_and_save_color_matches(results)
                     return results
@@ -3000,17 +3013,13 @@ RESULTS_HTML = '''
                         return gb.localeCompare(ga);  // 문자열이면 역순
                     });
                 }
-                // 결과 병합: 최신 회차가 앞으로만 진행. 같은 최신이면 개수가 늘 때만 allResults 교체 (뒤로 가기 방지)
+                // 결과 병합: 서버에서 받은 newResults와 기존 oldResults를 합쳐 merged 구성 후, 유효한 merged가 있으면 allResults 갱신 (화면 먹통 방지)
                 let resultsUpdated = false;
                 if (newResults.length > 0) {
                     const newGameIDs = new Set(newResults.map(r => String(r.gameID != null && r.gameID !== '' ? r.gameID : '')).filter(id => id !== ''));
                     const oldResults = allResults.filter(r => !newGameIDs.has(String(r.gameID != null && r.gameID !== '' ? r.gameID : '')));
                     const merged = sortResultsNewestFirst([...newResults, ...oldResults].slice(0, 150));
-                    const prevLatest = allResults.length > 0 ? (parseInt(String(allResults[0].gameID || '0'), 10) || 0) : 0;
-                    const newLatest = merged.length > 0 ? (parseInt(String(merged[0].gameID || '0'), 10) || 0) : 0;
-                    const strictlyNewer = newLatest > prevLatest;
-                    const sameRoundMoreOnly = (newLatest === prevLatest && merged.length > allResults.length);
-                    if (merged.length > 0 && (strictlyNewer || sameRoundMoreOnly)) {
+                    if (merged.length > 0) {
                         allResults = merged;
                     }
                     // 서버에서 결과를 받았으면 항상 DOM 갱신 (성공/실패·결과값 박스가 움직이도록)
@@ -4801,7 +4810,7 @@ def _build_results_payload():
                         if save_game_result(game_data):
                             saved_count += 1
                     if saved_count > 0:
-                        print(f"[💾] 최신 데이터 {saved_count}개 저장 완료")
+                        _log_throttle('latest_save', 5.0, f"[💾] 최신 데이터 {saved_count}개 저장 완료")
                 except Exception as e:
                     print(f"[경고] 최신 데이터 저장 실패: {str(e)[:100]}")
             
