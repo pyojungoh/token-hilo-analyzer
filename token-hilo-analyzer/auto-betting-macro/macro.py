@@ -22,7 +22,7 @@ try:
         QCheckBox, QHeaderView, QComboBox, QSpinBox,
         QMenuBar, QMenu, QAction, QFileDialog, QDialog, QPlainTextEdit,
     )
-    from PyQt5.QtCore import QUrl, Qt, pyqtSlot, QEvent, QTimer
+    from PyQt5.QtCore import QUrl, Qt, pyqtSlot, QEvent, QTimer, pyqtSignal
     from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage
     from PyQt5.QtGui import QFont, QColor, QBrush
     HAS_PYQT = True
@@ -238,6 +238,39 @@ def _cell_item(text, bg_color=None, align_center=True):
         item.setBackground(QBrush(QColor(bg_color)))
         item.setForeground(QColor("#ffffff"))
     return item
+
+
+# "보유 금액 없음" 등 사이트 알림 문구 패턴 (포함 여부로 판단)
+INSUFFICIENT_FUNDS_KEYWORDS = ("보유", "금액", "없습니다")
+
+
+def _is_insufficient_funds_alert(message):
+    """알림 메시지가 '보유 금액 없음' 유형인지 판별."""
+    if not message or not isinstance(message, str):
+        return False
+    msg = message.strip()
+    return all(kw in msg for kw in INSUFFICIENT_FUNDS_KEYWORDS)
+
+
+class MacroWebEnginePage(QWebEnginePage):
+    """JavaScript alert/confirm 가로채기: 보유 금액 없음 시 배팅 중지 신호."""
+    insufficient_funds = pyqtSignal()
+
+    def javaScriptAlert(self, securityOrigin, msg):
+        if _is_insufficient_funds_alert(msg):
+            self.insufficient_funds.emit()
+        # 기본 다이얼로그 띄우지 않음 → 알림 수락(닫기) 처리
+
+    def javaScriptConfirm(self, securityOrigin, msg):
+        if _is_insufficient_funds_alert(msg):
+            self.insufficient_funds.emit()
+        # Confirm은 True 반환 = OK 처리
+        return True
+
+    def javaScriptPrompt(self, securityOrigin, msg, defaultValue):
+        if _is_insufficient_funds_alert(msg):
+            self.insufficient_funds.emit()
+        return True, defaultValue
 
 
 class MacroWindow(QMainWindow):
@@ -521,6 +554,11 @@ class MacroWindow(QMainWindow):
         self.web.setMinimumSize(200, 200)
         self.web.installEventFilter(self)
         self.web.loadFinished.connect(self._on_page_loaded_mute)
+        # JavaScript 알림(보유 금액 없음 등) 가로채기 → 배팅 중지
+        _profile = self.web.page().profile() if self.web.page() else None
+        self._web_page = MacroWebEnginePage(_profile, self.web)
+        self._web_page.insufficient_funds.connect(self._on_insufficient_funds)
+        self.web.setPage(self._web_page)
         layout.addWidget(self.web, stretch=1)
 
         self._timer = QTimer(self)
@@ -1297,6 +1335,21 @@ class MacroWindow(QMainWindow):
             self.set_status(f"마지막: {pick_color} 회차")
         except Exception as e:
             self.log(f"[클릭 실패] {pick_color} - {e}")
+
+    @pyqtSlot()
+    def _on_insufficient_funds(self):
+        """사이트에서 '보유 금액 없음' 알림이 뜬 경우: 알림은 이미 닫힘, 배팅 중지."""
+        if not self.running:
+            return
+        self.running = False
+        if getattr(self, "_elapsed_timer", None):
+            self._elapsed_timer.stop()
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self._set_settings_locked(False)
+        self.set_status("보유 금액 없음으로 중지")
+        self.log("[자동 중지] 카지노/슬롯 '보유 금액 없음' 알림 감지 → 배팅 중지. 잔액 확인 후 다시 시작하세요.")
+        self.update_queue.put(("auto_save_log", None))
 
     @pyqtSlot()
     def _on_stop(self):

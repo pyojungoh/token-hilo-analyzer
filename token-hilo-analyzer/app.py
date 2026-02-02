@@ -637,7 +637,8 @@ def get_prediction_history(limit=30):
                 o['rate_100'] = float(r['rate_100'])
             pick_color = str(r.get('pick_color') or '').strip()
             if pick_color:
-                o['pickColor'] = pick_color
+                # API·프론트 일관성: 항상 빨강/검정으로 반환 (RED/BLACK 혼용 방지)
+                o['pickColor'] = '빨강' if pick_color.upper() in ('RED', '빨강') else '검정' if pick_color.upper() in ('BLACK', '검정') else pick_color
                 pc = 'RED' if pick_color.upper() in ('RED', '빨강') else 'BLACK' if pick_color.upper() in ('BLACK', '검정') else None
                 raw = str(r.get('actual') or '').strip()
                 if raw == 'joker':
@@ -2385,8 +2386,8 @@ RESULTS_HTML = '''
         .calc-round-table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
         .calc-round-table th, .calc-round-table td { padding: 4px 6px; border: 1px solid #444; text-align: center; }
         .calc-round-table th { background: #333; color: #81c784; }
-        .calc-round-table td.pick-jung { background: #b71c1c; color: #fff; }
-        .calc-round-table td.pick-kkuk { background: #111; color: #fff; }
+        .calc-round-table td.pick-jung, .calc-round-table td.pick-red { background: #b71c1c; color: #fff; }
+        .calc-round-table td.pick-kkuk, .calc-round-table td.pick-black { background: #111; color: #fff; }
         .calc-round-table .win { color: #ffeb3b; font-weight: 600; }
         .calc-round-table .lose { color: #c62828; font-weight: 500; }
         .calc-round-table .joker { color: #64b5f6; }
@@ -2755,6 +2756,18 @@ RESULTS_HTML = '''
             if (pickColor) body.pickColor = pickColor;
             fetch('/api/prediction-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(function() {});
         }
+        // 배팅 색상 통일: RED/빨강 → 빨강, BLACK/검정 → 검정 (표시·저장 일관성)
+        function normalizePickColor(pc) {
+            if (pc == null || pc === '') return '';
+            var s = String(pc).trim();
+            if (s.toUpperCase() === 'RED' || s === '빨강') return '빨강';
+            if (s.toUpperCase() === 'BLACK' || s === '검정') return '검정';
+            return s;
+        }
+        function pickColorToClass(pc) {
+            var n = normalizePickColor(pc);
+            return n === '빨강' ? 'pick-red' : (n === '검정' ? 'pick-black' : '');
+        }
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         var lastServerPrediction = null;  // 서버 예측 (있으면 표시·pending 동기화용)
         var lastWarningU35 = false;       // U자+줄 3~5 구간 감지 시 서버가 보낸 경고
@@ -3068,7 +3081,8 @@ RESULTS_HTML = '''
                     lastServerPrediction = (sp && (sp.value === '정' || sp.value === '꺽')) ? sp : null;
                     lastWarningU35 = !!(lastServerPrediction && sp && sp.warning_u35);
                     if (lastServerPrediction) {
-                        lastPrediction = { value: lastServerPrediction.value, round: lastServerPrediction.round, prob: lastServerPrediction.prob != null ? lastServerPrediction.prob : 0, color: lastServerPrediction.color || null };
+                        var normColor = normalizePickColor(lastServerPrediction.color) || lastServerPrediction.color || null;
+                        lastPrediction = { value: lastServerPrediction.value, round: lastServerPrediction.round, prob: lastServerPrediction.prob != null ? lastServerPrediction.prob : 0, color: normColor };
                     }
                     lastResultsUpdate = Date.now();  // 갱신 완료 시점에 폴링 간격 리셋
                 }
@@ -3380,7 +3394,10 @@ RESULTS_HTML = '''
                                 var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
                                 if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
                                 if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
-                                calcState[id].history.push({ predicted: pred, actual: 'joker', round: lastPrediction.round });
+                                var betColor = normalizePickColor(lastPrediction.color);
+                                if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                calcState[id].history.push({ predicted: pred, actual: 'joker', round: lastPrediction.round, pickColor: betColor || null });
                             });
                             saveCalcStateToServer();
                             savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, 'joker', lastPrediction.prob, lastPrediction.color);
@@ -3400,7 +3417,10 @@ RESULTS_HTML = '''
                                 var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
                                 if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
                                 if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
-                                calcState[id].history.push({ predicted: pred, actual: actual, round: lastPrediction.round });
+                                var betColorActual = normalizePickColor(lastPrediction.color);
+                                if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                calcState[id].history.push({ predicted: pred, actual: actual, round: lastPrediction.round, pickColor: betColorActual || null });
                                 updateCalcSummary(id);
                                 updateCalcDetail(id);
                                 var targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
@@ -3775,11 +3795,7 @@ RESULTS_HTML = '''
                     if (shouldShowLoseEffect) lastLoseEffectRound = lastEntry.round;
                     var resultBarHtml = '';
                     if (lastEntry && lastEntry.actual !== 'joker') {
-                        var lastPickColor = (lastEntry.pickColor || lastEntry.pick_color || '').toString();
-                        if (lastPickColor === 'RED') lastPickColor = '빨강';
-                        else if (lastPickColor === 'BLACK') lastPickColor = '검정';
-                        else if (!lastPickColor && lastEntry.predicted) lastPickColor = lastEntry.predicted === '정' ? '빨강' : '검정';
-                        else lastPickColor = lastPickColor || '-';
+                        var lastPickColor = normalizePickColor(lastEntry.pickColor || lastEntry.pick_color) || (lastEntry.predicted === '정' ? '빨강' : lastEntry.predicted === '꺽' ? '검정' : '') || '-';
                         var resultBarClass = lastIsWin ? 'pick-result-bar result-win' : 'pick-result-bar result-lose';
                         var resultBarText = displayRound(lastEntry.round) + '회 ' + (lastIsWin ? '성공' : '실패') + ' (' + (lastEntry.predicted || '-') + ' / ' + lastPickColor + ')';
                         resultBarHtml = '<div class="' + resultBarClass + '">' + resultBarText + '</div>';
@@ -3845,8 +3861,7 @@ RESULTS_HTML = '''
                             const headerCells = rev.map(function(h) { return '<th>' + displayRound(h.round) + '</th>'; }).join('');
                             const rowProb = rev.map(function(h) { return '<td>' + (h.probability != null ? Number(h.probability).toFixed(1) + '%' : '-') + '</td>'; }).join('');
                             const rowPick = rev.map(function(h) {
-                                const pickColor = h.pickColor || h.pick_color;
-                                const c = pickColor === '빨강' ? 'pick-red' : (pickColor === '검정' ? 'pick-black' : '');
+                                const c = pickColorToClass(h.pickColor || h.pick_color);
                                 return '<td class="' + c + '">' + (h.predicted != null ? h.predicted : '-') + '</td>';
                             }).join('');
                             const rowOutcome = rev.map(function(h) {
@@ -4128,7 +4143,8 @@ RESULTS_HTML = '''
                     if (!bettingCardEl || !predictionCardEl) return;
                     if (state.running && lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) {
                         var predictionText = lastPrediction.value;
-                        var predictionIsRed = (lastPrediction.color === '빨강' || lastPrediction.color === '검정') ? (lastPrediction.color === '빨강') : (predictionText === '정');
+                        var predColorNorm = normalizePickColor(lastPrediction.color);
+                        var predictionIsRed = (predColorNorm === '빨강' || predColorNorm === '검정') ? (predColorNorm === '빨강') : (predictionText === '정');
                         var bettingText = predictionText;
                         var bettingIsRed = predictionIsRed;
                         const rev = !!(calcState[id] && calcState[id].reverse);
@@ -4281,7 +4297,7 @@ RESULTS_HTML = '''
                     const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
                     const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
                     const pickVal = h.predicted === '정' ? '정' : '꺽';
-                    const pickClass = pickVal === '정' ? 'pick-jung' : 'pick-kkuk';
+                    const pickClass = pickColorToClass(h.pickColor || h.pick_color) || (pickVal === '정' ? 'pick-jung' : 'pick-kkuk');
                     const resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
                     const betStr = betAmounts[i] != null ? betAmounts[i].toLocaleString() : '-';
                     const profitVal = profits[i] != null ? profits[i] : '-';
@@ -5083,6 +5099,10 @@ def api_save_prediction_history():
             return jsonify({'ok': False, 'error': 'round, predicted, actual required'}), 400
         probability = data.get('probability')
         pick_color = data.get('pickColor') or data.get('pick_color')
+        if pick_color:
+            s = str(pick_color).strip().upper()
+            if s in ('RED', '빨강'): pick_color = '빨강'
+            elif s in ('BLACK', '검정'): pick_color = '검정'
         ok = save_prediction_record(int(round_num), str(predicted), str(actual), probability=probability, pick_color=pick_color)
         return jsonify({'ok': ok}), 200
     except Exception as e:
