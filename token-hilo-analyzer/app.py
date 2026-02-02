@@ -3039,22 +3039,14 @@ RESULTS_HTML = '''
                         return gb.localeCompare(ga);  // 문자열이면 역순
                     });
                 }
-                // 결과 병합: 서버가 많은 결과를 보낼 때(전체 목록)는 그대로 최신순 정렬해 전체 교체 → 현재 회차가 화면에 반영되도록
+                // 서버에서 결과가 오면 무조건 전체 교체. 병합 시 과거 데이터가 남아 최신 회차가 안 나오는 문제 방지
                 let resultsUpdated = false;
                 if (newResults.length > 0) {
-                    const FULL_REPLACE_THRESHOLD = 80;  // 서버가 80개 이상 보내면 전체 교체(예전 데이터 고정 방지)
-                    if (newResults.length >= FULL_REPLACE_THRESHOLD) {
-                        allResults = sortResultsNewestFirst(newResults).slice(0, 300);
-                    } else {
-                        const newGameIDs = new Set(newResults.map(r => String(r.gameID != null && r.gameID !== '' ? r.gameID : '')).filter(id => id !== ''));
-                        const oldResults = allResults.filter(r => !newGameIDs.has(String(r.gameID != null && r.gameID !== '' ? r.gameID : '')));
-                        const merged = sortResultsNewestFirst([...newResults, ...oldResults].slice(0, 150));
-                        if (merged.length > 0) allResults = merged;
-                    }
+                    allResults = sortResultsNewestFirst(newResults).slice(0, 300);
                     resultsUpdated = true;
                 } else {
                     if (allResults.length === 0) {
-                        allResults = sortResultsNewestFirst(newResults);
+                        allResults = [];
                         resultsUpdated = true;
                     } else {
                         allResults = sortResultsNewestFirst(allResults);
@@ -3070,6 +3062,7 @@ RESULTS_HTML = '''
                     if (lastServerPrediction) {
                         lastPrediction = { value: lastServerPrediction.value, round: lastServerPrediction.round, prob: lastServerPrediction.prob != null ? lastServerPrediction.prob : 0, color: lastServerPrediction.color || null };
                     }
+                    lastResultsUpdate = Date.now();  // 갱신 완료 시점에 폴링 간격 리셋
                 }
                 
                 // resultsUpdated가 false면 DOM 갱신 생략 (데이터 없을 때만)
@@ -3993,8 +3986,6 @@ RESULTS_HTML = '''
                     var formulaCollapseEmpty = document.getElementById('formula-collapse');
                     if (formulaCollapseEmpty) formulaCollapseEmpty.style.display = 'none';
                 }
-                // 요청 완료 시점에만 갱신 → 다음 폴링이 완료 후 2.2초 뒤에만 실행 (pending 폭증 방지)
-                lastResultsUpdate = Date.now();
                 } catch (renderErr) {
                     if (statusEl) statusEl.textContent = '표시 오류 - 새로고침 해 주세요';
                     console.error('표시 오류:', renderErr);
@@ -5034,13 +5025,13 @@ def get_results():
         global results_cache, last_update_time
         result_source = request.args.get('result_source', '').strip()
 
-        # 매 요청마다 DB에서 응답 생성 (Gunicorn 다중 워커에서 캐시 비어 있는 워커로 가도 빈 응답 방지)
-        payload = _build_results_payload_db_only(hours=5)
+        # 매 요청마다 DB에서 응답 생성. 24h 사용해 최신 회차 누락 방지 (타임존·커밋 타이밍 이슈 시 5h만 쓰면 과거만 옴)
+        payload = _build_results_payload_db_only(hours=24)
         if payload and payload.get('results'):
             results_cache = payload
             last_update_time = time.time() * 1000
-        else:
-            payload = _build_results_payload_db_only(hours=24) or payload
+        if not payload or not payload.get('results'):
+            payload = _build_results_payload_db_only(hours=72) or payload
             if payload and payload.get('results'):
                 results_cache = payload
                 last_update_time = time.time() * 1000
