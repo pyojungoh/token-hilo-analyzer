@@ -2303,6 +2303,7 @@ RESULTS_HTML = '''
         .calc-current-card.calc-card-prediction { width: 22px; height: 18px; line-height: 18px; font-size: 0.75em; }
         .calc-current-card.card-jung { background: #b71c1c; }
         .calc-current-card.card-kkuk { background: #111; }
+        .calc-card-bet-amount { font-size: 0.85em; font-weight: 600; color: #81c784; margin-left: 6px; letter-spacing: 0.02em; min-width: 4.5em; text-align: right; }
         .calc-dropdown-header .calc-toggle { font-size: 0.8em; color: #888; }
         .calc-dropdown.collapsed .calc-dropdown-body { display: none !important; }
         .calc-dropdown:not(.collapsed) .calc-dropdown-header .calc-toggle { transform: rotate(180deg); }
@@ -2454,7 +2455,7 @@ RESULTS_HTML = '''
                             <span class="calc-title">계산기 1</span>
                             <span class="calc-status idle" id="calc-1-status">대기중</span>
                             <span class="calc-cards-wrap" id="calc-1-cards-wrap">
-                                <span class="calc-card-item"><span class="calc-card-label">배팅중</span><span class="calc-current-card calc-card-betting" id="calc-1-current-card"></span></span>
+                                <span class="calc-card-item"><span class="calc-card-label">배팅중</span><span class="calc-current-card calc-card-betting" id="calc-1-current-card"></span><span class="calc-card-bet-amount" id="calc-1-current-bet" aria-label="현재 배팅금액"></span></span>
                                 <span class="calc-card-item"><span class="calc-card-label">예측픽</span><span class="calc-current-card calc-card-prediction" id="calc-1-prediction-card"></span></span>
                             </span>
                             <div class="calc-summary" id="calc-1-summary">보유자산 - | 순익 - | 배팅중 -</div>
@@ -2466,8 +2467,9 @@ RESULTS_HTML = '''
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-1-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label></td></tr>
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="46" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
-                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option></select></label></td></tr>
+                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option><option value="ban">표마틴 반</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-1-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-1-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-1-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
+                                    <tr><td>찍어먹기</td><td><label><input type="checkbox" id="calc-1-teuk-eat"> 찍어먹기</label> <label>범위 <select id="calc-1-teuk-scope"><option value="top">초강승부만</option><option value="top2" selected>강승부까지</option></select></label> <span class="calc-teuk-hint" style="color:#888;font-size:0.8em">예측 확률 구간별 상위 구간 픽 그대로 배팅</span></td></tr>
                                 </table>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="1">실행</button>
@@ -2488,7 +2490,7 @@ RESULTS_HTML = '''
                             <span class="calc-title">계산기 2</span>
                             <span class="calc-status idle" id="calc-2-status">대기중</span>
                             <span class="calc-cards-wrap" id="calc-2-cards-wrap">
-                                <span class="calc-card-item"><span class="calc-card-label">배팅중</span><span class="calc-current-card calc-card-betting" id="calc-2-current-card"></span></span>
+                                <span class="calc-card-item"><span class="calc-card-label">배팅중</span><span class="calc-current-card calc-card-betting" id="calc-2-current-card"></span><span class="calc-card-bet-amount" id="calc-2-current-bet" aria-label="현재 배팅금액"></span></span>
                                 <span class="calc-card-item"><span class="calc-card-label">예측픽</span><span class="calc-current-card calc-card-prediction" id="calc-2-prediction-card"></span></span>
                             </span>
                             <div class="calc-summary" id="calc-2-summary">보유자산 - | 순익 - | 배팅중 -</div>
@@ -2500,8 +2502,9 @@ RESULTS_HTML = '''
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-2-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label></td></tr>
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="46" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
-                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option></select></label></td></tr>
+                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option><option value="ban">표마틴 반</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-2-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-2-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-2-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
+                                    <tr><td>찍어먹기</td><td><label><input type="checkbox" id="calc-2-teuk-eat"> 찍어먹기</label> <label>범위 <select id="calc-2-teuk-scope"><option value="top">초강승부만</option><option value="top2" selected>강승부까지</option></select></label></td></tr>
                                 </table>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="2">실행</button>
@@ -2522,7 +2525,7 @@ RESULTS_HTML = '''
                             <span class="calc-title">계산기 3</span>
                             <span class="calc-status idle" id="calc-3-status">대기중</span>
                             <span class="calc-cards-wrap" id="calc-3-cards-wrap">
-                                <span class="calc-card-item"><span class="calc-card-label">배팅중</span><span class="calc-current-card calc-card-betting" id="calc-3-current-card"></span></span>
+                                <span class="calc-card-item"><span class="calc-card-label">배팅중</span><span class="calc-current-card calc-card-betting" id="calc-3-current-card"></span><span class="calc-card-bet-amount" id="calc-3-current-bet" aria-label="현재 배팅금액"></span></span>
                                 <span class="calc-card-item"><span class="calc-card-label">예측픽</span><span class="calc-current-card calc-card-prediction" id="calc-3-prediction-card"></span></span>
                             </span>
                             <div class="calc-summary" id="calc-3-summary">보유자산 - | 순익 - | 배팅중 -</div>
@@ -2534,8 +2537,9 @@ RESULTS_HTML = '''
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-3-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label></td></tr>
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="46" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
-                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option></select></label></td></tr>
+                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option><option value="ban">표마틴 반</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-3-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-3-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-3-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
+                                    <tr><td>찍어먹기</td><td><label><input type="checkbox" id="calc-3-teuk-eat"> 찍어먹기</label> <label>범위 <select id="calc-3-teuk-scope"><option value="top">초강승부만</option><option value="top2" selected>강승부까지</option></select></label></td></tr>
                                 </table>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="3">실행</button>
@@ -2712,6 +2716,7 @@ RESULTS_HTML = '''
         const CALC_STATE_BACKUP_KEY = 'tokenHiloCalcStateBackup';
         const calcState = {};
         var TABLE_MARTIN_PYO = [10000, 15000, 25000, 40000, 70000, 120000, 200000, 400000, 120000];
+        var TABLE_MARTIN_BAN = [5000, 7500, 12500, 20000, 35000, 60000, 100000, 200000, 60000];
         CALC_IDS.forEach(id => {
             calcState[id] = {
                 running: false,
@@ -2731,7 +2736,10 @@ RESULTS_HTML = '''
                 timerId: null,
                 maxWinStreakEver: 0,
                 maxLoseStreakEver: 0,
-                first_bet_round: 0
+                first_bet_round: 0,
+                teuk_eat: false,
+                teuk_scope: 'top2',
+                teuk_martingale_step: 0
             };
         });
         let lastServerTimeSec = 0;  // /api/current-status 등에서 갱신
@@ -2764,6 +2772,9 @@ RESULTS_HTML = '''
                     martingale_type: (martingaleTypeEl && martingaleTypeEl.value) || 'pyo',
                     target_enabled: !!(document.getElementById('calc-' + id + '-target-enabled') && document.getElementById('calc-' + id + '-target-enabled').checked),
                     target_amount: Math.max(0, parseInt(document.getElementById('calc-' + id + '-target-amount')?.value, 10) || 0),
+                    teuk_eat: !!(document.getElementById('calc-' + id + '-teuk-eat') && document.getElementById('calc-' + id + '-teuk-eat').checked),
+                    teuk_scope: (document.getElementById('calc-' + id + '-teuk-scope') && document.getElementById('calc-' + id + '-teuk-scope').value) || 'top2',
+                    teuk_martingale_step: calcState[id].teuk_martingale_step || 0,
                     timer_completed: !!calcState[id].timer_completed,
                     max_win_streak_ever: calcState[id].maxWinStreakEver || 0,
                     max_lose_streak_ever: calcState[id].maxLoseStreakEver || 0,
@@ -2796,15 +2807,19 @@ RESULTS_HTML = '''
                 calcState[id].pending_predicted = c.pending_predicted != null ? c.pending_predicted : null;
                 calcState[id].pending_prob = c.pending_prob != null ? c.pending_prob : null;
                 calcState[id].pending_color = c.pending_color || null;
+                calcState[id].teuk_martingale_step = Math.max(0, parseInt(c.teuk_martingale_step, 10) || 0);
                 if (!fullRestore) return;
                 calcState[id].reverse = !!c.reverse;
                 calcState[id].win_rate_reverse = !!c.win_rate_reverse;
                 var thr = (typeof c.win_rate_threshold === 'number' && c.win_rate_threshold >= 0 && c.win_rate_threshold <= 100) ? c.win_rate_threshold : 46;
                 calcState[id].win_rate_threshold = thr;
                 calcState[id].martingale = !!c.martingale;
-                calcState[id].martingale_type = (c.martingale_type === 'pyo' ? 'pyo' : 'pyo');
+                calcState[id].martingale_type = (c.martingale_type === 'ban' ? 'ban' : 'pyo');
                 calcState[id].target_enabled = !!c.target_enabled;
                 calcState[id].target_amount = Math.max(0, parseInt(c.target_amount, 10) || 0);
+                calcState[id].teuk_eat = !!c.teuk_eat;
+                calcState[id].teuk_scope = (c.teuk_scope === 'top' ? 'top' : 'top2');
+                calcState[id].teuk_martingale_step = Math.max(0, parseInt(c.teuk_martingale_step, 10) || 0);
                 const durEl = document.getElementById('calc-' + id + '-duration');
                 const checkEl = document.getElementById('calc-' + id + '-duration-check');
                 const revEl = document.getElementById('calc-' + id + '-reverse');
@@ -2818,11 +2833,15 @@ RESULTS_HTML = '''
                 const martingaleEl = document.getElementById('calc-' + id + '-martingale');
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 if (martingaleEl) martingaleEl.checked = !!calcState[id].martingale;
-                if (martingaleTypeEl) martingaleTypeEl.value = calcState[id].martingale_type || 'pyo';
+                if (martingaleTypeEl) martingaleTypeEl.value = (calcState[id].martingale_type === 'ban' ? 'ban' : 'pyo');
                 const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
                 const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
                 if (targetEnabledEl) targetEnabledEl.checked = !!calcState[id].target_enabled;
                 if (targetAmountEl) targetAmountEl.value = String(calcState[id].target_amount || 0);
+                const teukEatEl = document.getElementById('calc-' + id + '-teuk-eat');
+                const teukScopeEl = document.getElementById('calc-' + id + '-teuk-scope');
+                if (teukEatEl) teukEatEl.checked = !!calcState[id].teuk_eat;
+                if (teukScopeEl) teukScopeEl.value = (calcState[id].teuk_scope === 'top' ? 'top' : 'top2');
             });
         }
         async function loadCalcStateFromServer(restoreUi) {
@@ -3319,7 +3338,12 @@ RESULTS_HTML = '''
                                 if (firstBetJoker > 0 && lastPrediction.round < firstBetJoker) return;
                                 const hasRound = calcState[id].history.some(function(h) { return h && h.round === lastPrediction.round; });
                                 if (hasRound) return;
-                                const rev = !!(calcState[id] && calcState[id].reverse);
+                                var teukEatJ = !!(calcState[id] && calcState[id].teuk_eat);
+                                var revJ = !!(calcState[id] && calcState[id].reverse);
+                                var martingaleElJ = document.getElementById('calc-' + id + '-martingale');
+                                var martingaleJ = !!(martingaleElJ && martingaleElJ.checked);
+                                if (teukEatJ && !revJ && !martingaleJ) return;
+                                const rev = revJ;
                                 var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
                                 const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
                                 var thrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
@@ -3333,20 +3357,40 @@ RESULTS_HTML = '''
                         } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
                             const actual = graphValues[0] ? '정' : '꺽';
                             predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: actual, probability: lastPrediction.prob != null ? lastPrediction.prob : null, pickColor: lastPrediction.color || null });
+                            var teukTop2 = [];
+                            try {
+                                var nonJ = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && h.actual !== 'joker' && h.probability != null; }) : [];
+                                var BUCKETS_T = [{ min: 50, max: 55 }, { min: 55, max: 60 }, { min: 60, max: 65 }, { min: 65, max: 70 }, { min: 70, max: 75 }, { min: 75, max: 80 }, { min: 80, max: 85 }, { min: 85, max: 90 }, { min: 90, max: 101 }];
+                                var bucketStatsT = BUCKETS_T.map(function(b) { var inB = nonJ.filter(function(h) { var p = Number(h.probability); return p >= b.min && p < b.max; }); var wins = inB.filter(function(h) { return h.predicted === h.actual; }).length; return { min: b.min, max: b.max, total: inB.length, wins: wins }; }).filter(function(s) { return s.total > 0; });
+                                var sortedT = bucketStatsT.slice().sort(function(a, b) { return (b.total ? 100 * b.wins / b.total : 0) - (a.total ? 100 * a.wins / a.total : 0); });
+                                teukTop2 = sortedT.slice(0, 2);
+                            } catch (et) {}
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
                                 const firstBetActual = calcState[id].first_bet_round || 0;
                                 if (firstBetActual > 0 && lastPrediction.round < firstBetActual) return;
                                 const hasRound = calcState[id].history.some(function(h) { return h && h.round === lastPrediction.round; });
                                 if (hasRound) return;
-                                const rev = !!(calcState[id] && calcState[id].reverse);
-                                var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
-                                const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
-                                var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
-                                var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
-                                if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
-                                if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
+                                var inTeuk = false;
+                                if (lastPrediction.prob != null && teukTop2.length > 0) { for (var qi = 0; qi < teukTop2.length; qi++) { if (lastPrediction.prob >= teukTop2[qi].min && lastPrediction.prob < teukTop2[qi].max) { inTeuk = true; break; } } }
+                                var teukEat = !!(calcState[id] && calcState[id].teuk_eat);
+                                var rev = !!(calcState[id] && calcState[id].reverse);
+                                var martingaleEl = document.getElementById('calc-' + id + '-martingale');
+                                var martingale = !!(martingaleEl && martingaleEl.checked);
+                                var teukOnly = teukEat && !rev && !martingale;
+                                if (teukOnly && !inTeuk) return;
+                                var pred;
+                                if (teukEat && inTeuk) pred = lastPrediction.value;
+                                else {
+                                    pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
+                                    const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
+                                    var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
+                                    var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
+                                    if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
+                                    if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
+                                }
                                 calcState[id].history.push({ predicted: pred, actual: actual, round: lastPrediction.round });
+                                if (teukOnly && inTeuk) { if (actual !== pred) calcState[id].teuk_martingale_step = (calcState[id].teuk_martingale_step || 0) + 1; else calcState[id].teuk_martingale_step = 0; }
                                 updateCalcSummary(id);
                                 updateCalcDetail(id);
                                 var targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
@@ -3711,6 +3755,13 @@ RESULTS_HTML = '''
                             var t = top2[ti];
                             if (predProb >= t.min && predProb < t.max) { pickInBucket = true; break; }
                         }
+                        var teukRank = 0;
+                        for (var ti = 0; ti < top2.length; ti++) {
+                            if (predProb >= top2[ti].min && predProb < top2[ti].max) { teukRank = ti + 1; break; }
+                        }
+                        try { window.__teukTopBucketRanges = top2; window.__teukPredProb = predProb; window.__teukPickInRank = teukRank; } catch (e) {}
+                    } else {
+                        try { window.__teukPickInRank = 0; window.__teukPredProb = null; window.__teukTopBucketRanges = []; } catch (e) {}
                     }
                     const lastEntry = validHist.length > 0 ? validHist[validHist.length - 1] : null;
                     const lastIsWin = lastEntry && lastEntry.actual !== 'joker' && lastEntry.predicted === lastEntry.actual;
@@ -3968,7 +4019,29 @@ RESULTS_HTML = '''
             const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
             const useMartingale = !!(martingaleEl && martingaleEl.checked);
             const martingaleType = (martingaleTypeEl && martingaleTypeEl.value) || 'pyo';
+            const martinTable = (martingaleType === 'ban') ? TABLE_MARTIN_BAN : TABLE_MARTIN_PYO;
             const hist = calcState[id].history || [];
+            const teukEat = !!(calcState[id] && calcState[id].teuk_eat);
+            const rev = !!(calcState[id] && calcState[id].reverse);
+            const teukOnly = teukEat && !rev && !useMartingale;
+            if (teukOnly && hist.length > 0) {
+                let cap = capIn, step = 0, wins = 0, losses = 0, maxWinStreak = 0, maxLoseStreak = 0, curWin = 0, curLose = 0;
+                for (let i = 0; i < hist.length; i++) {
+                    const h = hist[i];
+                    if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                    const bet = Math.min(baseIn * Math.pow(2, step), Math.floor(cap));
+                    if (cap < bet || cap <= 0) break;
+                    const isJoker = h.actual === 'joker';
+                    const isWin = !isJoker && h.predicted === h.actual;
+                    if (isJoker) { cap -= bet; step++; curWin = 0; curLose = 0; }
+                    else if (isWin) { cap += bet * (oddsIn - 1); step = 0; wins++; curWin++; curLose = 0; if (curWin > maxWinStreak) maxWinStreak = curWin; }
+                    else { cap -= bet; step++; losses++; curLose++; curWin = 0; if (curLose > maxLoseStreak) maxLoseStreak = curLose; }
+                }
+                const total = wins + losses;
+                const winRate = total > 0 ? (100 * wins / total).toFixed(1) : '-';
+                const currentBet = baseIn * Math.pow(2, step);
+                return { cap: Math.max(0, Math.floor(cap)), profit: cap - capIn, currentBet: Math.min(currentBet, Math.floor(cap)), wins, losses, bust: cap <= 0, maxWinStreak, maxLoseStreak, winRate, processedCount: hist.length };
+            }
             let cap = capIn, currentBet = baseIn, bust = false;
             let martingaleStep = 0;
             let wins = 0, losses = 0, maxWinStreak = 0, maxLoseStreak = 0, curWin = 0, curLose = 0;
@@ -3976,8 +4049,8 @@ RESULTS_HTML = '''
             for (let i = 0; i < hist.length; i++) {
                 const h = hist[i];
                 if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
-                if (useMartingale && martingaleType === 'pyo') {
-                    currentBet = TABLE_MARTIN_PYO[Math.min(martingaleStep, TABLE_MARTIN_PYO.length - 1)];
+                if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'ban')) {
+                    currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
                 }
                 const bet = Math.min(currentBet, Math.floor(cap));
                 if (cap < bet || cap <= 0) { bust = true; processedCount = i; break; }
@@ -3985,13 +4058,13 @@ RESULTS_HTML = '''
                 const isWin = !isJoker && h.predicted === h.actual;
                 if (isJoker) {
                     cap -= bet;
-                    if (useMartingale && martingaleType === 'pyo') martingaleStep = Math.min(martingaleStep + 1, TABLE_MARTIN_PYO.length - 1);
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'ban')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1);
                     else currentBet = Math.min(currentBet * 2, Math.floor(cap));
                     curWin = 0;
                     curLose = 0;
                 } else if (isWin) {
                     cap += bet * (oddsIn - 1);
-                    if (useMartingale && martingaleType === 'pyo') martingaleStep = 0;
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'ban')) martingaleStep = 0;
                     else currentBet = baseIn;
                     wins++;
                     curWin++;
@@ -3999,7 +4072,7 @@ RESULTS_HTML = '''
                     if (curWin > maxWinStreak) maxWinStreak = curWin;
                 } else {
                     cap -= bet;
-                    if (useMartingale && martingaleType === 'pyo') martingaleStep = Math.min(martingaleStep + 1, TABLE_MARTIN_PYO.length - 1);
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'ban')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1);
                     else currentBet = Math.min(currentBet * 2, Math.floor(cap));
                     losses++;
                     curLose++;
@@ -4009,8 +4082,8 @@ RESULTS_HTML = '''
                 processedCount = i + 1;
                 if (cap <= 0) { bust = true; break; }
             }
-            if (useMartingale && martingaleType === 'pyo') {
-                currentBet = bust ? 0 : TABLE_MARTIN_PYO[Math.min(martingaleStep, TABLE_MARTIN_PYO.length - 1)];
+            if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'ban')) {
+                currentBet = bust ? 0 : martinTable[Math.min(martingaleStep, martinTable.length - 1)];
             }
             if (calcState[id]) {
                 calcState[id].maxWinStreakEver = Math.max(calcState[id].maxWinStreakEver || 0, maxWinStreak);
@@ -4031,6 +4104,8 @@ RESULTS_HTML = '''
             if (!el) return;
             const state = calcState[id];
             if (!state) return;
+            const betAmountEl = document.getElementById('calc-' + id + '-current-bet');
+            if (betAmountEl && !state.running) betAmountEl.textContent = '-';
             el.className = 'calc-status';
             if (state.running) {
                 el.classList.add('running');
@@ -4051,12 +4126,22 @@ RESULTS_HTML = '''
             try {
                     const bettingCardEl = document.getElementById('calc-' + id + '-current-card');
                     const predictionCardEl = document.getElementById('calc-' + id + '-prediction-card');
+                    const betAmountEl = document.getElementById('calc-' + id + '-current-bet');
                     if (!bettingCardEl || !predictionCardEl) return;
                     if (state.running && lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) {
                         var predictionText = lastPrediction.value;
                         var predictionIsRed = (lastPrediction.color === '빨강' || lastPrediction.color === '검정') ? (lastPrediction.color === '빨강') : (predictionText === '정');
                         var bettingText = predictionText;
                         var bettingIsRed = predictionIsRed;
+                        var teukEat = !!(calcState[id] && calcState[id].teuk_eat);
+                        var teukScope = (calcState[id] && calcState[id].teuk_scope) || 'top2';
+                        var teukRank = 0;
+                        try { teukRank = window.__teukPickInRank || 0; } catch (e) {}
+                        var useTeuk = teukEat && teukRank && (teukScope === 'top' ? teukRank === 1 : teukRank >= 1);
+                        if (useTeuk) {
+                            bettingText = predictionText;
+                            bettingIsRed = (predictionText === '정');
+                        } else {
                         const rev = !!(calcState[id] && calcState[id].reverse);
                         if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                         var lowWinRate = false;
@@ -4080,15 +4165,21 @@ RESULTS_HTML = '''
                         } catch (e2) {}
                         const useWinRateRevCard = !!(calcState[id] && calcState[id].win_rate_reverse);
                         if (useWinRateRevCard && lowWinRate) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                        }
                         predictionCardEl.textContent = predictionText;
                         predictionCardEl.className = 'calc-current-card calc-card-prediction card-' + (predictionIsRed ? 'jung' : 'kkuk');
                         bettingCardEl.textContent = bettingText;
                         bettingCardEl.className = 'calc-current-card calc-card-betting card-' + (bettingIsRed ? 'jung' : 'kkuk');
+                        try {
+                            var r = getCalcResult(id);
+                            if (betAmountEl) betAmountEl.textContent = (r && r.currentBet > 0) ? r.currentBet.toLocaleString() + '원' : '-';
+                        } catch (e3) {}
                     } else {
                         bettingCardEl.textContent = '';
                         bettingCardEl.className = 'calc-current-card calc-card-betting';
                         predictionCardEl.textContent = '';
                         predictionCardEl.className = 'calc-current-card calc-card-prediction';
+                        if (betAmountEl) betAmountEl.textContent = '-';
                     }
                 } catch (cardErr) { console.warn('updateCalcStatus card', id, cardErr); }
             } catch (e) { console.warn('updateCalcStatus', id, e); }
@@ -4183,20 +4274,21 @@ RESULTS_HTML = '''
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 const useMartingale = !!(martingaleEl && martingaleEl.checked);
                 const martingaleType = (martingaleTypeEl && martingaleTypeEl.value) || 'pyo';
+                const martinTableDetail = (martingaleType === 'ban') ? TABLE_MARTIN_BAN : TABLE_MARTIN_PYO;
                 let cap = capIn, currentBet = baseIn, martingaleStep = 0;
                 for (let i = 0; i < usedHist.length; i++) {
                     const h = usedHist[i];
                     if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') { betAmounts[i] = null; profits[i] = null; continue; }
-                    if (useMartingale && martingaleType === 'pyo') currentBet = TABLE_MARTIN_PYO[Math.min(martingaleStep, TABLE_MARTIN_PYO.length - 1)];
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'ban')) currentBet = martinTableDetail[Math.min(martingaleStep, martinTableDetail.length - 1)];
                     const bet = Math.min(currentBet, Math.floor(cap));
                     if (cap < bet || cap <= 0) { betAmounts[i] = null; profits[i] = null; break; }
                     const isJoker = h.actual === 'joker';
                     const isWin = !isJoker && h.predicted === h.actual;
                     betAmounts[i] = bet;
                     profits[i] = isJoker ? -bet : (isWin ? Math.floor(bet * (oddsIn - 1)) : -bet);
-                    if (isJoker) { cap -= bet; if (useMartingale && martingaleType === 'pyo') martingaleStep = Math.min(martingaleStep + 1, TABLE_MARTIN_PYO.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
-                    else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && martingaleType === 'pyo') martingaleStep = 0; else currentBet = baseIn; }
-                    else { cap -= bet; if (useMartingale && martingaleType === 'pyo') martingaleStep = Math.min(martingaleStep + 1, TABLE_MARTIN_PYO.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
+                    if (isJoker) { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'ban')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
+                    else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'ban')) martingaleStep = 0; else currentBet = baseIn; }
+                    else { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'ban')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
                 }
             // 회차별 픽/결과/승패/배팅금액/수익 행 목록 (유효 항목만, 최신순 = 뒤에서부터)
             let rows = [];
@@ -4378,6 +4470,7 @@ RESULTS_HTML = '''
                 if (state.timerId) { clearInterval(state.timerId); state.timerId = null; }
                 state.history = [];
                 state.elapsed = 0;
+                state.teuk_martingale_step = 0;
                 saveCalcStateToServer();
                 updateCalcSummary(id);
                 updateCalcDetail(id);
@@ -4875,7 +4968,7 @@ def api_calc_state():
             if state is None:
                 state = {}
             # 계산기 1,2,3만 반환 (레거시 defense 제거 후 클라이언트 호환)
-            _default = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
+            _default = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'teuk_eat': False, 'teuk_scope': 'top2', 'teuk_martingale_step': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
             calcs = {}
             for cid in ('1', '2', '3'):
                 calcs[cid] = state[cid] if (cid in state and isinstance(state.get(cid), dict)) else dict(_default)
@@ -4908,6 +5001,9 @@ def api_calc_state():
                     'martingale_type': str(c.get('martingale_type') or 'pyo'),
                     'target_enabled': bool(c.get('target_enabled')),
                     'target_amount': max(0, int(c.get('target_amount') or 0)),
+                    'teuk_eat': bool(c.get('teuk_eat')),
+                    'teuk_scope': 'top' if c.get('teuk_scope') == 'top' else 'top2',
+                    'teuk_martingale_step': max(0, int(c.get('teuk_martingale_step') or 0)),
                     'max_win_streak_ever': int(c.get('max_win_streak_ever') or 0),
                     'max_lose_streak_ever': int(c.get('max_lose_streak_ever') or 0),
                     'first_bet_round': max(0, int(c.get('first_bet_round') or 0)),
@@ -4917,7 +5013,7 @@ def api_calc_state():
                     'pending_color': c.get('pending_color'),
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'teuk_eat': False, 'teuk_scope': 'top2', 'teuk_martingale_step': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
         save_calc_state(session_id, out)
         return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': out}), 200
     except Exception as e:
