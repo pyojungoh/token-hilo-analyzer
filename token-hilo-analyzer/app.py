@@ -14,6 +14,7 @@ import traceback
 import threading
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # .env 파일 로드 (DATABASE_URL 등)
 try:
@@ -1379,12 +1380,58 @@ def load_game_data():
         'timestamp': current_status_data.get('timestamp', datetime.now().isoformat())
     }
 
-# 외부 result.json 요청 시 타임아웃 (먹통 방지, 초 단위)
-RESULTS_FETCH_TIMEOUT = 5
+# 외부 result.json 요청 시 타임아웃 (병렬: 경로당 4초, 전체 6초)
+RESULTS_FETCH_TIMEOUT_PER_PATH = 4
+RESULTS_FETCH_OVERALL_TIMEOUT = 6
 RESULTS_FETCH_MAX_RETRIES = 1
 
+
+def _parse_results_json(data):
+    """response.json() 결과를 파싱해 results 리스트 반환. 실패 시 None."""
+    if not isinstance(data, list):
+        return None
+    results = []
+    for game in data:
+        try:
+            game_id = game.get('gameID', '')
+            result = game.get('result', '')
+            json_str = game.get('json', '{}')
+            if isinstance(json_str, str):
+                json_data = json.loads(json_str)
+            else:
+                json_data = json_str
+            red_val = json_data.get('red') or game.get('red', False)
+            black_val = json_data.get('black') or game.get('black', False)
+            results.append({
+                'gameID': str(game_id),
+                'result': result,
+                'hi': json_data.get('hi', False),
+                'lo': json_data.get('lo', False),
+                'red': red_val,
+                'black': black_val,
+                'jqka': json_data.get('jqka', False),
+                'joker': json_data.get('joker', False),
+                'hash': game.get('hash', ''),
+                'salt': game.get('salt', '')
+            })
+        except Exception:
+            continue
+    return results if results else None
+
+
+def _fetch_one_result_path(url_path, timeout_sec):
+    """단일 경로 result.json 요청. 반환: response 또는 None."""
+    url = f"{url_path}?t={int(time.time() * 1000)}"
+    return fetch_with_retry(
+        url,
+        max_retries=RESULTS_FETCH_MAX_RETRIES,
+        silent=True,
+        timeout_sec=timeout_sec,
+    )
+
+
 def load_results_data(base_url=None):
-    """경기 결과 데이터 로드 (result.json). base_url 없으면 BASE_URL 사용. 짧은 타임아웃으로 먹통 방지"""
+    """경기 결과 데이터 로드 (result.json). 여러 경로 병렬 요청해 먼저 성공한 결과 사용 → 회차 갱신."""
     base = (base_url or '').rstrip('/') or BASE_URL
     possible_paths = [
         f"{base}/frame/hilo/result.json",
@@ -1394,60 +1441,26 @@ def load_results_data(base_url=None):
         f"{base}/api/result.json",
         f"{base}/game/result.json",
     ]
-    for url_path in possible_paths:
-        try:
-            url = f"{url_path}?t={int(time.time() * 1000)}"
-            print(f"[결과 데이터 요청 시도] {url}")
-            response = fetch_with_retry(
-                url,
-                max_retries=RESULTS_FETCH_MAX_RETRIES,
-                silent=True,
-                timeout_sec=RESULTS_FETCH_TIMEOUT,
-            )
-            
-            if response:
-                print(f"[✅ 결과 데이터 성공] {url}")
+    executor = ThreadPoolExecutor(max_workers=min(6, len(possible_paths)))
+    try:
+        future_to_path = {
+            executor.submit(_fetch_one_result_path, p, RESULTS_FETCH_TIMEOUT_PER_PATH): p
+            for p in possible_paths
+        }
+        for future in as_completed(future_to_path, timeout=RESULTS_FETCH_OVERALL_TIMEOUT):
+            url_path = future_to_path[future]
+            try:
+                response = future.result()
+                if not response:
+                    continue
                 try:
                     data = response.json()
-                    print(f"[결과 데이터 파싱] 받은 데이터 개수: {len(data) if isinstance(data, list) else '리스트 아님'}")
-                    
-                    # 결과 파싱
-                    results = []
-                    for game in data:
-                        try:
-                            game_id = game.get('gameID', '')
-                            result = game.get('result', '')
-                            json_str = game.get('json', '{}')
-                            
-                            # JSON 파싱
-                            if isinstance(json_str, str):
-                                json_data = json.loads(json_str)
-                            else:
-                                json_data = json_str
-                            
-                            # red/black: json 안에도, 상위에도 있을 수 있음 (게임마다 구조 다름)
-                            red_val = json_data.get('red') or game.get('red', False)
-                            black_val = json_data.get('black') or game.get('black', False)
-                            results.append({
-                                'gameID': str(game_id),  # 문자열로 변환
-                                'result': result,
-                                'hi': json_data.get('hi', False),
-                                'lo': json_data.get('lo', False),
-                                'red': red_val,
-                                'black': black_val,
-                                'jqka': json_data.get('jqka', False),
-                                'joker': json_data.get('joker', False),
-                                'hash': game.get('hash', ''),
-                                'salt': game.get('salt', '')
-                            })
-                        except Exception as e:
-                            # 개별 게임 파싱 오류는 무시
-                            print(f"[결과 파싱 오류] {str(e)[:100]}")
-                            continue
-                    
-                    print(f"[결과 데이터 최종] {len(results)}개 게임 결과 파싱 완료 (소스: {base})")
-                    
-                    # 데이터베이스에 저장 (base_url 지정 시 스킵 - 베팅 사이트별 결과만 조회용)
+                except (ValueError, json.JSONDecodeError):
+                    continue
+                results = _parse_results_json(data)
+                if results:
+                    print(f"[✅ 결과 데이터 성공] {url_path} ({len(results)}개)")
+                    executor.shutdown(wait=False)
                     if DB_AVAILABLE and DATABASE_URL and base == BASE_URL:
                         saved_count = 0
                         for game_data in results:
@@ -1455,23 +1468,19 @@ def load_results_data(base_url=None):
                                 saved_count += 1
                         if saved_count > 0:
                             print(f"[💾] 데이터베이스에 {saved_count}개 결과 저장 완료")
-                        
-                        # 정/꺽 결과 계산 및 저장 (30개 이상일 때만)
                         if len(results) >= 16:
                             calculate_and_save_color_matches(results)
-                    
                     return results
-                except (ValueError, json.JSONDecodeError) as e:
-                    print(f"[결과 JSON 파싱 오류] {str(e)[:200]}")
-                    continue  # 다음 경로 시도
-            else:
-                print(f"[❌ 결과 데이터 실패] {url} - 다음 경로 시도")
-                continue  # 다음 경로 시도
-        except Exception as e:
-            print(f"[결과 데이터 오류] {url_path}: {str(e)[:100]}")
-            continue  # 다음 경로 시도
-    
-    # 모든 경로 실패
+            except Exception as e:
+                print(f"[결과 데이터 오류] {url_path}: {str(e)[:80]}")
+                continue
+    except Exception as e:
+        print(f"[경고] 결과 병렬 요청 오류: {str(e)[:150]}")
+    finally:
+        try:
+            executor.shutdown(wait=True)
+        except Exception:
+            pass
     print(f"[경고] 모든 경로에서 결과 데이터를 가져올 수 없음")
     return []
 
