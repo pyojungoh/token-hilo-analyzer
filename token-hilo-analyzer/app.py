@@ -2119,6 +2119,8 @@ RESULTS_HTML = '''
             border: 1px solid rgba(239, 83, 80, 0.5);
             color: #ef9a9a;
         }
+        .pick-result-bar .result-value-jung { display: inline-block; background: #b71c1c; color: #fff; padding: 2px 8px; border-radius: 4px; font-weight: 700; margin-left: 4px; }
+        .pick-result-bar .result-value-kkuk { display: inline-block; background: #111; color: #fff; padding: 2px 8px; border-radius: 4px; font-weight: 700; margin-left: 4px; }
         .prediction-pick-title {
             font-size: clamp(0.8em, 1.8vw, 0.9em);
             font-weight: bold;
@@ -2357,6 +2359,11 @@ RESULTS_HTML = '''
         .calc-round-table th { background: #333; color: #81c784; }
         .calc-round-table td.pick-jung { background: #b71c1c; color: #fff; }
         .calc-round-table td.pick-kkuk { background: #111; color: #fff; }
+        .calc-round-table td.result-jung { background: #b71c1c; color: #fff; }
+        .calc-round-table td.result-kkuk { background: #111; color: #fff; }
+        .calc-round-table td.result-joker { background: #1565c0; color: #fff; }
+        .calc-round-table td.result-pending { color: #888; font-style: italic; }
+        .calc-round-table td.result-skip { color: #666; }
         .calc-round-table .win { color: #ffeb3b; font-weight: 600; }
         .calc-round-table .lose { color: #c62828; font-weight: 500; }
         .calc-round-table .joker { color: #64b5f6; }
@@ -3050,7 +3057,9 @@ RESULTS_HTML = '''
                     lastServerPrediction = (sp && (sp.value === '정' || sp.value === '꺽')) ? sp : null;
                     lastWarningU35 = !!(lastServerPrediction && sp && sp.warning_u35);
                     if (lastServerPrediction) {
-                        lastPrediction = { value: lastServerPrediction.value, round: lastServerPrediction.round, prob: lastServerPrediction.prob != null ? lastServerPrediction.prob : 0, color: lastServerPrediction.color || null };
+                        var sc = (lastServerPrediction.color || '').toString().trim().toUpperCase();
+                        var colorNorm = (sc === 'RED' || sc === '빨강') ? '빨강' : (sc === 'BLACK' || sc === '검정') ? '검정' : (lastServerPrediction.color || null);
+                        lastPrediction = { value: lastServerPrediction.value, round: lastServerPrediction.round, prob: lastServerPrediction.prob != null ? lastServerPrediction.prob : 0, color: colorNorm };
                     }
                     lastResultsUpdate = Date.now();  // 갱신 완료 시점에 폴링 간격 리셋
                 }
@@ -3403,7 +3412,14 @@ RESULTS_HTML = '''
                                 var revJ = !!(calcState[id] && calcState[id].reverse);
                                 var martingaleElJ = document.getElementById('calc-' + id + '-martingale');
                                 var martingaleJ = !!(martingaleElJ && martingaleElJ.checked);
-                                if (teukEatJ && !revJ && !martingaleJ) { if (pendingIdxJ >= 0) histJ.splice(pendingIdxJ, 1); return; }
+                                if (teukEatJ && !revJ && !martingaleJ) {
+                                    if (pendingIdxJ >= 0) {
+                                        histJ[pendingIdxJ].actual = 'skipped';
+                                        histJ[pendingIdxJ].predicted = (revJ ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value);
+                                        if (lastPrediction.color != null) histJ[pendingIdxJ].pickColor = lastPrediction.color;
+                                    }
+                                    return;
+                                }
                                 const rev = revJ;
                                 var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
                                 const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
@@ -3439,7 +3455,14 @@ RESULTS_HTML = '''
                                 var martingaleEl = document.getElementById('calc-' + id + '-martingale');
                                 var martingale = !!(martingaleEl && martingaleEl.checked);
                                 var teukOnly = teukEat && !rev && !martingale;
-                                if (teukEat && !inTeuk) { if (pendingIdx >= 0) hist.splice(pendingIdx, 1); return; }
+                                if (teukEat && !inTeuk) {
+                                    if (pendingIdx >= 0) {
+                                        hist[pendingIdx].actual = 'skipped';
+                                        hist[pendingIdx].predicted = (rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value);
+                                        if (lastPrediction.color != null) hist[pendingIdx].pickColor = lastPrediction.color;
+                                    }
+                                    return;
+                                }
                                 var pred;
                                 if (teukEat && inTeuk) pred = lastPrediction.value;
                                 else {
@@ -3849,7 +3872,9 @@ RESULTS_HTML = '''
                         else if (!lastPickColor && lastEntry.predicted) lastPickColor = lastEntry.predicted === '정' ? '빨강' : '검정';
                         else lastPickColor = lastPickColor || '-';
                         var resultBarClass = lastIsWin ? 'pick-result-bar result-win' : 'pick-result-bar result-lose';
-                        var resultBarText = displayRound(lastEntry.round) + '회 ' + (lastIsWin ? '성공' : '실패') + ' (' + (lastEntry.predicted || '-') + ' / ' + lastPickColor + ')';
+                        var actualVal = lastEntry.actual === '정' ? '정' : '꺽';
+                        var resultValueClass = lastEntry.actual === '정' ? 'result-value-jung' : 'result-value-kkuk';
+                        var resultBarText = displayRound(lastEntry.round) + '회 ' + (lastIsWin ? '성공' : '실패') + ' (예측: ' + (lastEntry.predicted || '-') + ' / ' + lastPickColor + ' · 결과: <span class="' + resultValueClass + '">' + actualVal + '</span>)';
                         resultBarHtml = '<div class="' + resultBarClass + '">' + resultBarText + '</div>';
                     }
                     const pickWrapClass = 'prediction-pick' + (pickInBucket ? ' pick-in-bucket' : '');
@@ -4100,7 +4125,7 @@ RESULTS_HTML = '''
                 let cap = capIn, step = 0, wins = 0, losses = 0, maxWinStreak = 0, maxLoseStreak = 0, curWin = 0, curLose = 0;
                 for (let i = 0; i < hist.length; i++) {
                     const h = hist[i];
-                    if (!h || typeof h.predicted === 'undefined' || h.actual == null || h.actual === undefined) continue;
+                    if (!h || typeof h.predicted === 'undefined' || h.actual == null || h.actual === undefined || h.actual === 'skipped') continue;
                     const bet = Math.min(baseIn * Math.pow(2, step), Math.floor(cap));
                     if (cap < bet || cap <= 0) break;
                     const isJoker = h.actual === 'joker';
@@ -4120,7 +4145,7 @@ RESULTS_HTML = '''
             let processedCount = 0;
             for (let i = 0; i < hist.length; i++) {
                 const h = hist[i];
-                if (!h || typeof h.predicted === 'undefined' || h.actual == null || h.actual === undefined) continue;
+                if (!h || typeof h.predicted === 'undefined' || h.actual == null || h.actual === undefined || h.actual === 'skipped') continue;
                 if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'ban')) {
                     currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
                 }
@@ -4202,7 +4227,10 @@ RESULTS_HTML = '''
                     if (!bettingCardEl || !predictionCardEl) return;
                     if (state.running && lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) {
                         var predictionText = lastPrediction.value;
-                        var predictionIsRed = (lastPrediction.color === '빨강' || lastPrediction.color === '검정') ? (lastPrediction.color === '빨강') : (predictionText === '정');
+                        var rawColor = (lastPrediction.color || '').toString().trim();
+                        var normRed = (rawColor.toUpperCase() === 'RED' || rawColor === '빨강');
+                        var normBlack = (rawColor.toUpperCase() === 'BLACK' || rawColor === '검정');
+                        var predictionIsRed = (normRed || normBlack) ? normRed : (predictionText === '정');
                         var bettingText = predictionText;
                         var bettingIsRed = predictionIsRed;
                         var teukEatElCard = document.getElementById('calc-' + id + '-teuk-eat');
@@ -4352,6 +4380,7 @@ RESULTS_HTML = '''
                 for (let i = 0; i < usedHist.length; i++) {
                     const h = usedHist[i];
                     if (!h || typeof h.predicted === 'undefined') { betAmounts[i] = null; profits[i] = null; continue; }
+                    if (h.actual === 'skipped') { betAmounts[i] = null; profits[i] = null; continue; }
                     if (h.actual == null || h.actual === undefined) {
                         if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'ban')) currentBet = martinTableDetail[Math.min(martingaleStep, martinTableDetail.length - 1)];
                         betAmounts[i] = Math.min(currentBet, Math.floor(cap));
@@ -4376,14 +4405,15 @@ RESULTS_HTML = '''
                 if (!h || typeof h.predicted === 'undefined') continue;
                 const roundStr = h.round != null ? String(h.round) : '-';
                 const isPending = h.actual == null || h.actual === undefined;
-                const res = isPending ? '-' : (h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽'));
-                const outcome = isPending ? '대기' : (h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패'));
+                const isSkipped = h.actual === 'skipped';
+                const res = isPending ? '-' : (isSkipped ? '-' : (h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽')));
+                const outcome = isPending ? '대기' : (isSkipped ? '스킵' : (h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패')));
                 const pickVal = h.predicted === '정' ? '정' : '꺽';
                 const pickClass = pickVal === '정' ? 'pick-jung' : 'pick-kkuk';
-                const resultClass = isPending ? 'pending' : (res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk'));
+                const resultClass = isPending ? 'pending' : (isSkipped ? 'skip' : (res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk')));
                 const betStr = betAmounts[i] != null ? betAmounts[i].toLocaleString() : '-';
                 const profitVal = profits[i] != null ? profits[i] : '-';
-                const profitStr = isPending ? '-' : (profitVal === '-' ? '-' : (profitVal >= 0 ? '+' : '') + Number(profitVal).toLocaleString());
+                const profitStr = (isPending || isSkipped) ? '-' : (profitVal === '-' ? '-' : (profitVal >= 0 ? '+' : '') + Number(profitVal).toLocaleString());
                 rows.push({ roundStr: roundStr, pick: pickVal, pickClass: pickClass, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr });
             }
             const displayRows = rows.slice(0, 15);
@@ -4391,20 +4421,20 @@ RESULTS_HTML = '''
                 if (displayRows.length === 0) {
                     tableWrap.innerHTML = '';
                 } else {
-                    let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽(걸은 것)</th><th>배팅금액</th><th>수익</th><th>승패</th></tr></thead><tbody>';
+                    let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽(걸은 것)</th><th>결과</th><th>배팅금액</th><th>수익</th><th>승패</th></tr></thead><tbody>';
                     displayRows.forEach(function(row) {
                         const outClass = row.outcome === '승' ? 'win' : row.outcome === '패' ? 'lose' : row.outcome === '조' ? 'joker' : row.outcome === '대기' ? 'pending' : 'skip';
                         const profitClass = (typeof row.profit === 'number' && row.profit > 0) || (typeof row.profit === 'string' && row.profit.indexOf('+') === 0) ? 'profit-plus' : (typeof row.profit === 'number' && row.profit < 0) || (typeof row.profit === 'string' && row.profit.indexOf('-') === 0 && row.profit !== '-') ? 'profit-minus' : '';
-                        tbl += '<tr><td>' + row.roundStr + '</td><td class="' + row.pickClass + '">' + row.pick + '</td><td class="calc-td-bet">' + row.betAmount + '</td><td class="calc-td-profit ' + profitClass + '">' + row.profit + '</td><td class="' + outClass + '">' + row.outcome + '</td></tr>';
+                        tbl += '<tr><td>' + row.roundStr + '</td><td class="' + row.pickClass + '">' + row.pick + '</td><td class="' + row.resultClass + '">' + row.result + '</td><td class="calc-td-bet">' + row.betAmount + '</td><td class="calc-td-profit ' + profitClass + '">' + row.profit + '</td><td class="' + outClass + '">' + row.outcome + '</td></tr>';
                     });
                     tbl += '</tbody></table>';
                     tableWrap.innerHTML = tbl;
                 }
             }
-            // 경기결과(승/패/조)는 완료된 행만, 최근 30회만 표시
+            // 경기결과(승/패/조)는 완료된 행만, 최근 30회만 표시 (스킵 제외)
             let arr = [];
             for (const h of usedHist) {
-                if (!h || typeof h.predicted === 'undefined' || h.actual == null || h.actual === undefined) continue;
+                if (!h || typeof h.predicted === 'undefined' || h.actual == null || h.actual === undefined || h.actual === 'skipped') continue;
                 arr.push(h.actual === 'joker' ? 'j' : (h.predicted === h.actual ? 'w' : 'l'));
             }
             const arrRev = arr.slice().reverse();
