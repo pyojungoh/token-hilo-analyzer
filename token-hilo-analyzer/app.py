@@ -2882,6 +2882,7 @@ RESULTS_HTML = '''
         }
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         var lastServerPrediction = null;  // 서버 예측 (있으면 표시·pending 동기화용)
+        var lastIs15Joker = false;  // 15번 카드 조커 여부 (계산기 예측픽에 보류 반영용)
         var roundPredictionBuffer = {};   // 회차별 예측 저장 (표 충돌 방지: 결과 반영 시 해당 회차만 조회)
         var ROUND_PREDICTION_BUFFER_MAX = 50;
         function setRoundPrediction(round, pred) {
@@ -3481,6 +3482,7 @@ RESULTS_HTML = '''
                     const predictedRoundFull = currentRoundFull + 1;
                     try { window.__latestGameIDForCalc = latestGameID; } catch (e) {}
                     const is15Joker = displayResults.length >= 15 && !!displayResults[14].joker;  // 15번 카드 조커면 픽/배팅 보류
+                    lastIs15Joker = is15Joker;  // 계산기 예측픽에 보류 반영
                     
                     // 직전 예측의 실제 결과 반영: API prediction_history(서버 머지) 우선, 없으면 버퍼/lastPrediction
                     const alreadyRecordedRound = predictionHistory.some(function(h) { return h && h.round === currentRoundFull; });
@@ -4328,6 +4330,14 @@ RESULTS_HTML = '''
                     const predictionCardEl = document.getElementById('calc-' + id + '-prediction-card');
                     if (!bettingCardEl || !predictionCardEl) return;
                     if (state.running && lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) {
+                        if (lastIs15Joker) {
+                            predictionCardEl.textContent = '보류';
+                            predictionCardEl.className = 'calc-current-card calc-card-prediction';
+                            predictionCardEl.title = '15번 카드 조커 · 배팅하지 마세요';
+                            bettingCardEl.textContent = '보류';
+                            bettingCardEl.className = 'calc-current-card calc-card-betting';
+                            bettingCardEl.title = '15번 카드 조커 · 배팅하지 마세요';
+                        } else {
                         var predictionText = lastPrediction.value;
                         var predColorNorm = normalizePickColor(lastPrediction.color);
                         var predictionIsRed = (predColorNorm === '빨강' || predColorNorm === '검정') ? (predColorNorm === '빨강') : (predictionText === '정');
@@ -4358,8 +4368,11 @@ RESULTS_HTML = '''
                         if (useWinRateRevCard && lowWinRate) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                         predictionCardEl.textContent = predictionText;
                         predictionCardEl.className = 'calc-current-card calc-card-prediction card-' + (predictionIsRed ? 'jung' : 'kkuk');
+                        predictionCardEl.title = '';
                         bettingCardEl.textContent = bettingText;
                         bettingCardEl.className = 'calc-current-card calc-card-betting card-' + (bettingIsRed ? 'jung' : 'kkuk');
+                        bettingCardEl.title = '';
+                        }
                     } else {
                         bettingCardEl.textContent = '';
                         bettingCardEl.className = 'calc-current-card calc-card-betting';
