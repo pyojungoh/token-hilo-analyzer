@@ -512,12 +512,6 @@ def _apply_results_to_calcs(results):
                 c['pending_prob'] = next_pred.get('prob')
                 c['pending_color'] = next_pred.get('color')
                 updated = True
-                defense = state.get('defense')
-                if defense and isinstance(defense, dict) and defense.get('running') and defense.get('linked_calc_id') == int(cid):
-                    def_first = defense.get('first_bet_round') or 0
-                    if def_first == 0 or pending_round >= def_first:
-                        def_pred = '꺽' if pred_for_calc == '정' else '정'
-                        defense['history'] = (defense.get('history') or []) + [{'round': pending_round, 'predicted': def_pred, 'actual': actual, 'betAmount': 0}]
             if updated:
                 save_calc_state(session_id, state)
     except Exception as e:
@@ -2358,7 +2352,6 @@ RESULTS_HTML = '''
         .calc-streak .w { color: #ffeb3b; }
         .calc-streak .l { color: #c62828; }
         .calc-streak .j { color: #64b5f6; }
-        .calc-streak .defense-skip { color: #666; }
         .calc-stats { color: #aaa; }
         .bet-calc-tabs { display: flex; gap: 0; margin-top: 8px; border-bottom: 1px solid #444; }
         .bet-calc-tabs .tab { padding: 8px 16px; cursor: pointer; font-size: 0.9em; color: #888; background: #2a2a2a; border: 1px solid #444; border-bottom: none; border-radius: 6px 6px 0 0; margin-bottom: -1px; }
@@ -2558,38 +2551,6 @@ RESULTS_HTML = '''
                             </div>
                         </div>
                     </div>
-                    <div class="calc-dropdown collapsed" data-calc="defense">
-                        <div class="calc-dropdown-header">
-                            <span class="calc-title">방어 계산기</span>
-                            <span class="calc-status idle" id="calc-defense-status">대기중</span>
-                            <div class="calc-summary" id="calc-defense-summary">보유자산 - | 순익 - | 배팅중 -</div>
-                            <span class="calc-toggle">▼</span>
-                        </div>
-                        <div class="calc-dropdown-body" id="calc-defense-body">
-                            <div class="calc-body-row">
-                                <div class="calc-inputs">
-                                    <label>연결 계산기 <select id="calc-defense-linked"><option value="1">계산기 1</option><option value="2">계산기 2</option><option value="3">계산기 3</option></select></label>
-                                    <label>자본금 <input type="number" id="calc-defense-capital" min="0" value="1000000"></label>
-                                    <label>배당 <input type="number" id="calc-defense-odds" min="1" step="0.01" value="1.97"></label>
-                                    <label title="마틴 1~N회까지 연결과 동일 금액">동일금액 <input type="number" id="calc-defense-full-steps" min="0" value="3" style="width:40px">회까지</label>
-                                    <label title="N회부터 연결금액의 1/X로 감액">감액 <input type="number" id="calc-defense-reduce-from" min="1" value="4" style="width:40px">회부터 1/<input type="number" id="calc-defense-reduce-div" min="2" value="4" style="width:40px"> 금액</label>
-                                    <label title="방어 N연승 달성 시 다음 회차부터 배팅 안 함, 0=해제">배팅중지 <input type="number" id="calc-defense-stop-streak" min="0" value="5" style="width:40px">연승부터 (0=해제)</label>
-                                    <label>지속 시간(분) <input type="number" id="calc-defense-duration" min="0" value="0" placeholder="0=무제한"></label>
-                                    <label class="calc-duration-check"><input type="checkbox" id="calc-defense-duration-check"> 지정 시간만 실행</label>
-                                </div>
-                                <div class="calc-buttons">
-                                    <button type="button" class="calc-run" data-calc="defense">실행</button>
-                                    <button type="button" class="calc-stop" data-calc="defense">정지</button>
-                                    <button type="button" class="calc-reset" data-calc="defense">리셋</button>
-                                </div>
-                            </div>
-                            <div class="calc-detail" id="calc-defense-detail">
-                                <div class="calc-round-table-wrap" id="calc-defense-round-table-wrap"></div>
-                                <div class="calc-streak" id="calc-defense-streak">경기결과 (최근 30회): - (연결 반픽·설정에 따라 동일/감액/미배팅)</div>
-                                <div class="calc-stats" id="calc-defense-stats">최대연승: - | 최대연패: - | 승률: -</div>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </div>
             <div id="bet-log-panel" class="bet-log-panel">
@@ -2773,21 +2734,6 @@ RESULTS_HTML = '''
                 first_bet_round: 0
             };
         });
-        calcState.defense = {
-            running: false,
-            started_at: 0,
-            history: [],
-            elapsed: 0,
-            duration_limit: 0,
-            use_duration_limit: false,
-            timer_completed: false,
-            linked_calc_id: 1,
-            timerId: null,
-            maxWinStreakEver: 0,
-            maxLoseStreakEver: 0,
-            first_bet_round: 0
-        };
-        const DEFENSE_ID = 'defense';
         let lastServerTimeSec = 0;  // /api/current-status 등에서 갱신
         function getServerTimeSec() { return lastServerTimeSec || Math.floor(Date.now() / 1000); }
         function buildCalcPayload() {
@@ -2828,31 +2774,6 @@ RESULTS_HTML = '''
                     pending_color: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.color) || calcState[id].pending_color) : null
                 };
             });
-            const d = calcState.defense;
-            const defDurEl = document.getElementById('calc-defense-duration');
-            const defCheckEl = document.getElementById('calc-defense-duration-check');
-            const defLinkEl = document.getElementById('calc-defense-linked');
-            const defFullSteps = document.getElementById('calc-defense-full-steps');
-            const defReduceFrom = document.getElementById('calc-defense-reduce-from');
-            const defReduceDiv = document.getElementById('calc-defense-reduce-div');
-            const defStopStreak = document.getElementById('calc-defense-stop-streak');
-            const defDurationMin = (defDurEl && parseInt(defDurEl.value, 10)) || 0;
-            payload[DEFENSE_ID] = {
-                running: !!d.running,
-                started_at: d.started_at || 0,
-                history: (d.history || []).slice(-500),
-                duration_limit: defDurationMin * 60,
-                use_duration_limit: !!(defCheckEl && defCheckEl.checked),
-                timer_completed: !!d.timer_completed,
-                linked_calc_id: (defLinkEl && parseInt(defLinkEl.value, 10)) || 1,
-                full_steps: (defFullSteps && parseInt(defFullSteps.value, 10)) || 3,
-                reduce_from: (defReduceFrom && parseInt(defReduceFrom.value, 10)) || 4,
-                reduce_div: (defReduceDiv && parseInt(defReduceDiv.value, 10)) || 4,
-                stop_streak: (defStopStreak && parseInt(defStopStreak.value, 10)) || 0,
-                max_win_streak_ever: (d.maxWinStreakEver || 0),
-                max_lose_streak_ever: (d.maxLoseStreakEver || 0),
-                first_bet_round: d.first_bet_round || 0
-            };
             return payload;
         }
         function applyCalcsToState(calcs, serverTimeSec) {
@@ -2901,33 +2822,6 @@ RESULTS_HTML = '''
                 if (targetEnabledEl) targetEnabledEl.checked = !!calcState[id].target_enabled;
                 if (targetAmountEl) targetAmountEl.value = String(calcState[id].target_amount || 0);
             });
-            const dc = calcs[DEFENSE_ID] || {};
-            if (Array.isArray(dc.history)) calcState.defense.history = dc.history.slice(-500);
-            else calcState.defense.history = [];
-            calcState.defense.running = !!dc.running;
-            calcState.defense.started_at = dc.started_at || 0;
-            calcState.defense.duration_limit = parseInt(dc.duration_limit, 10) || 0;
-            calcState.defense.use_duration_limit = !!dc.use_duration_limit;
-            calcState.defense.timer_completed = !!dc.timer_completed;
-            calcState.defense.linked_calc_id = parseInt(dc.linked_calc_id, 10) || 1;
-            calcState.defense.maxWinStreakEver = Math.max(0, parseInt(dc.max_win_streak_ever, 10) || 0);
-            calcState.defense.maxLoseStreakEver = Math.max(0, parseInt(dc.max_lose_streak_ever, 10) || 0);
-            calcState.defense.first_bet_round = Math.max(0, parseInt(dc.first_bet_round, 10) || 0);
-            calcState.defense.elapsed = calcState.defense.running && calcState.defense.started_at ? Math.max(0, st - calcState.defense.started_at) : 0;
-            const defDurEl = document.getElementById('calc-defense-duration');
-            const defCheckEl = document.getElementById('calc-defense-duration-check');
-            const defLinkEl = document.getElementById('calc-defense-linked');
-            const defFullSteps = document.getElementById('calc-defense-full-steps');
-            const defReduceFrom = document.getElementById('calc-defense-reduce-from');
-            const defReduceDiv = document.getElementById('calc-defense-reduce-div');
-            const defStopStreak = document.getElementById('calc-defense-stop-streak');
-            if (defDurEl) defDurEl.value = Math.floor((calcState.defense.duration_limit || 0) / 60);
-            if (defCheckEl) defCheckEl.checked = calcState.defense.use_duration_limit;
-            if (defLinkEl) defLinkEl.value = String(calcState.defense.linked_calc_id);
-            if (defFullSteps) defFullSteps.value = dc.full_steps !== undefined ? dc.full_steps : 3;
-            if (defReduceFrom) defReduceFrom.value = dc.reduce_from !== undefined ? dc.reduce_from : 4;
-            if (defReduceDiv) defReduceDiv.value = dc.reduce_div !== undefined ? dc.reduce_div : 4;
-            if (defStopStreak) defStopStreak.value = dc.stop_streak !== undefined ? dc.stop_streak : 5;
         }
         async function loadCalcStateFromServer() {
             try {
@@ -2938,8 +2832,8 @@ RESULTS_HTML = '''
                 if (data.session_id) localStorage.setItem(CALC_SESSION_KEY, data.session_id);
                 lastServerTimeSec = data.server_time || Math.floor(Date.now() / 1000);
                 let calcs = data.calcs || {};
-                const hasRunning = CALC_IDS.some(id => calcs[String(id)] && calcs[String(id)].running) || (calcs[DEFENSE_ID] && calcs[DEFENSE_ID].running);
-                const hasHistory = CALC_IDS.some(id => calcs[String(id)] && Array.isArray(calcs[String(id)].history) && calcs[String(id)].history.length > 0) || (calcs[DEFENSE_ID] && Array.isArray(calcs[DEFENSE_ID].history) && calcs[DEFENSE_ID].history.length > 0);
+                const hasRunning = CALC_IDS.some(id => calcs[String(id)] && calcs[String(id)].running);
+                const hasHistory = CALC_IDS.some(id => calcs[String(id)] && Array.isArray(calcs[String(id)].history) && calcs[String(id)].history.length > 0);
                 if (!hasRunning && !hasHistory) {
                     try {
                         const backup = localStorage.getItem(CALC_STATE_BACKUP_KEY);
@@ -2988,15 +2882,10 @@ RESULTS_HTML = '''
             try { localStorage.setItem(BET_LOG_KEY, JSON.stringify(betCalcLog)); } catch (e) { /* ignore */ }
         }
         function buildLogDetailTable(hist, calcId) {
-            const isDefense = calcId === 'defense';
             let rows = [];
             for (let i = 0; i < hist.length; i++) {
                 const h = hist[i];
                 if (!h) continue;
-                if (isDefense) {
-                    const bet = (typeof h.betAmount === 'number' ? h.betAmount : 0) || parseInt(h.betAmount, 10) || 0;
-                    if (bet <= 0) { rows.push({ idx: i + 1, pick: '-', result: '-', outcome: '－' }); continue; }
-                }
                 const pred = h.predicted === '정' ? '정' : (h.predicted === '꺽' ? '꺽' : '-');
                 const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
                 const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
@@ -3434,18 +3323,7 @@ RESULTS_HTML = '''
                                 var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
                                 if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
                                 if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
-                                // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
-                                let defenseBet = 0;
-                                if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
                                 calcState[id].history.push({ predicted: pred, actual: 'joker', round: lastPrediction.round });
-                                if (calcState.defense.running && calcState.defense.linked_calc_id === id) {
-                                    const defFirstJ = calcState.defense.first_bet_round || 0;
-                                    if (defFirstJ === 0 || lastPrediction.round >= defFirstJ) {
-                                        calcState.defense.history.push({ predicted: pred === '정' ? '꺽' : '정', actual: 'joker', betAmount: defenseBet, round: lastPrediction.round });
-                                        updateCalcSummary(DEFENSE_ID);
-                                        updateCalcDetail(DEFENSE_ID);
-                                    }
-                                }
                             });
                             saveCalcStateToServer();
                             savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, 'joker', lastPrediction.prob, lastPrediction.color);
@@ -3465,18 +3343,7 @@ RESULTS_HTML = '''
                                 var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
                                 if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
                                 if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
-                                // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
-                                let defenseBet = 0;
-                                if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
                                 calcState[id].history.push({ predicted: pred, actual: actual, round: lastPrediction.round });
-                                if (calcState.defense.running && calcState.defense.linked_calc_id === id) {
-                                    const defFirstA = calcState.defense.first_bet_round || 0;
-                                    if (defFirstA === 0 || lastPrediction.round >= defFirstA) {
-                                        calcState.defense.history.push({ predicted: pred === '정' ? '꺽' : '정', actual: actual, betAmount: defenseBet, round: lastPrediction.round });
-                                        updateCalcSummary(DEFENSE_ID);
-                                        updateCalcDetail(DEFENSE_ID);
-                                    }
-                                }
                                 updateCalcSummary(id);
                                 updateCalcDetail(id);
                                 var targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
@@ -4154,94 +4021,19 @@ RESULTS_HTML = '''
             return { cap: Math.max(0, Math.floor(cap)), profit, currentBet: bust ? 0 : currentBet, wins, losses, bust, maxWinStreak: displayMaxWin, maxLoseStreak: displayMaxLose, winRate, processedCount: bust ? processedCount : hist.length };
             } catch (e) { console.warn('getCalcResult', id, e); return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-', processedCount: 0 }; }
         }
-        function getDefenseBetAmount(linkedId) {
-            const linkedBet = getCalcResult(linkedId).currentBet;
-            const linkedBase = parseFloat(document.getElementById('calc-' + linkedId + '-base')?.value) || 10000;
-            if (!linkedBet || linkedBet <= linkedBase) return 0;
-            const fullSteps = Math.max(0, parseInt(document.getElementById('calc-defense-full-steps')?.value, 10) || 3);
-            const reduceFrom = Math.max(1, parseInt(document.getElementById('calc-defense-reduce-from')?.value, 10) || 4);
-            const reduceDiv = Math.max(2, parseInt(document.getElementById('calc-defense-reduce-div')?.value, 10) || 4);
-            const stopStreak = parseInt(document.getElementById('calc-defense-stop-streak')?.value, 10) || 0;
-            const hist = (calcState.defense && calcState.defense.history) || [];
-            let consecutiveWins = 0;
-            for (let i = hist.length - 1; i >= 0; i--) {
-                const h = hist[i];
-                if ((h.betAmount || 0) <= 0) break;
-                if (h.actual === 'joker') break;
-                if (h.predicted === h.actual) consecutiveWins++; else break;
-            }
-            if (stopStreak > 0 && consecutiveWins >= stopStreak) return 0;
-            const ratio = linkedBet / linkedBase;
-            const step = ratio <= 1 ? 0 : Math.round(Math.log2(ratio));
-            if (step <= fullSteps) return linkedBet;
-            if (step >= reduceFrom) return Math.floor(linkedBet / reduceDiv);
-            return linkedBet;
-        }
-        function getDefenseCalcResult() {
-            try {
-            const d = calcState.defense;
-            if (!d || !d.history || d.history.length === 0) return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-' };
-            const capIn = parseFloat(document.getElementById('calc-defense-capital')?.value) || 1000000;
-            const oddsIn = parseFloat(document.getElementById('calc-defense-odds')?.value) || 1.97;
-            const hist = d.history || [];
-            let cap = capIn, bust = false;
-            let wins = 0, losses = 0, maxWinStreak = 0, maxLoseStreak = 0, curWin = 0, curLose = 0;
-            for (let i = 0; i < hist.length; i++) {
-                const h = hist[i];
-                const betAmount = (h && typeof h.betAmount === 'number' ? h.betAmount : 0) || (h && parseInt(h.betAmount, 10)) || 0;
-                if (!h || (typeof h.predicted === 'undefined' && typeof h.actual === 'undefined')) continue;
-                if (betAmount <= 0) continue;
-                const isJoker = h.actual === 'joker';
-                const isWin = !isJoker && h.predicted === h.actual;
-                if (cap < betAmount || cap <= 0) { bust = true; break; }
-                if (isJoker) {
-                    cap -= betAmount;
-                    curWin = 0;
-                    curLose = 0;
-                } else if (isWin) {
-                    cap += betAmount * (oddsIn - 1);
-                    wins++;
-                    curWin++;
-                    curLose = 0;
-                    if (curWin > maxWinStreak) maxWinStreak = curWin;
-                } else {
-                    cap -= betAmount;
-                    losses++;
-                    curLose++;
-                    curWin = 0;
-                    if (curLose > maxLoseStreak) maxLoseStreak = curLose;
-                }
-                if (cap <= 0) { bust = true; break; }
-            }
-            if (calcState.defense) {
-                calcState.defense.maxWinStreakEver = Math.max(calcState.defense.maxWinStreakEver || 0, maxWinStreak);
-                calcState.defense.maxLoseStreakEver = Math.max(calcState.defense.maxLoseStreakEver || 0, maxLoseStreak);
-            }
-            const linkedId = d.linked_calc_id || 1;
-            const currentBet = (d.running && calcState[linkedId] && calcState[linkedId].running) ? getDefenseBetAmount(linkedId) : 0;
-            const profit = cap - capIn;
-            const total = wins + losses;
-            const winRate = total > 0 ? (100 * wins / total).toFixed(1) : '-';
-            const displayMaxWin = (calcState.defense && calcState.defense.maxWinStreakEver != null) ? calcState.defense.maxWinStreakEver : maxWinStreak;
-            const displayMaxLose = (calcState.defense && calcState.defense.maxLoseStreakEver != null) ? calcState.defense.maxLoseStreakEver : maxLoseStreak;
-            return { cap: Math.max(0, Math.floor(cap)), profit, currentBet, wins, losses, bust, maxWinStreak: displayMaxWin, maxLoseStreak: displayMaxLose, winRate };
-            } catch (e) { console.warn('getDefenseCalcResult', e); return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-' }; }
-        }
         function updateCalcStatus(id) {
             try {
-            const statusId = id === DEFENSE_ID ? 'calc-defense-status' : ('calc-' + id + '-status');
+            const statusId = 'calc-' + id + '-status';
             const el = document.getElementById(statusId);
             if (!el) return;
-            const state = id === DEFENSE_ID ? calcState.defense : calcState[id];
+            const state = calcState[id];
             if (!state) return;
             el.className = 'calc-status';
             if (state.running) {
                 el.classList.add('running');
                 var statusTxt = '실행중';
-                if (id !== DEFENSE_ID) {
-                    if (!!(state.reverse)) statusTxt += ' · 반픽';
-                    if (!!(state.win_rate_reverse)) statusTxt += ' · 승률반픽';
-                }
+                if (!!(state.reverse)) statusTxt += ' · 반픽';
+                if (!!(state.win_rate_reverse)) statusTxt += ' · 승률반픽';
                 el.textContent = statusTxt;
             } else if (state.timer_completed) {
                 el.classList.add('timer-done');
@@ -4253,9 +4045,7 @@ RESULTS_HTML = '''
                 el.classList.add('idle');
                 el.textContent = '대기중';
             }
-            // 계산기 1,2,3: 예측픽 = 메인과 동일( lastPrediction.value + lastPrediction.color로 색 보장 ). 반픽/승률반픽이면 배팅만 반대로.
-            if (id !== DEFENSE_ID) {
-                try {
+            try {
                     const bettingCardEl = document.getElementById('calc-' + id + '-current-card');
                     const predictionCardEl = document.getElementById('calc-' + id + '-prediction-card');
                     if (!bettingCardEl || !predictionCardEl) return;
@@ -4298,27 +4088,24 @@ RESULTS_HTML = '''
                         predictionCardEl.className = 'calc-current-card calc-card-prediction';
                     }
                 } catch (cardErr) { console.warn('updateCalcStatus card', id, cardErr); }
-            }
             } catch (e) { console.warn('updateCalcStatus', id, e); }
         }
         function updateCalcSummary(id) {
             try {
-            const summaryId = id === DEFENSE_ID ? 'calc-defense-summary' : ('calc-' + id + '-summary');
+            const summaryId = 'calc-' + id + '-summary';
             const el = document.getElementById(summaryId);
             if (!el) return;
-            const state = id === DEFENSE_ID ? calcState.defense : calcState[id];
+            const state = calcState[id];
             const hist = state.history || [];
             const elapsedStr = state.running && typeof formatMmSs === 'function' ? formatMmSs(state.elapsed || 0) : '-';
             const timerNote = state.timer_completed ? '<span class="calc-timer-note" style="color:#64b5f6;font-weight:bold;grid-column:1/-1">타이머 완료</span>' : '';
             if (hist.length === 0) {
                 var targetNoteEmpty = '';
-                if (id !== DEFENSE_ID) {
-                    const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
-                    const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
-                    const targetEnabled = !!(targetEnabledEl && targetEnabledEl.checked);
-                    const targetAmount = Math.max(0, parseInt(targetAmountEl?.value, 10) || 0);
-                    if (targetEnabled && targetAmount > 0) targetNoteEmpty = '<span class="calc-timer-note" style="grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 목표까지: ' + targetAmount.toLocaleString() + '원 남음</span>';
-                }
+                const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
+                const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
+                const targetEnabled = !!(targetEnabledEl && targetEnabledEl.checked);
+                const targetAmount = Math.max(0, parseInt(targetAmountEl?.value, 10) || 0);
+                if (targetEnabled && targetAmount > 0) targetNoteEmpty = '<span class="calc-timer-note" style="grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 목표까지: ' + targetAmount.toLocaleString() + '원 남음</span>';
                 el.innerHTML = '<div class="calc-summary-grid">' + timerNote + targetNoteEmpty +
                     '<span class="label">보유자산</span><span class="value">-</span>' +
                     '<span class="label">순익</span><span class="value">-</span>' +
@@ -4327,20 +4114,18 @@ RESULTS_HTML = '''
                 updateCalcStatus(id);
                 return;
             }
-            const r = id === DEFENSE_ID ? getDefenseCalcResult() : getCalcResult(id);
+            const r = getCalcResult(id);
             const profitStr = (r.profit >= 0 ? '+' : '') + r.profit.toLocaleString() + '원';
             const profitClass = r.profit > 0 ? 'profit-plus' : (r.profit < 0 ? 'profit-minus' : '');
             var targetNote = '';
-            if (id !== DEFENSE_ID) {
-                const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
-                const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
-                const targetEnabled = !!(targetEnabledEl && targetEnabledEl.checked);
-                const targetAmount = Math.max(0, parseInt(targetAmountEl?.value, 10) || 0);
-                if (targetEnabled && targetAmount > 0) {
-                    const remain = targetAmount - r.profit;
-                    if (remain <= 0) targetNote = '<span class="calc-timer-note" style="color:#81c784;font-weight:bold;grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 달성</span>';
-                    else targetNote = '<span class="calc-timer-note" style="grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 목표까지: ' + remain.toLocaleString() + '원 남음</span>';
-                }
+            const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
+            const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
+            const targetEnabled = !!(targetEnabledEl && targetEnabledEl.checked);
+            const targetAmount = Math.max(0, parseInt(targetAmountEl?.value, 10) || 0);
+            if (targetEnabled && targetAmount > 0) {
+                const remain = targetAmount - r.profit;
+                if (remain <= 0) targetNote = '<span class="calc-timer-note" style="color:#81c784;font-weight:bold;grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 달성</span>';
+                else targetNote = '<span class="calc-timer-note" style="grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 목표까지: ' + remain.toLocaleString() + '원 남음</span>';
             }
             el.innerHTML = '<div class="calc-summary-grid">' + timerNote + targetNote +
                 '<span class="label">보유자산</span><span class="value">' + r.cap.toLocaleString() + '원</span>' +
@@ -4351,61 +4136,44 @@ RESULTS_HTML = '''
             } catch (e) { console.warn('updateCalcSummary', id, e); }
         }
         function appendCalcLog(id) {
-            const state = id === DEFENSE_ID ? calcState.defense : calcState[id];
+            const state = calcState[id];
             if (!state || !state.history || state.history.length === 0) return;
             const now = new Date();
             const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
-            const r = id === DEFENSE_ID ? getDefenseCalcResult() : getCalcResult(id);
-            let logLine;
-            if (id === DEFENSE_ID) {
-                logLine = dateStr + '_방어_순익' + (r.profit >= 0 ? '+' : '') + r.profit + '원_승' + r.wins + '패' + r.losses + '_승률' + r.winRate + '%_최대연승' + r.maxWinStreak + '_최대연패' + r.maxLoseStreak;
-            } else {
-                const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
-                const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
-                const pickType = rev ? '반픽' : '정픽';
-                logLine = dateStr + '_계산기' + id + '_' + pickType + '_배팅' + baseIn + '원_순익' + (r.profit >= 0 ? '+' : '') + r.profit + '원_승' + r.wins + '패' + r.losses + '_승률' + r.winRate + '%';
-            }
+            const r = getCalcResult(id);
+            const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
+            const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
+            const pickType = rev ? '반픽' : '정픽';
+            const logLine = dateStr + '_계산기' + id + '_' + pickType + '_배팅' + baseIn + '원_순익' + (r.profit >= 0 ? '+' : '') + r.profit + '원_승' + r.wins + '패' + r.losses + '_승률' + r.winRate + '%';
             const histCopy = JSON.parse(JSON.stringify(state.history || []));
-            betCalcLog.unshift({ line: logLine, calcId: id === DEFENSE_ID ? 'defense' : String(id), history: histCopy });
+            betCalcLog.unshift({ line: logLine, calcId: String(id), history: histCopy });
             saveBetCalcLog();
             renderBetCalcLog();
         }
         function updateCalcDetail(id) {
             try {
-            const streakId = id === DEFENSE_ID ? 'calc-defense-streak' : ('calc-' + id + '-streak');
-            const statsId = id === DEFENSE_ID ? 'calc-defense-stats' : ('calc-' + id + '-stats');
-            const tableWrapId = id === DEFENSE_ID ? 'calc-defense-round-table-wrap' : ('calc-' + id + '-round-table-wrap');
+            const streakId = 'calc-' + id + '-streak';
+            const statsId = 'calc-' + id + '-stats';
+            const tableWrapId = 'calc-' + id + '-round-table-wrap';
             const streakEl = document.getElementById(streakId);
             const statsEl = document.getElementById(statsId);
             const tableWrap = document.getElementById(tableWrapId);
             if (!streakEl || !statsEl) return;
-            const state = id === DEFENSE_ID ? calcState.defense : calcState[id];
+            const state = calcState[id];
             if (!state) return;
             const hist = state.history || [];
             if (hist.length === 0) {
-                streakEl.textContent = id === DEFENSE_ID ? '경기결과 (최근 30회): - (연결 계산기의 반픽·동일 배팅금)' : '경기결과 (최근 30회): -';
+                streakEl.textContent = '경기결과 (최근 30회): -';
                 statsEl.textContent = '최대연승: - | 최대연패: - | 승률: -';
                 if (tableWrap) tableWrap.innerHTML = '';
                 return;
             }
-            const r = id === DEFENSE_ID ? getDefenseCalcResult() : getCalcResult(id);
+            const r = getCalcResult(id);
             const usedLen = (r.processedCount !== undefined && r.processedCount >= 0) ? r.processedCount : hist.length;
             const usedHist = hist.slice(0, usedLen);
-            const oddsIn = parseFloat(document.getElementById(id === DEFENSE_ID ? 'calc-defense-odds' : ('calc-' + id + '-odds'))?.value) || 1.97;
+            const oddsIn = parseFloat(document.getElementById('calc-' + id + '-odds')?.value) || 1.97;
             var betAmounts = [], profits = [];
-            if (id === DEFENSE_ID) {
-                for (let i = 0; i < usedHist.length; i++) {
-                    const h = usedHist[i];
-                    const bet = (h && typeof h.betAmount === 'number' ? h.betAmount : 0) || (h && parseInt(h.betAmount, 10)) || 0;
-                    if (!h || (typeof h.predicted === 'undefined' && typeof h.actual === 'undefined')) { betAmounts[i] = null; profits[i] = null; continue; }
-                    if (bet <= 0) { betAmounts[i] = null; profits[i] = null; continue; }
-                    const isJoker = h.actual === 'joker';
-                    const isWin = !isJoker && h.predicted === h.actual;
-                    betAmounts[i] = bet;
-                    profits[i] = isJoker ? -bet : (isWin ? Math.floor(bet * (oddsIn - 1)) : -bet);
-                }
-            } else {
-                const capIn = parseFloat(document.getElementById('calc-' + id + '-capital')?.value) || 1000000;
+            const capIn = parseFloat(document.getElementById('calc-' + id + '-capital')?.value) || 1000000;
                 const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
                 const martingaleEl = document.getElementById('calc-' + id + '-martingale');
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
@@ -4429,27 +4197,10 @@ RESULTS_HTML = '''
             }
             // 회차별 픽/결과/승패/배팅금액/수익 행 목록 (유효 항목만, 최신순 = 뒤에서부터)
             let rows = [];
-            if (id === DEFENSE_ID) {
-                for (let i = usedHist.length - 1; i >= 0; i--) {
-                    const h = usedHist[i];
-                    const bet = (h && typeof h.betAmount === 'number' ? h.betAmount : 0) || (h && parseInt(h.betAmount, 10)) || 0;
-                    if (!h || (typeof h.predicted === 'undefined' && typeof h.actual === 'undefined')) continue;
-                    const roundStr = h.round != null ? String(h.round) : '-';
-                    if (bet <= 0) { rows.push({ roundStr: roundStr, pick: '-', pickClass: '', result: '-', resultClass: '', outcome: '－', betAmount: '-', profit: '-' }); continue; }
-                    const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
-                    const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
-                    const pickVal = h.predicted === '정' ? '정' : '꺽';
-                    const pickClass = pickVal === '정' ? 'pick-jung' : 'pick-kkuk';
-                    const resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
-                    const profitVal = profits[i] != null ? profits[i] : '-';
-                    const profitStr = profitVal === '-' ? '-' : (profitVal >= 0 ? '+' : '') + Number(profitVal).toLocaleString();
-                    rows.push({ roundStr: roundStr, pick: pickVal, pickClass: pickClass, result: res, resultClass: resultClass, outcome: outcome, betAmount: bet.toLocaleString(), profit: profitStr });
-                }
-            } else {
-                for (let i = usedHist.length - 1; i >= 0; i--) {
-                    const h = usedHist[i];
-                    if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
-                    const roundStr = h.round != null ? String(h.round) : '-';
+            for (let i = usedHist.length - 1; i >= 0; i--) {
+                const h = usedHist[i];
+                if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                const roundStr = h.round != null ? String(h.round) : '-';
                     const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
                     const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
                     const pickVal = h.predicted === '정' ? '정' : '꺽';
@@ -4459,7 +4210,6 @@ RESULTS_HTML = '''
                     const profitVal = profits[i] != null ? profits[i] : '-';
                     const profitStr = profitVal === '-' ? '-' : (profitVal >= 0 ? '+' : '') + Number(profitVal).toLocaleString();
                     rows.push({ roundStr: roundStr, pick: pickVal, pickClass: pickClass, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr });
-                }
             }
             const displayRows = rows.slice(0, 15);
             if (tableWrap) {
@@ -4478,22 +4228,17 @@ RESULTS_HTML = '''
             }
             // getCalcResult와 동일 기준: 무효 항목은 표시에서 제외. 경기결과는 최근 30회만 표시(저장은 전부 유지)
             let arr = [];
-            if (id === DEFENSE_ID) {
-                arr = usedHist.map(h => ((h.betAmount || 0) <= 0 ? '-' : (h.actual === 'joker' ? 'j' : (h.predicted === h.actual ? 'w' : 'l'))));
-            } else {
-                for (const h of usedHist) {
-                    if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
-                    arr.push(h.actual === 'joker' ? 'j' : (h.predicted === h.actual ? 'w' : 'l'));
-                }
+            for (const h of usedHist) {
+                if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                arr.push(h.actual === 'joker' ? 'j' : (h.predicted === h.actual ? 'w' : 'l'));
             }
             const arrRev = arr.slice().reverse();
             const showMax = 30;
             const arrShow = arrRev.slice(0, showMax);
             const streakStr = arrShow.map(a => {
-                if (a === '-') return '<span class="defense-skip">－</span>';
                 return '<span class="' + (a === 'w' ? 'w' : a === 'l' ? 'l' : 'j') + '">' + (a === 'w' ? '승' : a === 'l' ? '패' : '조') + '</span>';
             }).join(' ');
-            streakEl.innerHTML = '경기결과 (최근 30회←): ' + streakStr + (id === DEFENSE_ID ? ' <span class="defense-skip">※－=미배팅</span>' : '');
+            streakEl.innerHTML = '경기결과 (최근 30회←): ' + streakStr;
             statsEl.textContent = '최대연승: ' + r.maxWinStreak + ' | 최대연패: ' + r.maxLoseStreak + ' | 승률: ' + r.winRate + '%';
             } catch (e) { console.warn('updateCalcDetail', id, e); }
         }
@@ -4540,65 +4285,19 @@ RESULTS_HTML = '''
                     if (saveBtn) saveBtn.style.display = 'none';
                 }
             });
-            if (calcState.defense.running) {
-                const started = calcState.defense.started_at || 0;
-                calcState.defense.elapsed = started ? Math.max(0, st - started) : 0;
-                updateCalcSummary(DEFENSE_ID);
-                if (calcState.defense.use_duration_limit && calcState.defense.duration_limit > 0 && calcState.defense.elapsed >= calcState.defense.duration_limit) {
-                    calcState.defense.running = false;
-                    calcState.defense.timer_completed = true;
-                    if (calcState.defense.history.length > 0) appendCalcLog(DEFENSE_ID);
-                    saveCalcStateToServer();
-                    updateCalcSummary(DEFENSE_ID);
-                    updateCalcStatus(DEFENSE_ID);
-                }
-            }
             }, 1000);
         function updateAllCalcs() {
             CALC_IDS.forEach(id => { updateCalcSummary(id); updateCalcDetail(id); updateCalcStatus(id); });
-            updateCalcSummary(DEFENSE_ID); updateCalcDetail(DEFENSE_ID); updateCalcStatus(DEFENSE_ID);
         }
         try { updateAllCalcs(); } catch (e) { console.warn('초기 계산기 상태:', e); }
         document.querySelectorAll('.calc-run').forEach(btn => {
             btn.addEventListener('click', async function() {
                 const rawId = this.getAttribute('data-calc');
-                const id = rawId === 'defense' ? DEFENSE_ID : parseInt(rawId, 10);
-                const state = id === DEFENSE_ID ? calcState.defense : calcState[id];
+                const id = parseInt(rawId, 10);
+                const state = calcState[id];
                 if (!state || state.running) return;
                 if (!localStorage.getItem(CALC_SESSION_KEY)) {
                     await loadCalcStateFromServer();
-                }
-                if (id === DEFENSE_ID) {
-                    const defLinkEl = document.getElementById('calc-defense-linked');
-                    const defDurEl = document.getElementById('calc-defense-duration');
-                    const defCheckEl = document.getElementById('calc-defense-duration-check');
-                    calcState.defense.linked_calc_id = (defLinkEl && parseInt(defLinkEl.value, 10)) || 1;
-                    calcState.defense.duration_limit = ((defDurEl && parseInt(defDurEl.value, 10)) || 0) * 60;
-                    calcState.defense.use_duration_limit = !!(defCheckEl && defCheckEl.checked);
-                    calcState.defense.timer_completed = false;
-                    calcState.defense.running = true;
-                    calcState.defense.history = [];
-                    calcState.defense.started_at = 0;
-                    calcState.defense.elapsed = 0;
-                    calcState.defense.maxWinStreakEver = 0;
-                    calcState.defense.maxLoseStreakEver = 0;
-                    var defLatestG = null;
-                    try { defLatestG = window.__latestGameIDForCalc; } catch (e) {}
-                    var defNextRound = 0;
-                    if (defLatestG != null && defLatestG !== '') { var dn = parseInt(String(defLatestG), 10); if (!isNaN(dn)) defNextRound = dn + 1; }
-                    calcState.defense.first_bet_round = defNextRound;
-                    try {
-                        const defPayload = buildCalcPayload();
-                        defPayload[DEFENSE_ID].first_bet_round = calcState.defense.first_bet_round;
-                        const res = await fetch('/api/calc-state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: localStorage.getItem(CALC_SESSION_KEY), calcs: defPayload }) });
-                        const data = await res.json();
-                        if (data.calcs && data.calcs[DEFENSE_ID]) calcState.defense.started_at = data.calcs[DEFENSE_ID].started_at || 0;
-                        if (data.server_time) lastServerTimeSec = data.server_time;
-                    } catch (e) { console.warn('방어 계산기 실행 저장 실패:', e); }
-                    updateCalcSummary(DEFENSE_ID);
-                    updateCalcDetail(DEFENSE_ID);
-                    updateCalcStatus(DEFENSE_ID);
-                    return;
                 }
                 const durEl = document.getElementById('calc-' + id + '-duration');
                 const checkEl = document.getElementById('calc-' + id + '-duration-check');
@@ -4646,8 +4345,8 @@ RESULTS_HTML = '''
         document.querySelectorAll('.calc-stop').forEach(btn => {
             btn.addEventListener('click', function() {
                 const rawId = this.getAttribute('data-calc');
-                const id = rawId === 'defense' ? DEFENSE_ID : parseInt(rawId, 10);
-                const state = id === DEFENSE_ID ? calcState.defense : calcState[id];
+                const id = parseInt(rawId, 10);
+                const state = calcState[id];
                 if (!state) return;
                 state.running = false;
                 state.timer_completed = false;
@@ -4656,9 +4355,7 @@ RESULTS_HTML = '''
                 updateCalcSummary(id);
                 updateCalcDetail(id);
                 updateCalcStatus(id);
-                if (id === DEFENSE_ID && state.history.length > 0) {
-                    appendCalcLog(DEFENSE_ID);
-                } else if (id !== DEFENSE_ID && state.history.length > 0) {
+                if (state.history.length > 0) {
                     const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
                     if (saveBtn) saveBtn.style.display = 'inline-block';
                 }
@@ -4667,8 +4364,8 @@ RESULTS_HTML = '''
         document.querySelectorAll('.calc-reset').forEach(btn => {
             btn.addEventListener('click', function() {
                 const rawId = this.getAttribute('data-calc');
-                const id = rawId === 'defense' ? DEFENSE_ID : parseInt(rawId, 10);
-                const state = id === DEFENSE_ID ? calcState.defense : calcState[id];
+                const id = parseInt(rawId, 10);
+                const state = calcState[id];
                 if (!state) return;
                 state.running = false;
                 state.timer_completed = false;
@@ -4679,10 +4376,8 @@ RESULTS_HTML = '''
                 updateCalcSummary(id);
                 updateCalcDetail(id);
                 updateCalcStatus(id);
-                if (id !== DEFENSE_ID) {
-                    const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
-                    if (saveBtn) saveBtn.style.display = 'none';
-                }
+                const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
+                if (saveBtn) saveBtn.style.display = 'none';
             });
         });
         document.querySelectorAll('.calc-save').forEach(btn => {
@@ -4822,7 +4517,7 @@ RESULTS_HTML = '''
         
         // 계산기 실행 중일 때 서버 상태 주기적으로 가져와 UI 실시간 반영 (멈춰 보이는 현상 방지)
         setInterval(() => {
-            const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running) || (calcState.defense && calcState.defense.running);
+            const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
             if (anyRunning) {
                 loadCalcStateFromServer().then(function() { updateAllCalcs(); }).catch(function(e) { console.warn('계산기 상태 폴링:', e); });
             }
@@ -5211,30 +4906,6 @@ def api_calc_state():
                 }
             else:
                 out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
-        c = calcs.get('defense') or {}
-        if isinstance(c, dict):
-            running = c.get('running', False)
-            started_at = c.get('started_at') or 0
-            if running and not started_at:
-                started_at = server_time
-            out['defense'] = {
-                'running': running,
-                'started_at': started_at,
-                'history': c.get('history') if isinstance(c.get('history'), list) else [],
-                'duration_limit': int(c.get('duration_limit') or 0),
-                'use_duration_limit': bool(c.get('use_duration_limit')),
-                'timer_completed': bool(c.get('timer_completed')),
-                'linked_calc_id': int(c.get('linked_calc_id') or 1),
-                'full_steps': int(c.get('full_steps') or 3),
-                'reduce_from': int(c.get('reduce_from') or 4),
-                'reduce_div': int(c.get('reduce_div') or 4),
-                'stop_streak': int(c.get('stop_streak') or 0),
-                'max_win_streak_ever': int(c.get('max_win_streak_ever') or 0),
-                'max_lose_streak_ever': int(c.get('max_lose_streak_ever') or 0),
-                'first_bet_round': max(0, int(c.get('first_bet_round') or 0))
-            }
-        else:
-            out['defense'] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'timer_completed': False, 'linked_calc_id': 1, 'full_steps': 3, 'reduce_from': 4, 'reduce_div': 4, 'stop_streak': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0}
         save_calc_state(session_id, out)
         return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': out}), 200
     except Exception as e:
