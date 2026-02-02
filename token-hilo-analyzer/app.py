@@ -524,6 +524,55 @@ def _apply_results_to_calcs(results):
         print(f"[스케줄러] 회차 반영 오류: {str(e)[:200]}")
 
 
+def _prediction_history_has_round(round_num):
+    """해당 회차가 prediction_history에 이미 있는지 조회."""
+    if not DB_AVAILABLE or not DATABASE_URL or round_num is None:
+        return False
+    conn = get_db_connection(statement_timeout_sec=3)
+    if not conn:
+        return False
+    try:
+        cur = conn.cursor()
+        cur.execute('SELECT 1 FROM prediction_history WHERE round_num = %s LIMIT 1', (int(round_num),))
+        found = cur.fetchone() is not None
+        cur.close()
+        conn.close()
+        return found
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return False
+
+
+def _backfill_latest_round_to_prediction_history(results):
+    """최신 회차가 prediction_history에 없으면 서버가 예측/실제를 계산해 저장. 화면 미반영으로 누락된 회차 보정."""
+    if not results or len(results) < 17:
+        return
+    try:
+        latest_game_id = results[0].get('gameID')
+        if not latest_game_id:
+            return
+        latest_round = int(str(latest_game_id), 10)
+        if _prediction_history_has_round(latest_round):
+            return
+        actual = _get_actual_for_round(results, latest_round)
+        if actual is None:
+            return
+        ph = get_prediction_history(100)
+        pred = compute_prediction(results[1:], ph)
+        if not pred or pred.get('round') != latest_round or pred.get('value') is None:
+            return
+        save_prediction_record(
+            latest_round, pred['value'], actual,
+            probability=pred.get('prob'), pick_color=pred.get('color')
+        )
+        print(f"[API] prediction_history 보정 저장: round {latest_round} predicted={pred.get('value')} actual={actual}")
+    except Exception as e:
+        print(f"[경고] prediction_history 보정 실패: {str(e)[:150]}")
+
+
 def get_prediction_history(limit=30):
     """시스템 예측 기록 조회 (최신 N건, round 오름차순 = 과거→현재). statement_timeout으로 먹통 방지."""
     if not DB_AVAILABLE or not DATABASE_URL:
@@ -1523,13 +1572,14 @@ def load_results_data(base_url=None):
 
 
 def _scheduler_fetch_results():
-    """스케줄러에서 호출: results_cache 갱신 + DB 저장 + 실행 중인 계산기 회차 반영. API 대기 없이 선제적 갱신."""
+    """스케줄러에서 호출: results_cache 갱신 + DB 저장 + 실행 중인 계산기 회차 반영 + prediction_history 누락 보정."""
     try:
         _refresh_results_background()
         if DB_AVAILABLE and DATABASE_URL:
             results = get_recent_results(hours=1)
             if results and len(results) >= 16:
                 _apply_results_to_calcs(results)
+                _backfill_latest_round_to_prediction_history(results)
     except Exception as e:
         print(f"[스케줄러] 결과 수집/회차 반영 오류: {str(e)[:150]}")
 
@@ -3072,8 +3122,7 @@ RESULTS_HTML = '''
                 
                 statusElement.textContent = `총 ${allResults.length}개 경기 결과 (표시: ${newResults.length}개)`;
                 
-                // 최신 결과가 왼쪽에 오도록 (원본 데이터가 최신이 앞에 있음)
-                // 최신 15개만 표시 (반응형으로 모두 보이도록)
+                // 맨 왼쪽 = 최신 회차: 서버·클라이언트 모두 gameID 내림차순 정렬 완료. index 0이 최신.
                 const displayResults = allResults.slice(0, 15);
                 const results = allResults;  // 비교를 위해 전체 결과 사용
                 
@@ -5062,6 +5111,13 @@ def get_results():
                     print(f"[API] result_source 적용: {base} → round_actuals {len(ra)}건")
             except Exception as e:
                 print(f"[API] result_source 조회 실패: {result_source} - {str(e)[:100]}")
+        
+        # 화면 맨 왼쪽 = 최신 회차 보장: 응답 직전에 game_id 기준 내림차순 강제 정렬 (캐시/병합 출처와 무관)
+        if payload and payload.get('results'):
+            payload = dict(payload)
+            payload['results'] = _sort_results_newest_first(list(payload['results']))
+            first_id = (payload['results'][0].get('gameID') if payload['results'] else None)
+            print(f"[API] 응답 결과 수: {len(payload['results'])}개, 맨 앞(최신) gameID: {first_id}")
         
         resp = jsonify(payload)
         resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
