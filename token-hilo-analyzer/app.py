@@ -3358,14 +3358,8 @@ RESULTS_HTML = '''
                         } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
                             const actual = graphValues[0] ? '정' : '꺽';
                             predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: actual, probability: lastPrediction.prob != null ? lastPrediction.prob : null, pickColor: lastPrediction.color || null });
-                            var teukTop2 = [];
-                            try {
-                                var nonJ = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && h.actual !== 'joker' && h.probability != null; }) : [];
-                                var BUCKETS_T = [{ min: 50, max: 55 }, { min: 55, max: 60 }, { min: 60, max: 65 }, { min: 65, max: 70 }, { min: 70, max: 75 }, { min: 75, max: 80 }, { min: 80, max: 85 }, { min: 85, max: 90 }, { min: 90, max: 101 }];
-                                var bucketStatsT = BUCKETS_T.map(function(b) { var inB = nonJ.filter(function(h) { var p = Number(h.probability); return p >= b.min && p < b.max; }); var wins = inB.filter(function(h) { return h.predicted === h.actual; }).length; return { min: b.min, max: b.max, total: inB.length, wins: wins }; }).filter(function(s) { return s.total > 0; });
-                                var sortedT = bucketStatsT.slice().sort(function(a, b) { return (b.total ? 100 * b.wins / b.total : 0) - (a.total ? 100 * a.wins / a.total : 0); });
-                                teukTop2 = sortedT.slice(0, 2);
-                            } catch (et) {}
+                            var teukPickInRankRound = 0;
+                            try { teukPickInRankRound = window.__teukPickInRank || 0; } catch (e) {}
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
                                 const firstBetActual = calcState[id].first_bet_round || 0;
@@ -3374,9 +3368,7 @@ RESULTS_HTML = '''
                                 if (hasRound) return;
                                 var teukScopeElRound = document.getElementById('calc-' + id + '-teuk-scope');
                                 var teukScopeRound = (teukScopeElRound && teukScopeElRound.value === 'top') ? 'top' : 'top2';
-                                var scopeLen = (teukScopeRound === 'top') ? 1 : 2;
-                                var inTeuk = false;
-                                if (lastPrediction.prob != null && teukTop2.length > 0) { for (var qi = 0; qi < Math.min(scopeLen, teukTop2.length); qi++) { if (lastPrediction.prob >= teukTop2[qi].min && lastPrediction.prob < teukTop2[qi].max) { inTeuk = true; break; } } }
+                                var inTeuk = (teukScopeRound === 'top' && teukPickInRankRound === 1) || (teukScopeRound === 'top2' && teukPickInRankRound >= 1 && teukPickInRankRound <= 2);
                                 var teukEatEl = document.getElementById('calc-' + id + '-teuk-eat');
                                 var teukEat = !!(teukEatEl && teukEatEl.checked);
                                 var rev = !!(calcState[id] && calcState[id].reverse);
