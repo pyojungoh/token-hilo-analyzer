@@ -3380,8 +3380,7 @@ RESULTS_HTML = '''
                     try { window.__latestGameIDForCalc = latestGameID; } catch (e) {}
                     const is15Joker = displayResults.length >= 15 && !!displayResults[14].joker;  // 15번 카드 조커면 픽/배팅 보류
                     
-                    // 직전 예측의 실제 결과 반영: 서버에서 예측을 주면 서버가 회차 반영하므로 클라이언트는 생략
-                    if (!lastServerPrediction) {
+                    // 직전 예측의 실제 결과 반영: 회차별 버퍼에서 해당 회차 예측만 사용 (서버/클라이언트 구분 없이 매 회차 반영)
                     const alreadyRecordedRound = predictionHistory.some(function(h) { return h && h.round === currentRoundFull; });
                     const predForRound = getRoundPrediction(currentRoundFull) || (lastPrediction && lastPrediction.round === currentRoundFull ? lastPrediction : null);
                     var lowWinRateForRecord = false;
@@ -3472,7 +3471,6 @@ RESULTS_HTML = '''
                         }
                         predictionHistory = predictionHistory.slice(-100);
                         savePredictionHistory();  // localStorage 백업
-                    }
                     }
                     
                     // 최근 15회 정/꺽 흐름으로 퐁당·줄 계산 (승패 아님)
@@ -4645,13 +4643,13 @@ RESULTS_HTML = '''
         
         initialLoad();
         
-        // 결과 폴링: 한 번에 하나만 요청, 간격 넉넉히 (서버 부하·pending 폭증 방지)
+        // 결과 폴링: 예측픽·계산기 반영 속도 위해 간격 단축 (서버 부하 고려해 1.2초)
         setInterval(() => {
-            const interval = allResults.length === 0 ? 800 : 2200;
+            const interval = allResults.length === 0 ? 600 : 1200;
             if (Date.now() - lastResultsUpdate > interval) {
                 loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
             }
-        }, 500);
+        }, 400);
         
         // 계산기 실행 중일 때 서버 상태 주기적으로 가져와 UI 실시간 반영 (멈춰 보이는 현상 방지)
         setInterval(() => {
