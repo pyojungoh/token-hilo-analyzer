@@ -501,7 +501,7 @@ def _apply_results_to_calcs(results):
                 if c.get('reverse'):
                     pred_for_calc = '꺽' if pending_predicted == '정' else '정'
                 blended = _blended_win_rate(get_prediction_history(100))
-                thr = c.get('win_rate_threshold', 50)
+                thr = c.get('win_rate_threshold', 46)
                 if c.get('win_rate_reverse') and blended is not None and blended <= thr:
                     pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
                 c['history'] = (c.get('history') or []) + [{'round': pending_round, 'predicted': pred_for_calc, 'actual': actual}]
@@ -2464,7 +2464,7 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-1-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label></td></tr>
-                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="46" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-1-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-1-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-1-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
@@ -2498,7 +2498,7 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-2-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label></td></tr>
-                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="46" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-2-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-2-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-2-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
@@ -2532,7 +2532,7 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-3-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label></td></tr>
-                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="46" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-3-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-3-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-3-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
@@ -2722,7 +2722,7 @@ RESULTS_HTML = '''
                 use_duration_limit: false,
                 reverse: false,
                 win_rate_reverse: false,
-                win_rate_threshold: 50,
+                win_rate_threshold: 46,
                 martingale: false,
                 martingale_type: 'pyo',
                 target_enabled: false,
@@ -2747,8 +2747,8 @@ RESULTS_HTML = '''
                 const use_duration_limit = !!(checkEl && checkEl.checked);
                 const winRateRevEl = document.getElementById('calc-' + id + '-win-rate-reverse');
                 const winRateThrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
-                var winRateThr = (winRateThrEl && !isNaN(parseFloat(winRateThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(winRateThrEl.value))) : 50;
-                if (typeof winRateThr !== 'number' || isNaN(winRateThr)) winRateThr = 50;
+                var winRateThr = (winRateThrEl && !isNaN(parseFloat(winRateThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(winRateThrEl.value))) : 46;
+                if (typeof winRateThr !== 'number' || isNaN(winRateThr)) winRateThr = 46;
                 const martingaleEl = document.getElementById('calc-' + id + '-martingale');
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 payload[String(id)] = {
@@ -2776,8 +2776,9 @@ RESULTS_HTML = '''
             });
             return payload;
         }
-        function applyCalcsToState(calcs, serverTimeSec) {
+        function applyCalcsToState(calcs, serverTimeSec, restoreUi) {
             const st = serverTimeSec || Math.floor(Date.now() / 1000);
+            const fullRestore = restoreUi === true;
             CALC_IDS.forEach(id => {
                 const c = calcs[String(id)] || {};
                 if (Array.isArray(c.history)) calcState[id].history = c.history.slice(-500);
@@ -2791,18 +2792,25 @@ RESULTS_HTML = '''
                 calcState[id].maxLoseStreakEver = Math.max(0, parseInt(c.max_lose_streak_ever, 10) || 0);
                 calcState[id].first_bet_round = Math.max(0, parseInt(c.first_bet_round, 10) || 0);
                 calcState[id].elapsed = calcState[id].running && calcState[id].started_at ? Math.max(0, st - calcState[id].started_at) : 0;
+                calcState[id].pending_round = c.pending_round != null ? c.pending_round : null;
+                calcState[id].pending_predicted = c.pending_predicted != null ? c.pending_predicted : null;
+                calcState[id].pending_prob = c.pending_prob != null ? c.pending_prob : null;
+                calcState[id].pending_color = c.pending_color || null;
+                if (!fullRestore) return;
+                calcState[id].reverse = !!c.reverse;
+                calcState[id].win_rate_reverse = !!c.win_rate_reverse;
+                var thr = (typeof c.win_rate_threshold === 'number' && c.win_rate_threshold >= 0 && c.win_rate_threshold <= 100) ? c.win_rate_threshold : 46;
+                calcState[id].win_rate_threshold = thr;
+                calcState[id].martingale = !!c.martingale;
+                calcState[id].martingale_type = (c.martingale_type === 'pyo' ? 'pyo' : 'pyo');
+                calcState[id].target_enabled = !!c.target_enabled;
+                calcState[id].target_amount = Math.max(0, parseInt(c.target_amount, 10) || 0);
                 const durEl = document.getElementById('calc-' + id + '-duration');
                 const checkEl = document.getElementById('calc-' + id + '-duration-check');
                 const revEl = document.getElementById('calc-' + id + '-reverse');
                 if (durEl) durEl.value = Math.floor((calcState[id].duration_limit || 0) / 60);
                 if (checkEl) checkEl.checked = calcState[id].use_duration_limit;
                 if (revEl) revEl.checked = !!c.reverse;
-                calcState[id].reverse = !!c.reverse;
-                calcState[id].win_rate_reverse = !!c.win_rate_reverse;
-                var thr = (typeof c.win_rate_threshold === 'number' && c.win_rate_threshold >= 0 && c.win_rate_threshold <= 100) ? c.win_rate_threshold : 50;
-                calcState[id].win_rate_threshold = thr;
-                calcState[id].martingale = !!c.martingale;
-                calcState[id].martingale_type = (c.martingale_type === 'pyo' ? 'pyo' : 'pyo');
                 const winRateRevEl = document.getElementById('calc-' + id + '-win-rate-reverse');
                 if (winRateRevEl) winRateRevEl.checked = !!c.win_rate_reverse;
                 const winRateThrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
@@ -2811,20 +2819,15 @@ RESULTS_HTML = '''
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 if (martingaleEl) martingaleEl.checked = !!calcState[id].martingale;
                 if (martingaleTypeEl) martingaleTypeEl.value = calcState[id].martingale_type || 'pyo';
-                calcState[id].target_enabled = !!c.target_enabled;
-                calcState[id].target_amount = Math.max(0, parseInt(c.target_amount, 10) || 0);
-                calcState[id].pending_round = c.pending_round != null ? c.pending_round : null;
-                calcState[id].pending_predicted = c.pending_predicted != null ? c.pending_predicted : null;
-                calcState[id].pending_prob = c.pending_prob != null ? c.pending_prob : null;
-                calcState[id].pending_color = c.pending_color || null;
                 const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
                 const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
                 if (targetEnabledEl) targetEnabledEl.checked = !!calcState[id].target_enabled;
                 if (targetAmountEl) targetAmountEl.value = String(calcState[id].target_amount || 0);
             });
         }
-        async function loadCalcStateFromServer() {
+        async function loadCalcStateFromServer(restoreUi) {
             try {
+                if (restoreUi === undefined) restoreUi = true;
                 const session_id = localStorage.getItem(CALC_SESSION_KEY);
                 const url = session_id ? '/api/calc-state?session_id=' + encodeURIComponent(session_id) : '/api/calc-state';
                 const res = await fetch(url, { cache: 'no-cache' });
@@ -2843,7 +2846,7 @@ RESULTS_HTML = '''
                         }
                     } catch (e) { /* ignore */ }
                 }
-                applyCalcsToState(calcs, lastServerTimeSec);
+                applyCalcsToState(calcs, lastServerTimeSec, restoreUi);
             } catch (e) { console.warn('계산기 상태 로드 실패:', e); }
         }
         async function saveCalcStateToServer() {
@@ -3320,7 +3323,7 @@ RESULTS_HTML = '''
                                 var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
                                 const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
                                 var thrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
-                                var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
+                                var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
                                 if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
                                 if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
                                 calcState[id].history.push({ predicted: pred, actual: 'joker', round: lastPrediction.round });
@@ -3340,7 +3343,7 @@ RESULTS_HTML = '''
                                 var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
                                 const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
                                 var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
-                                var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
+                                var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
                                 if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
                                 if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
                                 calcState[id].history.push({ predicted: pred, actual: actual, round: lastPrediction.round });
@@ -4071,8 +4074,8 @@ RESULTS_HTML = '''
                             var c100 = hit100r + loss100, r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
                             var blended = 0.6 * r15 + 0.25 * r30 + 0.15 * r100;
                             var thrCardEl = document.getElementById('calc-' + id + '-win-rate-threshold');
-                            var thrCardNum = (thrCardEl && !isNaN(parseFloat(thrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrCardEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
-                            if (typeof thrCardNum !== 'number' || isNaN(thrCardNum)) thrCardNum = 50;
+                            var thrCardNum = (thrCardEl && !isNaN(parseFloat(thrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrCardEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
+                            if (typeof thrCardNum !== 'number' || isNaN(thrCardNum)) thrCardNum = 46;
                             lowWinRate = (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrCardNum;
                         } catch (e2) {}
                         const useWinRateRevCard = !!(calcState[id] && calcState[id].win_rate_reverse);
@@ -4310,7 +4313,7 @@ RESULTS_HTML = '''
                 const winRateRevRun = document.getElementById('calc-' + id + '-win-rate-reverse');
                 calcState[id].win_rate_reverse = !!(winRateRevRun && winRateRevRun.checked);
                 const winRateThrRun = document.getElementById('calc-' + id + '-win-rate-threshold');
-                var thrRun = (winRateThrRun && parseFloat(winRateThrRun.value) != null && !isNaN(parseFloat(winRateThrRun.value))) ? Math.max(0, Math.min(100, parseFloat(winRateThrRun.value))) : 50;
+                var thrRun = (winRateThrRun && parseFloat(winRateThrRun.value) != null && !isNaN(parseFloat(winRateThrRun.value))) ? Math.max(0, Math.min(100, parseFloat(winRateThrRun.value))) : 46;
                 calcState[id].win_rate_threshold = thrRun;
                 calcState[id].timer_completed = false;
                 calcState[id].running = true;
@@ -4523,7 +4526,7 @@ RESULTS_HTML = '''
         setInterval(() => {
             const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
             if (anyRunning) {
-                loadCalcStateFromServer().then(function() { updateAllCalcs(); }).catch(function(e) { console.warn('계산기 상태 폴링:', e); });
+                loadCalcStateFromServer(false).then(function() { updateAllCalcs(); }).catch(function(e) { console.warn('계산기 상태 폴링:', e); });
             }
         }, 2000);
         
@@ -4872,7 +4875,7 @@ def api_calc_state():
             if state is None:
                 state = {}
             # 계산기 1,2,3만 반환 (레거시 defense 제거 후 클라이언트 호환)
-            _default = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
+            _default = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
             calcs = {}
             for cid in ('1', '2', '3'):
                 calcs[cid] = state[cid] if (cid in state and isinstance(state.get(cid), dict)) else dict(_default)
@@ -4900,7 +4903,7 @@ def api_calc_state():
                     'reverse': bool(c.get('reverse')),
                     'timer_completed': bool(c.get('timer_completed')),
                     'win_rate_reverse': bool(c.get('win_rate_reverse')),
-                    'win_rate_threshold': max(0, min(100, int(c.get('win_rate_threshold') or 50))),
+                    'win_rate_threshold': max(0, min(100, int(c.get('win_rate_threshold') or 46))),
                     'martingale': bool(c.get('martingale')),
                     'martingale_type': str(c.get('martingale_type') or 'pyo'),
                     'target_enabled': bool(c.get('target_enabled')),
@@ -4914,7 +4917,7 @@ def api_calc_state():
                     'pending_color': c.get('pending_color'),
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
         save_calc_state(session_id, out)
         return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': out}), 200
     except Exception as e:
