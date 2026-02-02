@@ -1166,13 +1166,13 @@ def get_recent_results(hours=5):
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # 최근 N시간 데이터 조회, LIMIT 2000으로 과부하 방지
+        # 최근 N시간 데이터 조회, LIMIT 2000. 회차(game_id) 숫자 기준 최신순으로 정렬 (화면에 현재 회차 표시 보장)
         cur.execute('''
             SELECT game_id as "gameID", result, hi, lo, red, black, jqka, joker, 
                    hash_value as hash, salt_value as salt
             FROM game_results
             WHERE created_at >= NOW() - (INTERVAL '1 hour' * %s)
-            ORDER BY created_at DESC
+            ORDER BY (NULLIF(REGEXP_REPLACE(game_id::text, '[^0-9]', '', 'g'), '')::BIGINT) DESC NULLS LAST, created_at DESC
             LIMIT 2000
         ''', (int(hours),))
         
@@ -3031,16 +3031,18 @@ RESULTS_HTML = '''
                         return gb.localeCompare(ga);  // 문자열이면 역순
                     });
                 }
-                // 결과 병합: 서버에서 받은 newResults와 기존 oldResults를 합쳐 merged 구성 후, 유효한 merged가 있으면 allResults 갱신 (화면 먹통 방지)
+                // 결과 병합: 서버가 많은 결과를 보낼 때(전체 목록)는 그대로 최신순 정렬해 전체 교체 → 현재 회차가 화면에 반영되도록
                 let resultsUpdated = false;
                 if (newResults.length > 0) {
-                    const newGameIDs = new Set(newResults.map(r => String(r.gameID != null && r.gameID !== '' ? r.gameID : '')).filter(id => id !== ''));
-                    const oldResults = allResults.filter(r => !newGameIDs.has(String(r.gameID != null && r.gameID !== '' ? r.gameID : '')));
-                    const merged = sortResultsNewestFirst([...newResults, ...oldResults].slice(0, 150));
-                    if (merged.length > 0) {
-                        allResults = merged;
+                    const FULL_REPLACE_THRESHOLD = 80;  // 서버가 80개 이상 보내면 전체 교체(예전 데이터 고정 방지)
+                    if (newResults.length >= FULL_REPLACE_THRESHOLD) {
+                        allResults = sortResultsNewestFirst(newResults).slice(0, 300);
+                    } else {
+                        const newGameIDs = new Set(newResults.map(r => String(r.gameID != null && r.gameID !== '' ? r.gameID : '')).filter(id => id !== ''));
+                        const oldResults = allResults.filter(r => !newGameIDs.has(String(r.gameID != null && r.gameID !== '' ? r.gameID : '')));
+                        const merged = sortResultsNewestFirst([...newResults, ...oldResults].slice(0, 150));
+                        if (merged.length > 0) allResults = merged;
                     }
-                    // 서버에서 결과를 받았으면 항상 DOM 갱신 (성공/실패·결과값 박스가 움직이도록)
                     resultsUpdated = true;
                 } else {
                     if (allResults.length === 0) {
