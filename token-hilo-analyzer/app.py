@@ -5024,37 +5024,32 @@ def _refresh_results_background():
 
 @app.route('/api/results', methods=['GET'])
 def get_results():
-    """경기 결과 API. 캐시 없으면 DB만으로 즉시 응답 후 백그라운드 갱신."""
+    """경기 결과 API. 화면 송출 보장: 매 요청마다 DB에서 결과 생성(워커/캐시 무관)."""
     try:
         global results_cache, last_update_time
         result_source = request.args.get('result_source', '').strip()
-        now_ms = time.time() * 1000
 
-        if results_cache and (now_ms - last_update_time) < CACHE_TTL:
-            payload = results_cache.copy()
-        elif results_cache:
-            payload = results_cache.copy()
-            if not _results_refreshing:
-                threading.Thread(target=_refresh_results_background, daemon=True).start()
+        # 매 요청마다 DB에서 응답 생성 (Gunicorn 다중 워커에서 캐시 비어 있는 워커로 가도 빈 응답 방지)
+        payload = _build_results_payload_db_only(hours=5)
+        if payload and payload.get('results'):
+            results_cache = payload
+            last_update_time = time.time() * 1000
         else:
-            # 캐시 없음: DB에서 즉시 결과 만들어 응답 (화면 송출 우선). 백그라운드 갱신은 별도로 돌려 다음 요청용 캐시 채움
-            payload = _build_results_payload_db_only(hours=5)
+            payload = _build_results_payload_db_only(hours=24) or payload
             if payload and payload.get('results'):
                 results_cache = payload
                 last_update_time = time.time() * 1000
+        if not payload or not payload.get('results'):
+            if results_cache and results_cache.get('results'):
+                payload = results_cache.copy()
             else:
-                payload = _build_results_payload_db_only(hours=24) or payload
-                if payload and payload.get('results'):
-                    results_cache = payload
-                    last_update_time = time.time() * 1000
-            if not payload or not payload.get('results'):
                 payload = {
                     'results': [], 'count': 0, 'timestamp': datetime.now().isoformat(),
                     'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
                     'blended_win_rate': None, 'round_actuals': {}
                 }
-            if not _results_refreshing:
-                threading.Thread(target=_refresh_results_background, daemon=True).start()
+        if not _results_refreshing:
+            threading.Thread(target=_refresh_results_background, daemon=True).start()
         
         # result_source 지정 시: 베팅 사이트와 동일한 결과 소스에서 round_actuals 재조회
         if result_source:
