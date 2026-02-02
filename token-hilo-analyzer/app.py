@@ -42,8 +42,8 @@ try:
     from apscheduler.schedulers.background import BackgroundScheduler
     SCHEDULER_AVAILABLE = True
     import logging
-    logging.getLogger('apscheduler.scheduler').setLevel(logging.WARNING)
-    logging.getLogger('apscheduler.executors.default').setLevel(logging.WARNING)
+    for _name in ('apscheduler', 'apscheduler.scheduler', 'apscheduler.executors.default'):
+        logging.getLogger(_name).setLevel(logging.WARNING)
 except ImportError:
     SCHEDULER_AVAILABLE = False
 
@@ -141,11 +141,12 @@ def init_database():
             CREATE INDEX IF NOT EXISTS idx_prediction_history_created ON prediction_history(created_at DESC)
         ''')
         for col, typ in [('probability', 'REAL'), ('pick_color', 'VARCHAR(10)')]:
-            try:
+            cur.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'prediction_history' AND column_name = %s",
+                (col,)
+            )
+            if cur.fetchone() is None:
                 cur.execute('ALTER TABLE prediction_history ADD COLUMN ' + col + ' ' + typ)
-                conn.commit()
-            except Exception:
-                pass
         
         # calc_sessions: 계산기 상태 서버 저장 (새로고침/재접속 후에도 실행중 유지)
         cur.execute('''
@@ -1472,7 +1473,7 @@ def load_results_data(base_url=None):
                     continue
                 results = _parse_results_json(data)
                 if results:
-                    print(f"[✅ 결과 데이터 성공] {url_path} ({len(results)}개)")
+                    _log_throttle('result_success', 5.0, f"[✅ 결과 데이터 성공] {url_path} ({len(results)}개)")
                     executor.shutdown(wait=False)
                     if DB_AVAILABLE and DATABASE_URL and base == BASE_URL:
                         saved_count = 0
@@ -4796,11 +4797,11 @@ def _build_results_payload():
         latest_results = load_results_data()
         if latest_results is None:
             latest_results = []
-        print(f"[API] 최신 데이터 로드: {len(latest_results)}개")
+        _log_throttle('api_latest', 5.0, f"[API] 최신 데이터 로드: {len(latest_results)}개")
         if DB_AVAILABLE and DATABASE_URL:
             # 데이터베이스에서 최근 5시간 데이터 조회
             db_results = get_recent_results(hours=5)
-            print(f"[API] DB 데이터 조회: {len(db_results)}개")
+            _log_throttle('api_db', 5.0, f"[API] DB 데이터 조회: {len(db_results)}개")
             
             # 최신 데이터 저장 (백그라운드)
             if latest_results:
@@ -4825,7 +4826,7 @@ def _build_results_payload():
                 # 최신 데이터 + DB 데이터 (최신순) → gameID 기준 정렬로 순서 고정 (그래프 일관성)
                 results = latest_results + db_results_filtered
                 results = _sort_results_newest_first(results)
-                print(f"[API] 병합 결과: 최신 {len(latest_results)}개 + DB {len(db_results_filtered)}개 = 총 {len(results)}개")
+                _log_throttle('api_merge', 5.0, f"[API] 병합 결과: 최신 {len(latest_results)}개 + DB {len(db_results_filtered)}개 = 총 {len(results)}개")
                 
                 # 병합된 전체 결과에 대해 정/꺽 결과 계산 및 추가
                 if len(results) >= 16:
