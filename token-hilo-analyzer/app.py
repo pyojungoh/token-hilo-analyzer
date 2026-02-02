@@ -1169,8 +1169,8 @@ def get_recent_results(hours=5):
         for i in range(min(15, len(results))):
             if i + 15 >= len(results):
                 break
-                if results[i].get('joker') or results[i + 15].get('joker'):
-                    results[i]['colorMatch'] = None
+            if results[i].get('joker') or results[i + 15].get('joker'):
+                results[i]['colorMatch'] = None
                 continue
             gid = results[i].get('gameID')
             cgid = results[i + 15].get('gameID')
@@ -4745,6 +4745,32 @@ def results_page():
     """경기 결과 웹페이지"""
     return render_template_string(RESULTS_HTML)
 
+def _build_results_payload_db_only(hours=1):
+    """DB만으로 페이로드 생성 (네트워크 없음). 캐시 비어 있을 때 첫 화면 빠르게 표시용."""
+    try:
+        if not DB_AVAILABLE or not DATABASE_URL:
+            return None
+        results = get_recent_results(hours=hours)
+        results = _sort_results_newest_first(results)
+        ph = get_prediction_history(100)
+        server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
+        blended = _blended_win_rate(ph)
+        round_actuals = _build_round_actuals(results)
+        return {
+            'results': results,
+            'count': len(results),
+            'timestamp': datetime.now().isoformat(),
+            'source': 'database',
+            'prediction_history': ph,
+            'server_prediction': server_pred,
+            'blended_win_rate': round(blended, 1) if blended is not None else None,
+            'round_actuals': round_actuals
+        }
+    except Exception as e:
+        print(f"[API] DB 전용 페이로드 오류: {str(e)[:150]}")
+        return None
+
+
 def _build_results_payload():
     """경기 결과 페이로드 생성 (스레드에서 호출, 먹통 시 None 반환)."""
     try:
@@ -4980,27 +5006,32 @@ def _refresh_results_background():
 
 @app.route('/api/results', methods=['GET'])
 def get_results():
-    """경기 결과 API. result_source=URL 쿼리 있으면 해당 URL에서 결과 조회(베팅 사이트와 동일 소스)."""
+    """경기 결과 API. 캐시 없으면 DB만으로 즉시 응답 후 백그라운드 갱신."""
     try:
         global results_cache, last_update_time
         result_source = request.args.get('result_source', '').strip()
-        
-        # 기본 응답 (캐시 또는 빈값)
-        payload = None
-        if results_cache and (time.time() * 1000 - last_update_time) < CACHE_TTL:
+        now_ms = time.time() * 1000
+
+        if results_cache and (now_ms - last_update_time) < CACHE_TTL:
             payload = results_cache.copy()
         elif results_cache:
             payload = results_cache.copy()
             if not _results_refreshing:
                 threading.Thread(target=_refresh_results_background, daemon=True).start()
         else:
+            # 캐시 없음: DB만으로 즉시 응답해 경기 결과가 화면에 바로 표시되도록
+            payload = _build_results_payload_db_only(hours=1)
+            if payload and payload.get('results'):
+                results_cache = payload
+                last_update_time = now_ms
+            else:
+                payload = {
+                    'results': [], 'count': 0, 'timestamp': datetime.now().isoformat(),
+                    'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
+                    'blended_win_rate': None, 'round_actuals': {}
+                }
             if not _results_refreshing:
                 threading.Thread(target=_refresh_results_background, daemon=True).start()
-            payload = {
-                'results': [], 'count': 0, 'timestamp': datetime.now().isoformat(),
-                'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
-                'blended_win_rate': None, 'round_actuals': {}
-            }
         
         # result_source 지정 시: 베팅 사이트와 동일한 결과 소스에서 round_actuals 재조회
         if result_source:
