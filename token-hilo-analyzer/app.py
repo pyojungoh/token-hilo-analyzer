@@ -443,7 +443,7 @@ def _build_round_actuals(results):
 
 
 def _blended_win_rate(prediction_history):
-    """예측 이력으로 15/30/100 가중 승률. (0.5*15 + 0.3*30 + 0.2*100).
+    """예측 이력으로 15/30/100 가중 승률. (0.6*15 + 0.25*30 + 0.15*100).
     프론트엔드와 동일: 위치 기준 마지막 N개에서 조커 제외 후 승률 계산."""
     valid_hist = [h for h in (prediction_history or []) if h and isinstance(h, dict)]
     if not valid_hist:
@@ -457,7 +457,7 @@ def _blended_win_rate(prediction_history):
     r15 = rate(v15)
     r30 = rate(v30)
     r100 = rate(v100)
-    return 0.5 * r15 + 0.3 * r30 + 0.2 * r100
+    return 0.6 * r15 + 0.25 * r30 + 0.15 * r100
 
 
 def _apply_results_to_calcs(results):
@@ -2195,6 +2195,18 @@ RESULTS_HTML = '''
         .prediction-stats-row .stat-rate.high { color: #81c784; }
         .prediction-stats-row .stat-rate.low { color: #e57373; }
         .prediction-stats-row .stat-rate.mid { color: #ffb74d; }
+        .blended-win-rate-wrap {
+            margin-bottom: 10px; padding: 10px 12px; background: #2a2a2a; border-radius: 8px; border: 1px solid #444;
+            text-align: center;
+        }
+        .prediction-stats-blended-label { font-size: clamp(0.8em, 2vw, 0.9em); color: #b0bec5; margin-bottom: 4px; }
+        .prediction-stats-blended-value { font-size: clamp(1.4em, 4vw, 1.8em); font-weight: 900; color: #fff; }
+        .blended-win-rate-low .prediction-stats-blended-value { color: #e57373; }
+        @keyframes blended-blink {
+            0%, 100% { opacity: 1; background: rgba(229,115,115,0.15); }
+            50% { opacity: 0.85; background: rgba(229,115,115,0.35); }
+        }
+        .blended-win-rate-low { animation: blended-blink 1.2s ease-in-out infinite; }
         .prediction-streak-line { margin-top: 8px; font-size: clamp(0.9em, 2vw, 1em); color: #bbb; text-align: center; }
         .prediction-streak-line .streak-win { color: #ffeb3b; font-weight: bold; }
         .prediction-streak-line .streak-lose { color: #c62828; font-weight: bold; }
@@ -3402,7 +3414,7 @@ RESULTS_HTML = '''
                         var loss100 = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
                         c100 = hit100r + loss100;
                         var r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
-                        blended = 0.5 * r15 + 0.3 * r30 + 0.2 * r100;
+                        blended = 0.6 * r15 + 0.25 * r30 + 0.15 * r100;
                         lowWinRateForRecord = (c15 > 0 || c30 > 0 || c100 > 0) && blended <= 50;
                     } catch (e) {}
                     if (lastPrediction && currentRoundFull === lastPrediction.round && !alreadyRecordedRound) {
@@ -3783,7 +3795,7 @@ RESULTS_HTML = '''
                     const countForPct = hit + losses;
                     const hitPctNum = countForPct > 0 ? 100 * hit / countForPct : 0;
                     const hitPct = countForPct > 0 ? hitPctNum.toFixed(1) : '-';
-                    // 승률 낮음·배팅 주의: 15회 50% + 30회 30% + 100회 20% 반영 (룰)
+                    // 승률 낮음·배팅 주의: 15회 60% + 30회 25% + 100회 15% 반영 (룰)
                     const validHist15 = validHist.slice(-15);
                     const validHist30 = validHist.slice(-30);
                     const validHist100 = validHist.slice(-100);
@@ -3799,7 +3811,7 @@ RESULTS_HTML = '''
                     const rate15 = count15 > 0 ? 100 * hit15 / count15 : 50;
                     const hitPctNum30 = count30 > 0 ? 100 * hit30 / count30 : 50;
                     const rate100 = count100 > 0 ? 100 * hit100 / count100 : 50;
-                    const blendedWinRate = 0.5 * rate15 + 0.3 * hitPctNum30 + 0.2 * rate100;
+                    const blendedWinRate = 0.6 * rate15 + 0.25 * hitPctNum30 + 0.15 * rate100;
                     const lowWinRate = (count15 > 0 || count30 > 0 || count100 > 0) && blendedWinRate <= 50;
                     // 표시용: 최근 50회 결과 (승/패/조커/합산승률)
                     const validHist50 = validHist.slice(-50);
@@ -3887,15 +3899,20 @@ RESULTS_HTML = '''
                     if (predDiv) {
                         const rateClass50 = count50 > 0 ? (rate50 >= 60 ? 'high' : rate50 >= 50 ? 'mid' : 'low') : '';
                         const blendedStr = (typeof blendedWinRate === 'number' && !isNaN(blendedWinRate)) ? blendedWinRate.toFixed(1) : '-';
-                        const statsBlock = '<div class="prediction-stats-row">' +
+                        const blendedLow = (typeof blendedWinRate === 'number' && !isNaN(blendedWinRate) && blendedWinRate <= 50);
+                        const blendedWrapClass = 'blended-win-rate-wrap' + (blendedLow ? ' blended-win-rate-low' : '');
+                        const statsBlock = '<div class="' + blendedWrapClass + '">' +
+                            '<div class="prediction-stats-blended-label">실제 경고 합산승률</div>' +
+                            '<div class="prediction-stats-blended-value">' + blendedStr + '%</div>' +
+                            '</div>' +
+                            '<div class="prediction-stats-row">' +
                             '<span class="stat-total">최근 50회 결과</span>' +
                             '<span class="stat-win">승 - <span class="num">' + hit50 + '</span>회</span>' +
                             '<span class="stat-lose">패 - <span class="num">' + losses50 + '</span>회</span>' +
                             '<span class="stat-joker">조커 - <span class="num">' + joker50 + '</span>회</span>' +
                             (count50 > 0 ? '<span class="stat-rate ' + rateClass50 + '">승률 : ' + rate50Str + '%</span>' : '') +
-                            '<span class="stat-rate" style="color:#888;font-size:0.9em">실제 경고 합산승률 : ' + blendedStr + '%</span>' +
                             '</div>' +
-                            '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 메인=서버 최근 100회 · 승률/경고=15·30·100 반영(50·30·20)</div>';
+                            '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 메인=서버 최근 100회 · 합산승률=15·30·100 반영(60·25·15)</div>';
                         let streakTableBlock = '';
                         try {
                         if (rev.length === 0) {
@@ -4262,7 +4279,7 @@ RESULTS_HTML = '''
                             var hit100r = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
                             var loss100 = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
                             var c100 = hit100r + loss100, r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
-                            var blended = 0.5 * r15 + 0.3 * r30 + 0.2 * r100;
+                            var blended = 0.6 * r15 + 0.25 * r30 + 0.15 * r100;
                             var thrCardEl = document.getElementById('calc-' + id + '-win-rate-threshold');
                             var thrCardNum = (thrCardEl && !isNaN(parseFloat(thrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrCardEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
                             if (typeof thrCardNum !== 'number' || isNaN(thrCardNum)) thrCardNum = 50;

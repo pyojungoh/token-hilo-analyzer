@@ -1,0 +1,49 @@
+---
+description: 토큰 하이로우 분석기 회차·결과·히스토리 코딩 규칙 (참고용)
+globs: app.py, betting_integration.py, **/macro.py
+alwaysApply: true
+---
+
+# 토큰 하이로우 분석기 코딩 규칙
+
+이 프로젝트에서 회차(round_num/gameID), 결과 표시, prediction_history 저장을 다룰 때 반드시 지킬 규칙이다. 위반 시 화면에 최신 회차가 안 나오거나 히스토리가 비는 버그가 발생한다.
+
+---
+
+## 1. 회차(round_num / gameID)
+
+- **비교·저장·표시 모두 전체 번호 사용.** 끝 3자리만 쓰면 서로 다른 회차가 같은 숫자로 겹친다(예: 11423052 vs 11424052 → 둘 다 052).
+- DB `prediction_history.round_num`, API `round`, 클라이언트 `lastPrediction.round`·`h.round`는 전부 **정수 전체 회차 번호**만 사용한다.
+- 화면에 표시할 때도 `displayRound(round)` 등으로 **전체 회차**를 보여 주어 충돌을 방지한다.
+
+---
+
+## 2. API 결과 순서 (맨 앞 = 최신 회차)
+
+- **응답 직전**에 `payload['results']`를 **game_id 기준 내림차순**으로 한 번 더 정렬한다. 캐시/병합 출처와 관계없이 맨 앞이 최신 회차가 되도록 보장한다.
+- DB 조회는 **24h(또는 72h 폴백)** 구간을 사용해 타임존·커밋 타이밍 때문에 최신 회차가 빠지지 않게 한다.
+- 클라이언트는 서버에서 결과가 1건이라도 오면 **전체 교체**한다. 예전 데이터와 병합해 상위 N개만 쓰는 로직은 사용하지 않는다(과거 데이터가 맨 앞에 고정되는 원인이 됨).
+- **맨 왼쪽 카드 = index 0 = 최신 회차.** `displayResults[0]`이 현재 회차이고, DOM/CSS에서 역순으로 그리지 않는다.
+
+---
+
+## 3. prediction_history 저장
+
+- 저장 경로는 두 가지뿐이다: **(1) 클라이언트**가 “현재 회차 = 예측했던 회차”일 때 `/api/save-prediction` 호출, **(2) 서버** 계산기 스케줄러가 `pending_round` 결과 반영 시 `save_prediction_record()` 호출.
+- **화면에 최신 회차가 안 나오면** 클라이언트는 “현재 회차”를 인식하지 못해 저장 요청을 안 보낸다. 따라서 **스케줄러에서 최신 회차가 히스토리에 없으면 서버가 자동으로 한 건 보정 저장**하는 로직(`_backfill_latest_round_to_prediction_history`)을 유지한다.
+- 보정 시: `results[0]`이 최신 회차, `_get_actual_for_round(results, latest_round)`로 실제 결과, `compute_prediction(results[1:], ph)`로 그 회차에 대한 예측값을 구한 뒤 `save_prediction_record()` 호출.
+
+---
+
+## 4. 정렬·필터 요약
+
+| 위치 | 규칙 |
+|------|------|
+| DB `get_recent_results` | `ORDER BY (game_id 숫자) DESC`, 시간 구간 24h 등으로 최신 포함 |
+| API `get_results()` | 응답 직전 `_sort_results_newest_first(payload['results'])` 강제 적용 |
+| 클라이언트 `loadResults` | 서버 결과 수신 시 `allResults = sortResultsNewestFirst(newResults).slice(0, 300)` 전체 교체 |
+| 카드 렌더 | `displayResults = allResults.slice(0, 15)`, forEach로 index 0부터 append → 맨 왼쪽이 최신 |
+
+---
+
+이 규칙을 수정·확장할 때는 “맨 왼쪽 = 최신 회차”, “히스토리 누락 없이 서버 보정” 두 원칙을 유지한다.
