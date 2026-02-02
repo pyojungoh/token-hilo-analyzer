@@ -3338,7 +3338,8 @@ RESULTS_HTML = '''
                                 if (firstBetJoker > 0 && lastPrediction.round < firstBetJoker) return;
                                 const hasRound = calcState[id].history.some(function(h) { return h && h.round === lastPrediction.round; });
                                 if (hasRound) return;
-                                var teukEatJ = !!(calcState[id] && calcState[id].teuk_eat);
+                                var teukEatElJ = document.getElementById('calc-' + id + '-teuk-eat');
+                                var teukEatJ = !!(teukEatElJ && teukEatElJ.checked);
                                 var revJ = !!(calcState[id] && calcState[id].reverse);
                                 var martingaleElJ = document.getElementById('calc-' + id + '-martingale');
                                 var martingaleJ = !!(martingaleElJ && martingaleElJ.checked);
@@ -3371,9 +3372,13 @@ RESULTS_HTML = '''
                                 if (firstBetActual > 0 && lastPrediction.round < firstBetActual) return;
                                 const hasRound = calcState[id].history.some(function(h) { return h && h.round === lastPrediction.round; });
                                 if (hasRound) return;
+                                var teukScopeElRound = document.getElementById('calc-' + id + '-teuk-scope');
+                                var teukScopeRound = (teukScopeElRound && teukScopeElRound.value === 'top') ? 'top' : 'top2';
+                                var scopeLen = (teukScopeRound === 'top') ? 1 : 2;
                                 var inTeuk = false;
-                                if (lastPrediction.prob != null && teukTop2.length > 0) { for (var qi = 0; qi < teukTop2.length; qi++) { if (lastPrediction.prob >= teukTop2[qi].min && lastPrediction.prob < teukTop2[qi].max) { inTeuk = true; break; } } }
-                                var teukEat = !!(calcState[id] && calcState[id].teuk_eat);
+                                if (lastPrediction.prob != null && teukTop2.length > 0) { for (var qi = 0; qi < Math.min(scopeLen, teukTop2.length); qi++) { if (lastPrediction.prob >= teukTop2[qi].min && lastPrediction.prob < teukTop2[qi].max) { inTeuk = true; break; } } }
+                                var teukEatEl = document.getElementById('calc-' + id + '-teuk-eat');
+                                var teukEat = !!(teukEatEl && teukEatEl.checked);
                                 var rev = !!(calcState[id] && calcState[id].reverse);
                                 var martingaleEl = document.getElementById('calc-' + id + '-martingale');
                                 var martingale = !!(martingaleEl && martingaleEl.checked);
@@ -4021,7 +4026,8 @@ RESULTS_HTML = '''
             const martingaleType = (martingaleTypeEl && martingaleTypeEl.value) || 'pyo';
             const martinTable = (martingaleType === 'ban') ? TABLE_MARTIN_BAN : TABLE_MARTIN_PYO;
             const hist = calcState[id].history || [];
-            const teukEat = !!(calcState[id] && calcState[id].teuk_eat);
+            const teukEatEl = document.getElementById('calc-' + id + '-teuk-eat');
+            const teukEat = !!(teukEatEl && teukEatEl.checked);
             const rev = !!(calcState[id] && calcState[id].reverse);
             const teukOnly = teukEat && !rev && !useMartingale;
             if (teukOnly && hist.length > 0) {
@@ -4133,8 +4139,10 @@ RESULTS_HTML = '''
                         var predictionIsRed = (lastPrediction.color === '빨강' || lastPrediction.color === '검정') ? (lastPrediction.color === '빨강') : (predictionText === '정');
                         var bettingText = predictionText;
                         var bettingIsRed = predictionIsRed;
-                        var teukEat = !!(calcState[id] && calcState[id].teuk_eat);
-                        var teukScope = (calcState[id] && calcState[id].teuk_scope) || 'top2';
+                        var teukEatElCard = document.getElementById('calc-' + id + '-teuk-eat');
+                        var teukEat = !!(teukEatElCard && teukEatElCard.checked);
+                        var teukScopeElCard = document.getElementById('calc-' + id + '-teuk-scope');
+                        var teukScope = (teukScopeElCard && teukScopeElCard.value === 'top') ? 'top' : 'top2';
                         var teukRank = 0;
                         try { teukRank = window.__teukPickInRank || 0; } catch (e) {}
                         var useTeuk = teukEat && teukRank && (teukScope === 'top' ? teukRank === 1 : teukRank >= 1);
@@ -4407,6 +4415,10 @@ RESULTS_HTML = '''
                 const winRateThrRun = document.getElementById('calc-' + id + '-win-rate-threshold');
                 var thrRun = (winRateThrRun && parseFloat(winRateThrRun.value) != null && !isNaN(parseFloat(winRateThrRun.value))) ? Math.max(0, Math.min(100, parseFloat(winRateThrRun.value))) : 46;
                 calcState[id].win_rate_threshold = thrRun;
+                var teukEatElRun = document.getElementById('calc-' + id + '-teuk-eat');
+                var teukScopeElRun = document.getElementById('calc-' + id + '-teuk-scope');
+                calcState[id].teuk_eat = !!(teukEatElRun && teukEatElRun.checked);
+                calcState[id].teuk_scope = (teukScopeElRun && teukScopeElRun.value === 'top') ? 'top' : 'top2';
                 calcState[id].timer_completed = false;
                 calcState[id].running = true;
                 calcState[id].history = [];
