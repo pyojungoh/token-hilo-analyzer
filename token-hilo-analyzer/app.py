@@ -1951,6 +1951,9 @@ RESULTS_HTML = '''
         .graph-stats .kkuk-next { color: #e57373; }
         .graph-stats .jung-kkuk { color: #ffb74d; }
         .graph-stats .kkuk-jung { color: #64b5f6; }
+        .graph-stats .stat-rate.high { color: #81c784; font-weight: 600; }
+        .graph-stats .stat-rate.mid { color: #ffb74d; }
+        .graph-stats .stat-rate.low { color: #e57373; font-weight: 500; }
         .graph-stats-note { margin-top: 6px; font-size: 0.85em; color: #aaa; text-align: center; line-height: 1.5; }
         /* 성공/실패 결과: 예측 박스와 완전 분리(아웃) */
         .prediction-result-section {
@@ -2480,7 +2483,7 @@ RESULTS_HTML = '''
                 <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">합산승률 = 15회 승률×<span id="win-rate-w15">0.6</span> + 30회 승률×<span id="win-rate-w30">0.25</span> + 100회 승률×<span id="win-rate-w100">0.15</span></p>
                 <p style="font-size:0.85em;color:#888;margin:0 0 10px 0;">위험 구간: 합산승률 ≤ <input type="number" id="win-rate-danger-threshold" min="0" max="100" value="46" style="width:3em;background:#333;color:#fff;border:1px solid #555;padding:2px 4px;"> % 일 때 패 비율 참고</p>
                 <div class="win-rate-formula-title" style="font-weight:bold;color:#81c784;margin:12px 0 6px 0;">합산승률 구간별 승/패</div>
-                <div id="win-rate-buckets-table-wrap" style="overflow-x:auto;"><table id="win-rate-buckets-table" class="prob-bucket-table" style="width:100%;margin:0;"><thead><tr><th>합산승률 구간</th><th>n</th><th>승</th><th>패</th><th>승률%</th></tr></thead><tbody id="win-rate-buckets-tbody"><tr><td colspan="5" style="color:#888;">로딩 중...</td></tr></tbody></table></div>
+                <div id="win-rate-buckets-table-wrap" class="graph-stats" style="margin-top:8px;"><table><thead><tr><th>합산승률 구간</th><th>n</th><th>승</th><th>패</th><th>승률%</th></tr></thead><tbody id="win-rate-buckets-tbody"><tr><td colspan="5" style="color:#888;">로딩 중...</td></tr></tbody></table></div>
             </div>
         </div>
         </div>
