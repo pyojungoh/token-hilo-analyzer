@@ -4096,6 +4096,7 @@ RESULTS_HTML = '''
             const el = document.getElementById(summaryId);
             if (!el) return;
             const state = calcState[id];
+            if (!state) return;
             const hist = state.history || [];
             const elapsedStr = state.running && typeof formatMmSs === 'function' ? formatMmSs(state.elapsed || 0) : '-';
             const timerNote = state.timer_completed ? '<span class="calc-timer-note" style="color:#64b5f6;font-weight:bold;grid-column:1/-1">타이머 완료</span>' : '';
@@ -4294,6 +4295,7 @@ RESULTS_HTML = '''
             btn.addEventListener('click', async function() {
                 const rawId = this.getAttribute('data-calc');
                 const id = parseInt(rawId, 10);
+                if (!CALC_IDS.includes(id)) return;
                 const state = calcState[id];
                 if (!state || state.running) return;
                 if (!localStorage.getItem(CALC_SESSION_KEY)) {
@@ -4346,6 +4348,7 @@ RESULTS_HTML = '''
             btn.addEventListener('click', function() {
                 const rawId = this.getAttribute('data-calc');
                 const id = parseInt(rawId, 10);
+                if (!CALC_IDS.includes(id)) return;
                 const state = calcState[id];
                 if (!state) return;
                 state.running = false;
@@ -4365,6 +4368,7 @@ RESULTS_HTML = '''
             btn.addEventListener('click', function() {
                 const rawId = this.getAttribute('data-calc');
                 const id = parseInt(rawId, 10);
+                if (!CALC_IDS.includes(id)) return;
                 const state = calcState[id];
                 if (!state) return;
                 state.running = false;
@@ -4383,6 +4387,7 @@ RESULTS_HTML = '''
         document.querySelectorAll('.calc-save').forEach(btn => {
             btn.addEventListener('click', function() {
                 const id = parseInt(this.getAttribute('data-calc'), 10);
+                if (!CALC_IDS.includes(id) || !calcState[id]) return;
                 if (calcState[id].history.length === 0) return;
                 appendCalcLog(id);
                 this.style.display = 'none';
@@ -4867,7 +4872,12 @@ def api_calc_state():
             state = get_calc_state(session_id)
             if state is None:
                 state = {}
-            return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': state}), 200
+            # 계산기 1,2,3만 반환 (레거시 defense 제거 후 클라이언트 호환)
+            _default = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
+            calcs = {}
+            for cid in ('1', '2', '3'):
+                calcs[cid] = state[cid] if (cid in state and isinstance(state.get(cid), dict)) else dict(_default)
+            return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': calcs}), 200
         # POST
         data = request.get_json(force=True, silent=True) or {}
         session_id = (data.get('session_id') or '').strip()
