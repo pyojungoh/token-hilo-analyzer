@@ -156,7 +156,7 @@ def init_database():
         cur.execute('''
             CREATE INDEX IF NOT EXISTS idx_prediction_history_created ON prediction_history(created_at DESC)
         ''')
-        for col, typ in [('probability', 'REAL'), ('pick_color', 'VARCHAR(10)')]:
+        for col, typ in [('probability', 'REAL'), ('pick_color', 'VARCHAR(10)'), ('blended_win_rate', 'REAL'), ('rate_15', 'REAL'), ('rate_30', 'REAL'), ('rate_100', 'REAL')]:
             cur.execute(
                 "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'prediction_history' AND column_name = %s",
                 (col,)
@@ -292,20 +292,28 @@ def save_game_result(game_data):
 
 
 def save_prediction_record(round_num, predicted, actual, probability=None, pick_color=None):
-    """시스템 예측 기록 1건 저장. statement_timeout으로 먹통 방지."""
+    """시스템 예측 기록 1건 저장. 해당 회차 직전 이력으로 합산승률(blended_win_rate) 계산 후 저장."""
     if not DB_AVAILABLE or not DATABASE_URL:
         return False
     conn = get_db_connection(statement_timeout_sec=5)
     if not conn:
         return False
     try:
+        history_before = get_prediction_history_before_round(conn, round_num, limit=100)
+        blended_val = None
+        r15_val = r30_val = r100_val = None
+        comp = _blended_win_rate_components(history_before)
+        if comp:
+            r15_val, r30_val, r100_val, blended_val = comp
         cur = conn.cursor()
         cur.execute('''
-            INSERT INTO prediction_history (round_num, predicted, actual, probability, pick_color)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO prediction_history (round_num, predicted, actual, probability, pick_color, blended_win_rate, rate_15, rate_30, rate_100)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (round_num) DO UPDATE SET predicted = EXCLUDED.predicted, actual = EXCLUDED.actual,
-                probability = EXCLUDED.probability, pick_color = EXCLUDED.pick_color, created_at = DEFAULT
-        ''', (int(round_num), str(predicted), str(actual), float(probability) if probability is not None else None, str(pick_color) if pick_color else None))
+                probability = EXCLUDED.probability, pick_color = EXCLUDED.pick_color,
+                blended_win_rate = EXCLUDED.blended_win_rate, rate_15 = EXCLUDED.rate_15, rate_30 = EXCLUDED.rate_30, rate_100 = EXCLUDED.rate_100, created_at = DEFAULT
+        ''', (int(round_num), str(predicted), str(actual), float(probability) if probability is not None else None, str(pick_color) if pick_color else None,
+             round(blended_val, 1) if blended_val is not None else None, round(r15_val, 1) if r15_val is not None else None, round(r30_val, 1) if r30_val is not None else None, round(r100_val, 1) if r100_val is not None else None))
         conn.commit()
         cur.close()
         conn.close()
@@ -445,6 +453,12 @@ def _build_round_actuals(results):
 def _blended_win_rate(prediction_history):
     """예측 이력으로 15/30/100 가중 승률. (0.6*15 + 0.25*30 + 0.15*100).
     프론트엔드와 동일: 위치 기준 마지막 N개에서 조커 제외 후 승률 계산."""
+    comp = _blended_win_rate_components(prediction_history)
+    return comp[3] if comp else None
+
+
+def _blended_win_rate_components(prediction_history):
+    """예측 이력으로 15/30/100 승률 및 합산. (r15, r30, r100, blended)."""
     valid_hist = [h for h in (prediction_history or []) if h and isinstance(h, dict)]
     if not valid_hist:
         return None
@@ -457,7 +471,8 @@ def _blended_win_rate(prediction_history):
     r15 = rate(v15)
     r30 = rate(v30)
     r100 = rate(v100)
-    return 0.6 * r15 + 0.25 * r30 + 0.15 * r100
+    blended = 0.6 * r15 + 0.25 * r30 + 0.15 * r100
+    return (r15, r30, r100, blended)
 
 
 def _apply_results_to_calcs(results):
@@ -516,6 +531,27 @@ def _apply_results_to_calcs(results):
                 save_calc_state(session_id, state)
     except Exception as e:
         print(f"[스케줄러] 회차 반영 오류: {str(e)[:200]}")
+
+
+def get_prediction_history_before_round(conn, round_num, limit=100):
+    """해당 회차 직전까지의 예측 이력 (round_num < round_num, 과거→현재 순). 합산승률 저장용."""
+    if not conn or round_num is None:
+        return []
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('''
+            SELECT round_num as "round", predicted, actual
+            FROM prediction_history
+            WHERE round_num < %s
+            ORDER BY round_num DESC
+            LIMIT %s
+        ''', (int(round_num), int(limit)))
+        rows = cur.fetchall()
+        cur.close()
+        out = [{'round': r['round'], 'predicted': r['predicted'], 'actual': r['actual']} for r in reversed(rows)]
+        return out
+    except Exception:
+        return []
 
 
 def _prediction_history_has_round(round_num):
@@ -577,7 +613,7 @@ def get_prediction_history(limit=30):
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute('''
-            SELECT round_num as "round", predicted, actual, probability, pick_color
+            SELECT round_num as "round", predicted, actual, probability, pick_color, blended_win_rate, rate_15, rate_30, rate_100
             FROM prediction_history
             ORDER BY round_num DESC
             LIMIT %s
@@ -591,6 +627,14 @@ def get_prediction_history(limit=30):
             o = {'round': r['round'], 'predicted': r['predicted'], 'actual': r['actual']}
             if r.get('probability') is not None:
                 o['probability'] = float(r['probability'])
+            if r.get('blended_win_rate') is not None:
+                o['blended_win_rate'] = float(r['blended_win_rate'])
+            if r.get('rate_15') is not None:
+                o['rate_15'] = float(r['rate_15'])
+            if r.get('rate_30') is not None:
+                o['rate_30'] = float(r['rate_30'])
+            if r.get('rate_100') is not None:
+                o['rate_100'] = float(r['rate_100'])
             pick_color = str(r.get('pick_color') or '').strip()
             if pick_color:
                 o['pickColor'] = pick_color
@@ -2428,9 +2472,16 @@ RESULTS_HTML = '''
             </div>
         </div>
         <div id="graph-stats-collapse" class="prob-bucket-collapse collapsed">
-            <div class="prob-bucket-collapse-header" id="graph-stats-collapse-header" role="button" tabindex="0">최근 15회/30회/전체 정꺽 승률</div>
+            <div class="prob-bucket-collapse-header" id="graph-stats-collapse-header" role="button" tabindex="0">승률관리</div>
             <div class="prob-bucket-collapse-body" id="graph-stats-collapse-body">
             <div id="graph-stats" class="graph-stats"></div>
+            <div id="win-rate-formula-section" class="win-rate-formula-section" style="margin-top:12px;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
+                <div class="win-rate-formula-title" style="font-weight:bold;color:#81c784;margin-bottom:8px;">합산승률 공식</div>
+                <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">합산승률 = 15회 승률×<span id="win-rate-w15">0.6</span> + 30회 승률×<span id="win-rate-w30">0.25</span> + 100회 승률×<span id="win-rate-w100">0.15</span></p>
+                <p style="font-size:0.85em;color:#888;margin:0 0 10px 0;">위험 구간: 합산승률 ≤ <input type="number" id="win-rate-danger-threshold" min="0" max="100" value="46" style="width:3em;background:#333;color:#fff;border:1px solid #555;padding:2px 4px;"> % 일 때 패 비율 참고</p>
+                <div class="win-rate-formula-title" style="font-weight:bold;color:#81c784;margin:12px 0 6px 0;">합산승률 구간별 승/패</div>
+                <div id="win-rate-buckets-table-wrap" style="overflow-x:auto;"><table id="win-rate-buckets-table" class="prob-bucket-table" style="width:100%;margin:0;"><thead><tr><th>합산승률 구간</th><th>n</th><th>승</th><th>패</th><th>승률%</th></tr></thead><tbody id="win-rate-buckets-tbody"><tr><td colspan="5" style="color:#888;">로딩 중...</td></tr></tbody></table></div>
+            </div>
         </div>
         </div>
         <div id="prob-bucket-collapse" class="prob-bucket-collapse collapsed">
@@ -3863,6 +3914,26 @@ RESULTS_HTML = '''
                         }
                         var graphStatsCollapse = document.getElementById('graph-stats-collapse');
                         if (graphStatsCollapse) graphStatsCollapse.style.display = '';
+                        (function loadWinRateBuckets() {
+                            var tbody = document.getElementById('win-rate-buckets-tbody');
+                            if (!tbody) return;
+                            fetch('/api/win-rate-buckets').then(function(r) { return r.json(); }).then(function(data) {
+                                var buckets = data.buckets || [];
+                                if (buckets.length === 0) {
+                                    tbody.innerHTML = '<tr><td colspan="5" style="color:#888;">합산승률 데이터 없음 (회차 기록 후 저장되는 값)</td></tr>';
+                                    return;
+                                }
+                                var rows = buckets.map(function(b) {
+                                    var label = b.bucket_min + '~' + b.bucket_max + '%';
+                                    var pct = b.win_pct != null ? b.win_pct.toFixed(1) : '-';
+                                    var rowClass = b.win_pct != null && b.win_pct >= 55 ? 'high' : b.win_pct != null && b.win_pct >= 45 ? 'mid' : 'low';
+                                    return '<tr><td>' + label + '</td><td>' + b.total + '</td><td>' + b.wins + '</td><td>' + b.losses + '</td><td class="stat-rate ' + rowClass + '">' + pct + '%</td></tr>';
+                                }).join('');
+                                tbody.innerHTML = rows;
+                            }).catch(function() {
+                                if (tbody) tbody.innerHTML = '<tr><td colspan="5" style="color:#888;">로드 실패</td></tr>';
+                            });
+                        })();
                         var formulaCollapse = document.getElementById('formula-collapse');
                         if (formulaCollapse) formulaCollapse.style.display = '';
                         var graphStatsCollapseHeader = document.getElementById('graph-stats-collapse-header');
@@ -4922,6 +4993,79 @@ def api_calc_state():
         return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': out}), 200
     except Exception as e:
         return jsonify({'error': str(e)[:200], 'session_id': None, 'server_time': int(time.time()), 'calcs': {}}), 200
+
+
+def _backfill_blended_win_rate(conn):
+    """기존 prediction_history 행 중 blended_win_rate가 null인 행을 과거 이력으로 채움."""
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute('SELECT round_num FROM prediction_history WHERE blended_win_rate IS NULL ORDER BY round_num ASC')
+        null_rounds = [r[0] for r in cur.fetchall()]
+        cur.close()
+        for rn in null_rounds:
+            hist = get_prediction_history_before_round(conn, rn, limit=100)
+            comp = _blended_win_rate_components(hist)
+            if not comp:
+                continue
+            r15, r30, r100, blended = comp
+            cur2 = conn.cursor()
+            cur2.execute('''
+                UPDATE prediction_history SET blended_win_rate = %s, rate_15 = %s, rate_30 = %s, rate_100 = %s WHERE round_num = %s
+            ''', (round(blended, 1), round(r15, 1), round(r30, 1), round(r100, 1), rn))
+            cur2.close()
+        conn.commit()
+    except Exception as e:
+        print(f"[경고] blended_win_rate backfill 실패: {str(e)[:150]}")
+
+
+@app.route('/api/win-rate-buckets', methods=['GET'])
+def api_win_rate_buckets():
+    """합산승률 구간별 승/패 집계. prediction_history의 blended_win_rate 기준 10% 단위 구간. ?backfill=1 시 null 행 보정."""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return jsonify({'buckets': []}), 200
+    try:
+        conn = get_db_connection(statement_timeout_sec=10)
+        if not conn:
+            return jsonify({'buckets': []}), 200
+        if request.args.get('backfill') == '1':
+            _backfill_blended_win_rate(conn)
+        cur = conn.cursor()
+        cur.execute('''
+            SELECT round_num, predicted, actual, blended_win_rate
+            FROM prediction_history
+            WHERE blended_win_rate IS NOT NULL AND actual != 'joker'
+            ORDER BY round_num ASC
+        ''')
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        buckets = {i: {'bucket_min': i * 10, 'bucket_max': i * 10 + 10, 'wins': 0, 'losses': 0} for i in range(10)}
+        for r in rows:
+            b = float(r[3]) if r[3] is not None else None
+            if b is None:
+                continue
+            idx = min(9, max(0, int(b // 10)))
+            win = 1 if r[1] == r[2] else 0
+            buckets[idx]['wins'] += win
+            buckets[idx]['losses'] += (1 - win)
+        out = []
+        for i in range(10):
+            d = buckets[i]
+            total = d['wins'] + d['losses']
+            out.append({
+                'bucket_min': d['bucket_min'],
+                'bucket_max': d['bucket_max'],
+                'wins': d['wins'],
+                'losses': d['losses'],
+                'total': total,
+                'win_pct': round(100 * d['wins'] / total, 1) if total > 0 else None
+            })
+        return jsonify({'buckets': out}), 200
+    except Exception as e:
+        print(f"[❌ 오류] win-rate-buckets 실패: {str(e)[:200]}")
+        return jsonify({'buckets': [], 'error': str(e)[:200]}), 200
 
 
 @app.route('/api/prediction-history', methods=['POST'])
