@@ -2768,6 +2768,17 @@ RESULTS_HTML = '''
             var n = normalizePickColor(pc);
             return n === '빨강' ? 'pick-red' : (n === '검정' ? 'pick-black' : '');
         }
+        var _lastCalcHistKey = {};  // 계산기별 마지막 history 키 (불필요한 갱신 방지)
+        function needCalcUpdate(id) {
+            var state = calcState[id];
+            if (!state || !state.history) return true;
+            var len = state.history.length;
+            var last = len > 0 ? state.history[len - 1] : null;
+            var key = len + '-' + (last ? (last.round + '_' + (last.actual || '')) : '');
+            if (_lastCalcHistKey[id] === key) return false;
+            _lastCalcHistKey[id] = key;
+            return true;
+        }
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         var lastServerPrediction = null;  // 서버 예측 (있으면 표시·pending 동기화용)
         var lastWarningU35 = false;       // U자+줄 3~5 구간 감지 시 서버가 보낸 경고
@@ -3398,6 +3409,7 @@ RESULTS_HTML = '''
                                 if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
                                 if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
                                 calcState[id].history.push({ predicted: pred, actual: 'joker', round: lastPrediction.round, pickColor: betColor || null });
+                                _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
                             });
                             saveCalcStateToServer();
                             savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, 'joker', lastPrediction.prob, lastPrediction.color);
@@ -3421,6 +3433,7 @@ RESULTS_HTML = '''
                                 if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                 if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                 calcState[id].history.push({ predicted: pred, actual: actual, round: lastPrediction.round, pickColor: betColorActual || null });
+                                _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + lastPrediction.round + '_' + actual;
                                 updateCalcSummary(id);
                                 updateCalcDetail(id);
                                 var targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
@@ -3983,10 +3996,14 @@ RESULTS_HTML = '''
                         predDiv.innerHTML = noticeBlock + statsBlock + streakTableBlock + extraLine;
                     }
                     
-                    // 가상 배팅 계산기 1,2,3 요약·상세 갱신 (오류 시에도 메인 화면은 유지)
+                    // 가상 배팅 계산기: history 변경된 것만 갱신 (배팅픽 표시 속도 개선)
                     try {
-                        CALC_IDS.forEach(id => updateCalcSummary(id));
-                        CALC_IDS.forEach(id => updateCalcDetail(id));
+                        CALC_IDS.forEach(id => {
+                            if (needCalcUpdate(id)) {
+                                updateCalcSummary(id);
+                                updateCalcDetail(id);
+                            }
+                        });
                     } catch (calcErr) {
                         console.warn('계산기 갱신 오류:', calcErr);
                     }
@@ -4297,7 +4314,12 @@ RESULTS_HTML = '''
                     const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
                     const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
                     const pickVal = h.predicted === '정' ? '정' : '꺽';
-                    const pickClass = pickColorToClass(h.pickColor || h.pick_color) || (pickVal === '정' ? 'pick-jung' : 'pick-kkuk');
+                    var pickColorForRow = h.pickColor || h.pick_color;
+                    if (!pickColorForRow && typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) {
+                        var phEntry = predictionHistory.filter(function(p) { return p && p.round === h.round; })[0];
+                        if (phEntry) pickColorForRow = phEntry.pickColor || phEntry.pick_color;
+                    }
+                    const pickClass = pickColorToClass(pickColorForRow) || (pickVal === '정' ? 'pick-jung' : 'pick-kkuk');
                     const resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
                     const betStr = betAmounts[i] != null ? betAmounts[i].toLocaleString() : '-';
                     const profitVal = profits[i] != null ? profits[i] : '-';
