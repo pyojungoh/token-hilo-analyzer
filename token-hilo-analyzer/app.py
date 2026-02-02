@@ -2448,7 +2448,11 @@ RESULTS_HTML = '''
         .calc-card-item { display: inline-flex; align-items: center; gap: 4px; font-size: 0.8em; color: #888; }
         .calc-card-label { white-space: nowrap; }
         .calc-card-box { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; }
-        .calc-round-line { font-size: 0.7em; color: #aaa; min-height: 1.2em; line-height: 1.2; }
+        .calc-round-line { font-size: 0.95em; font-weight: 600; color: #ddd; min-height: 1.3em; line-height: 1.3; }
+        .calc-round-line .calc-icon { font-size: 1.5em; display: inline-block; vertical-align: middle; line-height: 1; }
+        .calc-round-line .calc-icon-star { color: #ffeb3b; }
+        .calc-round-line .calc-icon-triangle { color: #f44336; }
+        .calc-round-line .calc-icon-circle { color: #2196f3; }
         .calc-current-card { display: inline-block; text-align: center; vertical-align: middle; border: 1px solid #555; box-sizing: border-box; color: #fff; }
         .calc-current-card.calc-card-betting { width: 44px; height: 28px; line-height: 28px; font-size: 1em; font-weight: bold; }
         .calc-current-card.calc-card-prediction { width: 36px; height: 22px; line-height: 22px; font-size: 0.85em; }
@@ -2877,6 +2881,22 @@ RESULTS_HTML = '''
             if (isNaN(r) || r < 1) return '★';
             var icons = ['★', '△', '○'];
             return icons[(r - 1) % 3];
+        }
+        // 계산기 회차줄용: 아이콘에 색상 클래스 넣은 HTML (별=노랑, 세모=빨강, 동그라미=파랑)
+        function getRoundIconHtml(round) {
+            var r = parseInt(round, 10);
+            if (isNaN(r) || r < 1) return '<span class="calc-icon calc-icon-star">★</span>';
+            var idx = (r - 1) % 3;
+            var classes = ['calc-icon calc-icon-star', 'calc-icon calc-icon-triangle', 'calc-icon calc-icon-circle'];
+            var chars = ['★', '△', '○'];
+            return '<span class="' + classes[idx] + '">' + chars[idx] + '</span>';
+        }
+        // 회차 4자리만 표시 (끝 4자리)
+        function roundLast4(round) {
+            if (round == null) return '-';
+            var s = String(round);
+            if (s.length <= 4) return s;
+            return s.slice(-4);
         }
         var _lastCalcHistKey = {};  // 계산기별 마지막 history 키 (불필요한 갱신 방지)
         function needCalcUpdate(id) {
@@ -4342,11 +4362,10 @@ RESULTS_HTML = '''
                     const predictionCardEl = document.getElementById('calc-' + id + '-prediction-card');
                     if (!bettingCardEl || !predictionCardEl) return;
                     if (state.running && lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) {
-                        var roundNum = lastPrediction.round != null ? String(lastPrediction.round) : '-';
-                        var roundIcon = getRoundIcon(lastPrediction.round);
-                        var roundLine = roundNum + '회 ' + roundIcon;
-                        if (bettingRoundEl) bettingRoundEl.textContent = roundLine;
-                        if (predictionRoundEl) predictionRoundEl.textContent = roundLine;
+                        var roundNum = roundLast4(lastPrediction.round);
+                        var roundLineHtml = roundNum + '회 ' + getRoundIconHtml(lastPrediction.round);
+                        if (bettingRoundEl) bettingRoundEl.innerHTML = roundLineHtml;
+                        if (predictionRoundEl) predictionRoundEl.innerHTML = roundLineHtml;
                         if (lastIs15Joker) {
                             predictionCardEl.textContent = '보류';
                             predictionCardEl.className = 'calc-current-card calc-card-prediction';
