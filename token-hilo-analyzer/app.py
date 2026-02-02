@@ -4195,7 +4195,6 @@ RESULTS_HTML = '''
                     else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && martingaleType === 'pyo') martingaleStep = 0; else currentBet = baseIn; }
                     else { cap -= bet; if (useMartingale && martingaleType === 'pyo') martingaleStep = Math.min(martingaleStep + 1, TABLE_MARTIN_PYO.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
                 }
-            }
             // 회차별 픽/결과/승패/배팅금액/수익 행 목록 (유효 항목만, 최신순 = 뒤에서부터)
             let rows = [];
             for (let i = usedHist.length - 1; i >= 0; i--) {
