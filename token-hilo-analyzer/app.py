@@ -43,7 +43,7 @@ try:
     SCHEDULER_AVAILABLE = True
     import logging
     for _name in ('apscheduler', 'apscheduler.scheduler', 'apscheduler.executors.default'):
-        logging.getLogger(_name).setLevel(logging.WARNING)
+        logging.getLogger(_name).setLevel(logging.ERROR)
 except ImportError:
     SCHEDULER_AVAILABLE = False
 
@@ -66,6 +66,8 @@ DATABASE_URL = os.getenv('DATABASE_URL', None)
 
 # 반복 로그 억제용 (키 -> 마지막 출력 시각)
 _log_throttle_last = {}
+# 값이 바뀔 때만 로그 (키 -> 마지막 값)
+_log_when_changed_last = {}
 
 def _log_throttle(key, interval_sec, message):
     """같은 key로 interval_sec 초에 한 번만 출력."""
@@ -73,6 +75,13 @@ def _log_throttle(key, interval_sec, message):
     if key not in _log_throttle_last or (now - _log_throttle_last[key]) >= interval_sec:
         _log_throttle_last[key] = now
         print(message)
+
+def _log_when_changed(key, value, message_fn):
+    """value가 이전과 다를 때만 출력. value는 비교 가능한 값 (튜플/문자열/숫자)."""
+    last = _log_when_changed_last.get(key)
+    if last != value:
+        _log_when_changed_last[key] = value
+        print(message_fn(value))
 
 # 데이터베이스 연결 및 초기화
 def init_database():
@@ -1037,7 +1046,7 @@ def calculate_and_save_color_matches(results):
         conn.close()
         
         if saved_count > 0:
-            _log_throttle('color_matches', 5.0, f"[✅] 정/꺽 결과 {saved_count}개 저장 완료")
+            _log_when_changed('color_matches', saved_count, lambda v: f"[✅] 정/꺽 결과 {v}개 저장 완료")
     except Exception as e:
         print(f"[❌ 오류] 정/꺽 결과 계산 실패: {str(e)[:200]}")
         try:
@@ -1275,7 +1284,7 @@ game_data_cache = None
 streaks_cache = None
 results_cache = None
 last_update_time = 0
-CACHE_TTL = 50  # 결과 나오면 예측픽 빠르게 반영 (ms). 스케줄러 0.2초마다 선제 갱신으로 지연 최소화
+CACHE_TTL = 1000  # 결과 캐시 유효 시간 (ms). 1초 동안 동일 캐시 반환, 스케줄러가 2초마다 선제 갱신
 
 # 게임 상태 (Socket.IO 제거 후 기본값만 사용)
 current_status_data = {
@@ -1480,7 +1489,7 @@ def load_results_data(base_url=None):
                     continue
                 results = _parse_results_json(data)
                 if results:
-                    _log_throttle('result_success', 5.0, f"[✅ 결과 데이터 성공] {url_path} ({len(results)}개)")
+                    _log_when_changed(('result_success', url_path), (url_path, len(results)), lambda v: f"[✅ 결과 데이터 성공] {v[0]} ({v[1]}개)")
                     executor.shutdown(wait=False)
                     if DB_AVAILABLE and DATABASE_URL and base == BASE_URL:
                         saved_count = 0
@@ -1488,7 +1497,7 @@ def load_results_data(base_url=None):
                             if save_game_result(game_data):
                                 saved_count += 1
                         if saved_count > 0:
-                            _log_throttle('db_save', 5.0, f"[💾] 데이터베이스에 {saved_count}개 결과 저장 완료")
+                            _log_when_changed('db_save', saved_count, lambda v: f"[💾] 데이터베이스에 {v}개 결과 저장 완료")
                         if len(results) >= 16:
                             calculate_and_save_color_matches(results)
                     return results
@@ -1520,9 +1529,9 @@ def _scheduler_fetch_results():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=1, id='fetch_results', max_instances=1)
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=2, id='fetch_results', max_instances=1)
     _scheduler.start()
-    print("[✅] 결과 수집 스케줄러 시작 (1초마다, 예측픽 선제적 갱신)")
+    print("[✅] 결과 수집 스케줄러 시작 (2초마다, 예측픽 선제적 갱신)")
 else:
     print("[⚠] APScheduler 미설치 - 결과 수집은 브라우저 요청 시에만 동작합니다. pip install APScheduler")
 
@@ -4804,11 +4813,11 @@ def _build_results_payload():
         latest_results = load_results_data()
         if latest_results is None:
             latest_results = []
-        _log_throttle('api_latest', 5.0, f"[API] 최신 데이터 로드: {len(latest_results)}개")
+        _log_when_changed('api_latest', len(latest_results), lambda v: f"[API] 최신 데이터 로드: {v}개")
         if DB_AVAILABLE and DATABASE_URL:
             # 데이터베이스에서 최근 5시간 데이터 조회
             db_results = get_recent_results(hours=5)
-            _log_throttle('api_db', 5.0, f"[API] DB 데이터 조회: {len(db_results)}개")
+            _log_when_changed('api_db', len(db_results), lambda v: f"[API] DB 데이터 조회: {v}개")
             
             # 최신 데이터 저장 (백그라운드)
             if latest_results:
@@ -4818,7 +4827,7 @@ def _build_results_payload():
                         if save_game_result(game_data):
                             saved_count += 1
                     if saved_count > 0:
-                        _log_throttle('latest_save', 5.0, f"[💾] 최신 데이터 {saved_count}개 저장 완료")
+                        _log_when_changed('latest_save', saved_count, lambda v: f"[💾] 최신 데이터 {v}개 저장 완료")
                 except Exception as e:
                     print(f"[경고] 최신 데이터 저장 실패: {str(e)[:100]}")
             
@@ -4833,7 +4842,7 @@ def _build_results_payload():
                 # 최신 데이터 + DB 데이터 (최신순) → gameID 기준 정렬로 순서 고정 (그래프 일관성)
                 results = latest_results + db_results_filtered
                 results = _sort_results_newest_first(results)
-                _log_throttle('api_merge', 5.0, f"[API] 병합 결과: 최신 {len(latest_results)}개 + DB {len(db_results_filtered)}개 = 총 {len(results)}개")
+                _log_when_changed('api_merge', (len(latest_results), len(db_results_filtered), len(results)), lambda v: f"[API] 병합 결과: 최신 {v[0]}개 + DB {v[1]}개 = 총 {v[2]}개")
                 
                 # 병합된 전체 결과에 대해 정/꺽 결과 계산 및 추가
                 if len(results) >= 16:
@@ -4993,7 +5002,7 @@ _results_refresh_lock = threading.Lock()
 _results_refreshing = False
 
 def _refresh_results_background():
-    """백그라운드에서 캐시 갱신 (요청 스레드 블로킹 없음). 이전보다 오래된 데이터로는 덮어쓰지 않음."""
+    """백그라운드에서 캐시 갱신. 서버가 항상 최신 결과를 송출하려면 유효한 페이로드가 오면 캐시를 덮어쓴다."""
     global results_cache, last_update_time, _results_refreshing
     if not _results_refresh_lock.acquire(blocking=False):
         return
@@ -5001,27 +5010,8 @@ def _refresh_results_background():
     try:
         payload = _build_results_payload()
         if payload is not None and payload.get('results'):
-            new_results = payload['results']
-            new_latest = str(new_results[0].get('gameID') or '0') if new_results else '0'
-            try:
-                new_latest_num = int(new_latest)
-            except (ValueError, TypeError):
-                new_latest_num = 0
-            should_update = True
-            if results_cache and results_cache.get('results'):
-                cur_results = results_cache['results']
-                cur_latest = str(cur_results[0].get('gameID') or '0') if cur_results else '0'
-                try:
-                    cur_latest_num = int(cur_latest)
-                except (ValueError, TypeError):
-                    cur_latest_num = 0
-                if new_latest_num < cur_latest_num:
-                    should_update = False
-                elif new_latest_num == cur_latest_num and len(new_results) <= len(cur_results):
-                    should_update = False
-            if should_update:
-                results_cache = payload
-                last_update_time = time.time() * 1000
+            results_cache = payload
+            last_update_time = time.time() * 1000
     except Exception as e:
         print(f"[API] 백그라운드 갱신 오류: {str(e)[:150]}")
     finally:
@@ -5046,19 +5036,32 @@ def get_results():
             if not _results_refreshing:
                 threading.Thread(target=_refresh_results_background, daemon=True).start()
         else:
-            # 캐시 없음: DB만으로 즉시 응답해 경기 결과가 화면에 바로 표시되도록 (5시간 구간으로 충분한 결과값 확보)
-            payload = _build_results_payload_db_only(hours=5)
-            if payload and payload.get('results'):
-                results_cache = payload
-                last_update_time = now_ms
-            else:
+            # 캐시 없음: 백그라운드 갱신 한 번 돌리고 최대 2.5초 대기 후, 없으면 DB 전용으로 즉시 응답 (결과값이 반드시 나오도록)
+            payload = None
+            if not _results_refreshing:
+                threading.Thread(target=_refresh_results_background, daemon=True).start()
+            for _ in range(5):
+                time.sleep(0.5)
+                if results_cache and results_cache.get('results'):
+                    payload = results_cache.copy()
+                    last_update_time = time.time() * 1000
+                    break
+            if not payload or not payload.get('results'):
+                payload = _build_results_payload_db_only(hours=5)
+                if payload and payload.get('results'):
+                    results_cache = payload
+                    last_update_time = time.time() * 1000
+                else:
+                    payload = _build_results_payload_db_only(hours=24) or payload
+                    if payload and payload.get('results'):
+                        results_cache = payload
+                        last_update_time = time.time() * 1000
+            if not payload or not payload.get('results'):
                 payload = {
                     'results': [], 'count': 0, 'timestamp': datetime.now().isoformat(),
                     'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
                     'blended_win_rate': None, 'round_actuals': {}
                 }
-            if not _results_refreshing:
-                threading.Thread(target=_refresh_results_background, daemon=True).start()
         
         # result_source 지정 시: 베팅 사이트와 동일한 결과 소스에서 round_actuals 재조회
         if result_source:
@@ -5223,7 +5226,7 @@ def api_current_pick():
         ok = bet_int.set_current_pick(conn, pick_color=pick_color, round_num=round_num, probability=probability, suggested_amount=suggested_amount)
         if ok:
             conn.commit()
-            print(f"[배팅연동] 픽 저장: {pick_color} round {round_num}")
+            _log_when_changed('current_pick', (pick_color, round_num), lambda v: f"[배팅연동] 픽 저장: {v[0]} round {v[1]}")
         conn.close()
         return jsonify({'ok': ok}), 200
     except Exception as e:
@@ -5267,7 +5270,7 @@ def get_current_status():
         # 디버깅: 반환 데이터 확인
         red_count = len(data.get('currentBets', {}).get('red', []))
         black_count = len(data.get('currentBets', {}).get('black', []))
-        _log_throttle('current_status', 10.0, f"[API 응답] RED: {red_count}명, BLACK: {black_count}명 | 구조: {list(data.keys())}")
+        _log_when_changed('current_status', (red_count, black_count), lambda v: f"[API 응답] RED: {v[0]}명, BLACK: {v[1]}명 | 구조: {list(data.keys())}")
         data['server_time'] = int(time.time())  # 계산기 경과시간용
         return jsonify(data), 200
     except Exception as e:
