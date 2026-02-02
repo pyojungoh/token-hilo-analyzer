@@ -3000,7 +3000,7 @@ RESULTS_HTML = '''
                         return gb.localeCompare(ga);  // 문자열이면 역순
                     });
                 }
-                // 결과 병합: 최신 회차가 앞으로만 진행. 같은 최신이면 개수가 늘 때만 반영 (앞뒤 깜빡임 제거)
+                // 결과 병합: 최신 회차가 앞으로만 진행. 같은 최신이면 개수가 늘 때만 allResults 교체 (뒤로 가기 방지)
                 let resultsUpdated = false;
                 if (newResults.length > 0) {
                     const newGameIDs = new Set(newResults.map(r => String(r.gameID != null && r.gameID !== '' ? r.gameID : '')).filter(id => id !== ''));
@@ -3012,8 +3012,9 @@ RESULTS_HTML = '''
                     const sameRoundMoreOnly = (newLatest === prevLatest && merged.length > allResults.length);
                     if (merged.length > 0 && (strictlyNewer || sameRoundMoreOnly)) {
                         allResults = merged;
-                        resultsUpdated = true;
                     }
+                    // 서버에서 결과를 받았으면 항상 DOM 갱신 (성공/실패·결과값 박스가 움직이도록)
+                    resultsUpdated = true;
                 } else {
                     if (allResults.length === 0) {
                         allResults = sortResultsNewestFirst(newResults);
@@ -3024,7 +3025,7 @@ RESULTS_HTML = '''
                     }
                 }
                 
-                // 이번 응답의 결과를 수락했을 때만 서버 예측 반영 (앞뒤 깜빡임 제거)
+                // 서버 예측 반영 (서버에서 결과를 받았을 때마다 갱신)
                 if (resultsUpdated) {
                     const sp = data.server_prediction;
                     lastServerPrediction = (sp && (sp.value === '정' || sp.value === '꺽')) ? sp : null;
@@ -3034,8 +3035,8 @@ RESULTS_HTML = '''
                     }
                 }
                 
-                // 결과 리스트가 바뀌지 않았으면 DOM/상태 전혀 갱신하지 않고 즉시 return (깜빡임 방지)
-                if (!resultsUpdated && allResults.length > 0) {
+                // resultsUpdated가 false면 DOM 갱신 생략 (데이터 없을 때만)
+                if (!resultsUpdated) {
                     return;
                 }
                 
