@@ -1356,8 +1356,8 @@ def ensure_database_initialized():
 def _run_db_init():
     try:
         time.sleep(1)
-            ensure_database_initialized()
-        except Exception as e:
+        ensure_database_initialized()
+    except Exception as e:
         print(f"[❌ 오류] DB 초기화 실패: {str(e)}")
 
 print("[🔄] 모듈 로드 시 데이터베이스 초기화는 백그라운드에서 실행됩니다.")
@@ -1365,7 +1365,7 @@ if DB_AVAILABLE and DATABASE_URL:
     _db_init_thread = threading.Thread(target=_run_db_init, daemon=True)
     _db_init_thread.start()
 elif not DATABASE_URL:
-        print("[❌ 경고] DATABASE_URL이 None입니다. 환경 변수를 확인하세요.")
+    print("[❌ 경고] DATABASE_URL이 None입니다. 환경 변수를 확인하세요.")
 else:
     print("[❌ 경고] DB_AVAILABLE이 False입니다. psycopg2를 설치하세요.")
 
@@ -5317,8 +5317,8 @@ def refresh_data():
                 'round_actuals': round_actuals
             }
     if game_data is not None or streaks_data is not None or results_data is not None:
-    last_update_time = time.time() * 1000
-    
+        last_update_time = time.time() * 1000
+
     return jsonify({
         'success': True,
         'gameData': game_data is not None,
