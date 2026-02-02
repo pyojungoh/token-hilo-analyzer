@@ -2447,9 +2447,10 @@ RESULTS_HTML = '''
         .calc-cards-wrap { display: inline-flex; align-items: center; gap: 10px; margin-left: 8px; vertical-align: middle; }
         .calc-card-item { display: inline-flex; align-items: center; gap: 4px; font-size: 0.8em; color: #888; }
         .calc-card-label { white-space: nowrap; }
-        .calc-current-card { display: inline-block; text-align: center; vertical-align: middle; border: 1px solid #555; box-sizing: border-box; color: #fff; }
-        .calc-current-card.calc-card-betting { width: 44px; height: 36px; line-height: 36px; font-size: 1em; font-weight: bold; }
-        .calc-current-card.calc-card-prediction { width: 22px; height: 18px; line-height: 18px; font-size: 0.75em; }
+        .calc-current-card { display: inline-block; text-align: center; vertical-align: middle; border: 1px solid #555; box-sizing: border-box; color: #fff; padding: 2px 4px; }
+        .calc-current-card .calc-round-icon { font-size: 0.6em; line-height: 1.1; opacity: 0.95; display: block; }
+        .calc-current-card.calc-card-betting { width: 52px; min-height: 36px; line-height: 1.2; font-size: 0.9em; font-weight: bold; }
+        .calc-current-card.calc-card-prediction { width: 48px; min-height: 28px; line-height: 1.2; font-size: 0.75em; }
         .calc-current-card.card-jung { background: #b71c1c; }
         .calc-current-card.card-kkuk { background: #111; }
         .calc-dropdown-header .calc-toggle { font-size: 0.8em; color: #888; }
@@ -2868,6 +2869,13 @@ RESULTS_HTML = '''
         function pickColorToClass(pc) {
             var n = normalizePickColor(pc);
             return n === '빨강' ? 'pick-red' : (n === '검정' ? 'pick-black' : '');
+        }
+        // 회차별 순차 아이콘: 별→세모→동그라미 (회차 바뀔 때마다 아이콘 변경으로 구분)
+        function getRoundIcon(round) {
+            var r = parseInt(round, 10);
+            if (isNaN(r) || r < 1) return '★';
+            var icons = ['★', '△', '○'];
+            return icons[(r - 1) % 3];
         }
         var _lastCalcHistKey = {};  // 계산기별 마지막 history 키 (불필요한 갱신 방지)
         function needCalcUpdate(id) {
@@ -3987,20 +3995,21 @@ RESULTS_HTML = '''
                     const pickWrapClass = 'prediction-pick' + (pickInBucket ? ' pick-in-bucket' : '');
                     if (resultBarContainer) resultBarContainer.innerHTML = resultBarHtml;
                     const u35WarningBlock = lastWarningU35 ? ('<div class="prediction-warning-u35">⚠ U자+줄 3~5 구간 · 줄(유지) 보정 적용</div>') : '';
+                    const roundIconMain = getRoundIcon(predictedRoundFull);
                     const leftBlock = is15Joker ? ('<div class="prediction-pick">' +
                         '<div class="prediction-pick-title">예측 픽</div>' +
                         '<div class="prediction-card" style="background:#455a64;border-color:#78909c">' +
                         '<span class="pred-value-big" style="color:#fff;font-size:1.2em">보류</span>' +
                         '</div>' +
                         '<div class="prediction-prob-under" style="color:#ffb74d">15번 카드 조커 · 배팅하지 마세요</div>' +
-                        '<div class="pred-round">' + displayRound(predictedRoundFull) + '회</div>' +
+                        '<div class="pred-round">' + displayRound(predictedRoundFull) + '회 ' + roundIconMain + '</div>' +
                         '</div>') : ('<div class="' + pickWrapClass + '">' +
                         '<div class="prediction-pick-title prediction-pick-title-betting">배팅중<br>' + (colorToPick === '빨강' ? 'RED' : 'BLACK') + '</div>' +
                         '<div class="prediction-card card-' + colorClass + '">' +
                         '<span class="pred-value-big">' + predict + '</span>' +
                         '</div>' +
                         '<div class="prediction-prob-under">예측 확률 ' + predProb.toFixed(1) + '%</div>' +
-                        '<div class="pred-round">' + displayRound(predictedRoundFull) + '회</div>' +
+                        '<div class="pred-round">' + displayRound(predictedRoundFull) + '회 ' + roundIconMain + '</div>' +
                         u35WarningBlock +
                         '</div>');
                     if (pickContainer) pickContainer.innerHTML = leftBlock;
@@ -4330,13 +4339,16 @@ RESULTS_HTML = '''
                     const predictionCardEl = document.getElementById('calc-' + id + '-prediction-card');
                     if (!bettingCardEl || !predictionCardEl) return;
                     if (state.running && lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) {
+                        var roundNum = lastPrediction.round != null ? String(lastPrediction.round) : '-';
+                        var roundIcon = getRoundIcon(lastPrediction.round);
+                        var roundLine = roundNum + '회 ' + roundIcon;
                         if (lastIs15Joker) {
-                            predictionCardEl.textContent = '보류';
                             predictionCardEl.className = 'calc-current-card calc-card-prediction';
                             predictionCardEl.title = '15번 카드 조커 · 배팅하지 마세요';
-                            bettingCardEl.textContent = '보류';
+                            predictionCardEl.innerHTML = '<span class="calc-round-icon">' + roundLine + '</span><br><span>보류</span>';
                             bettingCardEl.className = 'calc-current-card calc-card-betting';
                             bettingCardEl.title = '15번 카드 조커 · 배팅하지 마세요';
+                            bettingCardEl.innerHTML = '<span class="calc-round-icon">' + roundLine + '</span><br><span>보류</span>';
                         } else {
                         var predictionText = lastPrediction.value;
                         var predColorNorm = normalizePickColor(lastPrediction.color);
@@ -4366,12 +4378,12 @@ RESULTS_HTML = '''
                         } catch (e2) {}
                         const useWinRateRevCard = !!(calcState[id] && calcState[id].win_rate_reverse);
                         if (useWinRateRevCard && lowWinRate) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
-                        predictionCardEl.textContent = predictionText;
                         predictionCardEl.className = 'calc-current-card calc-card-prediction card-' + (predictionIsRed ? 'jung' : 'kkuk');
                         predictionCardEl.title = '';
-                        bettingCardEl.textContent = bettingText;
+                        predictionCardEl.innerHTML = '<span class="calc-round-icon">' + roundLine + '</span><br><span>' + predictionText + '</span>';
                         bettingCardEl.className = 'calc-current-card calc-card-betting card-' + (bettingIsRed ? 'jung' : 'kkuk');
                         bettingCardEl.title = '';
+                        bettingCardEl.innerHTML = '<span class="calc-round-icon">' + roundLine + '</span><br><span>' + bettingText + '</span>';
                         }
                     } else {
                         bettingCardEl.textContent = '';
@@ -4808,9 +4820,9 @@ RESULTS_HTML = '''
         
         initialLoad();
         
-        // 결과 폴링: 예측픽·계산기 반영 속도 위해 간격 단축 (서버 부하 고려해 1.2초)
+        // 결과 폴링: 예측픽 더 빨리 나오게 간격 단축 (서버 부하 고려해 0.9초)
         setInterval(() => {
-            const interval = allResults.length === 0 ? 600 : 1200;
+            const interval = allResults.length === 0 ? 500 : 900;
             if (Date.now() - lastResultsUpdate > interval) {
                 loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
             }
