@@ -180,6 +180,16 @@ def init_database():
             )
         ''')
         
+        # round_predictions: 배팅중(예측) 나올 때마다 회차별로 즉시 저장 → 결과 나오면 prediction_history로 머지
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS round_predictions (
+                round_num INTEGER PRIMARY KEY,
+                predicted VARCHAR(10) NOT NULL,
+                pick_color VARCHAR(10),
+                probability REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         # current_pick: 배팅 연동용 현재 예측 픽 1건 (RED/BLACK, 회차, 확률). 실패해도 서버는 기동
         try:
             cur.execute('''
@@ -574,6 +584,97 @@ def _prediction_history_has_round(round_num):
         except Exception:
             pass
         return False
+
+
+def save_round_prediction(round_num, predicted, pick_color=None, probability=None):
+    """배팅중(예측) 나올 때마다 회차별로 즉시 저장. 결과 나오면 prediction_history로 머지됨."""
+    if not DB_AVAILABLE or not DATABASE_URL or round_num is None or predicted is None:
+        return False
+    conn = get_db_connection(statement_timeout_sec=3)
+    if not conn:
+        return False
+    try:
+        cur = conn.cursor()
+        pick_color = str(pick_color).strip() if pick_color else None
+        if pick_color:
+            pick_color = '빨강' if pick_color.upper() in ('RED', '빨강') else '검정' if pick_color.upper() in ('BLACK', '검정') else pick_color
+        cur.execute('''
+            INSERT INTO round_predictions (round_num, predicted, pick_color, probability)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (round_num) DO UPDATE SET predicted = EXCLUDED.predicted, pick_color = EXCLUDED.pick_color,
+                probability = EXCLUDED.probability, created_at = DEFAULT
+        ''', (int(round_num), str(predicted), pick_color, float(probability) if probability is not None else None))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[경고] round_predictions 저장 실패: {str(e)[:150]}")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return False
+
+
+# 머지 캐시: 이미 머지한 회차 집합. 새 결과 회차가 생길 때만 머지해서 폴링 시 속도 향상
+_merge_rounds_cache = set()
+
+
+def _merge_round_predictions_into_history(round_actuals):
+    """round_actuals에 있는 회차 중 prediction_history에 없는 것은 round_predictions에서 꺼내 저장 후 삭제.
+    새로 결과가 나온 회차가 있을 때만 DB 접근(폴링마다 머지하지 않음)."""
+    global _merge_rounds_cache
+    if not round_actuals or not DB_AVAILABLE or not DATABASE_URL:
+        return
+    rounds_with_result = set()
+    for rid, ra in round_actuals.items():
+        try:
+            rnd = int(rid)
+        except (TypeError, ValueError):
+            continue
+        if (ra.get('actual') or '').strip():
+            rounds_with_result.add(rnd)
+    if not rounds_with_result:
+        return
+    # 새로 결과가 나온 회차가 없으면 머지 생략 → 폴링 시 응답 속도 향상
+    if rounds_with_result <= _merge_rounds_cache:
+        return
+    conn = get_db_connection(statement_timeout_sec=5)
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute('SELECT round_num FROM prediction_history WHERE round_num = ANY(%s)', (list(rounds_with_result),))
+        already = {r[0] for r in cur.fetchall()}
+        to_merge = [r for r in rounds_with_result if r not in already]
+        for rnd in to_merge:
+            cur.execute('SELECT predicted, pick_color, probability FROM round_predictions WHERE round_num = %s LIMIT 1', (rnd,))
+            row = cur.fetchone()
+            if not row:
+                continue
+            pred_val, pick_color, prob = row[0], row[1], row[2]
+            actual = (round_actuals.get(str(rnd), {}).get('actual') or '').strip()
+            if not actual:
+                continue
+            cur.close()
+            conn.close()
+            save_prediction_record(rnd, pred_val, actual, probability=prob, pick_color=pick_color)
+            conn = get_db_connection(statement_timeout_sec=3)
+            if not conn:
+                return
+            cur = conn.cursor()
+            cur.execute('DELETE FROM round_predictions WHERE round_num = %s', (rnd,))
+            conn.commit()
+        _merge_rounds_cache |= rounds_with_result
+    except Exception as e:
+        print(f"[경고] round_predictions 머지 실패: {str(e)[:150]}")
+    try:
+        if conn:
+            cur.close()
+            conn.close()
+    except Exception:
+        pass
 
 
 def _backfill_latest_round_to_prediction_history(results):
@@ -3109,6 +3210,7 @@ RESULTS_HTML = '''
                         var normColor = normalizePickColor(lastServerPrediction.color) || lastServerPrediction.color || null;
                         lastPrediction = { value: lastServerPrediction.value, round: lastServerPrediction.round, prob: lastServerPrediction.prob != null ? lastServerPrediction.prob : 0, color: normColor };
                         setRoundPrediction(lastServerPrediction.round, lastPrediction);
+                        fetch('/api/round-prediction', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ round: lastServerPrediction.round, predicted: lastServerPrediction.value, pickColor: normColor || lastServerPrediction.color, probability: lastServerPrediction.prob }) }).catch(function() {});
                     }
                     lastResultsUpdate = Date.now();  // 갱신 완료 시점에 폴링 간격 리셋
                 }
@@ -3380,9 +3482,10 @@ RESULTS_HTML = '''
                     try { window.__latestGameIDForCalc = latestGameID; } catch (e) {}
                     const is15Joker = displayResults.length >= 15 && !!displayResults[14].joker;  // 15번 카드 조커면 픽/배팅 보류
                     
-                    // 직전 예측의 실제 결과 반영: 회차별 버퍼에서 해당 회차 예측만 사용 (서버/클라이언트 구분 없이 매 회차 반영)
+                    // 직전 예측의 실제 결과 반영: API prediction_history(서버 머지) 우선, 없으면 버퍼/lastPrediction
                     const alreadyRecordedRound = predictionHistory.some(function(h) { return h && h.round === currentRoundFull; });
-                    const predForRound = getRoundPrediction(currentRoundFull) || (lastPrediction && lastPrediction.round === currentRoundFull ? lastPrediction : null);
+                    var predForRound = (predictionHistory && predictionHistory.find(function(p) { return p && p.round === currentRoundFull; })) || getRoundPrediction(currentRoundFull) || (lastPrediction && lastPrediction.round === currentRoundFull ? lastPrediction : null);
+                    if (predForRound && predForRound.actual !== undefined) predForRound = { round: predForRound.round, value: predForRound.predicted, prob: predForRound.probability, color: predForRound.pickColor || predForRound.pick_color };
                     var lowWinRateForRecord = false;
                     var blended = 50, c15 = 0, c30 = 0, c100 = 0;
                     try {
@@ -3471,6 +3574,54 @@ RESULTS_HTML = '''
                         }
                         predictionHistory = predictionHistory.slice(-100);
                         savePredictionHistory();  // localStorage 백업
+                    } else if (alreadyRecordedRound && predForRound) {
+                        // 서버가 이미 prediction_history에 머지한 회차 → calc에만 반영 (한 회차 건너뛰기 방지)
+                        const isActualJoker2 = displayResults.length > 0 && !!displayResults[0].joker;
+                        if (isActualJoker2) {
+                            CALC_IDS.forEach(id => {
+                                if (!calcState[id].running) return;
+                                const firstBetJoker = calcState[id].first_bet_round || 0;
+                                if (firstBetJoker > 0 && predForRound.round < firstBetJoker) return;
+                                if (calcState[id].history.some(function(h) { return h && h.round === predForRound.round; })) return;
+                                const rev = !!(calcState[id] && calcState[id].reverse);
+                                var pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
+                                const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
+                                var thrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
+                                var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
+                                if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
+                                if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
+                                var betColor = normalizePickColor(predForRound.color);
+                                if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                calcState[id].history.push({ predicted: pred, actual: 'joker', round: predForRound.round, pickColor: betColor || null });
+                                _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
+                                updateCalcSummary(id);
+                                updateCalcDetail(id);
+                            });
+                        } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
+                            const actual = graphValues[0] ? '정' : '꺽';
+                            CALC_IDS.forEach(id => {
+                                if (!calcState[id].running) return;
+                                const firstBetActual = calcState[id].first_bet_round || 0;
+                                if (firstBetActual > 0 && predForRound.round < firstBetActual) return;
+                                if (calcState[id].history.some(function(h) { return h && h.round === predForRound.round; })) return;
+                                const rev = !!(calcState[id] && calcState[id].reverse);
+                                var pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
+                                const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
+                                var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
+                                var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
+                                if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
+                                if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
+                                var betColorActual = normalizePickColor(predForRound.color);
+                                if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                calcState[id].history.push({ predicted: pred, actual: actual, round: predForRound.round, pickColor: betColorActual || null });
+                                _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + predForRound.round + '_' + actual;
+                                updateCalcSummary(id);
+                                updateCalcDetail(id);
+                            });
+                        }
+                        saveCalcStateToServer();
                     }
                     
                     // 최근 15회 정/꺽 흐름으로 퐁당·줄 계산 (승패 아님)
@@ -3714,6 +3865,7 @@ RESULTS_HTML = '''
                         if (!lastServerPrediction) {
                             lastPrediction = { value: predict, round: predictedRoundFull, prob: predProb, color: colorToPick };
                             setRoundPrediction(predictedRoundFull, lastPrediction);
+                            fetch('/api/round-prediction', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ round: predictedRoundFull, predicted: predict, pickColor: colorToPick, probability: predProb }) }).catch(function() {});
                         }
                         colorClass = colorToPick === '빨강' ? 'red' : 'black';
                     }
@@ -4682,10 +4834,13 @@ def _build_results_payload_db_only(hours=1):
         RESULTS_PAYLOAD_LIMIT = 300
         if len(results) > RESULTS_PAYLOAD_LIMIT:
             results = results[:RESULTS_PAYLOAD_LIMIT]
+        round_actuals = _build_round_actuals(results)
+        _merge_round_predictions_into_history(round_actuals)
         ph = get_prediction_history(100)
         server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
+        if server_pred and server_pred.get('round') and server_pred.get('value'):
+            save_round_prediction(server_pred['round'], server_pred['value'], pick_color=server_pred.get('color'), probability=server_pred.get('prob'))
         blended = _blended_win_rate(ph)
-        round_actuals = _build_round_actuals(results)
         return {
             'results': results,
             'count': len(results),
@@ -4825,10 +4980,13 @@ def _build_results_payload():
             
             # 그래프/표시 순서 일관성: 항상 gameID 기준 최신순으로 정렬
             results = _sort_results_newest_first(results)
+            round_actuals = _build_round_actuals(results)
+            _merge_round_predictions_into_history(round_actuals)
             ph = get_prediction_history(100)
             server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
+            if server_pred and server_pred.get('round') and server_pred.get('value'):
+                save_round_prediction(server_pred['round'], server_pred['value'], pick_color=server_pred.get('color'), probability=server_pred.get('prob'))
             blended = _blended_win_rate(ph)
-            round_actuals = _build_round_actuals(results)
             return {
                 'results': results,
                 'count': len(results),
@@ -5124,6 +5282,23 @@ def api_win_rate_buckets():
     except Exception as e:
         print(f"[❌ 오류] win-rate-buckets 실패: {str(e)[:200]}")
         return jsonify({'buckets': [], 'error': str(e)[:200]}), 200
+
+
+@app.route('/api/round-prediction', methods=['POST'])
+def api_save_round_prediction():
+    """배팅중(예측) 나올 때마다 회차별로 즉시 저장. round, predicted 필수. pick_color, probability 선택."""
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        round_num = data.get('round')
+        predicted = data.get('predicted')
+        if round_num is None or predicted is None:
+            return jsonify({'ok': False, 'error': 'round, predicted required'}), 400
+        pick_color = data.get('pickColor') or data.get('pick_color')
+        probability = data.get('probability')
+        ok = save_round_prediction(int(round_num), str(predicted), pick_color=pick_color, probability=probability)
+        return jsonify({'ok': ok}), 200
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)[:200]}), 200
 
 
 @app.route('/api/prediction-history', methods=['POST'])
