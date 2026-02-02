@@ -3000,7 +3000,8 @@ RESULTS_HTML = '''
                 
                 const data = await response.json();
                 if (thisRequestId !== resultsRequestId) return;
-                if (data.error) {
+                var hasResults = Array.isArray(data.results) && data.results.length > 0;
+                if (data.error && !hasResults) {
                     if (statusEl) statusEl.textContent = '오류: ' + data.error;
                     return;
                 }
@@ -5036,32 +5037,24 @@ def get_results():
             if not _results_refreshing:
                 threading.Thread(target=_refresh_results_background, daemon=True).start()
         else:
-            # 캐시 없음: 백그라운드 갱신 한 번 돌리고 최대 2.5초 대기 후, 없으면 DB 전용으로 즉시 응답 (결과값이 반드시 나오도록)
-            payload = None
-            if not _results_refreshing:
-                threading.Thread(target=_refresh_results_background, daemon=True).start()
-            for _ in range(5):
-                time.sleep(0.5)
-                if results_cache and results_cache.get('results'):
-                    payload = results_cache.copy()
-                    last_update_time = time.time() * 1000
-                    break
-            if not payload or not payload.get('results'):
-                payload = _build_results_payload_db_only(hours=5)
+            # 캐시 없음: DB에서 즉시 결과 만들어 응답 (화면 송출 우선). 백그라운드 갱신은 별도로 돌려 다음 요청용 캐시 채움
+            payload = _build_results_payload_db_only(hours=5)
+            if payload and payload.get('results'):
+                results_cache = payload
+                last_update_time = time.time() * 1000
+            else:
+                payload = _build_results_payload_db_only(hours=24) or payload
                 if payload and payload.get('results'):
                     results_cache = payload
                     last_update_time = time.time() * 1000
-                else:
-                    payload = _build_results_payload_db_only(hours=24) or payload
-                    if payload and payload.get('results'):
-                        results_cache = payload
-                        last_update_time = time.time() * 1000
             if not payload or not payload.get('results'):
                 payload = {
                     'results': [], 'count': 0, 'timestamp': datetime.now().isoformat(),
                     'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
                     'blended_win_rate': None, 'round_actuals': {}
                 }
+            if not _results_refreshing:
+                threading.Thread(target=_refresh_results_background, daemon=True).start()
         
         # result_source 지정 시: 베팅 사이트와 동일한 결과 소스에서 round_actuals 재조회
         if result_source:
