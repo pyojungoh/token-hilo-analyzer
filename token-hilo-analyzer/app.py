@@ -2973,7 +2973,7 @@ RESULTS_HTML = '''
         }
         
         async function loadResults() {
-            if (isLoadingResults) return;
+            // 중복 요청 차단 제거: 느린 응답이 있어도 새 요청이 들어와 최신 응답만 적용되도록 (resultsRequestId로 구분)
             const statusEl = document.getElementById('status');
             if (statusEl) statusEl.textContent = '데이터 요청 중...';
             const thisRequestId = ++resultsRequestId;
@@ -3075,6 +3075,14 @@ RESULTS_HTML = '''
                 // 최신 15개만 표시 (반응형으로 모두 보이도록)
                 const displayResults = allResults.slice(0, 15);
                 const results = allResults;  // 비교를 위해 전체 결과 사용
+                
+                // 이전회차·상태를 맨 앞에서 먼저 적용 (아래 예측/그래프 블록에서 예외 나도 화면에 현재 회차 반영)
+                if (displayResults.length > 0) {
+                    const latest = displayResults[0];
+                    const fullGameID = latest.gameID != null && latest.gameID !== '' ? String(latest.gameID) : '--';
+                    const prevRoundElement = document.getElementById('prev-round');
+                    if (prevRoundElement) prevRoundElement.textContent = '이전회차: ' + fullGameID;
+                }
                 
                 // 모든 카드의 색상 비교 결과 계산 (캐시 사용)
                 // 각 카드는 고정된 상대 위치의 카드와 비교 (1번째↔16번째, 2번째↔17번째, ...)
@@ -3977,16 +3985,7 @@ RESULTS_HTML = '''
                     var formulaCollapseEmpty = document.getElementById('formula-collapse');
                     if (formulaCollapseEmpty) formulaCollapseEmpty.style.display = 'none';
                 }
-                
-                // 헤더: 상단에는 회차 전체 숫자 표시 (비교용), 표에는 뒤 3자리만
-                if (displayResults.length > 0) {
-                    const latest = displayResults[0];
-                    const fullGameID = latest.gameID != null && latest.gameID !== '' ? String(latest.gameID) : '--';
-                    const prevRoundElement = document.getElementById('prev-round');
-                    if (prevRoundElement) {
-                        prevRoundElement.textContent = '이전회차: ' + fullGameID;
-                    }
-                }
+                // 이전회차는 위에서 이미 적용 (예외 시에도 현재 회차 표시 보장)
                 } catch (renderErr) {
                     if (statusEl) statusEl.textContent = '표시 오류 - 새로고침 해 주세요';
                     console.error('표시 오류:', renderErr);
@@ -5069,13 +5068,16 @@ def get_results():
             except Exception as e:
                 print(f"[API] result_source 조회 실패: {result_source} - {str(e)[:100]}")
         
-        return jsonify(payload)
+        resp = jsonify(payload)
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+        resp.headers['Pragma'] = 'no-cache'
+        return resp
     except Exception as e:
         import traceback
         error_msg = str(e)[:200]
         print(f"[❌ 오류] 결과 로드 실패: {error_msg}")
         print(traceback.format_exc()[:500])
-        return jsonify({
+        err_resp = jsonify({
             'results': [],
             'count': 0,
             'timestamp': datetime.now().isoformat(),
@@ -5084,7 +5086,9 @@ def get_results():
             'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
             'blended_win_rate': None,
             'round_actuals': {}
-        }), 200
+        })
+        err_resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+        return err_resp, 200
 
 
 @app.route('/api/calc-state', methods=['GET', 'POST'])
