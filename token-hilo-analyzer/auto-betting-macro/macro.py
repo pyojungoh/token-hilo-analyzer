@@ -300,7 +300,7 @@ class MacroWindow(QMainWindow):
         bet_inner.addLayout(bet_top)
         self.bet_table = QTableWidget()
         self.bet_table.setColumnCount(6)
-        self.bet_table.setHorizontalHeaderLabels(["회차", "PICK", "실제", "배팅금액", "결과", "누적"])
+        self.bet_table.setHorizontalHeaderLabels(["회차", "PICK", "결과", "배팅금액", "승/패", "누적"])
         self.bet_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.bet_table.setMaximumHeight(140)
         bet_inner.addWidget(self.bet_table)
@@ -695,7 +695,7 @@ class MacroWindow(QMainWindow):
 
     def _refresh_bet_table(self):
         def _actual_to_color(actual_val, pick_color):
-            """실제로 나온 색을 셀 배경색으로 변환. 정/꺽은 pick_color로 유추."""
+            """결과(실제 나온 색)를 셀 배경색으로 변환. 정/꺽은 pick_color로 유추."""
             if not actual_val:
                 return None
             v = str(actual_val).strip().upper()
@@ -722,7 +722,7 @@ class MacroWindow(QMainWindow):
             pick_bg = "#e53935" if pick_color == "RED" else "#212121" if pick_color == "BLACK" else None
             self.bet_table.setItem(i, 1, _cell_item(pick_color or "-", pick_bg))
 
-            # 실제: 실제로 나온 카드 색으로 셀배경. actual_color 있으면 그대로 사용(반픽 시에도 정확)
+            # 결과: 실제로 나온 카드 색으로 셀배경. actual_color 있으면 그대로 사용(반픽 시에도 정확)
             actual_val = b.get("actual", "-") or "-"
             actual_color = b.get("actual_color")
             actual_bg = "#e53935" if actual_color == "RED" else "#212121" if actual_color == "BLACK" else _actual_to_color(actual_val, pick_color)
@@ -731,6 +731,7 @@ class MacroWindow(QMainWindow):
             # 배팅금액, 누적: 천단위 쉼표
             self.bet_table.setItem(i, 3, _cell_item(_fmt_amount(b.get("amount", ""))))
 
+            # 승/패
             res = b.get("result")
             if res is True:
                 item4 = _cell_item("승")
@@ -1100,7 +1101,7 @@ class MacroWindow(QMainWindow):
                         if not getattr(self, "_wait_log_count", 0) % 10:
                             self.update_queue.put(("log", "[대기] 픽 없음 - Analyzer 결과 페이지 열어두고 픽 나오는지 확인"))
                         self._wait_log_count = getattr(self, "_wait_log_count", 0) + 1
-                        time.sleep(min(interval, 0.25))  # 픽 대기 시 더 자주 폴링
+                        time.sleep(min(interval, 0.2))  # 픽 대기 시 0.2초마다 폴링
                         continue
                     if self.last_clicked_round == round_num:
                         time.sleep(interval)
@@ -1129,7 +1130,7 @@ class MacroWindow(QMainWindow):
                             if not getattr(self, "_wait_result_log_count", 0) % 5:
                                 self.update_queue.put(("log", "[대기] 직전 회차(%s) 결과 수신 대기 중..." % self.last_clicked_round))
                             self._wait_result_log_count = getattr(self, "_wait_result_log_count", 0) + 1
-                            time.sleep(min(interval, 0.3))  # 결과 대기 시 더 자주 폴링 (지연 감소)
+                            time.sleep(min(interval, 0.15))  # 결과 대기 시 0.15초마다 폴링 (결과 열 빠른 반영)
                             continue
                     # 반픽: 픽과 반대 색으로 클릭
                     if self._reverse:
