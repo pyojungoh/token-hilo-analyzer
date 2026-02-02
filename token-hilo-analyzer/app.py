@@ -3327,6 +3327,20 @@ RESULTS_HTML = '''
                         blended = 0.6 * r15 + 0.25 * r30 + 0.15 * r100;
                         lowWinRateForRecord = (c15 > 0 || c30 > 0 || c100 > 0) && blended <= 50;
                     } catch (e) {}
+                    if (lastPrediction) {
+                        try {
+                            var nonJForTeuk = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && h.actual !== 'joker' && h.probability != null; }) : [];
+                            var BUCKETS_TEUK = [{ min: 50, max: 55 }, { min: 55, max: 60 }, { min: 60, max: 65 }, { min: 65, max: 70 }, { min: 70, max: 75 }, { min: 75, max: 80 }, { min: 80, max: 85 }, { min: 85, max: 90 }, { min: 90, max: 101 }];
+                            var bucketStatsTeuk = BUCKETS_TEUK.map(function(b) { var inB = nonJForTeuk.filter(function(h) { var p = Number(h.probability); return p >= b.min && p < b.max; }); var wins = inB.filter(function(h) { return h.predicted === h.actual; }).length; return { min: b.min, max: b.max, total: inB.length, wins: wins }; }).filter(function(s) { return s.total > 0; });
+                            var sortedTeuk = bucketStatsTeuk.slice().sort(function(a, b) { return (b.total ? 100 * b.wins / b.total : 0) - (a.total ? 100 * a.wins / a.total : 0); });
+                            var top2Teuk = sortedTeuk.slice(0, 2);
+                            var tr = 0;
+                            if (lastPrediction.prob != null && typeof lastPrediction.prob === 'number' && lastPrediction.prob >= 50 && top2Teuk.length > 0) {
+                                for (var qi = 0; qi < top2Teuk.length; qi++) { if (lastPrediction.prob >= top2Teuk[qi].min && lastPrediction.prob < top2Teuk[qi].max) { tr = qi + 1; break; } }
+                            }
+                            lastPrediction.teukRank = tr;
+                        } catch (et) { if (lastPrediction) lastPrediction.teukRank = 0; }
+                    }
                     if (lastPrediction && currentRoundFull === lastPrediction.round) {
                         const isActualJoker = displayResults.length > 0 && !!displayResults[0].joker;
                         if (isActualJoker) {
@@ -3350,20 +3364,13 @@ RESULTS_HTML = '''
                                 var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
                                 if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
                                 if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
-                                calcState[id].history.push({ predicted: pred, actual: 'joker', round: lastPrediction.round });
+                                calcState[id].history.push({ predicted: pred, actual: 'joker', round: lastPrediction.round, pickColor: lastPrediction.color || null });
                             });
                             saveCalcStateToServer();
                             if (!lastServerPrediction && !alreadyRecordedRound) savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, 'joker', lastPrediction.prob, lastPrediction.color);
                         } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
                             const actual = graphValues[0] ? '정' : '꺽';
-                            var teukTop2ForResult = [];
-                            try {
-                                var nonJResult = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && h.actual !== 'joker' && h.probability != null; }) : [];
-                                var BUCKETS_R = [{ min: 50, max: 55 }, { min: 55, max: 60 }, { min: 60, max: 65 }, { min: 65, max: 70 }, { min: 70, max: 75 }, { min: 75, max: 80 }, { min: 80, max: 85 }, { min: 85, max: 90 }, { min: 90, max: 101 }];
-                                var bucketStatsR = BUCKETS_R.map(function(b) { var inB = nonJResult.filter(function(h) { var p = Number(h.probability); return p >= b.min && p < b.max; }); var wins = inB.filter(function(h) { return h.predicted === h.actual; }).length; return { min: b.min, max: b.max, total: inB.length, wins: wins }; }).filter(function(s) { return s.total > 0; });
-                                var sortedR = bucketStatsR.slice().sort(function(a, b) { return (b.total ? 100 * b.wins / b.total : 0) - (a.total ? 100 * a.wins / a.total : 0); });
-                                teukTop2ForResult = sortedR.slice(0, 2);
-                            } catch (er) {}
+                            var teukRankVal = (lastPrediction && typeof lastPrediction.teukRank === 'number') ? lastPrediction.teukRank : 0;
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
                                 const firstBetActual = calcState[id].first_bet_round || 0;
@@ -3372,11 +3379,9 @@ RESULTS_HTML = '''
                                 if (hasRound) return;
                                 var teukScopeElRound = document.getElementById('calc-' + id + '-teuk-scope');
                                 var teukScopeRound = (teukScopeElRound && teukScopeElRound.value === 'top') ? 'top' : 'top2';
-                                var scopeLenRound = (teukScopeRound === 'top') ? 1 : 2;
-                                var inTeuk = false;
-                                if (lastPrediction.prob != null && teukTop2ForResult.length > 0) { for (var qi = 0; qi < Math.min(scopeLenRound, teukTop2ForResult.length); qi++) { if (lastPrediction.prob >= teukTop2ForResult[qi].min && lastPrediction.prob < teukTop2ForResult[qi].max) { inTeuk = true; break; } } }
+                                var inTeuk = (teukScopeRound === 'top' && teukRankVal === 1) || (teukScopeRound === 'top2' && teukRankVal >= 1 && teukRankVal <= 2);
                                 var teukEatEl = document.getElementById('calc-' + id + '-teuk-eat');
-                                var teukEat = !!(teukEatEl && teukEatEl.checked);
+                                var teukEat = !!(teukEatEl && teukEatEl.checked) || !!(calcState[id] && calcState[id].teuk_eat);
                                 var rev = !!(calcState[id] && calcState[id].reverse);
                                 var martingaleEl = document.getElementById('calc-' + id + '-martingale');
                                 var martingale = !!(martingaleEl && martingaleEl.checked);
@@ -3392,7 +3397,7 @@ RESULTS_HTML = '''
                                     if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
                                     if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
                                 }
-                                calcState[id].history.push({ predicted: pred, actual: actual, round: lastPrediction.round });
+                                calcState[id].history.push({ predicted: pred, actual: actual, round: lastPrediction.round, pickColor: lastPrediction.color || null });
                                 if (teukOnly && inTeuk) { if (actual !== pred) calcState[id].teuk_martingale_step = (calcState[id].teuk_martingale_step || 0) + 1; else calcState[id].teuk_martingale_step = 0; }
                                 updateCalcSummary(id);
                                 updateCalcDetail(id);
@@ -4309,7 +4314,8 @@ RESULTS_HTML = '''
                     const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
                     const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
                     const pickVal = h.predicted === '정' ? '정' : '꺽';
-                    const pickClass = pickVal === '정' ? 'pick-jung' : 'pick-kkuk';
+                    var pickColorH = h.pickColor || h.pick_color;
+                    const pickClass = (pickColorH === '빨강' || (typeof pickColorH === 'string' && pickColorH.toUpperCase() === 'RED')) ? 'pick-jung' : ((pickColorH === '검정' || (typeof pickColorH === 'string' && pickColorH.toUpperCase() === 'BLACK')) ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : 'pick-kkuk'));
                     const resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
                     const betStr = betAmounts[i] != null ? betAmounts[i].toLocaleString() : '-';
                     const profitVal = profits[i] != null ? profits[i] : '-';
