@@ -50,6 +50,13 @@ except ImportError:
 app = Flask(__name__)
 CORS(app)
 
+@app.after_request
+def add_csp_allow_eval(response):
+    """CSP: 'eval' 차단으로 스크립트 오동작 시 script-src에 unsafe-eval 허용."""
+    if response.content_type and 'text/html' in response.content_type:
+        response.headers['Content-Security-Policy'] = "script-src 'self' 'unsafe-inline' 'unsafe-eval'; object-src 'self'; base-uri 'self'"
+    return response
+
 # 환경 변수
 BASE_URL = os.getenv('BASE_URL', 'http://tgame365.com')
 DATA_PATH = ''
@@ -1513,9 +1520,9 @@ def _scheduler_fetch_results():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.2, id='fetch_results', max_instances=1)
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=1, id='fetch_results', max_instances=1)
     _scheduler.start()
-    print("[✅] 결과 수집 스케줄러 시작 (0.2초마다, 예측픽 선제적 갱신)")
+    print("[✅] 결과 수집 스케줄러 시작 (1초마다, 예측픽 선제적 갱신)")
 else:
     print("[⚠] APScheduler 미설치 - 결과 수집은 브라우저 요청 시에만 동작합니다. pip install APScheduler")
 
