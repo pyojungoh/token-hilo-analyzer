@@ -5038,8 +5038,8 @@ def get_results():
             if not _results_refreshing:
                 threading.Thread(target=_refresh_results_background, daemon=True).start()
         else:
-            # 캐시 없음: DB만으로 즉시 응답해 경기 결과가 화면에 바로 표시되도록
-            payload = _build_results_payload_db_only(hours=1)
+            # 캐시 없음: DB만으로 즉시 응답해 경기 결과가 화면에 바로 표시되도록 (5시간 구간으로 충분한 결과값 확보)
+            payload = _build_results_payload_db_only(hours=5)
             if payload and payload.get('results'):
                 results_cache = payload
                 last_update_time = now_ms
@@ -5259,9 +5259,7 @@ def get_current_status():
         # 디버깅: 반환 데이터 확인
         red_count = len(data.get('currentBets', {}).get('red', []))
         black_count = len(data.get('currentBets', {}).get('black', []))
-        print(f"[API 응답] RED: {red_count}명, BLACK: {black_count}명")
-        print(f"[API 응답] 전체 데이터 구조: {list(data.keys())}")
-        print(f"[API 응답] currentBets 키: {list(data.get('currentBets', {}).keys())}")
+        _log_throttle('current_status', 10.0, f"[API 응답] RED: {red_count}명, BLACK: {black_count}명 | 구조: {list(data.keys())}")
         data['server_time'] = int(time.time())  # 계산기 경과시간용
         return jsonify(data), 200
     except Exception as e:
