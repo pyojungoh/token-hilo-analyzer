@@ -14,6 +14,7 @@ import traceback
 import threading
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # .env 파일 로드 (DATABASE_URL 등)
 try:
@@ -40,11 +41,21 @@ except ImportError:
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
     SCHEDULER_AVAILABLE = True
+    import logging
+    for _name in ('apscheduler', 'apscheduler.scheduler', 'apscheduler.executors.default'):
+        logging.getLogger(_name).setLevel(logging.ERROR)
 except ImportError:
     SCHEDULER_AVAILABLE = False
 
 app = Flask(__name__)
 CORS(app)
+
+@app.after_request
+def add_csp_allow_eval(response):
+    """CSP: 'eval' 차단으로 스크립트 오동작 시 script-src에 unsafe-eval 허용."""
+    if response.content_type and 'text/html' in response.content_type:
+        response.headers['Content-Security-Policy'] = "script-src 'self' 'unsafe-inline' 'unsafe-eval'; object-src 'self'; base-uri 'self'"
+    return response
 
 # 환경 변수
 BASE_URL = os.getenv('BASE_URL', 'http://tgame365.com')
@@ -52,6 +63,25 @@ DATA_PATH = ''
 TIMEOUT = int(os.getenv('TIMEOUT', '10'))
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))
 DATABASE_URL = os.getenv('DATABASE_URL', None)
+
+# 반복 로그 억제용 (키 -> 마지막 출력 시각)
+_log_throttle_last = {}
+# 값이 바뀔 때만 로그 (키 -> 마지막 값)
+_log_when_changed_last = {}
+
+def _log_throttle(key, interval_sec, message):
+    """같은 key로 interval_sec 초에 한 번만 출력."""
+    now = time.time()
+    if key not in _log_throttle_last or (now - _log_throttle_last[key]) >= interval_sec:
+        _log_throttle_last[key] = now
+        print(message)
+
+def _log_when_changed(key, value, message_fn):
+    """value가 이전과 다를 때만 출력. value는 비교 가능한 값 (튜플/문자열/숫자)."""
+    last = _log_when_changed_last.get(key)
+    if last != value:
+        _log_when_changed_last[key] = value
+        print(message_fn(value))
 
 # 데이터베이스 연결 및 초기화
 def init_database():
@@ -127,11 +157,12 @@ def init_database():
             CREATE INDEX IF NOT EXISTS idx_prediction_history_created ON prediction_history(created_at DESC)
         ''')
         for col, typ in [('probability', 'REAL'), ('pick_color', 'VARCHAR(10)')]:
-            try:
+            cur.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'prediction_history' AND column_name = %s",
+                (col,)
+            )
+            if cur.fetchone() is None:
                 cur.execute('ALTER TABLE prediction_history ADD COLUMN ' + col + ' ' + typ)
-                conn.commit()
-            except Exception:
-                pass
         
         # calc_sessions: 계산기 상태 서버 저장 (새로고침/재접속 후에도 실행중 유지)
         cur.execute('''
@@ -1015,7 +1046,7 @@ def calculate_and_save_color_matches(results):
         conn.close()
         
         if saved_count > 0:
-            print(f"[✅] 정/꺽 결과 {saved_count}개 저장 완료")
+            _log_when_changed('color_matches', saved_count, lambda v: f"[✅] 정/꺽 결과 {v}개 저장 완료")
     except Exception as e:
         print(f"[❌ 오류] 정/꺽 결과 계산 실패: {str(e)[:200]}")
         try:
@@ -1135,13 +1166,13 @@ def get_recent_results(hours=5):
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # 최근 N시간 데이터 조회, LIMIT 2000으로 과부하 방지
+        # 최근 N시간 데이터 조회, LIMIT 2000. 회차(game_id) 숫자 기준 최신순으로 정렬 (화면에 현재 회차 표시 보장)
         cur.execute('''
             SELECT game_id as "gameID", result, hi, lo, red, black, jqka, joker, 
                    hash_value as hash, salt_value as salt
             FROM game_results
             WHERE created_at >= NOW() - (INTERVAL '1 hour' * %s)
-            ORDER BY created_at DESC
+            ORDER BY (NULLIF(REGEXP_REPLACE(game_id::text, '[^0-9]', '', 'g'), '')::BIGINT) DESC NULLS LAST, created_at DESC
             LIMIT 2000
         ''', (int(hours),))
         
@@ -1169,8 +1200,8 @@ def get_recent_results(hours=5):
         for i in range(min(15, len(results))):
             if i + 15 >= len(results):
                 break
-                if results[i].get('joker') or results[i + 15].get('joker'):
-                    results[i]['colorMatch'] = None
+            if results[i].get('joker') or results[i + 15].get('joker'):
+                results[i]['colorMatch'] = None
                 continue
             gid = results[i].get('gameID')
             cgid = results[i + 15].get('gameID')
@@ -1253,7 +1284,7 @@ game_data_cache = None
 streaks_cache = None
 results_cache = None
 last_update_time = 0
-CACHE_TTL = 50  # 결과 나오면 예측픽 빠르게 반영 (ms). 스케줄러 0.2초마다 선제 갱신으로 지연 최소화
+CACHE_TTL = 1000  # 결과 캐시 유효 시간 (ms). 1초 동안 동일 캐시 반환, 스케줄러가 2초마다 선제 갱신
 
 # 게임 상태 (Socket.IO 제거 후 기본값만 사용)
 current_status_data = {
@@ -1356,8 +1387,8 @@ def ensure_database_initialized():
 def _run_db_init():
     try:
         time.sleep(1)
-            ensure_database_initialized()
-        except Exception as e:
+        ensure_database_initialized()
+    except Exception as e:
         print(f"[❌ 오류] DB 초기화 실패: {str(e)}")
 
 print("[🔄] 모듈 로드 시 데이터베이스 초기화는 백그라운드에서 실행됩니다.")
@@ -1365,7 +1396,7 @@ if DB_AVAILABLE and DATABASE_URL:
     _db_init_thread = threading.Thread(target=_run_db_init, daemon=True)
     _db_init_thread.start()
 elif not DATABASE_URL:
-        print("[❌ 경고] DATABASE_URL이 None입니다. 환경 변수를 확인하세요.")
+    print("[❌ 경고] DATABASE_URL이 None입니다. 환경 변수를 확인하세요.")
 else:
     print("[❌ 경고] DB_AVAILABLE이 False입니다. psycopg2를 설치하세요.")
 
@@ -1379,12 +1410,58 @@ def load_game_data():
         'timestamp': current_status_data.get('timestamp', datetime.now().isoformat())
     }
 
-# 외부 result.json 요청 시 타임아웃 (먹통 방지, 초 단위)
-RESULTS_FETCH_TIMEOUT = 5
+# 외부 result.json 요청 시 타임아웃 (병렬: 경로당 4초, 전체 6초)
+RESULTS_FETCH_TIMEOUT_PER_PATH = 4
+RESULTS_FETCH_OVERALL_TIMEOUT = 6
 RESULTS_FETCH_MAX_RETRIES = 1
 
+
+def _parse_results_json(data):
+    """response.json() 결과를 파싱해 results 리스트 반환. 실패 시 None."""
+    if not isinstance(data, list):
+        return None
+    results = []
+    for game in data:
+        try:
+            game_id = game.get('gameID', '')
+            result = game.get('result', '')
+            json_str = game.get('json', '{}')
+            if isinstance(json_str, str):
+                json_data = json.loads(json_str)
+            else:
+                json_data = json_str
+            red_val = json_data.get('red') or game.get('red', False)
+            black_val = json_data.get('black') or game.get('black', False)
+            results.append({
+                'gameID': str(game_id),
+                'result': result,
+                'hi': json_data.get('hi', False),
+                'lo': json_data.get('lo', False),
+                'red': red_val,
+                'black': black_val,
+                'jqka': json_data.get('jqka', False),
+                'joker': json_data.get('joker', False),
+                'hash': game.get('hash', ''),
+                'salt': game.get('salt', '')
+            })
+        except Exception:
+            continue
+    return results if results else None
+
+
+def _fetch_one_result_path(url_path, timeout_sec):
+    """단일 경로 result.json 요청. 반환: response 또는 None."""
+    url = f"{url_path}?t={int(time.time() * 1000)}"
+    return fetch_with_retry(
+        url,
+        max_retries=RESULTS_FETCH_MAX_RETRIES,
+        silent=True,
+        timeout_sec=timeout_sec,
+    )
+
+
 def load_results_data(base_url=None):
-    """경기 결과 데이터 로드 (result.json). base_url 없으면 BASE_URL 사용. 짧은 타임아웃으로 먹통 방지"""
+    """경기 결과 데이터 로드 (result.json). 여러 경로 병렬 요청해 먼저 성공한 결과 사용 → 회차 갱신."""
     base = (base_url or '').rstrip('/') or BASE_URL
     possible_paths = [
         f"{base}/frame/hilo/result.json",
@@ -1394,84 +1471,46 @@ def load_results_data(base_url=None):
         f"{base}/api/result.json",
         f"{base}/game/result.json",
     ]
-    for url_path in possible_paths:
-        try:
-            url = f"{url_path}?t={int(time.time() * 1000)}"
-            print(f"[결과 데이터 요청 시도] {url}")
-            response = fetch_with_retry(
-                url,
-                max_retries=RESULTS_FETCH_MAX_RETRIES,
-                silent=True,
-                timeout_sec=RESULTS_FETCH_TIMEOUT,
-            )
-            
-            if response:
-                print(f"[✅ 결과 데이터 성공] {url}")
+    executor = ThreadPoolExecutor(max_workers=min(6, len(possible_paths)))
+    try:
+        future_to_path = {
+            executor.submit(_fetch_one_result_path, p, RESULTS_FETCH_TIMEOUT_PER_PATH): p
+            for p in possible_paths
+        }
+        for future in as_completed(future_to_path, timeout=RESULTS_FETCH_OVERALL_TIMEOUT):
+            url_path = future_to_path[future]
+            try:
+                response = future.result()
+                if not response:
+                    continue
                 try:
                     data = response.json()
-                    print(f"[결과 데이터 파싱] 받은 데이터 개수: {len(data) if isinstance(data, list) else '리스트 아님'}")
-                    
-                    # 결과 파싱
-                    results = []
-                    for game in data:
-                        try:
-                            game_id = game.get('gameID', '')
-                            result = game.get('result', '')
-                            json_str = game.get('json', '{}')
-                            
-                            # JSON 파싱
-                            if isinstance(json_str, str):
-                                json_data = json.loads(json_str)
-                            else:
-                                json_data = json_str
-                            
-                            # red/black: json 안에도, 상위에도 있을 수 있음 (게임마다 구조 다름)
-                            red_val = json_data.get('red') or game.get('red', False)
-                            black_val = json_data.get('black') or game.get('black', False)
-                            results.append({
-                                'gameID': str(game_id),  # 문자열로 변환
-                                'result': result,
-                                'hi': json_data.get('hi', False),
-                                'lo': json_data.get('lo', False),
-                                'red': red_val,
-                                'black': black_val,
-                                'jqka': json_data.get('jqka', False),
-                                'joker': json_data.get('joker', False),
-                                'hash': game.get('hash', ''),
-                                'salt': game.get('salt', '')
-                            })
-                        except Exception as e:
-                            # 개별 게임 파싱 오류는 무시
-                            print(f"[결과 파싱 오류] {str(e)[:100]}")
-                            continue
-                    
-                    print(f"[결과 데이터 최종] {len(results)}개 게임 결과 파싱 완료 (소스: {base})")
-                    
-                    # 데이터베이스에 저장 (base_url 지정 시 스킵 - 베팅 사이트별 결과만 조회용)
+                except (ValueError, json.JSONDecodeError):
+                    continue
+                results = _parse_results_json(data)
+                if results:
+                    _log_when_changed(('result_success', url_path), (url_path, len(results)), lambda v: f"[✅ 결과 데이터 성공] {v[0]} ({v[1]}개)")
+                    executor.shutdown(wait=False)
                     if DB_AVAILABLE and DATABASE_URL and base == BASE_URL:
                         saved_count = 0
                         for game_data in results:
                             if save_game_result(game_data):
                                 saved_count += 1
                         if saved_count > 0:
-                            print(f"[💾] 데이터베이스에 {saved_count}개 결과 저장 완료")
-                        
-                        # 정/꺽 결과 계산 및 저장 (30개 이상일 때만)
+                            _log_when_changed('db_save', saved_count, lambda v: f"[💾] 데이터베이스에 {v}개 결과 저장 완료")
                         if len(results) >= 16:
                             calculate_and_save_color_matches(results)
-                    
                     return results
-                except (ValueError, json.JSONDecodeError) as e:
-                    print(f"[결과 JSON 파싱 오류] {str(e)[:200]}")
-                    continue  # 다음 경로 시도
-            else:
-                print(f"[❌ 결과 데이터 실패] {url} - 다음 경로 시도")
-                continue  # 다음 경로 시도
-        except Exception as e:
-            print(f"[결과 데이터 오류] {url_path}: {str(e)[:100]}")
-            continue  # 다음 경로 시도
-    
-    # 모든 경로 실패
+            except Exception as e:
+                print(f"[결과 데이터 오류] {url_path}: {str(e)[:80]}")
+                continue
+    except Exception as e:
+        print(f"[경고] 결과 병렬 요청 오류: {str(e)[:150]}")
+    finally:
+        try:
+            executor.shutdown(wait=True)
+        except Exception:
+            pass
     print(f"[경고] 모든 경로에서 결과 데이터를 가져올 수 없음")
     return []
 
@@ -1490,9 +1529,9 @@ def _scheduler_fetch_results():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.2, id='fetch_results', max_instances=1)
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=2, id='fetch_results', max_instances=1)
     _scheduler.start()
-    print("[✅] 결과 수집 스케줄러 시작 (0.2초마다, 예측픽 선제적 갱신)")
+    print("[✅] 결과 수집 스케줄러 시작 (2초마다, 예측픽 선제적 갱신)")
 else:
     print("[⚠] APScheduler 미설치 - 결과 수집은 브라우저 요청 시에만 동작합니다. pip install APScheduler")
 
@@ -2934,7 +2973,7 @@ RESULTS_HTML = '''
         }
         
         async function loadResults() {
-            if (isLoadingResults) return;
+            // 중복 요청 차단 제거: 느린 응답이 있어도 새 요청이 들어와 최신 응답만 적용되도록 (resultsRequestId로 구분)
             const statusEl = document.getElementById('status');
             if (statusEl) statusEl.textContent = '데이터 요청 중...';
             const thisRequestId = ++resultsRequestId;
@@ -2961,7 +3000,8 @@ RESULTS_HTML = '''
                 
                 const data = await response.json();
                 if (thisRequestId !== resultsRequestId) return;
-                if (data.error) {
+                var hasResults = Array.isArray(data.results) && data.results.length > 0;
+                if (data.error && !hasResults) {
                     if (statusEl) statusEl.textContent = '오류: ' + data.error;
                     return;
                 }
@@ -2991,20 +3031,19 @@ RESULTS_HTML = '''
                         return gb.localeCompare(ga);  // 문자열이면 역순
                     });
                 }
-                // 결과 병합: 최신 회차가 앞으로만 진행. 같은 최신이면 개수가 늘 때만 반영 (앞뒤 깜빡임 제거)
+                // 결과 병합: 서버가 많은 결과를 보낼 때(전체 목록)는 그대로 최신순 정렬해 전체 교체 → 현재 회차가 화면에 반영되도록
                 let resultsUpdated = false;
                 if (newResults.length > 0) {
-                    const newGameIDs = new Set(newResults.map(r => String(r.gameID != null && r.gameID !== '' ? r.gameID : '')).filter(id => id !== ''));
-                    const oldResults = allResults.filter(r => !newGameIDs.has(String(r.gameID != null && r.gameID !== '' ? r.gameID : '')));
-                    const merged = sortResultsNewestFirst([...newResults, ...oldResults].slice(0, 150));
-                    const prevLatest = allResults.length > 0 ? (parseInt(String(allResults[0].gameID || '0'), 10) || 0) : 0;
-                    const newLatest = merged.length > 0 ? (parseInt(String(merged[0].gameID || '0'), 10) || 0) : 0;
-                    const strictlyNewer = newLatest > prevLatest;
-                    const sameRoundMoreOnly = (newLatest === prevLatest && merged.length > allResults.length);
-                    if (merged.length > 0 && (strictlyNewer || sameRoundMoreOnly)) {
-                        allResults = merged;
-                        resultsUpdated = true;
+                    const FULL_REPLACE_THRESHOLD = 80;  // 서버가 80개 이상 보내면 전체 교체(예전 데이터 고정 방지)
+                    if (newResults.length >= FULL_REPLACE_THRESHOLD) {
+                        allResults = sortResultsNewestFirst(newResults).slice(0, 300);
+                    } else {
+                        const newGameIDs = new Set(newResults.map(r => String(r.gameID != null && r.gameID !== '' ? r.gameID : '')).filter(id => id !== ''));
+                        const oldResults = allResults.filter(r => !newGameIDs.has(String(r.gameID != null && r.gameID !== '' ? r.gameID : '')));
+                        const merged = sortResultsNewestFirst([...newResults, ...oldResults].slice(0, 150));
+                        if (merged.length > 0) allResults = merged;
                     }
+                    resultsUpdated = true;
                 } else {
                     if (allResults.length === 0) {
                         allResults = sortResultsNewestFirst(newResults);
@@ -3015,7 +3054,7 @@ RESULTS_HTML = '''
                     }
                 }
                 
-                // 이번 응답의 결과를 수락했을 때만 서버 예측 반영 (앞뒤 깜빡임 제거)
+                // 서버 예측 반영 (서버에서 결과를 받았을 때마다 갱신)
                 if (resultsUpdated) {
                     const sp = data.server_prediction;
                     lastServerPrediction = (sp && (sp.value === '정' || sp.value === '꺽')) ? sp : null;
@@ -3025,8 +3064,8 @@ RESULTS_HTML = '''
                     }
                 }
                 
-                // 결과 리스트가 바뀌지 않았으면 DOM/상태 전혀 갱신하지 않고 즉시 return (깜빡임 방지)
-                if (!resultsUpdated && allResults.length > 0) {
+                // resultsUpdated가 false면 DOM 갱신 생략 (데이터 없을 때만)
+                if (!resultsUpdated) {
                     return;
                 }
                 
@@ -3036,6 +3075,14 @@ RESULTS_HTML = '''
                 // 최신 15개만 표시 (반응형으로 모두 보이도록)
                 const displayResults = allResults.slice(0, 15);
                 const results = allResults;  // 비교를 위해 전체 결과 사용
+                
+                // 이전회차·상태를 맨 앞에서 먼저 적용 (아래 예측/그래프 블록에서 예외 나도 화면에 현재 회차 반영)
+                if (displayResults.length > 0) {
+                    const latest = displayResults[0];
+                    const fullGameID = latest.gameID != null && latest.gameID !== '' ? String(latest.gameID) : '--';
+                    const prevRoundElement = document.getElementById('prev-round');
+                    if (prevRoundElement) prevRoundElement.textContent = '이전회차: ' + fullGameID;
+                }
                 
                 // 모든 카드의 색상 비교 결과 계산 (캐시 사용)
                 // 각 카드는 고정된 상대 위치의 카드와 비교 (1번째↔16번째, 2번째↔17번째, ...)
@@ -3938,16 +3985,7 @@ RESULTS_HTML = '''
                     var formulaCollapseEmpty = document.getElementById('formula-collapse');
                     if (formulaCollapseEmpty) formulaCollapseEmpty.style.display = 'none';
                 }
-                
-                // 헤더: 상단에는 회차 전체 숫자 표시 (비교용), 표에는 뒤 3자리만
-                if (displayResults.length > 0) {
-                    const latest = displayResults[0];
-                    const fullGameID = latest.gameID != null && latest.gameID !== '' ? String(latest.gameID) : '--';
-                    const prevRoundElement = document.getElementById('prev-round');
-                    if (prevRoundElement) {
-                        prevRoundElement.textContent = '이전회차: ' + fullGameID;
-                    }
-                }
+                // 이전회차는 위에서 이미 적용 (예외 시에도 현재 회차 표시 보장)
                 } catch (renderErr) {
                     if (statusEl) statusEl.textContent = '표시 오류 - 새로고침 해 주세요';
                     console.error('표시 오류:', renderErr);
@@ -4745,17 +4783,43 @@ def results_page():
     """경기 결과 웹페이지"""
     return render_template_string(RESULTS_HTML)
 
+def _build_results_payload_db_only(hours=1):
+    """DB만으로 페이로드 생성 (네트워크 없음). 캐시 비어 있을 때 첫 화면 빠르게 표시용."""
+    try:
+        if not DB_AVAILABLE or not DATABASE_URL:
+            return None
+        results = get_recent_results(hours=hours)
+        results = _sort_results_newest_first(results)
+        ph = get_prediction_history(100)
+        server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
+        blended = _blended_win_rate(ph)
+        round_actuals = _build_round_actuals(results)
+        return {
+            'results': results,
+            'count': len(results),
+            'timestamp': datetime.now().isoformat(),
+            'source': 'database',
+            'prediction_history': ph,
+            'server_prediction': server_pred,
+            'blended_win_rate': round(blended, 1) if blended is not None else None,
+            'round_actuals': round_actuals
+        }
+    except Exception as e:
+        print(f"[API] DB 전용 페이로드 오류: {str(e)[:150]}")
+        return None
+
+
 def _build_results_payload():
     """경기 결과 페이로드 생성 (스레드에서 호출, 먹통 시 None 반환)."""
     try:
         latest_results = load_results_data()
         if latest_results is None:
             latest_results = []
-        print(f"[API] 최신 데이터 로드: {len(latest_results)}개")
+        _log_when_changed('api_latest', len(latest_results), lambda v: f"[API] 최신 데이터 로드: {v}개")
         if DB_AVAILABLE and DATABASE_URL:
             # 데이터베이스에서 최근 5시간 데이터 조회
             db_results = get_recent_results(hours=5)
-            print(f"[API] DB 데이터 조회: {len(db_results)}개")
+            _log_when_changed('api_db', len(db_results), lambda v: f"[API] DB 데이터 조회: {v}개")
             
             # 최신 데이터 저장 (백그라운드)
             if latest_results:
@@ -4765,7 +4829,7 @@ def _build_results_payload():
                         if save_game_result(game_data):
                             saved_count += 1
                     if saved_count > 0:
-                        print(f"[💾] 최신 데이터 {saved_count}개 저장 완료")
+                        _log_when_changed('latest_save', saved_count, lambda v: f"[💾] 최신 데이터 {v}개 저장 완료")
                 except Exception as e:
                     print(f"[경고] 최신 데이터 저장 실패: {str(e)[:100]}")
             
@@ -4780,7 +4844,7 @@ def _build_results_payload():
                 # 최신 데이터 + DB 데이터 (최신순) → gameID 기준 정렬로 순서 고정 (그래프 일관성)
                 results = latest_results + db_results_filtered
                 results = _sort_results_newest_first(results)
-                print(f"[API] 병합 결과: 최신 {len(latest_results)}개 + DB {len(db_results_filtered)}개 = 총 {len(results)}개")
+                _log_when_changed('api_merge', (len(latest_results), len(db_results_filtered), len(results)), lambda v: f"[API] 병합 결과: 최신 {v[0]}개 + DB {v[1]}개 = 총 {v[2]}개")
                 
                 # 병합된 전체 결과에 대해 정/꺽 결과 계산 및 추가
                 if len(results) >= 16:
@@ -4940,7 +5004,7 @@ _results_refresh_lock = threading.Lock()
 _results_refreshing = False
 
 def _refresh_results_background():
-    """백그라운드에서 캐시 갱신 (요청 스레드 블로킹 없음). 이전보다 오래된 데이터로는 덮어쓰지 않음."""
+    """백그라운드에서 캐시 갱신. 서버가 항상 최신 결과를 송출하려면 유효한 페이로드가 오면 캐시를 덮어쓴다."""
     global results_cache, last_update_time, _results_refreshing
     if not _results_refresh_lock.acquire(blocking=False):
         return
@@ -4948,27 +5012,8 @@ def _refresh_results_background():
     try:
         payload = _build_results_payload()
         if payload is not None and payload.get('results'):
-            new_results = payload['results']
-            new_latest = str(new_results[0].get('gameID') or '0') if new_results else '0'
-            try:
-                new_latest_num = int(new_latest)
-            except (ValueError, TypeError):
-                new_latest_num = 0
-            should_update = True
-            if results_cache and results_cache.get('results'):
-                cur_results = results_cache['results']
-                cur_latest = str(cur_results[0].get('gameID') or '0') if cur_results else '0'
-                try:
-                    cur_latest_num = int(cur_latest)
-                except (ValueError, TypeError):
-                    cur_latest_num = 0
-                if new_latest_num < cur_latest_num:
-                    should_update = False
-                elif new_latest_num == cur_latest_num and len(new_results) <= len(cur_results):
-                    should_update = False
-            if should_update:
-                results_cache = payload
-                last_update_time = time.time() * 1000
+            results_cache = payload
+            last_update_time = time.time() * 1000
     except Exception as e:
         print(f"[API] 백그라운드 갱신 오류: {str(e)[:150]}")
     finally:
@@ -4980,27 +5025,32 @@ def _refresh_results_background():
 
 @app.route('/api/results', methods=['GET'])
 def get_results():
-    """경기 결과 API. result_source=URL 쿼리 있으면 해당 URL에서 결과 조회(베팅 사이트와 동일 소스)."""
+    """경기 결과 API. 화면 송출 보장: 매 요청마다 DB에서 결과 생성(워커/캐시 무관)."""
     try:
         global results_cache, last_update_time
         result_source = request.args.get('result_source', '').strip()
-        
-        # 기본 응답 (캐시 또는 빈값)
-        payload = None
-        if results_cache and (time.time() * 1000 - last_update_time) < CACHE_TTL:
-            payload = results_cache.copy()
-        elif results_cache:
-            payload = results_cache.copy()
-            if not _results_refreshing:
-                threading.Thread(target=_refresh_results_background, daemon=True).start()
+
+        # 매 요청마다 DB에서 응답 생성 (Gunicorn 다중 워커에서 캐시 비어 있는 워커로 가도 빈 응답 방지)
+        payload = _build_results_payload_db_only(hours=5)
+        if payload and payload.get('results'):
+            results_cache = payload
+            last_update_time = time.time() * 1000
         else:
-            if not _results_refreshing:
-                threading.Thread(target=_refresh_results_background, daemon=True).start()
-            payload = {
-                'results': [], 'count': 0, 'timestamp': datetime.now().isoformat(),
-                'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
-                'blended_win_rate': None, 'round_actuals': {}
-            }
+            payload = _build_results_payload_db_only(hours=24) or payload
+            if payload and payload.get('results'):
+                results_cache = payload
+                last_update_time = time.time() * 1000
+        if not payload or not payload.get('results'):
+            if results_cache and results_cache.get('results'):
+                payload = results_cache.copy()
+            else:
+                payload = {
+                    'results': [], 'count': 0, 'timestamp': datetime.now().isoformat(),
+                    'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
+                    'blended_win_rate': None, 'round_actuals': {}
+                }
+        if not _results_refreshing:
+            threading.Thread(target=_refresh_results_background, daemon=True).start()
         
         # result_source 지정 시: 베팅 사이트와 동일한 결과 소스에서 round_actuals 재조회
         if result_source:
@@ -5018,13 +5068,16 @@ def get_results():
             except Exception as e:
                 print(f"[API] result_source 조회 실패: {result_source} - {str(e)[:100]}")
         
-        return jsonify(payload)
+        resp = jsonify(payload)
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+        resp.headers['Pragma'] = 'no-cache'
+        return resp
     except Exception as e:
         import traceback
         error_msg = str(e)[:200]
         print(f"[❌ 오류] 결과 로드 실패: {error_msg}")
         print(traceback.format_exc()[:500])
-        return jsonify({
+        err_resp = jsonify({
             'results': [],
             'count': 0,
             'timestamp': datetime.now().isoformat(),
@@ -5033,7 +5086,9 @@ def get_results():
             'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
             'blended_win_rate': None,
             'round_actuals': {}
-        }), 200
+        })
+        err_resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+        return err_resp, 200
 
 
 @app.route('/api/calc-state', methods=['GET', 'POST'])
@@ -5165,7 +5220,7 @@ def api_current_pick():
         ok = bet_int.set_current_pick(conn, pick_color=pick_color, round_num=round_num, probability=probability, suggested_amount=suggested_amount)
         if ok:
             conn.commit()
-            print(f"[배팅연동] 픽 저장: {pick_color} round {round_num}")
+            _log_when_changed('current_pick', (pick_color, round_num), lambda v: f"[배팅연동] 픽 저장: {v[0]} round {v[1]}")
         conn.close()
         return jsonify({'ok': ok}), 200
     except Exception as e:
@@ -5209,9 +5264,7 @@ def get_current_status():
         # 디버깅: 반환 데이터 확인
         red_count = len(data.get('currentBets', {}).get('red', []))
         black_count = len(data.get('currentBets', {}).get('black', []))
-        print(f"[API 응답] RED: {red_count}명, BLACK: {black_count}명")
-        print(f"[API 응답] 전체 데이터 구조: {list(data.keys())}")
-        print(f"[API 응답] currentBets 키: {list(data.get('currentBets', {}).keys())}")
+        _log_when_changed('current_status', (red_count, black_count), lambda v: f"[API 응답] RED: {v[0]}명, BLACK: {v[1]}명 | 구조: {list(data.keys())}")
         data['server_time'] = int(time.time())  # 계산기 경과시간용
         return jsonify(data), 200
     except Exception as e:
@@ -5317,8 +5370,8 @@ def refresh_data():
                 'round_actuals': round_actuals
             }
     if game_data is not None or streaks_data is not None or results_data is not None:
-    last_update_time = time.time() * 1000
-    
+        last_update_time = time.time() * 1000
+
     return jsonify({
         'success': True,
         'gameData': game_data is not None,
