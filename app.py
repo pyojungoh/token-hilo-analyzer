@@ -14,6 +14,7 @@ import traceback
 import threading
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # .env 파일 로드 (DATABASE_URL 등)
 try:
@@ -40,11 +41,21 @@ except ImportError:
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
     SCHEDULER_AVAILABLE = True
+    import logging
+    for _name in ('apscheduler', 'apscheduler.scheduler', 'apscheduler.executors.default'):
+        logging.getLogger(_name).setLevel(logging.ERROR)
 except ImportError:
     SCHEDULER_AVAILABLE = False
 
 app = Flask(__name__)
 CORS(app)
+
+@app.after_request
+def add_csp_allow_eval(response):
+    """CSP: 'eval' 차단으로 스크립트 오동작 시 script-src에 unsafe-eval 허용."""
+    if response.content_type and 'text/html' in response.content_type:
+        response.headers['Content-Security-Policy'] = "script-src 'self' 'unsafe-inline' 'unsafe-eval'; object-src 'self'; base-uri 'self'"
+    return response
 
 # 환경 변수
 BASE_URL = os.getenv('BASE_URL', 'http://tgame365.com')
@@ -52,6 +63,25 @@ DATA_PATH = ''
 TIMEOUT = int(os.getenv('TIMEOUT', '10'))
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))
 DATABASE_URL = os.getenv('DATABASE_URL', None)
+
+# 반복 로그 억제용 (키 -> 마지막 출력 시각)
+_log_throttle_last = {}
+# 값이 바뀔 때만 로그 (키 -> 마지막 값)
+_log_when_changed_last = {}
+
+def _log_throttle(key, interval_sec, message):
+    """같은 key로 interval_sec 초에 한 번만 출력."""
+    now = time.time()
+    if key not in _log_throttle_last or (now - _log_throttle_last[key]) >= interval_sec:
+        _log_throttle_last[key] = now
+        print(message)
+
+def _log_when_changed(key, value, message_fn):
+    """value가 이전과 다를 때만 출력. value는 비교 가능한 값 (튜플/문자열/숫자)."""
+    last = _log_when_changed_last.get(key)
+    if last != value:
+        _log_when_changed_last[key] = value
+        print(message_fn(value))
 
 # 데이터베이스 연결 및 초기화
 def init_database():
@@ -126,12 +156,20 @@ def init_database():
         cur.execute('''
             CREATE INDEX IF NOT EXISTS idx_prediction_history_created ON prediction_history(created_at DESC)
         ''')
-        for col, typ in [('probability', 'REAL'), ('pick_color', 'VARCHAR(10)')]:
-            try:
-                cur.execute('ALTER TABLE prediction_history ADD COLUMN ' + col + ' ' + typ)
-                conn.commit()
-            except Exception:
-                pass
+        for col, typ in [('probability', 'REAL'), ('pick_color', 'VARCHAR(10)'), ('blended_win_rate', 'REAL'), ('rate_15', 'REAL'), ('rate_30', 'REAL'), ('rate_100', 'REAL')]:
+            cur.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'prediction_history' AND column_name = %s",
+                (col,)
+            )
+            if cur.fetchone() is None:
+                try:
+                    cur.execute('SAVEPOINT add_col_prediction_history')
+                    cur.execute('ALTER TABLE prediction_history ADD COLUMN ' + col + ' ' + typ)
+                except Exception as alter_err:
+                    if 'already exists' in str(alter_err).lower():
+                        cur.execute('ROLLBACK TO SAVEPOINT add_col_prediction_history')
+                    else:
+                        raise
         
         # calc_sessions: 계산기 상태 서버 저장 (새로고침/재접속 후에도 실행중 유지)
         cur.execute('''
@@ -142,6 +180,16 @@ def init_database():
             )
         ''')
         
+        # round_predictions: 배팅중(예측) 나올 때마다 회차별로 즉시 저장 → 결과 나오면 prediction_history로 머지
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS round_predictions (
+                round_num INTEGER PRIMARY KEY,
+                predicted VARCHAR(10) NOT NULL,
+                pick_color VARCHAR(10),
+                probability REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         # current_pick: 배팅 연동용 현재 예측 픽 1건 (RED/BLACK, 회차, 확률). 실패해도 서버는 기동
         try:
             cur.execute('''
@@ -254,20 +302,28 @@ def save_game_result(game_data):
 
 
 def save_prediction_record(round_num, predicted, actual, probability=None, pick_color=None):
-    """시스템 예측 기록 1건 저장. statement_timeout으로 먹통 방지."""
+    """시스템 예측 기록 1건 저장. 해당 회차 직전 이력으로 합산승률(blended_win_rate) 계산 후 저장."""
     if not DB_AVAILABLE or not DATABASE_URL:
         return False
     conn = get_db_connection(statement_timeout_sec=5)
     if not conn:
         return False
     try:
+        history_before = get_prediction_history_before_round(conn, round_num, limit=100)
+        blended_val = None
+        r15_val = r30_val = r100_val = None
+        comp = _blended_win_rate_components(history_before)
+        if comp:
+            r15_val, r30_val, r100_val, blended_val = comp
         cur = conn.cursor()
         cur.execute('''
-            INSERT INTO prediction_history (round_num, predicted, actual, probability, pick_color)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO prediction_history (round_num, predicted, actual, probability, pick_color, blended_win_rate, rate_15, rate_30, rate_100)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (round_num) DO UPDATE SET predicted = EXCLUDED.predicted, actual = EXCLUDED.actual,
-                probability = EXCLUDED.probability, pick_color = EXCLUDED.pick_color, created_at = DEFAULT
-        ''', (int(round_num), str(predicted), str(actual), float(probability) if probability is not None else None, str(pick_color) if pick_color else None))
+                probability = EXCLUDED.probability, pick_color = EXCLUDED.pick_color,
+                blended_win_rate = EXCLUDED.blended_win_rate, rate_15 = EXCLUDED.rate_15, rate_30 = EXCLUDED.rate_30, rate_100 = EXCLUDED.rate_100, created_at = DEFAULT
+        ''', (int(round_num), str(predicted), str(actual), float(probability) if probability is not None else None, str(pick_color) if pick_color else None,
+             round(blended_val, 1) if blended_val is not None else None, round(r15_val, 1) if r15_val is not None else None, round(r30_val, 1) if r30_val is not None else None, round(r100_val, 1) if r100_val is not None else None))
         conn.commit()
         cur.close()
         conn.close()
@@ -376,29 +432,69 @@ def _get_actual_for_round(results, round_id):
     return None
 
 
+def _build_round_actuals(results):
+    """results(최신순)에서 회차별 실제 결과 추출. 프론트엔드 getCategory와 동일한 색상 로직."""
+    out = {}
+    if not results or len(results) < 16:
+        return out
+    gv = _build_graph_values(results)
+    for i in range(min(15, len(results) - 15, len(gv))):
+        r = results[i]
+        r15 = results[i + 15]
+        rid = str(r.get('gameID', ''))
+        if not rid:
+            continue
+        if r.get('joker') or r15.get('joker'):
+            out[rid] = {'actual': 'joker', 'color': None}
+            continue
+        if gv[i] is None:
+            continue
+        actual = '정' if gv[i] else '꺽'
+        c = get_card_color_from_result(r)
+        if c is None:
+            c15 = get_card_color_from_result(r15)
+            if c15 is not None:
+                c = c15 if gv[i] else (not c15)
+        color = 'RED' if c is True else 'BLACK' if c is False else None
+        out[rid] = {'actual': actual, 'color': color}
+    return out
+
+
 def _blended_win_rate(prediction_history):
-    """예측 이력으로 15/30/100 가중 승률. (0.5*15 + 0.3*30 + 0.2*100)."""
-    valid = [h for h in (prediction_history or []) if h and isinstance(h, dict) and h.get('actual') != 'joker']
-    if not valid:
+    """예측 이력으로 15/30/100 가중 승률. (0.6*15 + 0.25*30 + 0.15*100).
+    프론트엔드와 동일: 위치 기준 마지막 N개에서 조커 제외 후 승률 계산."""
+    comp = _blended_win_rate_components(prediction_history)
+    return comp[3] if comp else None
+
+
+def _blended_win_rate_components(prediction_history):
+    """예측 이력으로 15/30/100 승률 및 합산. (r15, r30, r100, blended)."""
+    valid_hist = [h for h in (prediction_history or []) if h and isinstance(h, dict)]
+    if not valid_hist:
         return None
-    v15 = valid[-15:]
-    v30 = valid[-30:]
-    v100 = valid[-100:]
+    v15 = [h for h in valid_hist[-15:] if h.get('actual') != 'joker']
+    v30 = [h for h in valid_hist[-30:] if h.get('actual') != 'joker']
+    v100 = [h for h in valid_hist[-100:] if h.get('actual') != 'joker']
     def rate(arr):
         hit = sum(1 for h in arr if h.get('predicted') == h.get('actual'))
         return 100 * hit / len(arr) if arr else 50
     r15 = rate(v15)
     r30 = rate(v30)
     r100 = rate(v100)
-    return 0.5 * r15 + 0.3 * r30 + 0.2 * r100
+    blended = 0.6 * r15 + 0.25 * r30 + 0.15 * r100
+    return (r15, r30, r100, blended)
 
 
 def _apply_results_to_calcs(results):
-    """결과 수집 후 실행 중인 계산기 회차 반영: pending_round 결과 있으면 history 반영 후 다음 예측으로 갱신."""
+    """결과 수집 후 실행 중인 계산기 회차 반영: pending_round 결과 있으면 history 반영 후 다음 예측으로 갱신.
+    안정화: pending_*는 저장된 예측(round_predictions)만 사용. 저장은 스케줄러 ensure_stored에서만."""
     if not results or len(results) < 16:
         return
     try:
-        ph = get_prediction_history(100)
+        latest_gid = results[0].get('gameID')
+        predicted_round = int(str(latest_gid or '0'), 10) + 1
+        stored_for_round = get_stored_round_prediction(predicted_round) if predicted_round else None
+
         session_ids = _get_all_calc_session_ids()
         for session_id in session_ids:
             state = get_calc_state(session_id)
@@ -412,12 +508,11 @@ def _apply_results_to_calcs(results):
                 pending_round = c.get('pending_round')
                 pending_predicted = c.get('pending_predicted')
                 if pending_round is None or pending_predicted is None:
-                    pred = compute_prediction(results, ph)
-                    if pred.get('round') and pred.get('value') is not None:
-                        c['pending_round'] = pred['round']
-                        c['pending_predicted'] = pred['value']
-                        c['pending_prob'] = pred.get('prob')
-                        c['pending_color'] = pred.get('color')
+                    if stored_for_round and stored_for_round.get('predicted'):
+                        c['pending_round'] = predicted_round
+                        c['pending_predicted'] = stored_for_round['predicted']
+                        c['pending_prob'] = stored_for_round.get('probability')
+                        c['pending_color'] = stored_for_round.get('pick_color')
                         updated = True
                     continue
                 actual = _get_actual_for_round(results, pending_round)
@@ -434,27 +529,236 @@ def _apply_results_to_calcs(results):
                 if c.get('reverse'):
                     pred_for_calc = '꺽' if pending_predicted == '정' else '정'
                 blended = _blended_win_rate(get_prediction_history(100))
-                thr = c.get('win_rate_threshold', 50)
+                thr = c.get('win_rate_threshold', 46)
                 if c.get('win_rate_reverse') and blended is not None and blended <= thr:
                     pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
                 c['history'] = (c.get('history') or []) + [{'round': pending_round, 'predicted': pred_for_calc, 'actual': actual}]
-                ph = get_prediction_history(100)
-                next_pred = compute_prediction(results, ph)
-                c['pending_round'] = next_pred.get('round')
-                c['pending_predicted'] = next_pred.get('value')
-                c['pending_prob'] = next_pred.get('prob')
-                c['pending_color'] = next_pred.get('color')
-                updated = True
-                defense = state.get('defense')
-                if defense and isinstance(defense, dict) and defense.get('running') and defense.get('linked_calc_id') == int(cid):
-                    def_first = defense.get('first_bet_round') or 0
-                    if def_first == 0 or pending_round >= def_first:
-                        def_pred = '꺽' if pred_for_calc == '정' else '정'
-                        defense['history'] = (defense.get('history') or []) + [{'round': pending_round, 'predicted': def_pred, 'actual': actual, 'betAmount': 0}]
+                if stored_for_round and stored_for_round.get('predicted'):
+                    c['pending_round'] = predicted_round
+                    c['pending_predicted'] = stored_for_round['predicted']
+                    c['pending_prob'] = stored_for_round.get('probability')
+                    c['pending_color'] = stored_for_round.get('pick_color')
+                    updated = True
             if updated:
                 save_calc_state(session_id, state)
     except Exception as e:
         print(f"[스케줄러] 회차 반영 오류: {str(e)[:200]}")
+
+
+def get_prediction_history_before_round(conn, round_num, limit=100):
+    """해당 회차 직전까지의 예측 이력 (round_num < round_num, 과거→현재 순). 합산승률 저장용."""
+    if not conn or round_num is None:
+        return []
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('''
+            SELECT round_num as "round", predicted, actual
+            FROM prediction_history
+            WHERE round_num < %s
+            ORDER BY round_num DESC
+            LIMIT %s
+        ''', (int(round_num), int(limit)))
+        rows = cur.fetchall()
+        cur.close()
+        out = [{'round': r['round'], 'predicted': r['predicted'], 'actual': r['actual']} for r in reversed(rows)]
+        return out
+    except Exception:
+        return []
+
+
+def _prediction_history_has_round(round_num):
+    """해당 회차가 prediction_history에 이미 있는지 조회."""
+    if not DB_AVAILABLE or not DATABASE_URL or round_num is None:
+        return False
+    conn = get_db_connection(statement_timeout_sec=3)
+    if not conn:
+        return False
+    try:
+        cur = conn.cursor()
+        cur.execute('SELECT 1 FROM prediction_history WHERE round_num = %s LIMIT 1', (int(round_num),))
+        found = cur.fetchone() is not None
+        cur.close()
+        conn.close()
+        return found
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return False
+
+
+def get_stored_round_prediction(round_num):
+    """해당 회차에 대해 round_predictions에 저장된 예측이 있으면 반환. 한 출처(서버 저장)로 안정화용."""
+    if not DB_AVAILABLE or not DATABASE_URL or round_num is None:
+        return None
+    conn = get_db_connection(statement_timeout_sec=3)
+    if not conn:
+        return None
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            'SELECT predicted, pick_color, probability FROM round_predictions WHERE round_num = %s LIMIT 1',
+            (int(round_num),)
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not row:
+            return None
+        return {
+            'predicted': str(row[0]) if row[0] else None,
+            'pick_color': str(row[1]).strip() if row[1] else None,
+            'probability': float(row[2]) if row[2] is not None else None,
+        }
+    except Exception as e:
+        print(f"[경고] get_stored_round_prediction 조회 실패: {str(e)[:100]}")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return None
+
+
+def ensure_stored_prediction_for_current_round(results):
+    """현재 회차에 대한 예측이 round_predictions에 없으면 한 번만 계산·저장. 스케줄러에서만 호출(저장은 한 곳)."""
+    if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
+        return
+    try:
+        latest_gid = results[0].get('gameID')
+        predicted_round = int(str(latest_gid or '0'), 10) + 1
+        is_15_joker = len(results) >= 15 and bool(results[14].get('joker'))
+        if is_15_joker:
+            return
+        if get_stored_round_prediction(predicted_round):
+            return
+        ph = get_prediction_history(100)
+        pred = compute_prediction(results, ph)
+        if pred and pred.get('round') and pred.get('value') is not None:
+            save_round_prediction(
+                pred['round'], pred['value'],
+                pick_color=pred.get('color'), probability=pred.get('prob')
+            )
+    except Exception as e:
+        print(f"[경고] ensure_stored_prediction_for_current_round 실패: {str(e)[:120]}")
+
+
+def save_round_prediction(round_num, predicted, pick_color=None, probability=None):
+    """배팅중(예측) 나올 때마다 회차별로 즉시 저장. 결과 나오면 prediction_history로 머지됨."""
+    if not DB_AVAILABLE or not DATABASE_URL or round_num is None or predicted is None:
+        return False
+    conn = get_db_connection(statement_timeout_sec=3)
+    if not conn:
+        return False
+    try:
+        cur = conn.cursor()
+        pick_color = str(pick_color).strip() if pick_color else None
+        if pick_color:
+            pick_color = '빨강' if pick_color.upper() in ('RED', '빨강') else '검정' if pick_color.upper() in ('BLACK', '검정') else pick_color
+        # 안정화: 이미 저장된 회차는 덮어쓰지 않음. 첫 저장(스케줄러)만 유지.
+        cur.execute('''
+            INSERT INTO round_predictions (round_num, predicted, pick_color, probability)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (round_num) DO NOTHING
+        ''', (int(round_num), str(predicted), pick_color, float(probability) if probability is not None else None))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[경고] round_predictions 저장 실패: {str(e)[:150]}")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return False
+
+
+# 머지 캐시: 이미 머지한 회차 집합. 새 결과 회차가 생길 때만 머지해서 폴링 시 속도 향상
+_merge_rounds_cache = set()
+
+
+def _merge_round_predictions_into_history(round_actuals):
+    """round_actuals에 있는 회차 중 prediction_history에 없는 것은 round_predictions에서 꺼내 저장 후 삭제.
+    새로 결과가 나온 회차가 있을 때만 DB 접근(폴링마다 머지하지 않음)."""
+    global _merge_rounds_cache
+    if not round_actuals or not DB_AVAILABLE or not DATABASE_URL:
+        return
+    rounds_with_result = set()
+    for rid, ra in round_actuals.items():
+        try:
+            rnd = int(rid)
+        except (TypeError, ValueError):
+            continue
+        if (ra.get('actual') or '').strip():
+            rounds_with_result.add(rnd)
+    if not rounds_with_result:
+        return
+    # 새로 결과가 나온 회차가 없으면 머지 생략 → 폴링 시 응답 속도 향상
+    if rounds_with_result <= _merge_rounds_cache:
+        return
+    conn = get_db_connection(statement_timeout_sec=5)
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute('SELECT round_num FROM prediction_history WHERE round_num = ANY(%s)', (list(rounds_with_result),))
+        already = {r[0] for r in cur.fetchall()}
+        to_merge = [r for r in rounds_with_result if r not in already]
+        for rnd in to_merge:
+            cur.execute('SELECT predicted, pick_color, probability FROM round_predictions WHERE round_num = %s LIMIT 1', (rnd,))
+            row = cur.fetchone()
+            if not row:
+                continue
+            pred_val, pick_color, prob = row[0], row[1], row[2]
+            actual = (round_actuals.get(str(rnd), {}).get('actual') or '').strip()
+            if not actual:
+                continue
+            cur.close()
+            conn.close()
+            save_prediction_record(rnd, pred_val, actual, probability=prob, pick_color=pick_color)
+            conn = get_db_connection(statement_timeout_sec=3)
+            if not conn:
+                return
+            cur = conn.cursor()
+            cur.execute('DELETE FROM round_predictions WHERE round_num = %s', (rnd,))
+            conn.commit()
+        _merge_rounds_cache |= rounds_with_result
+    except Exception as e:
+        print(f"[경고] round_predictions 머지 실패: {str(e)[:150]}")
+    try:
+        if conn:
+            cur.close()
+            conn.close()
+    except Exception:
+        pass
+
+
+def _backfill_latest_round_to_prediction_history(results):
+    """최신 회차가 prediction_history에 없으면 서버가 예측/실제를 계산해 저장. 화면 미반영으로 누락된 회차 보정."""
+    if not results or len(results) < 17:
+        return
+    try:
+        latest_game_id = results[0].get('gameID')
+        if not latest_game_id:
+            return
+        latest_round = int(str(latest_game_id), 10)
+        if _prediction_history_has_round(latest_round):
+            return
+        actual = _get_actual_for_round(results, latest_round)
+        if actual is None:
+            return
+        ph = get_prediction_history(100)
+        pred = compute_prediction(results[1:], ph)
+        if not pred or pred.get('round') != latest_round or pred.get('value') is None:
+            return
+        save_prediction_record(
+            latest_round, pred['value'], actual,
+            probability=pred.get('prob'), pick_color=pred.get('color')
+        )
+        print(f"[API] prediction_history 보정 저장: round {latest_round} predicted={pred.get('value')} actual={actual}")
+    except Exception as e:
+        print(f"[경고] prediction_history 보정 실패: {str(e)[:150]}")
 
 
 def get_prediction_history(limit=30):
@@ -467,7 +771,7 @@ def get_prediction_history(limit=30):
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute('''
-            SELECT round_num as "round", predicted, actual, probability, pick_color
+            SELECT round_num as "round", predicted, actual, probability, pick_color, blended_win_rate, rate_15, rate_30, rate_100
             FROM prediction_history
             ORDER BY round_num DESC
             LIMIT %s
@@ -475,14 +779,32 @@ def get_prediction_history(limit=30):
         rows = cur.fetchall()
         cur.close()
         conn.close()
-        # 프론트와 맞추기: 과거→현재 순 (round 오름차순)
+        # 프론트와 맞추기: 과거→현재 순 (round 오름차순). actualColor = 분석기 승/패 표시와 동일
         out = []
         for r in reversed(rows):
             o = {'round': r['round'], 'predicted': r['predicted'], 'actual': r['actual']}
             if r.get('probability') is not None:
                 o['probability'] = float(r['probability'])
-            if r.get('pick_color'):
-                o['pickColor'] = str(r['pick_color'])
+            if r.get('blended_win_rate') is not None:
+                o['blended_win_rate'] = float(r['blended_win_rate'])
+            if r.get('rate_15') is not None:
+                o['rate_15'] = float(r['rate_15'])
+            if r.get('rate_30') is not None:
+                o['rate_30'] = float(r['rate_30'])
+            if r.get('rate_100') is not None:
+                o['rate_100'] = float(r['rate_100'])
+            pick_color = str(r.get('pick_color') or '').strip()
+            if pick_color:
+                # API·프론트 일관성: 항상 빨강/검정으로 반환 (RED/BLACK 혼용 방지)
+                o['pickColor'] = '빨강' if pick_color.upper() in ('RED', '빨강') else '검정' if pick_color.upper() in ('BLACK', '검정') else pick_color
+                pc = 'RED' if pick_color.upper() in ('RED', '빨강') else 'BLACK' if pick_color.upper() in ('BLACK', '검정') else None
+                raw = str(r.get('actual') or '').strip()
+                if raw == 'joker':
+                    o['actualColor'] = None
+                elif raw in ('정', '꺽') and pc:
+                    o['actualColor'] = pc if raw == '정' else ('BLACK' if pc == 'RED' else 'RED')
+                else:
+                    o['actualColor'] = None
             out.append(o)
         return out
     except Exception as e:
@@ -495,17 +817,33 @@ def get_prediction_history(limit=30):
 
 
 def parse_card_color(result_str):
-    """카드 결과 문자열에서 색상 추출 (빨강/검정)"""
+    """카드 결과 문자열에서 색상 추출. H,D,♥,♦=빨강 / S,C,♠,♣=검정. 앞뒤 모두 확인."""
     if not result_str:
         return None
-    
-    # 첫 글자가 문양인지 확인
-    first_char = result_str[0].upper()
-    if first_char in ['H', 'D']:  # 하트, 다이아몬드 = 빨강
+    s = str(result_str).upper().strip()
+    for c in s:
+        if c in ('H', 'D') or c in ('♥', '♦'):
+            return True
+        if c in ('S', 'C') or c in ('♠', '♣'):
+            return False
+    if 'RED' in s or 'HEART' in s or 'DIAMOND' in s:
         return True
-    elif first_char in ['S', 'C']:  # 스페이드, 클럽 = 검정
+    if 'BLACK' in s or 'SPADE' in s or 'CLUB' in s:
         return False
     return None
+
+
+def get_card_color_from_result(r):
+    """프론트엔드 getCategory와 동일: result 객체에서 카드 색상 추출. True=RED, False=BLACK, None=미확인.
+    red/black 우선(게임 제공값), parse_card_color 보조, 정/꺽+비교카드 유도까지 적용."""
+    if not r or r.get('joker'):
+        return None
+    if r.get('red') and not r.get('black'):
+        return True
+    if r.get('black') and not r.get('red'):
+        return False
+    c = parse_card_color(r.get('result', ''))
+    return c
 
 
 def _build_graph_values(results):
@@ -518,8 +856,8 @@ def _build_graph_values(results):
         if r0.get('joker') or r15.get('joker'):
             out.append(None)
             continue
-        c0 = parse_card_color(r0.get('result', ''))
-        c15 = parse_card_color(r15.get('result', ''))
+        c0 = get_card_color_from_result(r0)
+        c15 = get_card_color_from_result(r15)
         if c0 is None or c15 is None:
             out.append(None)
             continue
@@ -889,8 +1227,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
     adj_change_n = adj_change / s
     predict = ('정' if last is True else '꺽') if adj_same_n >= adj_change_n else ('꺽' if last is True else '정')
     pred_prob = (adj_same_n if predict == ('정' if last is True else '꺽') else adj_change_n) * 100
-    card15_result = results[14].get('result', '') if len(results) >= 15 else ''
-    is_15_red = parse_card_color(card15_result) if card15_result else None
+    is_15_red = get_card_color_from_result(results[14]) if len(results) >= 15 else None
     if is_15_red is True:
         color_to_pick = '빨강' if predict == '정' else '검정'
     elif is_15_red is False:
@@ -938,9 +1275,8 @@ def calculate_and_save_color_matches(results):
                 continue
             
             # 색상 비교
-            current_color = parse_card_color(current_result.get('result', ''))
-            compare_color = parse_card_color(compare_result.get('result', ''))
-            
+            current_color = get_card_color_from_result(current_result)
+            compare_color = get_card_color_from_result(compare_result)
             if current_color is None or compare_color is None:
                 continue
             
@@ -963,7 +1299,7 @@ def calculate_and_save_color_matches(results):
         conn.close()
         
         if saved_count > 0:
-            print(f"[✅] 정/꺽 결과 {saved_count}개 저장 완료")
+            _log_when_changed('color_matches', saved_count, lambda v: f"[✅] 정/꺽 결과 {v}개 저장 완료")
     except Exception as e:
         print(f"[❌ 오류] 정/꺽 결과 계산 실패: {str(e)[:200]}")
         try:
@@ -1065,10 +1401,9 @@ def _sort_results_newest_first(results):
         return results
     def key_fn(r):
         g = str(r.get('gameID') or '')
-        try:
-            return (-int(g), '')  # 숫자면 높은 ID가 앞으로
-        except ValueError:
-            return (0, g)  # 문자열이면 그대로
+        nums = re.findall(r'\d+', g)
+        n = int(nums[0]) if nums else 0
+        return (-n, g)  # 숫자 추출해서 높은 ID가 앞으로
     return sorted(results, key=key_fn)
 
 
@@ -1084,13 +1419,13 @@ def get_recent_results(hours=5):
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # 최근 N시간 데이터 조회, LIMIT 2000으로 과부하 방지
+        # 최근 N시간 데이터 조회, LIMIT 2000. 회차(game_id) 숫자 기준 최신순으로 정렬 (화면에 현재 회차 표시 보장)
         cur.execute('''
-            SELECT game_id as "gameID", result, hi, lo, red, black, jqka, joker,
+            SELECT game_id as "gameID", result, hi, lo, red, black, jqka, joker, 
                    hash_value as hash, salt_value as salt
             FROM game_results
             WHERE created_at >= NOW() - (INTERVAL '1 hour' * %s)
-            ORDER BY created_at DESC
+            ORDER BY (NULLIF(REGEXP_REPLACE(game_id::text, '[^0-9]', '', 'g'), '')::BIGINT) DESC NULLS LAST, created_at DESC
             LIMIT 2000
         ''', (int(hours),))
         
@@ -1135,8 +1470,8 @@ def get_recent_results(hours=5):
         to_save = []
         for (gid, cgid), idx in pair_to_idx.items():
             if 'colorMatch' not in results[idx]:
-                current_color = parse_card_color(results[idx].get('result', ''))
-                compare_color = parse_card_color(results[idx + 15].get('result', ''))
+                current_color = get_card_color_from_result(results[idx])
+                compare_color = get_card_color_from_result(results[idx + 15])
                 if current_color is not None and compare_color is not None:
                     results[idx]['colorMatch'] = (current_color == compare_color)
                     to_save.append((gid, cgid, results[idx]['colorMatch']))
@@ -1202,7 +1537,7 @@ game_data_cache = None
 streaks_cache = None
 results_cache = None
 last_update_time = 0
-CACHE_TTL = 120  # 결과 나오면 예측픽 바로 반영 (ms)
+CACHE_TTL = 1000  # 결과 캐시 유효 시간 (ms). 1초 동안 동일 캐시 반환, 스케줄러가 2초마다 선제 갱신
 
 # 게임 상태 (Socket.IO 제거 후 기본값만 사용)
 current_status_data = {
@@ -1328,115 +1663,130 @@ def load_game_data():
         'timestamp': current_status_data.get('timestamp', datetime.now().isoformat())
     }
 
-# 외부 result.json 요청 시 타임아웃 (먹통 방지, 초 단위)
-RESULTS_FETCH_TIMEOUT = 5
+# 외부 result.json 요청 시 타임아웃 (병렬: 경로당 4초, 전체 6초)
+RESULTS_FETCH_TIMEOUT_PER_PATH = 4
+RESULTS_FETCH_OVERALL_TIMEOUT = 6
 RESULTS_FETCH_MAX_RETRIES = 1
 
-def load_results_data():
-    """경기 결과 데이터 로드 (result.json) - 짧은 타임아웃으로 먹통 방지"""
-    possible_paths = [
-        f"{BASE_URL}/frame/hilo/result.json",
-        f"{BASE_URL}/result.json",
-        f"{BASE_URL}/hilo/result.json",
-        f"{BASE_URL}/frame/result.json",
-    ]
-    for url_path in possible_paths:
+
+def _parse_results_json(data):
+    """response.json() 결과를 파싱해 results 리스트 반환. 실패 시 None."""
+    if not isinstance(data, list):
+        return None
+    results = []
+    for game in data:
         try:
-            url = f"{url_path}?t={int(time.time() * 1000)}"
-            print(f"[결과 데이터 요청 시도] {url}")
-            response = fetch_with_retry(
-                url,
-                max_retries=RESULTS_FETCH_MAX_RETRIES,
-                silent=True,
-                timeout_sec=RESULTS_FETCH_TIMEOUT,
-            )
-            
-            if response:
-                print(f"[✅ 결과 데이터 성공] {url}")
+            game_id = game.get('gameID', '')
+            result = game.get('result', '')
+            json_str = game.get('json', '{}')
+            if isinstance(json_str, str):
+                json_data = json.loads(json_str)
+            else:
+                json_data = json_str
+            red_val = json_data.get('red') or game.get('red', False)
+            black_val = json_data.get('black') or game.get('black', False)
+            results.append({
+                'gameID': str(game_id),
+                'result': result,
+                'hi': json_data.get('hi', False),
+                'lo': json_data.get('lo', False),
+                'red': red_val,
+                'black': black_val,
+                'jqka': json_data.get('jqka', False),
+                'joker': json_data.get('joker', False),
+                'hash': game.get('hash', ''),
+                'salt': game.get('salt', '')
+            })
+        except Exception:
+            continue
+    return results if results else None
+
+
+def _fetch_one_result_path(url_path, timeout_sec):
+    """단일 경로 result.json 요청. 반환: response 또는 None."""
+    url = f"{url_path}?t={int(time.time() * 1000)}"
+    return fetch_with_retry(
+        url,
+        max_retries=RESULTS_FETCH_MAX_RETRIES,
+        silent=True,
+        timeout_sec=timeout_sec,
+    )
+
+
+def load_results_data(base_url=None):
+    """경기 결과 데이터 로드 (result.json). 여러 경로 병렬 요청해 먼저 성공한 결과 사용 → 회차 갱신."""
+    base = (base_url or '').rstrip('/') or BASE_URL
+    possible_paths = [
+        f"{base}/frame/hilo/result.json",
+        f"{base}/result.json",
+        f"{base}/hilo/result.json",
+        f"{base}/frame/result.json",
+        f"{base}/api/result.json",
+        f"{base}/game/result.json",
+    ]
+    executor = ThreadPoolExecutor(max_workers=min(6, len(possible_paths)))
+    try:
+        future_to_path = {
+            executor.submit(_fetch_one_result_path, p, RESULTS_FETCH_TIMEOUT_PER_PATH): p
+            for p in possible_paths
+        }
+        for future in as_completed(future_to_path, timeout=RESULTS_FETCH_OVERALL_TIMEOUT):
+            url_path = future_to_path[future]
+            try:
+                response = future.result()
+                if not response:
+                    continue
                 try:
                     data = response.json()
-                    print(f"[결과 데이터 파싱] 받은 데이터 개수: {len(data) if isinstance(data, list) else '리스트 아님'}")
-                    
-                    # 결과 파싱
-                    results = []
-                    for game in data:
-                        try:
-                            game_id = game.get('gameID', '')
-                            result = game.get('result', '')
-                            json_str = game.get('json', '{}')
-                            
-                            # JSON 파싱
-                            if isinstance(json_str, str):
-                                json_data = json.loads(json_str)
-                            else:
-                                json_data = json_str
-                            
-                            # 실제 데이터 구조에 맞게 파싱 (boolean 값)
-                            results.append({
-                                'gameID': str(game_id),  # 문자열로 변환
-                                'result': result,
-                                'hi': json_data.get('hi', False),
-                                'lo': json_data.get('lo', False),
-                                'red': json_data.get('red', False),
-                                'black': json_data.get('black', False),
-                                'jqka': json_data.get('jqka', False),
-                                'joker': json_data.get('joker', False),
-                                'hash': game.get('hash', ''),
-                                'salt': game.get('salt', '')
-                            })
-                        except Exception as e:
-                            # 개별 게임 파싱 오류는 무시
-                            print(f"[결과 파싱 오류] {str(e)[:100]}")
-                            continue
-                    
-                    print(f"[결과 데이터 최종] {len(results)}개 게임 결과 파싱 완료")
-                    
-                    # 데이터베이스에 저장 (비동기로 처리하지 않음 - 순차적으로 저장)
-                    if DB_AVAILABLE and DATABASE_URL:
+                except (ValueError, json.JSONDecodeError):
+                    continue
+                results = _parse_results_json(data)
+                if results:
+                    _log_when_changed(('result_success', url_path), (url_path, len(results)), lambda v: f"[✅ 결과 데이터 성공] {v[0]} ({v[1]}개)")
+                    executor.shutdown(wait=False)
+                    if DB_AVAILABLE and DATABASE_URL and base == BASE_URL:
                         saved_count = 0
                         for game_data in results:
                             if save_game_result(game_data):
                                 saved_count += 1
                         if saved_count > 0:
-                            print(f"[💾] 데이터베이스에 {saved_count}개 결과 저장 완료")
-                        
-                        # 정/꺽 결과 계산 및 저장 (30개 이상일 때만)
+                            _log_when_changed('db_save', saved_count, lambda v: f"[💾] 데이터베이스에 {v}개 결과 저장 완료")
                         if len(results) >= 16:
                             calculate_and_save_color_matches(results)
-                    
                     return results
-                except (ValueError, json.JSONDecodeError) as e:
-                    print(f"[결과 JSON 파싱 오류] {str(e)[:200]}")
-                    continue  # 다음 경로 시도
-            else:
-                print(f"[❌ 결과 데이터 실패] {url} - 다음 경로 시도")
-                continue  # 다음 경로 시도
-        except Exception as e:
-            print(f"[결과 데이터 오류] {url_path}: {str(e)[:100]}")
-            continue  # 다음 경로 시도
-    
-    # 모든 경로 실패
+            except Exception as e:
+                print(f"[결과 데이터 오류] {url_path}: {str(e)[:80]}")
+                continue
+    except Exception as e:
+        print(f"[경고] 결과 병렬 요청 오류: {str(e)[:150]}")
+    finally:
+        try:
+            executor.shutdown(wait=True)
+        except Exception:
+            pass
     print(f"[경고] 모든 경로에서 결과 데이터를 가져올 수 없음")
     return []
 
 
 def _scheduler_fetch_results():
-    """스케줄러에서 호출: 외부 결과 수집·DB 저장 후 실행 중인 계산기 회차 반영."""
+    """스케줄러에서 호출: results_cache 갱신 + DB 저장 + 현재 회차 예측 1회 저장(한 곳) + 계산기 회차 반영 + prediction_history 누락 보정."""
     try:
-        load_results_data()
+        _refresh_results_background()
         if DB_AVAILABLE and DATABASE_URL:
             results = get_recent_results(hours=1)
             if results and len(results) >= 16:
+                ensure_stored_prediction_for_current_round(results)
                 _apply_results_to_calcs(results)
+                _backfill_latest_round_to_prediction_history(results)
     except Exception as e:
         print(f"[스케줄러] 결과 수집/회차 반영 오류: {str(e)[:150]}")
 
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.5, id='fetch_results', max_instances=1)
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=2, id='fetch_results', max_instances=1)
     _scheduler.start()
-    print("[✅] 결과 수집 스케줄러 시작 (0.5초마다, 예측픽 빠른 반영)")
+    print("[✅] 결과 수집 스케줄러 시작 (2초마다, 예측픽 선제적 갱신)")
 else:
     print("[⚠] APScheduler 미설치 - 결과 수집은 브라우저 요청 시에만 동작합니다. pip install APScheduler")
 
@@ -1761,6 +2111,9 @@ RESULTS_HTML = '''
         .graph-stats .kkuk-next { color: #e57373; }
         .graph-stats .jung-kkuk { color: #ffb74d; }
         .graph-stats .kkuk-jung { color: #64b5f6; }
+        .graph-stats .stat-rate.high { color: #81c784; font-weight: 600; }
+        .graph-stats .stat-rate.mid { color: #ffb74d; }
+        .graph-stats .stat-rate.low { color: #e57373; font-weight: 500; }
         .graph-stats-note { margin-top: 6px; font-size: 0.85em; color: #aaa; text-align: center; line-height: 1.5; }
         /* 성공/실패 결과: 예측 박스와 완전 분리(아웃) */
         .prediction-result-section {
@@ -2043,6 +2396,18 @@ RESULTS_HTML = '''
         .prediction-stats-row .stat-rate.high { color: #81c784; }
         .prediction-stats-row .stat-rate.low { color: #e57373; }
         .prediction-stats-row .stat-rate.mid { color: #ffb74d; }
+        .blended-win-rate-wrap {
+            margin-bottom: 10px; padding: 10px 12px; background: #2a2a2a; border-radius: 8px; border: 1px solid #444;
+            text-align: center;
+        }
+        .prediction-stats-blended-label { font-size: clamp(0.8em, 2vw, 0.9em); color: #b0bec5; margin-bottom: 4px; }
+        .prediction-stats-blended-value { font-size: clamp(1.4em, 4vw, 1.8em); font-weight: 900; color: #fff; }
+        .blended-win-rate-low .prediction-stats-blended-value { color: #e57373; }
+        @keyframes blended-blink {
+            0%, 100% { opacity: 1; background: rgba(229,115,115,0.15); }
+            50% { opacity: 0.85; background: rgba(229,115,115,0.35); }
+        }
+        .blended-win-rate-low { animation: blended-blink 1.2s ease-in-out infinite; }
         .prediction-streak-line { margin-top: 8px; font-size: clamp(0.9em, 2vw, 1em); color: #bbb; text-align: center; }
         .prediction-streak-line .streak-win { color: #ffeb3b; font-weight: bold; }
         .prediction-streak-line .streak-lose { color: #c62828; font-weight: bold; }
@@ -2140,9 +2505,15 @@ RESULTS_HTML = '''
         .calc-cards-wrap { display: inline-flex; align-items: center; gap: 10px; margin-left: 8px; vertical-align: middle; }
         .calc-card-item { display: inline-flex; align-items: center; gap: 4px; font-size: 0.8em; color: #888; }
         .calc-card-label { white-space: nowrap; }
+        .calc-card-box { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; }
+        .calc-round-line { font-size: 0.95em; font-weight: 600; color: #ddd; min-height: 1.3em; line-height: 1.3; }
+        .calc-round-line .calc-icon { font-size: 1.5em; display: inline-block; vertical-align: middle; line-height: 1; }
+        .calc-round-line .calc-icon-star { color: #ffeb3b; }
+        .calc-round-line .calc-icon-triangle { color: #f44336; }
+        .calc-round-line .calc-icon-circle { color: #2196f3; }
         .calc-current-card { display: inline-block; text-align: center; vertical-align: middle; border: 1px solid #555; box-sizing: border-box; color: #fff; }
-        .calc-current-card.calc-card-betting { width: 44px; height: 36px; line-height: 36px; font-size: 1em; font-weight: bold; }
-        .calc-current-card.calc-card-prediction { width: 22px; height: 18px; line-height: 18px; font-size: 0.75em; }
+        .calc-current-card.calc-card-betting { width: 44px; height: 28px; line-height: 28px; font-size: 1em; font-weight: bold; }
+        .calc-current-card.calc-card-prediction { width: 36px; height: 22px; line-height: 22px; font-size: 0.85em; }
         .calc-current-card.card-jung { background: #b71c1c; }
         .calc-current-card.card-kkuk { background: #111; }
         .calc-dropdown-header .calc-toggle { font-size: 0.8em; color: #888; }
@@ -2163,6 +2534,11 @@ RESULTS_HTML = '''
         .calc-settings-table input[type="checkbox"] { margin: 0; }
         .calc-settings-table select { padding: 4px 6px; border-radius: 4px; border: 1px solid #555; background: #1a1a1a; color: #fff; }
         .calc-target-hint { margin-left: 4px; }
+        .calc-bet-copy-line { font-size: 0.95em; color: #bbb; }
+        .calc-bet-copy-amount { cursor: pointer; padding: 2px 6px; border-radius: 4px; background: #37474f; color: #81c784; font-weight: 600; margin-left: 4px; }
+        .calc-bet-copy-amount:hover { background: #455a64; color: #a5d6a7; }
+        .calc-bet-copy-amount:active { background: #546e7a; }
+        .calc-bet-copy-hint { font-size: 0.85em; color: #78909c; margin-left: 4px; }
         @media (max-width: 520px) {
             .calc-dropdown-body { flex-direction: column; }
             .calc-body-row { flex: 1 1 auto; max-width: none; }
@@ -2180,8 +2556,8 @@ RESULTS_HTML = '''
         .calc-round-table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
         .calc-round-table th, .calc-round-table td { padding: 4px 6px; border: 1px solid #444; text-align: center; }
         .calc-round-table th { background: #333; color: #81c784; }
-        .calc-round-table td.pick-jung { background: #b71c1c; color: #fff; }
-        .calc-round-table td.pick-kkuk { background: #111; color: #fff; }
+        .calc-round-table td.pick-jung, .calc-round-table td.pick-red { background: #b71c1c; color: #fff; }
+        .calc-round-table td.pick-kkuk, .calc-round-table td.pick-black { background: #111; color: #fff; }
         .calc-round-table .win { color: #ffeb3b; font-weight: 600; }
         .calc-round-table .lose { color: #c62828; font-weight: 500; }
         .calc-round-table .joker { color: #64b5f6; }
@@ -2194,7 +2570,6 @@ RESULTS_HTML = '''
         .calc-streak .w { color: #ffeb3b; }
         .calc-streak .l { color: #c62828; }
         .calc-streak .j { color: #64b5f6; }
-        .calc-streak .defense-skip { color: #666; }
         .calc-stats { color: #aaa; }
         .bet-calc-tabs { display: flex; gap: 0; margin-top: 8px; border-bottom: 1px solid #444; }
         .bet-calc-tabs .tab { padding: 8px 16px; cursor: pointer; font-size: 0.9em; color: #888; background: #2a2a2a; border: 1px solid #444; border-bottom: none; border-radius: 6px 6px 0 0; margin-bottom: -1px; }
@@ -2271,10 +2646,17 @@ RESULTS_HTML = '''
             </div>
         </div>
         <div id="graph-stats-collapse" class="prob-bucket-collapse collapsed">
-            <div class="prob-bucket-collapse-header" id="graph-stats-collapse-header" role="button" tabindex="0">최근 15회/30회/전체 정꺽 승률</div>
+            <div class="prob-bucket-collapse-header" id="graph-stats-collapse-header" role="button" tabindex="0">승률관리</div>
             <div class="prob-bucket-collapse-body" id="graph-stats-collapse-body">
-                <div id="graph-stats" class="graph-stats"></div>
+            <div id="graph-stats" class="graph-stats"></div>
+            <div id="win-rate-formula-section" class="win-rate-formula-section" style="margin-top:12px;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
+                <div class="win-rate-formula-title" style="font-weight:bold;color:#81c784;margin-bottom:8px;">합산승률 공식</div>
+                <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">합산승률 = 15회 승률×<span id="win-rate-w15">0.6</span> + 30회 승률×<span id="win-rate-w30">0.25</span> + 100회 승률×<span id="win-rate-w100">0.15</span></p>
+                <p style="font-size:0.85em;color:#888;margin:0 0 10px 0;">위험 구간: 합산승률 ≤ <input type="number" id="win-rate-danger-threshold" min="0" max="100" value="46" style="width:3em;background:#333;color:#fff;border:1px solid #555;padding:2px 4px;"> % 일 때 패 비율 참고</p>
+                <div class="win-rate-formula-title" style="font-weight:bold;color:#81c784;margin:12px 0 6px 0;">합산승률 구간별 승/패</div>
+                <div id="win-rate-buckets-table-wrap" class="graph-stats" style="margin-top:8px;"><table><thead><tr><th>합산승률 구간</th><th>n</th><th>승</th><th>패</th><th>승률%</th></tr></thead><tbody id="win-rate-buckets-tbody"><tr><td colspan="5" style="color:#888;">로딩 중...</td></tr></tbody></table></div>
             </div>
+        </div>
         </div>
         <div id="prob-bucket-collapse" class="prob-bucket-collapse collapsed">
             <div class="prob-bucket-collapse-header" id="prob-bucket-collapse-header" role="button" tabindex="0">예측 확률 구간별 승률</div>
@@ -2297,8 +2679,8 @@ RESULTS_HTML = '''
                             <span class="calc-title">계산기 1</span>
                             <span class="calc-status idle" id="calc-1-status">대기중</span>
                             <span class="calc-cards-wrap" id="calc-1-cards-wrap">
-                                <span class="calc-card-item"><span class="calc-card-label">배팅중</span><span class="calc-current-card calc-card-betting" id="calc-1-current-card"></span></span>
-                                <span class="calc-card-item"><span class="calc-card-label">예측픽</span><span class="calc-current-card calc-card-prediction" id="calc-1-prediction-card"></span></span>
+                                <span class="calc-card-item"><span class="calc-card-label">배팅중</span><div class="calc-card-box"><div class="calc-round-line" id="calc-1-current-round"></div><span class="calc-current-card calc-card-betting" id="calc-1-current-card"></span></div></span>
+                                <span class="calc-card-item"><span class="calc-card-label">예측픽</span><div class="calc-card-box"><div class="calc-round-line" id="calc-1-prediction-round"></div><span class="calc-current-card calc-card-prediction" id="calc-1-prediction-card"></span></div></span>
                             </span>
                             <div class="calc-summary" id="calc-1-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
@@ -2307,17 +2689,18 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-1-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label></td></tr>
-                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="46" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
-                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option></select></label></td></tr>
+                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-1-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-1-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-1-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
+                                    <tr><td>배팅복사</td><td><span id="calc-1-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
                                 </table>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="1">실행</button>
                                     <button type="button" class="calc-stop" data-calc="1">정지</button>
                                     <button type="button" class="calc-reset" data-calc="1">리셋</button>
                                     <button type="button" class="calc-save" data-calc="1" style="display:none">저장</button>
-                                </div>
+            </div>
                             </div>
                             <div class="calc-detail" id="calc-1-detail">
                                 <div class="calc-round-table-wrap" id="calc-1-round-table-wrap"></div>
@@ -2331,8 +2714,8 @@ RESULTS_HTML = '''
                             <span class="calc-title">계산기 2</span>
                             <span class="calc-status idle" id="calc-2-status">대기중</span>
                             <span class="calc-cards-wrap" id="calc-2-cards-wrap">
-                                <span class="calc-card-item"><span class="calc-card-label">배팅중</span><span class="calc-current-card calc-card-betting" id="calc-2-current-card"></span></span>
-                                <span class="calc-card-item"><span class="calc-card-label">예측픽</span><span class="calc-current-card calc-card-prediction" id="calc-2-prediction-card"></span></span>
+                                <span class="calc-card-item"><span class="calc-card-label">배팅중</span><div class="calc-card-box"><div class="calc-round-line" id="calc-2-current-round"></div><span class="calc-current-card calc-card-betting" id="calc-2-current-card"></span></div></span>
+                                <span class="calc-card-item"><span class="calc-card-label">예측픽</span><div class="calc-card-box"><div class="calc-round-line" id="calc-2-prediction-round"></div><span class="calc-current-card calc-card-prediction" id="calc-2-prediction-card"></span></div></span>
                             </span>
                             <div class="calc-summary" id="calc-2-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
@@ -2341,10 +2724,11 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-2-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label></td></tr>
-                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="46" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
-                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option></select></label></td></tr>
+                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-2-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-2-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-2-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
+                                    <tr><td>배팅복사</td><td><span id="calc-2-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
                                 </table>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="2">실행</button>
@@ -2365,8 +2749,8 @@ RESULTS_HTML = '''
                             <span class="calc-title">계산기 3</span>
                             <span class="calc-status idle" id="calc-3-status">대기중</span>
                             <span class="calc-cards-wrap" id="calc-3-cards-wrap">
-                                <span class="calc-card-item"><span class="calc-card-label">배팅중</span><span class="calc-current-card calc-card-betting" id="calc-3-current-card"></span></span>
-                                <span class="calc-card-item"><span class="calc-card-label">예측픽</span><span class="calc-current-card calc-card-prediction" id="calc-3-prediction-card"></span></span>
+                                <span class="calc-card-item"><span class="calc-card-label">배팅중</span><div class="calc-card-box"><div class="calc-round-line" id="calc-3-current-round"></div><span class="calc-current-card calc-card-betting" id="calc-3-current-card"></span></div></span>
+                                <span class="calc-card-item"><span class="calc-card-label">예측픽</span><div class="calc-card-box"><div class="calc-round-line" id="calc-3-prediction-round"></div><span class="calc-current-card calc-card-prediction" id="calc-3-prediction-card"></span></div></span>
                             </span>
                             <div class="calc-summary" id="calc-3-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
@@ -2375,10 +2759,11 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-3-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label></td></tr>
-                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="50" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="46" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
-                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option></select></label></td></tr>
+                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-3-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-3-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-3-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
+                                    <tr><td>배팅복사</td><td><span id="calc-3-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
                                 </table>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="3">실행</button>
@@ -2391,38 +2776,6 @@ RESULTS_HTML = '''
                                 <div class="calc-round-table-wrap" id="calc-3-round-table-wrap"></div>
                                 <div class="calc-streak" id="calc-3-streak">경기결과 (최근 30회): -</div>
                                 <div class="calc-stats" id="calc-3-stats">최대연승: - | 최대연패: - | 승률: -</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="calc-dropdown collapsed" data-calc="defense">
-                        <div class="calc-dropdown-header">
-                            <span class="calc-title">방어 계산기</span>
-                            <span class="calc-status idle" id="calc-defense-status">대기중</span>
-                            <div class="calc-summary" id="calc-defense-summary">보유자산 - | 순익 - | 배팅중 -</div>
-                            <span class="calc-toggle">▼</span>
-                        </div>
-                        <div class="calc-dropdown-body" id="calc-defense-body">
-                            <div class="calc-body-row">
-                                <div class="calc-inputs">
-                                    <label>연결 계산기 <select id="calc-defense-linked"><option value="1">계산기 1</option><option value="2">계산기 2</option><option value="3">계산기 3</option></select></label>
-                                    <label>자본금 <input type="number" id="calc-defense-capital" min="0" value="1000000"></label>
-                                    <label>배당 <input type="number" id="calc-defense-odds" min="1" step="0.01" value="1.97"></label>
-                                    <label title="마틴 1~N회까지 연결과 동일 금액">동일금액 <input type="number" id="calc-defense-full-steps" min="0" value="3" style="width:40px">회까지</label>
-                                    <label title="N회부터 연결금액의 1/X로 감액">감액 <input type="number" id="calc-defense-reduce-from" min="1" value="4" style="width:40px">회부터 1/<input type="number" id="calc-defense-reduce-div" min="2" value="4" style="width:40px"> 금액</label>
-                                    <label title="방어 N연승 달성 시 다음 회차부터 배팅 안 함, 0=해제">배팅중지 <input type="number" id="calc-defense-stop-streak" min="0" value="5" style="width:40px">연승부터 (0=해제)</label>
-                                    <label>지속 시간(분) <input type="number" id="calc-defense-duration" min="0" value="0" placeholder="0=무제한"></label>
-                                    <label class="calc-duration-check"><input type="checkbox" id="calc-defense-duration-check"> 지정 시간만 실행</label>
-                                </div>
-                                <div class="calc-buttons">
-                                    <button type="button" class="calc-run" data-calc="defense">실행</button>
-                                    <button type="button" class="calc-stop" data-calc="defense">정지</button>
-                                    <button type="button" class="calc-reset" data-calc="defense">리셋</button>
-                                </div>
-                            </div>
-                            <div class="calc-detail" id="calc-defense-detail">
-                                <div class="calc-round-table-wrap" id="calc-defense-round-table-wrap"></div>
-                                <div class="calc-streak" id="calc-defense-streak">경기결과 (최근 30회): - (연결 반픽·설정에 따라 동일/감액/미배팅)</div>
-                                <div class="calc-stats" id="calc-defense-stats">최대연승: - | 최대연패: - | 승률: -</div>
                             </div>
                         </div>
                     </div>
@@ -2576,8 +2929,71 @@ RESULTS_HTML = '''
             if (pickColor) body.pickColor = pickColor;
             fetch('/api/prediction-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(function() {});
         }
+        // 배팅 색상 통일: RED/빨강 → 빨강, BLACK/검정 → 검정 (표시·저장 일관성)
+        function normalizePickColor(pc) {
+            if (pc == null || pc === '') return '';
+            var s = String(pc).trim();
+            if (s.toUpperCase() === 'RED' || s === '빨강') return '빨강';
+            if (s.toUpperCase() === 'BLACK' || s === '검정') return '검정';
+            return s;
+        }
+        function pickColorToClass(pc) {
+            var n = normalizePickColor(pc);
+            return n === '빨강' ? 'pick-red' : (n === '검정' ? 'pick-black' : '');
+        }
+        // 회차별 순차 아이콘: 별→세모→동그라미 (회차 바뀔 때마다 아이콘 변경으로 구분)
+        function getRoundIcon(round) {
+            var r = parseInt(round, 10);
+            if (isNaN(r) || r < 1) return '★';
+            var icons = ['★', '△', '○'];
+            return icons[(r - 1) % 3];
+        }
+        // 계산기 회차줄용: 아이콘에 색상 클래스 넣은 HTML (별=노랑, 세모=빨강, 동그라미=파랑)
+        function getRoundIconHtml(round) {
+            var r = parseInt(round, 10);
+            if (isNaN(r) || r < 1) return '<span class="calc-icon calc-icon-star">★</span>';
+            var idx = (r - 1) % 3;
+            var classes = ['calc-icon calc-icon-star', 'calc-icon calc-icon-triangle', 'calc-icon calc-icon-circle'];
+            var chars = ['★', '△', '○'];
+            return '<span class="' + classes[idx] + '">' + chars[idx] + '</span>';
+        }
+        // 회차 4자리만 표시 (끝 4자리)
+        function roundLast4(round) {
+            if (round == null) return '-';
+            var s = String(round);
+            if (s.length <= 4) return s;
+            return s.slice(-4);
+        }
+        var _lastCalcHistKey = {};  // 계산기별 마지막 history 키 (불필요한 갱신 방지)
+        function needCalcUpdate(id) {
+            var state = calcState[id];
+            if (!state || !state.history) return true;
+            var len = state.history.length;
+            var last = len > 0 ? state.history[len - 1] : null;
+            var key = len + '-' + (last ? (last.round + '_' + (last.actual || '')) : '');
+            if (_lastCalcHistKey[id] === key) return false;
+            _lastCalcHistKey[id] = key;
+            return true;
+        }
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         var lastServerPrediction = null;  // 서버 예측 (있으면 표시·pending 동기화용)
+        var lastIs15Joker = false;  // 15번 카드 조커 여부 (계산기 예측픽에 보류 반영용)
+        var roundPredictionBuffer = {};   // 회차별 예측 저장 (표 충돌 방지: 결과 반영 시 해당 회차만 조회)
+        var ROUND_PREDICTION_BUFFER_MAX = 50;
+        var savedBetPickByRound = {};     // 배팅중 카드 그릴 때 걸은 픽 저장 (표에 넣을 때 이 값 사용 → 예측픽/재계산과 충돌 방지)
+        var SAVED_BET_PICK_MAX = 50;
+        function setRoundPrediction(round, pred) {
+            if (round == null || !pred) return;
+            roundPredictionBuffer[String(round)] = { value: pred.value, round: round, prob: pred.prob != null ? pred.prob : 0, color: pred.color || null };
+            var keys = Object.keys(roundPredictionBuffer).map(Number).filter(function(k) { return !isNaN(k); }).sort(function(a,b) { return a - b; });
+            while (keys.length > ROUND_PREDICTION_BUFFER_MAX) {
+                delete roundPredictionBuffer[String(keys.shift())];
+            }
+        }
+        function getRoundPrediction(round) {
+            if (round == null) return null;
+            return roundPredictionBuffer[String(round)] || null;
+        }
         var lastWarningU35 = false;       // U자+줄 3~5 구간 감지 시 서버가 보낸 경고
         let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
         let lastLoseEffectRound = null;  // 실패 이펙트를 이미 보여준 회차 (한 번만 표시)
@@ -2587,6 +3003,8 @@ RESULTS_HTML = '''
         const CALC_STATE_BACKUP_KEY = 'tokenHiloCalcStateBackup';
         const calcState = {};
         var TABLE_MARTIN_PYO = [10000, 15000, 25000, 40000, 70000, 120000, 200000, 400000, 120000];
+        var TABLE_MARTIN_PYO_HALF = [5000, 7500, 12500, 20000, 35000, 60000, 100000, 200000, 60000];
+        function getMartinTable(type) { return (type === 'pyo_half') ? TABLE_MARTIN_PYO_HALF : TABLE_MARTIN_PYO; }
         CALC_IDS.forEach(id => {
             calcState[id] = {
                 running: false,
@@ -2597,7 +3015,7 @@ RESULTS_HTML = '''
                 use_duration_limit: false,
                 reverse: false,
                 win_rate_reverse: false,
-                win_rate_threshold: 50,
+                win_rate_threshold: 46,
                 martingale: false,
                 martingale_type: 'pyo',
                 target_enabled: false,
@@ -2609,21 +3027,6 @@ RESULTS_HTML = '''
                 first_bet_round: 0
             };
         });
-        calcState.defense = {
-            running: false,
-            started_at: 0,
-            history: [],
-            elapsed: 0,
-            duration_limit: 0,
-            use_duration_limit: false,
-            timer_completed: false,
-            linked_calc_id: 1,
-            timerId: null,
-            maxWinStreakEver: 0,
-            maxLoseStreakEver: 0,
-            first_bet_round: 0
-        };
-        const DEFENSE_ID = 'defense';
         let lastServerTimeSec = 0;  // /api/current-status 등에서 갱신
         function getServerTimeSec() { return lastServerTimeSec || Math.floor(Date.now() / 1000); }
         function buildCalcPayload() {
@@ -2637,14 +3040,14 @@ RESULTS_HTML = '''
                 const use_duration_limit = !!(checkEl && checkEl.checked);
                 const winRateRevEl = document.getElementById('calc-' + id + '-win-rate-reverse');
                 const winRateThrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
-                var winRateThr = (winRateThrEl && !isNaN(parseFloat(winRateThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(winRateThrEl.value))) : 50;
-                if (typeof winRateThr !== 'number' || isNaN(winRateThr)) winRateThr = 50;
+                var winRateThr = (winRateThrEl && !isNaN(parseFloat(winRateThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(winRateThrEl.value))) : 46;
+                if (typeof winRateThr !== 'number' || isNaN(winRateThr)) winRateThr = 46;
                 const martingaleEl = document.getElementById('calc-' + id + '-martingale');
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 payload[String(id)] = {
                     running: calcState[id].running,
                     started_at: calcState[id].started_at || 0,
-                    history: (calcState[id].history || []).slice(-500),
+                    history: dedupeCalcHistoryByRound((calcState[id].history || []).slice(-500)),
                     duration_limit: duration_limit,
                     use_duration_limit: use_duration_limit,
                     reverse: !!(revEl && revEl.checked),
@@ -2664,38 +3067,27 @@ RESULTS_HTML = '''
                     pending_color: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.color) || calcState[id].pending_color) : null
                 };
             });
-            const d = calcState.defense;
-            const defDurEl = document.getElementById('calc-defense-duration');
-            const defCheckEl = document.getElementById('calc-defense-duration-check');
-            const defLinkEl = document.getElementById('calc-defense-linked');
-            const defFullSteps = document.getElementById('calc-defense-full-steps');
-            const defReduceFrom = document.getElementById('calc-defense-reduce-from');
-            const defReduceDiv = document.getElementById('calc-defense-reduce-div');
-            const defStopStreak = document.getElementById('calc-defense-stop-streak');
-            const defDurationMin = (defDurEl && parseInt(defDurEl.value, 10)) || 0;
-            payload[DEFENSE_ID] = {
-                running: !!d.running,
-                started_at: d.started_at || 0,
-                history: (d.history || []).slice(-500),
-                duration_limit: defDurationMin * 60,
-                use_duration_limit: !!(defCheckEl && defCheckEl.checked),
-                timer_completed: !!d.timer_completed,
-                linked_calc_id: (defLinkEl && parseInt(defLinkEl.value, 10)) || 1,
-                full_steps: (defFullSteps && parseInt(defFullSteps.value, 10)) || 3,
-                reduce_from: (defReduceFrom && parseInt(defReduceFrom.value, 10)) || 4,
-                reduce_div: (defReduceDiv && parseInt(defReduceDiv.value, 10)) || 4,
-                stop_streak: (defStopStreak && parseInt(defStopStreak.value, 10)) || 0,
-                max_win_streak_ever: (d.maxWinStreakEver || 0),
-                max_lose_streak_ever: (d.maxLoseStreakEver || 0),
-                first_bet_round: d.first_bet_round || 0
-            };
             return payload;
         }
-        function applyCalcsToState(calcs, serverTimeSec) {
+        function dedupeCalcHistoryByRound(hist) {
+            if (!Array.isArray(hist) || hist.length === 0) return hist;
+            var byRound = {};
+            for (var i = 0; i < hist.length; i++) {
+                var h = hist[i];
+                if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                var rn = h.round != null ? Number(h.round) : NaN;
+                if (isNaN(rn)) continue;
+                byRound[rn] = h;
+            }
+            var rounds = Object.keys(byRound).map(Number).sort(function(a, b) { return a - b; });
+            return rounds.map(function(r) { return byRound[r]; });
+        }
+        function applyCalcsToState(calcs, serverTimeSec, restoreUi) {
             const st = serverTimeSec || Math.floor(Date.now() / 1000);
+            const fullRestore = restoreUi === true;
             CALC_IDS.forEach(id => {
                 const c = calcs[String(id)] || {};
-                if (Array.isArray(c.history)) calcState[id].history = c.history.slice(-500);
+                if (Array.isArray(c.history)) calcState[id].history = dedupeCalcHistoryByRound(c.history.slice(-500));
                 else calcState[id].history = [];
                 calcState[id].running = !!c.running;
                 calcState[id].started_at = c.started_at || 0;
@@ -2706,18 +3098,25 @@ RESULTS_HTML = '''
                 calcState[id].maxLoseStreakEver = Math.max(0, parseInt(c.max_lose_streak_ever, 10) || 0);
                 calcState[id].first_bet_round = Math.max(0, parseInt(c.first_bet_round, 10) || 0);
                 calcState[id].elapsed = calcState[id].running && calcState[id].started_at ? Math.max(0, st - calcState[id].started_at) : 0;
+                calcState[id].pending_round = c.pending_round != null ? c.pending_round : null;
+                calcState[id].pending_predicted = c.pending_predicted != null ? c.pending_predicted : null;
+                calcState[id].pending_prob = c.pending_prob != null ? c.pending_prob : null;
+                calcState[id].pending_color = c.pending_color || null;
+                if (!fullRestore) return;
+                calcState[id].reverse = !!c.reverse;
+                calcState[id].win_rate_reverse = !!c.win_rate_reverse;
+                var thr = (typeof c.win_rate_threshold === 'number' && c.win_rate_threshold >= 0 && c.win_rate_threshold <= 100) ? c.win_rate_threshold : 46;
+                calcState[id].win_rate_threshold = thr;
+                calcState[id].martingale = !!c.martingale;
+                calcState[id].martingale_type = (c.martingale_type === 'pyo_half' ? 'pyo_half' : 'pyo');
+                calcState[id].target_enabled = !!c.target_enabled;
+                calcState[id].target_amount = Math.max(0, parseInt(c.target_amount, 10) || 0);
                 const durEl = document.getElementById('calc-' + id + '-duration');
                 const checkEl = document.getElementById('calc-' + id + '-duration-check');
                 const revEl = document.getElementById('calc-' + id + '-reverse');
                 if (durEl) durEl.value = Math.floor((calcState[id].duration_limit || 0) / 60);
                 if (checkEl) checkEl.checked = calcState[id].use_duration_limit;
                 if (revEl) revEl.checked = !!c.reverse;
-                calcState[id].reverse = !!c.reverse;
-                calcState[id].win_rate_reverse = !!c.win_rate_reverse;
-                var thr = (typeof c.win_rate_threshold === 'number' && c.win_rate_threshold >= 0 && c.win_rate_threshold <= 100) ? c.win_rate_threshold : 50;
-                calcState[id].win_rate_threshold = thr;
-                calcState[id].martingale = !!c.martingale;
-                calcState[id].martingale_type = (c.martingale_type === 'pyo' ? 'pyo' : 'pyo');
                 const winRateRevEl = document.getElementById('calc-' + id + '-win-rate-reverse');
                 if (winRateRevEl) winRateRevEl.checked = !!c.win_rate_reverse;
                 const winRateThrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
@@ -2725,48 +3124,16 @@ RESULTS_HTML = '''
                 const martingaleEl = document.getElementById('calc-' + id + '-martingale');
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 if (martingaleEl) martingaleEl.checked = !!calcState[id].martingale;
-                if (martingaleTypeEl) martingaleTypeEl.value = calcState[id].martingale_type || 'pyo';
-                calcState[id].target_enabled = !!c.target_enabled;
-                calcState[id].target_amount = Math.max(0, parseInt(c.target_amount, 10) || 0);
-                calcState[id].pending_round = c.pending_round != null ? c.pending_round : null;
-                calcState[id].pending_predicted = c.pending_predicted != null ? c.pending_predicted : null;
-                calcState[id].pending_prob = c.pending_prob != null ? c.pending_prob : null;
-                calcState[id].pending_color = c.pending_color || null;
+                if (martingaleTypeEl) martingaleTypeEl.value = (calcState[id].martingale_type === 'pyo_half' ? 'pyo_half' : 'pyo');
                 const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
                 const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
                 if (targetEnabledEl) targetEnabledEl.checked = !!calcState[id].target_enabled;
                 if (targetAmountEl) targetAmountEl.value = String(calcState[id].target_amount || 0);
             });
-            const dc = calcs[DEFENSE_ID] || {};
-            if (Array.isArray(dc.history)) calcState.defense.history = dc.history.slice(-500);
-            else calcState.defense.history = [];
-            calcState.defense.running = !!dc.running;
-            calcState.defense.started_at = dc.started_at || 0;
-            calcState.defense.duration_limit = parseInt(dc.duration_limit, 10) || 0;
-            calcState.defense.use_duration_limit = !!dc.use_duration_limit;
-            calcState.defense.timer_completed = !!dc.timer_completed;
-            calcState.defense.linked_calc_id = parseInt(dc.linked_calc_id, 10) || 1;
-            calcState.defense.maxWinStreakEver = Math.max(0, parseInt(dc.max_win_streak_ever, 10) || 0);
-            calcState.defense.maxLoseStreakEver = Math.max(0, parseInt(dc.max_lose_streak_ever, 10) || 0);
-            calcState.defense.first_bet_round = Math.max(0, parseInt(dc.first_bet_round, 10) || 0);
-            calcState.defense.elapsed = calcState.defense.running && calcState.defense.started_at ? Math.max(0, st - calcState.defense.started_at) : 0;
-            const defDurEl = document.getElementById('calc-defense-duration');
-            const defCheckEl = document.getElementById('calc-defense-duration-check');
-            const defLinkEl = document.getElementById('calc-defense-linked');
-            const defFullSteps = document.getElementById('calc-defense-full-steps');
-            const defReduceFrom = document.getElementById('calc-defense-reduce-from');
-            const defReduceDiv = document.getElementById('calc-defense-reduce-div');
-            const defStopStreak = document.getElementById('calc-defense-stop-streak');
-            if (defDurEl) defDurEl.value = Math.floor((calcState.defense.duration_limit || 0) / 60);
-            if (defCheckEl) defCheckEl.checked = calcState.defense.use_duration_limit;
-            if (defLinkEl) defLinkEl.value = String(calcState.defense.linked_calc_id);
-            if (defFullSteps) defFullSteps.value = dc.full_steps !== undefined ? dc.full_steps : 3;
-            if (defReduceFrom) defReduceFrom.value = dc.reduce_from !== undefined ? dc.reduce_from : 4;
-            if (defReduceDiv) defReduceDiv.value = dc.reduce_div !== undefined ? dc.reduce_div : 4;
-            if (defStopStreak) defStopStreak.value = dc.stop_streak !== undefined ? dc.stop_streak : 5;
         }
-        async function loadCalcStateFromServer() {
+        async function loadCalcStateFromServer(restoreUi) {
             try {
+                if (restoreUi === undefined) restoreUi = true;
                 const session_id = localStorage.getItem(CALC_SESSION_KEY);
                 const url = session_id ? '/api/calc-state?session_id=' + encodeURIComponent(session_id) : '/api/calc-state';
                 const res = await fetch(url, { cache: 'no-cache' });
@@ -2774,8 +3141,8 @@ RESULTS_HTML = '''
                 if (data.session_id) localStorage.setItem(CALC_SESSION_KEY, data.session_id);
                 lastServerTimeSec = data.server_time || Math.floor(Date.now() / 1000);
                 let calcs = data.calcs || {};
-                const hasRunning = CALC_IDS.some(id => calcs[String(id)] && calcs[String(id)].running) || (calcs[DEFENSE_ID] && calcs[DEFENSE_ID].running);
-                const hasHistory = CALC_IDS.some(id => calcs[String(id)] && Array.isArray(calcs[String(id)].history) && calcs[String(id)].history.length > 0) || (calcs[DEFENSE_ID] && Array.isArray(calcs[DEFENSE_ID].history) && calcs[DEFENSE_ID].history.length > 0);
+                const hasRunning = CALC_IDS.some(id => calcs[String(id)] && calcs[String(id)].running);
+                const hasHistory = CALC_IDS.some(id => calcs[String(id)] && Array.isArray(calcs[String(id)].history) && calcs[String(id)].history.length > 0);
                 if (!hasRunning && !hasHistory) {
                     try {
                         const backup = localStorage.getItem(CALC_STATE_BACKUP_KEY);
@@ -2785,7 +3152,7 @@ RESULTS_HTML = '''
                         }
                     } catch (e) { /* ignore */ }
                 }
-                applyCalcsToState(calcs, lastServerTimeSec);
+                applyCalcsToState(calcs, lastServerTimeSec, restoreUi);
             } catch (e) { console.warn('계산기 상태 로드 실패:', e); }
         }
         async function saveCalcStateToServer() {
@@ -2824,15 +3191,10 @@ RESULTS_HTML = '''
             try { localStorage.setItem(BET_LOG_KEY, JSON.stringify(betCalcLog)); } catch (e) { /* ignore */ }
         }
         function buildLogDetailTable(hist, calcId) {
-            const isDefense = calcId === 'defense';
             let rows = [];
             for (let i = 0; i < hist.length; i++) {
                 const h = hist[i];
                 if (!h) continue;
-                if (isDefense) {
-                    const bet = (typeof h.betAmount === 'number' ? h.betAmount : 0) || parseInt(h.betAmount, 10) || 0;
-                    if (bet <= 0) { rows.push({ idx: i + 1, pick: '-', result: '-', outcome: '－' }); continue; }
-                }
                 const pred = h.predicted === '정' ? '정' : (h.predicted === '꺽' ? '꺽' : '-');
                 const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
                 const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
@@ -2878,6 +3240,7 @@ RESULTS_HTML = '''
         }
         
         async function loadResults() {
+            // 한 번에 하나만 요청: 동시 요청이 쌓여 서버 먹통·pending 폭증 방지
             if (isLoadingResults) return;
             const statusEl = document.getElementById('status');
             if (statusEl) statusEl.textContent = '데이터 요청 중...';
@@ -2905,7 +3268,8 @@ RESULTS_HTML = '''
                 
                 const data = await response.json();
                 if (thisRequestId !== resultsRequestId) return;
-                if (data.error) {
+                var hasResults = Array.isArray(data.results) && data.results.length > 0;
+                if (data.error && !hasResults) {
                     if (statusEl) statusEl.textContent = '오류: ' + data.error;
                     return;
                 }
@@ -2935,23 +3299,14 @@ RESULTS_HTML = '''
                         return gb.localeCompare(ga);  // 문자열이면 역순
                     });
                 }
-                // 결과 병합: 최신 회차가 앞으로만 진행. 같은 최신이면 개수가 늘 때만 반영 (앞뒤 깜빡임 제거)
+                // 서버에서 결과가 오면 무조건 전체 교체. 병합 시 과거 데이터가 남아 최신 회차가 안 나오는 문제 방지
                 let resultsUpdated = false;
                 if (newResults.length > 0) {
-                    const newGameIDs = new Set(newResults.map(r => String(r.gameID != null && r.gameID !== '' ? r.gameID : '')).filter(id => id !== ''));
-                    const oldResults = allResults.filter(r => !newGameIDs.has(String(r.gameID != null && r.gameID !== '' ? r.gameID : '')));
-                    const merged = sortResultsNewestFirst([...newResults, ...oldResults].slice(0, 150));
-                    const prevLatest = allResults.length > 0 ? (parseInt(String(allResults[0].gameID || '0'), 10) || 0) : 0;
-                    const newLatest = merged.length > 0 ? (parseInt(String(merged[0].gameID || '0'), 10) || 0) : 0;
-                    const strictlyNewer = newLatest > prevLatest;
-                    const sameRoundMoreOnly = (newLatest === prevLatest && merged.length > allResults.length);
-                    if (merged.length > 0 && (strictlyNewer || sameRoundMoreOnly)) {
-                        allResults = merged;
-                        resultsUpdated = true;
-                    }
+                    allResults = sortResultsNewestFirst(newResults).slice(0, 300);
+                    resultsUpdated = true;
                 } else {
                     if (allResults.length === 0) {
-                        allResults = sortResultsNewestFirst(newResults);
+                        allResults = [];
                         resultsUpdated = true;
                     } else {
                         allResults = sortResultsNewestFirst(allResults);
@@ -2959,27 +3314,39 @@ RESULTS_HTML = '''
                     }
                 }
                 
-                // 이번 응답의 결과를 수락했을 때만 서버 예측 반영 (앞뒤 깜빡임 제거)
+                // 서버 예측 반영 (서버에서 결과를 받았을 때마다 갱신). 곧바로 카드 갱신해 예측픽이 결과와 같이 보이게
                 if (resultsUpdated) {
                     const sp = data.server_prediction;
                     lastServerPrediction = (sp && (sp.value === '정' || sp.value === '꺽')) ? sp : null;
                     lastWarningU35 = !!(lastServerPrediction && sp && sp.warning_u35);
                     if (lastServerPrediction) {
-                        lastPrediction = { value: lastServerPrediction.value, round: lastServerPrediction.round, prob: lastServerPrediction.prob != null ? lastServerPrediction.prob : 0, color: lastServerPrediction.color || null };
+                        var normColor = normalizePickColor(lastServerPrediction.color) || lastServerPrediction.color || null;
+                        lastPrediction = { value: lastServerPrediction.value, round: lastServerPrediction.round, prob: lastServerPrediction.prob != null ? lastServerPrediction.prob : 0, color: normColor };
+                        setRoundPrediction(lastServerPrediction.round, lastPrediction);
+                        fetch('/api/round-prediction', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ round: lastServerPrediction.round, predicted: lastServerPrediction.value, pickColor: normColor || lastServerPrediction.color, probability: lastServerPrediction.prob }) }).catch(function() {});
                     }
+                    lastResultsUpdate = Date.now();  // 갱신 완료 시점에 폴링 간격 리셋
+                    try { CALC_IDS.forEach(function(id) { updateCalcStatus(id); }); } catch (e) {}
                 }
                 
-                // 결과 리스트가 바뀌지 않았으면 DOM/상태 전혀 갱신하지 않고 즉시 return (깜빡임 방지)
-                if (!resultsUpdated && allResults.length > 0) {
+                // resultsUpdated가 false면 DOM 갱신 생략 (데이터 없을 때만)
+                if (!resultsUpdated) {
                     return;
                 }
                 
                 statusElement.textContent = `총 ${allResults.length}개 경기 결과 (표시: ${newResults.length}개)`;
                 
-                // 최신 결과가 왼쪽에 오도록 (원본 데이터가 최신이 앞에 있음)
-                // 최신 15개만 표시 (반응형으로 모두 보이도록)
+                // 맨 왼쪽 = 최신 회차: 서버·클라이언트 모두 gameID 내림차순 정렬 완료. index 0이 최신.
                 const displayResults = allResults.slice(0, 15);
                 const results = allResults;  // 비교를 위해 전체 결과 사용
+                
+                // 이전회차·상태를 맨 앞에서 먼저 적용 (아래 예측/그래프 블록에서 예외 나도 화면에 현재 회차 반영)
+                if (displayResults.length > 0) {
+                    const latest = displayResults[0];
+                    const fullGameID = latest.gameID != null && latest.gameID !== '' ? String(latest.gameID) : '--';
+                    const prevRoundElement = document.getElementById('prev-round');
+                    if (prevRoundElement) prevRoundElement.textContent = '이전회차: ' + fullGameID;
+                }
                 
                 // 모든 카드의 색상 비교 결과 계산 (캐시 사용)
                 // 각 카드는 고정된 상대 위치의 카드와 비교 (1번째↔16번째, 2번째↔17번째, ...)
@@ -3216,22 +3583,25 @@ RESULTS_HTML = '''
                         '<tr><td><span style="color:#888">구간반영</span></td><td>' + rowBlend15 + '</td><td>' + rowBlend30 + '</td><td>' + rowBlend100 + '</td></tr>' +
                         '</tbody></table><p class="graph-stats-note">※ 단기(15회) vs 장기(30회) 비교로 흐름 전환 감지<br>· 아랫줄=구간반영(예측이력 15/30/100회, 30% 적용)<br>· % 높을수록 예측 픽(정/꺽)에 대한 확신↑</p>';
                     
-                    // 회차: 비교·저장은 전체 gameID(11416052 등), 표시만 뒤 3자리(052). 숫자 높을수록 최신이므로 전체로 비교해야 035가 999보다 최신으로 인식됨
+                    // 회차: 비교·저장·표시 모두 전체 gameID(11416052 등) 사용. 끝 3자리만 쓰면 11423052/11424052가 둘 다 052로 겹침 → 충돌 방지를 위해 전체 표시
                     function fullRoundFromGameID(g) {
                         var s = String(g != null && g !== '' ? g : '0');
                         var n = parseInt(s, 10);
                         return isNaN(n) ? 0 : n;
                     }
-                    function displayRound3(r) { return r != null ? String(r).slice(-3) : '-'; }
+                    function displayRound(r) { return r != null ? String(r) : '-'; }
                     const latestGameID = displayResults[0]?.gameID;
                     const currentRoundFull = fullRoundFromGameID(latestGameID);
                     const predictedRoundFull = currentRoundFull + 1;
                     try { window.__latestGameIDForCalc = latestGameID; } catch (e) {}
                     const is15Joker = displayResults.length >= 15 && !!displayResults[14].joker;  // 15번 카드 조커면 픽/배팅 보류
+                    lastIs15Joker = is15Joker;  // 계산기 예측픽에 보류 반영
                     
-                    // 직전 예측의 실제 결과 반영: 서버에서 예측을 주면 서버가 회차 반영하므로 클라이언트는 생략
-                    if (!lastServerPrediction) {
-                    const alreadyRecordedRound = lastPrediction ? predictionHistory.some(function(h) { return h && h.round === lastPrediction.round; }) : true;
+                    // 직전 예측의 실제 결과 반영: API prediction_history(서버 머지) 우선, 없으면 버퍼/lastPrediction. 회차 비교는 Number 통일(문자/숫자 혼합 시 중복 방지)
+                    const currentRoundNum = Number(currentRoundFull);
+                    const alreadyRecordedRound = predictionHistory.some(function(h) { return h && Number(h.round) === currentRoundNum; });
+                    var predForRound = (predictionHistory && predictionHistory.find(function(p) { return p && Number(p.round) === currentRoundNum; })) || getRoundPrediction(currentRoundFull) || (lastPrediction && Number(lastPrediction.round) === currentRoundNum ? lastPrediction : null);
+                    if (predForRound && predForRound.actual !== undefined) predForRound = { round: predForRound.round, value: predForRound.predicted, prob: predForRound.probability, color: predForRound.pickColor || predForRound.pick_color };
                     var lowWinRateForRecord = false;
                     var blended = 50, c15 = 0, c30 = 0, c100 = 0;
                     try {
@@ -3249,69 +3619,71 @@ RESULTS_HTML = '''
                         var loss100 = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
                         c100 = hit100r + loss100;
                         var r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
-                        blended = 0.5 * r15 + 0.3 * r30 + 0.2 * r100;
+                        blended = 0.6 * r15 + 0.25 * r30 + 0.15 * r100;
                         lowWinRateForRecord = (c15 > 0 || c30 > 0 || c100 > 0) && blended <= 50;
                     } catch (e) {}
-                    if (lastPrediction && currentRoundFull === lastPrediction.round && !alreadyRecordedRound) {
+                    if (!alreadyRecordedRound && predForRound) {
                         const isActualJoker = displayResults.length > 0 && !!displayResults[0].joker;
                         if (isActualJoker) {
-                            predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: 'joker', probability: lastPrediction.prob != null ? lastPrediction.prob : null, pickColor: lastPrediction.color || null });
+                            predictionHistory.push({ round: currentRoundFull, predicted: predForRound.value, actual: 'joker', probability: predForRound.prob != null ? predForRound.prob : null, pickColor: predForRound.color || null });
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
                                 const firstBetJoker = calcState[id].first_bet_round || 0;
-                                if (firstBetJoker > 0 && lastPrediction.round < firstBetJoker) return;
-                                const hasRound = calcState[id].history.some(function(h) { return h && h.round === lastPrediction.round; });
+                                if (firstBetJoker > 0 && currentRoundNum < firstBetJoker) return;
+                                const hasRound = calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; });
                                 if (hasRound) return;
-                                const rev = !!(calcState[id] && calcState[id].reverse);
-                                var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
-                                const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
-                                var thrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
-                                var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
-                                if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
-                                if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
-                                // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
-                                let defenseBet = 0;
-                                if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
-                                calcState[id].history.push({ predicted: pred, actual: 'joker', round: lastPrediction.round });
-                                if (calcState.defense.running && calcState.defense.linked_calc_id === id) {
-                                    const defFirstJ = calcState.defense.first_bet_round || 0;
-                                    if (defFirstJ === 0 || lastPrediction.round >= defFirstJ) {
-                                        calcState.defense.history.push({ predicted: pred === '정' ? '꺽' : '정', actual: 'joker', betAmount: defenseBet, round: lastPrediction.round });
-                                        updateCalcSummary(DEFENSE_ID);
-                                        updateCalcDetail(DEFENSE_ID);
-                                    }
+                                var pred, betColor;
+                                var saved = savedBetPickByRound[currentRoundNum];
+                                if (saved && (saved.value === '정' || saved.value === '꺽')) {
+                                    pred = saved.value;
+                                    betColor = saved.isRed ? '빨강' : '검정';
+                                } else {
+                                    const rev = !!(calcState[id] && calcState[id].reverse);
+                                    pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
+                                    const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
+                                    var thrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
+                                    var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
+                                    if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
+                                    if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
+                                    betColor = normalizePickColor(predForRound.color);
+                                    if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                    if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
                                 }
+                                calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null });
+                                calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
+                                _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
                             });
                             saveCalcStateToServer();
-                            savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, 'joker', lastPrediction.prob, lastPrediction.color);
+                            savePredictionHistoryToServer(currentRoundFull, predForRound.value, 'joker', predForRound.prob, predForRound.color);
                         } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
                             const actual = graphValues[0] ? '정' : '꺽';
-                            predictionHistory.push({ round: lastPrediction.round, predicted: lastPrediction.value, actual: actual, probability: lastPrediction.prob != null ? lastPrediction.prob : null, pickColor: lastPrediction.color || null });
+                            predictionHistory.push({ round: currentRoundFull, predicted: predForRound.value, actual: actual, probability: predForRound.prob != null ? predForRound.prob : null, pickColor: predForRound.color || null });
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
                                 const firstBetActual = calcState[id].first_bet_round || 0;
-                                if (firstBetActual > 0 && lastPrediction.round < firstBetActual) return;
-                                const hasRound = calcState[id].history.some(function(h) { return h && h.round === lastPrediction.round; });
+                                if (firstBetActual > 0 && currentRoundNum < firstBetActual) return;
+                                const hasRound = calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; });
                                 if (hasRound) return;
-                                const rev = !!(calcState[id] && calcState[id].reverse);
-                                var pred = rev ? (lastPrediction.value === '정' ? '꺽' : '정') : lastPrediction.value;
-                                const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
-                                var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
-                                var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
-                                if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
-                                if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
-                                // 방어 배팅금: 연결에 이번 회차 푸시하기 *전*에 계산 (이번 회차에 실제로 건 금액)
-                                let defenseBet = 0;
-                                if (calcState.defense.running && calcState.defense.linked_calc_id === id) defenseBet = getDefenseBetAmount(id);
-                                calcState[id].history.push({ predicted: pred, actual: actual, round: lastPrediction.round });
-                                if (calcState.defense.running && calcState.defense.linked_calc_id === id) {
-                                    const defFirstA = calcState.defense.first_bet_round || 0;
-                                    if (defFirstA === 0 || lastPrediction.round >= defFirstA) {
-                                        calcState.defense.history.push({ predicted: pred === '정' ? '꺽' : '정', actual: actual, betAmount: defenseBet, round: lastPrediction.round });
-                                        updateCalcSummary(DEFENSE_ID);
-                                        updateCalcDetail(DEFENSE_ID);
-                                    }
+                                var pred, betColorActual;
+                                var saved = savedBetPickByRound[currentRoundNum];
+                                if (saved && (saved.value === '정' || saved.value === '꺽')) {
+                                    pred = saved.value;
+                                    betColorActual = saved.isRed ? '빨강' : '검정';
+                                } else {
+                                    const rev = !!(calcState[id] && calcState[id].reverse);
+                                    pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
+                                    const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
+                                    var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
+                                    var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
+                                    if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
+                                    if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
+                                    betColorActual = normalizePickColor(predForRound.color);
+                                    if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                    if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                 }
+                                calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null });
+                                calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
+                                _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + currentRoundFull + '_' + actual;
                                 updateCalcSummary(id);
                                 updateCalcDetail(id);
                                 var targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
@@ -3330,11 +3702,74 @@ RESULTS_HTML = '''
                                 }
                             });
                             saveCalcStateToServer();
-                            savePredictionHistoryToServer(lastPrediction.round, lastPrediction.value, actual, lastPrediction.prob, lastPrediction.color);
+                            savePredictionHistoryToServer(currentRoundFull, predForRound.value, actual, predForRound.prob, predForRound.color);
                         }
                         predictionHistory = predictionHistory.slice(-100);
                         savePredictionHistory();  // localStorage 백업
-                    }
+                    } else if (alreadyRecordedRound && predForRound) {
+                        // 서버가 이미 prediction_history에 머지한 회차 → calc에만 반영 (한 회차 건너뛰기 방지). 기록 회차는 화면 기준 currentRoundFull로 통일
+                        const isActualJoker2 = displayResults.length > 0 && !!displayResults[0].joker;
+                        if (isActualJoker2) {
+                            CALC_IDS.forEach(id => {
+                                if (!calcState[id].running) return;
+                                const firstBetJoker = calcState[id].first_bet_round || 0;
+                                if (firstBetJoker > 0 && currentRoundNum < firstBetJoker) return;
+                                if (calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) return;
+                                var pred, betColor;
+                                var saved = savedBetPickByRound[currentRoundNum];
+                                if (saved && (saved.value === '정' || saved.value === '꺽')) {
+                                    pred = saved.value;
+                                    betColor = saved.isRed ? '빨강' : '검정';
+                                } else {
+                                    const rev = !!(calcState[id] && calcState[id].reverse);
+                                    pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
+                                    const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
+                                    var thrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
+                                    var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
+                                    if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
+                                    if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
+                                    betColor = normalizePickColor(predForRound.color);
+                                    if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                    if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                }
+                                calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null });
+                                calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
+                                _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
+                                updateCalcSummary(id);
+                                updateCalcDetail(id);
+                            });
+                        } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
+                            const actual = graphValues[0] ? '정' : '꺽';
+                            CALC_IDS.forEach(id => {
+                                if (!calcState[id].running) return;
+                                const firstBetActual = calcState[id].first_bet_round || 0;
+                                if (firstBetActual > 0 && currentRoundNum < firstBetActual) return;
+                                if (calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) return;
+                                var pred, betColorActual;
+                                var saved = savedBetPickByRound[currentRoundNum];
+                                if (saved && (saved.value === '정' || saved.value === '꺽')) {
+                                    pred = saved.value;
+                                    betColorActual = saved.isRed ? '빨강' : '검정';
+                                } else {
+                                    const rev = !!(calcState[id] && calcState[id].reverse);
+                                    pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
+                                    const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
+                                    var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
+                                    var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
+                                    if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
+                                    if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
+                                    betColorActual = normalizePickColor(predForRound.color);
+                                    if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                    if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                }
+                                calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null });
+                                calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
+                                _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + currentRoundFull + '_' + actual;
+                                updateCalcSummary(id);
+                                updateCalcDetail(id);
+                            });
+                        }
+                        saveCalcStateToServer();
                     }
                     
                     // 최근 15회 정/꺽 흐름으로 퐁당·줄 계산 (승패 아님)
@@ -3575,8 +4010,21 @@ RESULTS_HTML = '''
                         const card15 = displayResults.length >= 15 ? parseCardValue(displayResults[14].result || '') : null;
                         const is15Red = card15 ? card15.isRed : false;
                         colorToPick = predict === '정' ? (is15Red ? '빨강' : '검정') : (is15Red ? '검정' : '빨강');
-                        if (!lastServerPrediction) lastPrediction = { value: predict, round: predictedRoundFull, prob: predProb, color: colorToPick };
+                        // 한 출처: lastPrediction은 서버(loadResults 응답)에서만 설정. 클라이언트 계산으로 덮어쓰지 않음 (깜빡임 방지).
                         colorClass = colorToPick === '빨강' ? 'red' : 'black';
+                    }
+                    // 표시용 픽/색은 서버 출처(lastPrediction)만 사용. 없으면 보류.
+                    if (lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) {
+                        predict = lastPrediction.value;
+                        predProb = (lastPrediction.prob != null && !isNaN(lastPrediction.prob)) ? lastPrediction.prob : predProb;
+                        var serverColor = normalizePickColor(lastPrediction.color);
+                        colorToPick = (serverColor === '빨강' || serverColor === '검정') ? serverColor : (lastPrediction.value === '정' ? '빨강' : '검정');
+                        colorClass = colorToPick === '빨강' ? 'red' : 'black';
+                    } else {
+                        predict = '보류';
+                        colorToPick = '-';
+                        colorClass = 'black';
+                        predProb = 0;
                     }
                     
                     // 연승/연패: 표 형식. 최신 회차가 가장 왼쪽 (reverse). 무효 항목 제외해 먹통 방지
@@ -3630,7 +4078,7 @@ RESULTS_HTML = '''
                     const countForPct = hit + losses;
                     const hitPctNum = countForPct > 0 ? 100 * hit / countForPct : 0;
                     const hitPct = countForPct > 0 ? hitPctNum.toFixed(1) : '-';
-                    // 승률 낮음·배팅 주의: 15회 50% + 30회 30% + 100회 20% 반영 (룰)
+                    // 승률 낮음·배팅 주의: 15회 60% + 30회 25% + 100회 15% 반영 (룰)
                     const validHist15 = validHist.slice(-15);
                     const validHist30 = validHist.slice(-30);
                     const validHist100 = validHist.slice(-100);
@@ -3646,7 +4094,7 @@ RESULTS_HTML = '''
                     const rate15 = count15 > 0 ? 100 * hit15 / count15 : 50;
                     const hitPctNum30 = count30 > 0 ? 100 * hit30 / count30 : 50;
                     const rate100 = count100 > 0 ? 100 * hit100 / count100 : 50;
-                    const blendedWinRate = 0.5 * rate15 + 0.3 * hitPctNum30 + 0.2 * rate100;
+                    const blendedWinRate = 0.6 * rate15 + 0.25 * hitPctNum30 + 0.15 * rate100;
                     const lowWinRate = (count15 > 0 || count30 > 0 || count100 > 0) && blendedWinRate <= 50;
                     // 표시용: 최근 50회 결과 (승/패/조커/합산승률)
                     const validHist50 = validHist.slice(-50);
@@ -3665,8 +4113,9 @@ RESULTS_HTML = '''
                         const total = inBucket.length;
                         return { label: b.min + '~' + (b.max === 101 ? '100' : b.max) + '%', total: total, wins: wins, pct: total > 0 ? (100 * wins / total).toFixed(1) : '-', min: b.min, max: b.max };
                     }).filter(function(s) { return s.total > 0; });
-                    // 기존 확률에 30% 반영 (blendData는 전이 확률 표에서 계산됨)
-                    if (blendData && blendData.newProb != null && !is15Joker) predProb = 0.7 * predProb + 0.3 * blendData.newProb;
+                    // 기존 확률에 30% 반영 (blendData는 전이 확률 표에서 계산됨). 한 출처: 서버 픽 표시 중일 때는 서버 확률 유지.
+                    var usingServerPick = lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽');
+                    if (blendData && blendData.newProb != null && !is15Joker && !usingServerPick) predProb = 0.7 * predProb + 0.3 * blendData.newProb;
                     // 깜빡임: 예측픽 확률이 "승률 상위 2개 구간" 안에 있을 때만 (나올 확률 높은 게 아니라, 그 구간이 실제로 많이 이긴 구간일 때만)
                     var pickInBucket = false;
                     if (!is15Joker && predProb != null && bucketStats.length > 0) {
@@ -3686,46 +4135,45 @@ RESULTS_HTML = '''
                     if (shouldShowLoseEffect) lastLoseEffectRound = lastEntry.round;
                     var resultBarHtml = '';
                     if (lastEntry && lastEntry.actual !== 'joker') {
-                        var lastPickColor = (lastEntry.pickColor || lastEntry.pick_color || '').toString();
-                        if (lastPickColor === 'RED') lastPickColor = '빨강';
-                        else if (lastPickColor === 'BLACK') lastPickColor = '검정';
-                        else if (!lastPickColor && lastEntry.predicted) lastPickColor = lastEntry.predicted === '정' ? '빨강' : '검정';
-                        else lastPickColor = lastPickColor || '-';
+                        var lastPickColor = normalizePickColor(lastEntry.pickColor || lastEntry.pick_color) || (lastEntry.predicted === '정' ? '빨강' : lastEntry.predicted === '꺽' ? '검정' : '') || '-';
                         var resultBarClass = lastIsWin ? 'pick-result-bar result-win' : 'pick-result-bar result-lose';
-                        var resultBarText = displayRound3(lastEntry.round) + '회 ' + (lastIsWin ? '성공' : '실패') + ' (' + (lastEntry.predicted || '-') + ' / ' + lastPickColor + ')';
+                        var resultBarText = displayRound(lastEntry.round) + '회 ' + (lastIsWin ? '성공' : '실패') + ' (' + (lastEntry.predicted || '-') + ' / ' + lastPickColor + ')';
                         resultBarHtml = '<div class="' + resultBarClass + '">' + resultBarText + '</div>';
                     }
                     const pickWrapClass = 'prediction-pick' + (pickInBucket ? ' pick-in-bucket' : '');
                     if (resultBarContainer) resultBarContainer.innerHTML = resultBarHtml;
                     const u35WarningBlock = lastWarningU35 ? ('<div class="prediction-warning-u35">⚠ U자+줄 3~5 구간 · 줄(유지) 보정 적용</div>') : '';
-                    const leftBlock = is15Joker ? ('<div class="prediction-pick">' +
+                    const displayRoundNum = (lastPrediction && lastPrediction.round) ? lastPrediction.round : predictedRoundFull;
+                    const roundIconMain = getRoundIcon(displayRoundNum);
+                    const showHold = is15Joker || predict === '보류';
+                    const leftBlock = showHold ? ('<div class="prediction-pick">' +
                         '<div class="prediction-pick-title">예측 픽</div>' +
                         '<div class="prediction-card" style="background:#455a64;border-color:#78909c">' +
                         '<span class="pred-value-big" style="color:#fff;font-size:1.2em">보류</span>' +
                         '</div>' +
-                        '<div class="prediction-prob-under" style="color:#ffb74d">15번 카드 조커 · 배팅하지 마세요</div>' +
-                        '<div class="pred-round">' + displayRound3(predictedRoundFull) + '회</div>' +
+                        '<div class="prediction-prob-under" style="color:#ffb74d">' + (is15Joker ? '15번 카드 조커 · 배팅하지 마세요' : '서버 예측 대기 중') + '</div>' +
+                        '<div class="pred-round">' + displayRound(displayRoundNum) + '회 ' + roundIconMain + '</div>' +
                         '</div>') : ('<div class="' + pickWrapClass + '">' +
                         '<div class="prediction-pick-title prediction-pick-title-betting">배팅중<br>' + (colorToPick === '빨강' ? 'RED' : 'BLACK') + '</div>' +
                         '<div class="prediction-card card-' + colorClass + '">' +
                         '<span class="pred-value-big">' + predict + '</span>' +
                         '</div>' +
                         '<div class="prediction-prob-under">예측 확률 ' + predProb.toFixed(1) + '%</div>' +
-                        '<div class="pred-round">' + displayRound3(predictedRoundFull) + '회</div>' +
+                        '<div class="pred-round">' + displayRound(displayRoundNum) + '회 ' + roundIconMain + '</div>' +
                         u35WarningBlock +
                         '</div>');
                     if (pickContainer) pickContainer.innerHTML = leftBlock;
-                    // 배팅 연동: 현재 픽을 서버에 저장 (GET /api/current-pick 으로 외부 조회 가능)
+                    // 배팅 연동: 현재 픽을 서버에 저장 (GET /api/current-pick 으로 외부 조회 가능). 한 출처(lastPrediction)만 반영.
                     try {
-                        if (is15Joker) {
-                            fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pickColor: null, round: predictedRoundFull, probability: null }) }).catch(function() {});
+                        if (is15Joker || predict === '보류') {
+                            fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pickColor: null, round: displayRoundNum, probability: null }) }).catch(function() {});
                         } else if (lastPrediction && (colorToPick === '빨강' || colorToPick === '검정')) {
                             fetch('/api/current-pick', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
                                     pickColor: colorToPick === '빨강' ? 'RED' : 'BLACK',
-                                    round: predictedRoundFull,
+                                    round: displayRoundNum,
                                     probability: predProb
                                 })
                             }).catch(function() {});
@@ -3734,25 +4182,29 @@ RESULTS_HTML = '''
                     if (predDiv) {
                         const rateClass50 = count50 > 0 ? (rate50 >= 60 ? 'high' : rate50 >= 50 ? 'mid' : 'low') : '';
                         const blendedStr = (typeof blendedWinRate === 'number' && !isNaN(blendedWinRate)) ? blendedWinRate.toFixed(1) : '-';
-                        const statsBlock = '<div class="prediction-stats-row">' +
+                        const blendedLow = (typeof blendedWinRate === 'number' && !isNaN(blendedWinRate) && blendedWinRate <= 50);
+                        const blendedWrapClass = 'blended-win-rate-wrap' + (blendedLow ? ' blended-win-rate-low' : '');
+                        const statsBlock = '<div class="' + blendedWrapClass + '">' +
+                            '<div class="prediction-stats-blended-label">실제 경고 합산승률</div>' +
+                            '<div class="prediction-stats-blended-value">' + blendedStr + '%</div>' +
+                            '</div>' +
+                            '<div class="prediction-stats-row">' +
                             '<span class="stat-total">최근 50회 결과</span>' +
                             '<span class="stat-win">승 - <span class="num">' + hit50 + '</span>회</span>' +
                             '<span class="stat-lose">패 - <span class="num">' + losses50 + '</span>회</span>' +
                             '<span class="stat-joker">조커 - <span class="num">' + joker50 + '</span>회</span>' +
                             (count50 > 0 ? '<span class="stat-rate ' + rateClass50 + '">승률 : ' + rate50Str + '%</span>' : '') +
-                            '<span class="stat-rate" style="color:#888;font-size:0.9em">실제 경고 합산승률 : ' + blendedStr + '%</span>' +
                             '</div>' +
-                            '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 메인=서버 최근 100회 · 승률/경고=15·30·100 반영(50·30·20)</div>';
+                            '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 메인=서버 최근 100회 · 합산승률=15·30·100 반영(60·25·15)</div>';
                         let streakTableBlock = '';
                         try {
                         if (rev.length === 0) {
                             streakTableBlock = '<div class="prediction-streak-line">최근 100회 기준 · <span class="streak-now">' + streakLine100 + '</span></div>';
                         } else {
-                            const headerCells = rev.map(function(h) { return '<th>' + displayRound3(h.round) + '</th>'; }).join('');
+                            const headerCells = rev.map(function(h) { return '<th>' + displayRound(h.round) + '</th>'; }).join('');
                             const rowProb = rev.map(function(h) { return '<td>' + (h.probability != null ? Number(h.probability).toFixed(1) + '%' : '-') + '</td>'; }).join('');
                             const rowPick = rev.map(function(h) {
-                                const pickColor = h.pickColor || h.pick_color;
-                                const c = pickColor === '빨강' ? 'pick-red' : (pickColor === '검정' ? 'pick-black' : '');
+                                const c = pickColorToClass(h.pickColor || h.pick_color);
                                 return '<td class="' + c + '">' + (h.predicted != null ? h.predicted : '-') + '</td>';
                             }).join('');
                             const rowOutcome = rev.map(function(h) {
@@ -3823,6 +4275,26 @@ RESULTS_HTML = '''
                         }
                         var graphStatsCollapse = document.getElementById('graph-stats-collapse');
                         if (graphStatsCollapse) graphStatsCollapse.style.display = '';
+                        (function loadWinRateBuckets() {
+                            var tbody = document.getElementById('win-rate-buckets-tbody');
+                            if (!tbody) return;
+                            fetch('/api/win-rate-buckets').then(function(r) { return r.json(); }).then(function(data) {
+                                var buckets = data.buckets || [];
+                                if (buckets.length === 0) {
+                                    tbody.innerHTML = '<tr><td colspan="5" style="color:#888;">합산승률 데이터 없음 (회차 기록 후 저장되는 값)</td></tr>';
+                                    return;
+                                }
+                                var rows = buckets.map(function(b) {
+                                    var label = b.bucket_min + '~' + b.bucket_max + '%';
+                                    var pct = b.win_pct != null ? b.win_pct.toFixed(1) : '-';
+                                    var rowClass = b.win_pct != null && b.win_pct >= 55 ? 'high' : b.win_pct != null && b.win_pct >= 45 ? 'mid' : 'low';
+                                    return '<tr><td>' + label + '</td><td>' + b.total + '</td><td>' + b.wins + '</td><td>' + b.losses + '</td><td class="stat-rate ' + rowClass + '">' + pct + '%</td></tr>';
+                                }).join('');
+                                tbody.innerHTML = rows;
+                            }).catch(function() {
+                                if (tbody) tbody.innerHTML = '<tr><td colspan="5" style="color:#888;">로드 실패</td></tr>';
+                            });
+                        })();
                         var formulaCollapse = document.getElementById('formula-collapse');
                         if (formulaCollapse) formulaCollapse.style.display = '';
                         var graphStatsCollapseHeader = document.getElementById('graph-stats-collapse-header');
@@ -3854,10 +4326,14 @@ RESULTS_HTML = '''
                         predDiv.innerHTML = noticeBlock + statsBlock + streakTableBlock + extraLine;
                     }
                     
-                    // 가상 배팅 계산기 1,2,3 요약·상세 갱신 (오류 시에도 메인 화면은 유지)
+                    // 가상 배팅 계산기: history 변경된 것만 갱신 (배팅픽 표시 속도 개선)
                     try {
-                        CALC_IDS.forEach(id => updateCalcSummary(id));
-                        CALC_IDS.forEach(id => updateCalcDetail(id));
+                        CALC_IDS.forEach(id => {
+                            if (needCalcUpdate(id)) {
+                                updateCalcSummary(id);
+                                updateCalcDetail(id);
+                            }
+                        });
                     } catch (calcErr) {
                         console.warn('계산기 갱신 오류:', calcErr);
                     }
@@ -3881,16 +4357,6 @@ RESULTS_HTML = '''
                     if (graphStatsCollapseEmpty) graphStatsCollapseEmpty.style.display = 'none';
                     var formulaCollapseEmpty = document.getElementById('formula-collapse');
                     if (formulaCollapseEmpty) formulaCollapseEmpty.style.display = 'none';
-                }
-                
-                // 헤더: 상단에는 회차 전체 숫자 표시 (비교용), 표에는 뒤 3자리만
-                if (displayResults.length > 0) {
-                    const latest = displayResults[0];
-                    const fullGameID = latest.gameID != null && latest.gameID !== '' ? String(latest.gameID) : '--';
-                    const prevRoundElement = document.getElementById('prev-round');
-                    if (prevRoundElement) {
-                        prevRoundElement.textContent = '이전회차: ' + fullGameID;
-                    }
                 }
                 } catch (renderErr) {
                     if (statusEl) statusEl.textContent = '표시 오류 - 새로고침 해 주세요';
@@ -3938,7 +4404,7 @@ RESULTS_HTML = '''
             const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
             const useMartingale = !!(martingaleEl && martingaleEl.checked);
             const martingaleType = (martingaleTypeEl && martingaleTypeEl.value) || 'pyo';
-            const hist = calcState[id].history || [];
+            const hist = dedupeCalcHistoryByRound(calcState[id].history || []);
             let cap = capIn, currentBet = baseIn, bust = false;
             let martingaleStep = 0;
             let wins = 0, losses = 0, maxWinStreak = 0, maxLoseStreak = 0, curWin = 0, curLose = 0;
@@ -3946,8 +4412,9 @@ RESULTS_HTML = '''
             for (let i = 0; i < hist.length; i++) {
                 const h = hist[i];
                 if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
-                if (useMartingale && martingaleType === 'pyo') {
-                    currentBet = TABLE_MARTIN_PYO[Math.min(martingaleStep, TABLE_MARTIN_PYO.length - 1)];
+                var martinTable = getMartinTable(martingaleType);
+                if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
+                    currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
                 }
                 const bet = Math.min(currentBet, Math.floor(cap));
                 if (cap < bet || cap <= 0) { bust = true; processedCount = i; break; }
@@ -3955,13 +4422,13 @@ RESULTS_HTML = '''
                 const isWin = !isJoker && h.predicted === h.actual;
                 if (isJoker) {
                     cap -= bet;
-                    if (useMartingale && martingaleType === 'pyo') martingaleStep = Math.min(martingaleStep + 1, TABLE_MARTIN_PYO.length - 1);
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1);
                     else currentBet = Math.min(currentBet * 2, Math.floor(cap));
                     curWin = 0;
                     curLose = 0;
                 } else if (isWin) {
                     cap += bet * (oddsIn - 1);
-                    if (useMartingale && martingaleType === 'pyo') martingaleStep = 0;
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = 0;
                     else currentBet = baseIn;
                     wins++;
                     curWin++;
@@ -3969,7 +4436,7 @@ RESULTS_HTML = '''
                     if (curWin > maxWinStreak) maxWinStreak = curWin;
                 } else {
                     cap -= bet;
-                    if (useMartingale && martingaleType === 'pyo') martingaleStep = Math.min(martingaleStep + 1, TABLE_MARTIN_PYO.length - 1);
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1);
                     else currentBet = Math.min(currentBet * 2, Math.floor(cap));
                     losses++;
                     curLose++;
@@ -3979,8 +4446,9 @@ RESULTS_HTML = '''
                 processedCount = i + 1;
                 if (cap <= 0) { bust = true; break; }
             }
-            if (useMartingale && martingaleType === 'pyo') {
-                currentBet = bust ? 0 : TABLE_MARTIN_PYO[Math.min(martingaleStep, TABLE_MARTIN_PYO.length - 1)];
+            var martinTableFinal = getMartinTable(martingaleType);
+            if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
+                currentBet = bust ? 0 : martinTableFinal[Math.min(martingaleStep, martinTableFinal.length - 1)];
             }
             if (calcState[id]) {
                 calcState[id].maxWinStreakEver = Math.max(calcState[id].maxWinStreakEver || 0, maxWinStreak);
@@ -3994,94 +4462,19 @@ RESULTS_HTML = '''
             return { cap: Math.max(0, Math.floor(cap)), profit, currentBet: bust ? 0 : currentBet, wins, losses, bust, maxWinStreak: displayMaxWin, maxLoseStreak: displayMaxLose, winRate, processedCount: bust ? processedCount : hist.length };
             } catch (e) { console.warn('getCalcResult', id, e); return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-', processedCount: 0 }; }
         }
-        function getDefenseBetAmount(linkedId) {
-            const linkedBet = getCalcResult(linkedId).currentBet;
-            const linkedBase = parseFloat(document.getElementById('calc-' + linkedId + '-base')?.value) || 10000;
-            if (!linkedBet || linkedBet <= linkedBase) return 0;
-            const fullSteps = Math.max(0, parseInt(document.getElementById('calc-defense-full-steps')?.value, 10) || 3);
-            const reduceFrom = Math.max(1, parseInt(document.getElementById('calc-defense-reduce-from')?.value, 10) || 4);
-            const reduceDiv = Math.max(2, parseInt(document.getElementById('calc-defense-reduce-div')?.value, 10) || 4);
-            const stopStreak = parseInt(document.getElementById('calc-defense-stop-streak')?.value, 10) || 0;
-            const hist = (calcState.defense && calcState.defense.history) || [];
-            let consecutiveWins = 0;
-            for (let i = hist.length - 1; i >= 0; i--) {
-                const h = hist[i];
-                if ((h.betAmount || 0) <= 0) break;
-                if (h.actual === 'joker') break;
-                if (h.predicted === h.actual) consecutiveWins++; else break;
-            }
-            if (stopStreak > 0 && consecutiveWins >= stopStreak) return 0;
-            const ratio = linkedBet / linkedBase;
-            const step = ratio <= 1 ? 0 : Math.round(Math.log2(ratio));
-            if (step <= fullSteps) return linkedBet;
-            if (step >= reduceFrom) return Math.floor(linkedBet / reduceDiv);
-            return linkedBet;
-        }
-        function getDefenseCalcResult() {
-            try {
-            const d = calcState.defense;
-            if (!d || !d.history || d.history.length === 0) return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-' };
-            const capIn = parseFloat(document.getElementById('calc-defense-capital')?.value) || 1000000;
-            const oddsIn = parseFloat(document.getElementById('calc-defense-odds')?.value) || 1.97;
-            const hist = d.history || [];
-            let cap = capIn, bust = false;
-            let wins = 0, losses = 0, maxWinStreak = 0, maxLoseStreak = 0, curWin = 0, curLose = 0;
-            for (let i = 0; i < hist.length; i++) {
-                const h = hist[i];
-                const betAmount = (h && typeof h.betAmount === 'number' ? h.betAmount : 0) || (h && parseInt(h.betAmount, 10)) || 0;
-                if (!h || (typeof h.predicted === 'undefined' && typeof h.actual === 'undefined')) continue;
-                if (betAmount <= 0) continue;
-                const isJoker = h.actual === 'joker';
-                const isWin = !isJoker && h.predicted === h.actual;
-                if (cap < betAmount || cap <= 0) { bust = true; break; }
-                if (isJoker) {
-                    cap -= betAmount;
-                    curWin = 0;
-                    curLose = 0;
-                } else if (isWin) {
-                    cap += betAmount * (oddsIn - 1);
-                    wins++;
-                    curWin++;
-                    curLose = 0;
-                    if (curWin > maxWinStreak) maxWinStreak = curWin;
-                } else {
-                    cap -= betAmount;
-                    losses++;
-                    curLose++;
-                    curWin = 0;
-                    if (curLose > maxLoseStreak) maxLoseStreak = curLose;
-                }
-                if (cap <= 0) { bust = true; break; }
-            }
-            if (calcState.defense) {
-                calcState.defense.maxWinStreakEver = Math.max(calcState.defense.maxWinStreakEver || 0, maxWinStreak);
-                calcState.defense.maxLoseStreakEver = Math.max(calcState.defense.maxLoseStreakEver || 0, maxLoseStreak);
-            }
-            const linkedId = d.linked_calc_id || 1;
-            const currentBet = (d.running && calcState[linkedId] && calcState[linkedId].running) ? getDefenseBetAmount(linkedId) : 0;
-            const profit = cap - capIn;
-            const total = wins + losses;
-            const winRate = total > 0 ? (100 * wins / total).toFixed(1) : '-';
-            const displayMaxWin = (calcState.defense && calcState.defense.maxWinStreakEver != null) ? calcState.defense.maxWinStreakEver : maxWinStreak;
-            const displayMaxLose = (calcState.defense && calcState.defense.maxLoseStreakEver != null) ? calcState.defense.maxLoseStreakEver : maxLoseStreak;
-            return { cap: Math.max(0, Math.floor(cap)), profit, currentBet, wins, losses, bust, maxWinStreak: displayMaxWin, maxLoseStreak: displayMaxLose, winRate };
-            } catch (e) { console.warn('getDefenseCalcResult', e); return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-' }; }
-        }
         function updateCalcStatus(id) {
             try {
-            const statusId = id === DEFENSE_ID ? 'calc-defense-status' : ('calc-' + id + '-status');
+            const statusId = 'calc-' + id + '-status';
             const el = document.getElementById(statusId);
             if (!el) return;
-            const state = id === DEFENSE_ID ? calcState.defense : calcState[id];
+            const state = calcState[id];
             if (!state) return;
             el.className = 'calc-status';
             if (state.running) {
                 el.classList.add('running');
                 var statusTxt = '실행중';
-                if (id !== DEFENSE_ID) {
-                    if (!!(state.reverse)) statusTxt += ' · 반픽';
-                    if (!!(state.win_rate_reverse)) statusTxt += ' · 승률반픽';
-                }
+                if (!!(state.reverse)) statusTxt += ' · 반픽';
+                if (!!(state.win_rate_reverse)) statusTxt += ' · 승률반픽';
                 el.textContent = statusTxt;
             } else if (state.timer_completed) {
                 el.classList.add('timer-done');
@@ -4093,15 +4486,28 @@ RESULTS_HTML = '''
                 el.classList.add('idle');
                 el.textContent = '대기중';
             }
-            // 계산기 1,2,3: 예측픽 = 메인과 동일( lastPrediction.value + lastPrediction.color로 색 보장 ). 반픽/승률반픽이면 배팅만 반대로.
-            if (id !== DEFENSE_ID) {
-                try {
+            try {
+                    const bettingRoundEl = document.getElementById('calc-' + id + '-current-round');
+                    const predictionRoundEl = document.getElementById('calc-' + id + '-prediction-round');
                     const bettingCardEl = document.getElementById('calc-' + id + '-current-card');
                     const predictionCardEl = document.getElementById('calc-' + id + '-prediction-card');
                     if (!bettingCardEl || !predictionCardEl) return;
                     if (state.running && lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) {
+                        var roundNum = roundLast4(lastPrediction.round);
+                        var roundLineHtml = roundNum + '회 ' + getRoundIconHtml(lastPrediction.round);
+                        if (bettingRoundEl) bettingRoundEl.innerHTML = roundLineHtml;
+                        if (predictionRoundEl) predictionRoundEl.innerHTML = roundLineHtml;
+                        if (lastIs15Joker) {
+                            predictionCardEl.textContent = '보류';
+                            predictionCardEl.className = 'calc-current-card calc-card-prediction';
+                            predictionCardEl.title = '15번 카드 조커 · 배팅하지 마세요';
+                            bettingCardEl.textContent = '보류';
+                            bettingCardEl.className = 'calc-current-card calc-card-betting';
+                            bettingCardEl.title = '15번 카드 조커 · 배팅하지 마세요';
+                        } else {
                         var predictionText = lastPrediction.value;
-                        var predictionIsRed = (lastPrediction.color === '빨강' || lastPrediction.color === '검정') ? (lastPrediction.color === '빨강') : (predictionText === '정');
+                        var predColorNorm = normalizePickColor(lastPrediction.color);
+                        var predictionIsRed = (predColorNorm === '빨강' || predColorNorm === '검정') ? (predColorNorm === '빨강') : (predictionText === '정');
                         var bettingText = predictionText;
                         var bettingIsRed = predictionIsRed;
                         const rev = !!(calcState[id] && calcState[id].reverse);
@@ -4119,187 +4525,183 @@ RESULTS_HTML = '''
                             var hit100r = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
                             var loss100 = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
                             var c100 = hit100r + loss100, r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
-                            var blended = 0.5 * r15 + 0.3 * r30 + 0.2 * r100;
+                            var blended = 0.6 * r15 + 0.25 * r30 + 0.15 * r100;
                             var thrCardEl = document.getElementById('calc-' + id + '-win-rate-threshold');
-                            var thrCardNum = (thrCardEl && !isNaN(parseFloat(thrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrCardEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 50);
-                            if (typeof thrCardNum !== 'number' || isNaN(thrCardNum)) thrCardNum = 50;
+                            var thrCardNum = (thrCardEl && !isNaN(parseFloat(thrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrCardEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
+                            if (typeof thrCardNum !== 'number' || isNaN(thrCardNum)) thrCardNum = 46;
                             lowWinRate = (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrCardNum;
                         } catch (e2) {}
                         const useWinRateRevCard = !!(calcState[id] && calcState[id].win_rate_reverse);
                         if (useWinRateRevCard && lowWinRate) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                         predictionCardEl.textContent = predictionText;
                         predictionCardEl.className = 'calc-current-card calc-card-prediction card-' + (predictionIsRed ? 'jung' : 'kkuk');
+                        predictionCardEl.title = '';
                         bettingCardEl.textContent = bettingText;
                         bettingCardEl.className = 'calc-current-card calc-card-betting card-' + (bettingIsRed ? 'jung' : 'kkuk');
+                        bettingCardEl.title = '';
+                        if (lastPrediction && lastPrediction.round != null) {
+                            savedBetPickByRound[Number(lastPrediction.round)] = { value: bettingText, isRed: bettingIsRed };
+                            var sbKeys = Object.keys(savedBetPickByRound).map(Number).filter(function(k) { return !isNaN(k); }).sort(function(a,b) { return a - b; });
+                            while (sbKeys.length > SAVED_BET_PICK_MAX) { delete savedBetPickByRound[sbKeys.shift()]; }
+                        }
+                        }
                     } else {
+                        if (bettingRoundEl) bettingRoundEl.textContent = '';
+                        if (predictionRoundEl) predictionRoundEl.textContent = '';
                         bettingCardEl.textContent = '';
                         bettingCardEl.className = 'calc-current-card calc-card-betting';
                         predictionCardEl.textContent = '';
                         predictionCardEl.className = 'calc-current-card calc-card-prediction';
                     }
                 } catch (cardErr) { console.warn('updateCalcStatus card', id, cardErr); }
-            }
             } catch (e) { console.warn('updateCalcStatus', id, e); }
         }
         function updateCalcSummary(id) {
             try {
-            const summaryId = id === DEFENSE_ID ? 'calc-defense-summary' : ('calc-' + id + '-summary');
+            const summaryId = 'calc-' + id + '-summary';
             const el = document.getElementById(summaryId);
             if (!el) return;
-            const state = id === DEFENSE_ID ? calcState.defense : calcState[id];
+            const state = calcState[id];
+            if (!state) return;
             const hist = state.history || [];
             const elapsedStr = state.running && typeof formatMmSs === 'function' ? formatMmSs(state.elapsed || 0) : '-';
             const timerNote = state.timer_completed ? '<span class="calc-timer-note" style="color:#64b5f6;font-weight:bold;grid-column:1/-1">타이머 완료</span>' : '';
             if (hist.length === 0) {
                 var targetNoteEmpty = '';
-                if (id !== DEFENSE_ID) {
-                    const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
-                    const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
-                    const targetEnabled = !!(targetEnabledEl && targetEnabledEl.checked);
-                    const targetAmount = Math.max(0, parseInt(targetAmountEl?.value, 10) || 0);
-                    if (targetEnabled && targetAmount > 0) targetNoteEmpty = '<span class="calc-timer-note" style="grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 목표까지: ' + targetAmount.toLocaleString() + '원 남음</span>';
-                }
+                const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
+                const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
+                const targetEnabled = !!(targetEnabledEl && targetEnabledEl.checked);
+                const targetAmount = Math.max(0, parseInt(targetAmountEl?.value, 10) || 0);
+                if (targetEnabled && targetAmount > 0) targetNoteEmpty = '<span class="calc-timer-note" style="grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 목표까지: ' + targetAmount.toLocaleString() + '원 남음</span>';
                 el.innerHTML = '<div class="calc-summary-grid">' + timerNote + targetNoteEmpty +
                     '<span class="label">보유자산</span><span class="value">-</span>' +
                     '<span class="label">순익</span><span class="value">-</span>' +
                     '<span class="label">배팅중</span><span class="value">-</span>' +
                     '<span class="label">경과</span><span class="value">' + elapsedStr + '</span></div>';
+                updateCalcBetCopyLine(id);
                 updateCalcStatus(id);
                 return;
             }
-            const r = id === DEFENSE_ID ? getDefenseCalcResult() : getCalcResult(id);
+            const r = getCalcResult(id);
             const profitStr = (r.profit >= 0 ? '+' : '') + r.profit.toLocaleString() + '원';
             const profitClass = r.profit > 0 ? 'profit-plus' : (r.profit < 0 ? 'profit-minus' : '');
             var targetNote = '';
-            if (id !== DEFENSE_ID) {
-                const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
-                const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
-                const targetEnabled = !!(targetEnabledEl && targetEnabledEl.checked);
-                const targetAmount = Math.max(0, parseInt(targetAmountEl?.value, 10) || 0);
-                if (targetEnabled && targetAmount > 0) {
-                    const remain = targetAmount - r.profit;
-                    if (remain <= 0) targetNote = '<span class="calc-timer-note" style="color:#81c784;font-weight:bold;grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 달성</span>';
-                    else targetNote = '<span class="calc-timer-note" style="grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 목표까지: ' + remain.toLocaleString() + '원 남음</span>';
-                }
+            const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
+            const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
+            const targetEnabled = !!(targetEnabledEl && targetEnabledEl.checked);
+            const targetAmount = Math.max(0, parseInt(targetAmountEl?.value, 10) || 0);
+            if (targetEnabled && targetAmount > 0) {
+                const remain = targetAmount - r.profit;
+                if (remain <= 0) targetNote = '<span class="calc-timer-note" style="color:#81c784;font-weight:bold;grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 달성</span>';
+                else targetNote = '<span class="calc-timer-note" style="grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 목표까지: ' + remain.toLocaleString() + '원 남음</span>';
             }
             el.innerHTML = '<div class="calc-summary-grid">' + timerNote + targetNote +
                 '<span class="label">보유자산</span><span class="value">' + r.cap.toLocaleString() + '원</span>' +
                 '<span class="label">순익</span><span class="value ' + profitClass + '">' + profitStr + '</span>' +
                 '<span class="label">배팅중</span><span class="value">' + r.currentBet.toLocaleString() + '원</span>' +
                 '<span class="label">경과</span><span class="value">' + elapsedStr + '</span></div>';
+            updateCalcBetCopyLine(id, r.currentBet);
             updateCalcStatus(id);
             } catch (e) { console.warn('updateCalcSummary', id, e); }
         }
+        function updateCalcBetCopyLine(id, currentBetVal) {
+            try {
+                var el = document.getElementById('calc-' + id + '-bet-copy-line');
+                if (!el) return;
+                var state = calcState[id];
+                var round = (state && state.pending_round) ? state.pending_round : (typeof lastPrediction !== 'undefined' && lastPrediction && lastPrediction.round ? lastPrediction.round : null);
+                var amount = (currentBetVal !== undefined && currentBetVal > 0) ? currentBetVal : (state && state.running ? (getCalcResult(id).currentBet || 0) : 0);
+                if (round == null || amount <= 0) {
+                    el.innerHTML = '—';
+                    return;
+                }
+                var roundStr = roundLast4(round) + '회 ';
+                var iconHtml = getRoundIconHtml(round);
+                var amountPlain = String(amount);
+                var amountDisplay = amount.toLocaleString() + '원';
+                el.innerHTML = roundStr + iconHtml + ' <span class="calc-bet-copy-amount" data-amount="' + amountPlain + '" title="클릭하면 금액 복사">' + amountDisplay + '</span> <span class="calc-bet-copy-hint">[클릭 복사]</span>';
+            } catch (e) { console.warn('updateCalcBetCopyLine', id, e); }
+        }
         function appendCalcLog(id) {
-            const state = id === DEFENSE_ID ? calcState.defense : calcState[id];
+            const state = calcState[id];
             if (!state || !state.history || state.history.length === 0) return;
             const now = new Date();
             const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
-            const r = id === DEFENSE_ID ? getDefenseCalcResult() : getCalcResult(id);
-            let logLine;
-            if (id === DEFENSE_ID) {
-                logLine = dateStr + '_방어_순익' + (r.profit >= 0 ? '+' : '') + r.profit + '원_승' + r.wins + '패' + r.losses + '_승률' + r.winRate + '%_최대연승' + r.maxWinStreak + '_최대연패' + r.maxLoseStreak;
-            } else {
-                const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
-                const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
-                const pickType = rev ? '반픽' : '정픽';
-                logLine = dateStr + '_계산기' + id + '_' + pickType + '_배팅' + baseIn + '원_순익' + (r.profit >= 0 ? '+' : '') + r.profit + '원_승' + r.wins + '패' + r.losses + '_승률' + r.winRate + '%';
-            }
+            const r = getCalcResult(id);
+            const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
+            const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
+            const pickType = rev ? '반픽' : '정픽';
+            const logLine = dateStr + '_계산기' + id + '_' + pickType + '_배팅' + baseIn + '원_순익' + (r.profit >= 0 ? '+' : '') + r.profit + '원_승' + r.wins + '패' + r.losses + '_승률' + r.winRate + '%';
             const histCopy = JSON.parse(JSON.stringify(state.history || []));
-            betCalcLog.unshift({ line: logLine, calcId: id === DEFENSE_ID ? 'defense' : String(id), history: histCopy });
+            betCalcLog.unshift({ line: logLine, calcId: String(id), history: histCopy });
             saveBetCalcLog();
             renderBetCalcLog();
         }
         function updateCalcDetail(id) {
             try {
-            const streakId = id === DEFENSE_ID ? 'calc-defense-streak' : ('calc-' + id + '-streak');
-            const statsId = id === DEFENSE_ID ? 'calc-defense-stats' : ('calc-' + id + '-stats');
-            const tableWrapId = id === DEFENSE_ID ? 'calc-defense-round-table-wrap' : ('calc-' + id + '-round-table-wrap');
+            const streakId = 'calc-' + id + '-streak';
+            const statsId = 'calc-' + id + '-stats';
+            const tableWrapId = 'calc-' + id + '-round-table-wrap';
             const streakEl = document.getElementById(streakId);
             const statsEl = document.getElementById(statsId);
             const tableWrap = document.getElementById(tableWrapId);
             if (!streakEl || !statsEl) return;
-            const state = id === DEFENSE_ID ? calcState.defense : calcState[id];
+            const state = calcState[id];
             if (!state) return;
             const hist = state.history || [];
             if (hist.length === 0) {
-                streakEl.textContent = id === DEFENSE_ID ? '경기결과 (최근 30회): - (연결 계산기의 반픽·동일 배팅금)' : '경기결과 (최근 30회): -';
+                streakEl.textContent = '경기결과 (최근 30회): -';
                 statsEl.textContent = '최대연승: - | 최대연패: - | 승률: -';
                 if (tableWrap) tableWrap.innerHTML = '';
                 return;
             }
-            const r = id === DEFENSE_ID ? getDefenseCalcResult() : getCalcResult(id);
+            const r = getCalcResult(id);
             const usedLen = (r.processedCount !== undefined && r.processedCount >= 0) ? r.processedCount : hist.length;
-            const usedHist = hist.slice(0, usedLen);
-            const oddsIn = parseFloat(document.getElementById(id === DEFENSE_ID ? 'calc-defense-odds' : ('calc-' + id + '-odds'))?.value) || 1.97;
+            const usedHist = dedupeCalcHistoryByRound(hist.slice(0, usedLen));
+            const oddsIn = parseFloat(document.getElementById('calc-' + id + '-odds')?.value) || 1.97;
             var betAmounts = [], profits = [];
-            if (id === DEFENSE_ID) {
-                for (let i = 0; i < usedHist.length; i++) {
-                    const h = usedHist[i];
-                    const bet = (h && typeof h.betAmount === 'number' ? h.betAmount : 0) || (h && parseInt(h.betAmount, 10)) || 0;
-                    if (!h || (typeof h.predicted === 'undefined' && typeof h.actual === 'undefined')) { betAmounts[i] = null; profits[i] = null; continue; }
-                    if (bet <= 0) { betAmounts[i] = null; profits[i] = null; continue; }
-                    const isJoker = h.actual === 'joker';
-                    const isWin = !isJoker && h.predicted === h.actual;
-                    betAmounts[i] = bet;
-                    profits[i] = isJoker ? -bet : (isWin ? Math.floor(bet * (oddsIn - 1)) : -bet);
-                }
-            } else {
-                const capIn = parseFloat(document.getElementById('calc-' + id + '-capital')?.value) || 1000000;
+            const capIn = parseFloat(document.getElementById('calc-' + id + '-capital')?.value) || 1000000;
                 const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
                 const martingaleEl = document.getElementById('calc-' + id + '-martingale');
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 const useMartingale = !!(martingaleEl && martingaleEl.checked);
                 const martingaleType = (martingaleTypeEl && martingaleTypeEl.value) || 'pyo';
+                var martinTableDetail = getMartinTable(martingaleType);
                 let cap = capIn, currentBet = baseIn, martingaleStep = 0;
                 for (let i = 0; i < usedHist.length; i++) {
                     const h = usedHist[i];
                     if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') { betAmounts[i] = null; profits[i] = null; continue; }
-                    if (useMartingale && martingaleType === 'pyo') currentBet = TABLE_MARTIN_PYO[Math.min(martingaleStep, TABLE_MARTIN_PYO.length - 1)];
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) currentBet = martinTableDetail[Math.min(martingaleStep, martinTableDetail.length - 1)];
                     const bet = Math.min(currentBet, Math.floor(cap));
                     if (cap < bet || cap <= 0) { betAmounts[i] = null; profits[i] = null; break; }
                     const isJoker = h.actual === 'joker';
                     const isWin = !isJoker && h.predicted === h.actual;
                     betAmounts[i] = bet;
                     profits[i] = isJoker ? -bet : (isWin ? Math.floor(bet * (oddsIn - 1)) : -bet);
-                    if (isJoker) { cap -= bet; if (useMartingale && martingaleType === 'pyo') martingaleStep = Math.min(martingaleStep + 1, TABLE_MARTIN_PYO.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
-                    else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && martingaleType === 'pyo') martingaleStep = 0; else currentBet = baseIn; }
-                    else { cap -= bet; if (useMartingale && martingaleType === 'pyo') martingaleStep = Math.min(martingaleStep + 1, TABLE_MARTIN_PYO.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
+                    if (isJoker) { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
+                    else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = 0; else currentBet = baseIn; }
+                    else { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
                 }
-            }
-            // 회차별 픽/결과/승패/배팅금액/수익 행 목록 (유효 항목만, 최신순 = 뒤에서부터)
+            // 회차별 픽/결과/승패/배팅금액/수익 행 목록 (유효 항목만, 최신순 = 뒤에서부터). 같은 회차는 한 번만 표시(중복 제거)
             let rows = [];
-            if (id === DEFENSE_ID) {
-                for (let i = usedHist.length - 1; i >= 0; i--) {
-                    const h = usedHist[i];
-                    const bet = (h && typeof h.betAmount === 'number' ? h.betAmount : 0) || (h && parseInt(h.betAmount, 10)) || 0;
-                    if (!h || (typeof h.predicted === 'undefined' && typeof h.actual === 'undefined')) continue;
-                    const roundStr = h.round != null ? String(h.round).slice(-3) : '-';
-                    if (bet <= 0) { rows.push({ roundStr: roundStr, pick: '-', pickClass: '', result: '-', resultClass: '', outcome: '－', betAmount: '-', profit: '-' }); continue; }
+            var seenRoundNums = {};
+            for (let i = usedHist.length - 1; i >= 0; i--) {
+                const h = usedHist[i];
+                if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                const rn = h.round != null ? Number(h.round) : NaN;
+                if (!isNaN(rn) && seenRoundNums[rn]) continue;
+                if (!isNaN(rn)) seenRoundNums[rn] = true;
+                const roundStr = h.round != null ? String(h.round) : '-';
                     const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
                     const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
                     const pickVal = h.predicted === '정' ? '정' : '꺽';
-                    const pickClass = pickVal === '정' ? 'pick-jung' : 'pick-kkuk';
-                    const resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
-                    const profitVal = profits[i] != null ? profits[i] : '-';
-                    const profitStr = profitVal === '-' ? '-' : (profitVal >= 0 ? '+' : '') + Number(profitVal).toLocaleString();
-                    rows.push({ roundStr: roundStr, pick: pickVal, pickClass: pickClass, result: res, resultClass: resultClass, outcome: outcome, betAmount: bet.toLocaleString(), profit: profitStr });
-                }
-            } else {
-                for (let i = usedHist.length - 1; i >= 0; i--) {
-                    const h = usedHist[i];
-                    if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
-                    const roundStr = h.round != null ? String(h.round).slice(-3) : '-';
-                    const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
-                    const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
-                    const pickVal = h.predicted === '정' ? '정' : '꺽';
-                    const pickClass = pickVal === '정' ? 'pick-jung' : 'pick-kkuk';
+                    // 픽(걸은 것) 색은 걸은 픽(h.predicted)만 기준으로 → 배팅중과 일치, 예측픽/서버 색과 충돌 방지
+                    const pickClass = (pickVal === '정' ? 'pick-jung' : 'pick-kkuk');
                     const resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
                     const betStr = betAmounts[i] != null ? betAmounts[i].toLocaleString() : '-';
                     const profitVal = profits[i] != null ? profits[i] : '-';
                     const profitStr = profitVal === '-' ? '-' : (profitVal >= 0 ? '+' : '') + Number(profitVal).toLocaleString();
                     rows.push({ roundStr: roundStr, pick: pickVal, pickClass: pickClass, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr });
-                }
             }
             const displayRows = rows.slice(0, 15);
             if (tableWrap) {
@@ -4318,22 +4720,17 @@ RESULTS_HTML = '''
             }
             // getCalcResult와 동일 기준: 무효 항목은 표시에서 제외. 경기결과는 최근 30회만 표시(저장은 전부 유지)
             let arr = [];
-            if (id === DEFENSE_ID) {
-                arr = usedHist.map(h => ((h.betAmount || 0) <= 0 ? '-' : (h.actual === 'joker' ? 'j' : (h.predicted === h.actual ? 'w' : 'l'))));
-            } else {
-                for (const h of usedHist) {
-                    if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
-                    arr.push(h.actual === 'joker' ? 'j' : (h.predicted === h.actual ? 'w' : 'l'));
-                }
+            for (const h of usedHist) {
+                if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                arr.push(h.actual === 'joker' ? 'j' : (h.predicted === h.actual ? 'w' : 'l'));
             }
             const arrRev = arr.slice().reverse();
             const showMax = 30;
             const arrShow = arrRev.slice(0, showMax);
             const streakStr = arrShow.map(a => {
-                if (a === '-') return '<span class="defense-skip">－</span>';
                 return '<span class="' + (a === 'w' ? 'w' : a === 'l' ? 'l' : 'j') + '">' + (a === 'w' ? '승' : a === 'l' ? '패' : '조') + '</span>';
             }).join(' ');
-            streakEl.innerHTML = '경기결과 (최근 30회←): ' + streakStr + (id === DEFENSE_ID ? ' <span class="defense-skip">※－=미배팅</span>' : '');
+            streakEl.innerHTML = '경기결과 (최근 30회←): ' + streakStr;
             statsEl.textContent = '최대연승: ' + r.maxWinStreak + ' | 최대연패: ' + r.maxLoseStreak + ' | 승률: ' + r.winRate + '%';
             } catch (e) { console.warn('updateCalcDetail', id, e); }
         }
@@ -4380,65 +4777,20 @@ RESULTS_HTML = '''
                     if (saveBtn) saveBtn.style.display = 'none';
                 }
             });
-            if (calcState.defense.running) {
-                const started = calcState.defense.started_at || 0;
-                calcState.defense.elapsed = started ? Math.max(0, st - started) : 0;
-                updateCalcSummary(DEFENSE_ID);
-                if (calcState.defense.use_duration_limit && calcState.defense.duration_limit > 0 && calcState.defense.elapsed >= calcState.defense.duration_limit) {
-                    calcState.defense.running = false;
-                    calcState.defense.timer_completed = true;
-                    if (calcState.defense.history.length > 0) appendCalcLog(DEFENSE_ID);
-                    saveCalcStateToServer();
-                    updateCalcSummary(DEFENSE_ID);
-                    updateCalcStatus(DEFENSE_ID);
-                }
-            }
             }, 1000);
         function updateAllCalcs() {
             CALC_IDS.forEach(id => { updateCalcSummary(id); updateCalcDetail(id); updateCalcStatus(id); });
-            updateCalcSummary(DEFENSE_ID); updateCalcDetail(DEFENSE_ID); updateCalcStatus(DEFENSE_ID);
         }
         try { updateAllCalcs(); } catch (e) { console.warn('초기 계산기 상태:', e); }
         document.querySelectorAll('.calc-run').forEach(btn => {
             btn.addEventListener('click', async function() {
                 const rawId = this.getAttribute('data-calc');
-                const id = rawId === 'defense' ? DEFENSE_ID : parseInt(rawId, 10);
-                const state = id === DEFENSE_ID ? calcState.defense : calcState[id];
+                const id = parseInt(rawId, 10);
+                if (!CALC_IDS.includes(id)) return;
+                const state = calcState[id];
                 if (!state || state.running) return;
                 if (!localStorage.getItem(CALC_SESSION_KEY)) {
                     await loadCalcStateFromServer();
-                }
-                if (id === DEFENSE_ID) {
-                    const defLinkEl = document.getElementById('calc-defense-linked');
-                    const defDurEl = document.getElementById('calc-defense-duration');
-                    const defCheckEl = document.getElementById('calc-defense-duration-check');
-                    calcState.defense.linked_calc_id = (defLinkEl && parseInt(defLinkEl.value, 10)) || 1;
-                    calcState.defense.duration_limit = ((defDurEl && parseInt(defDurEl.value, 10)) || 0) * 60;
-                    calcState.defense.use_duration_limit = !!(defCheckEl && defCheckEl.checked);
-                    calcState.defense.timer_completed = false;
-                    calcState.defense.running = true;
-                    calcState.defense.history = [];
-                    calcState.defense.started_at = 0;
-                    calcState.defense.elapsed = 0;
-                    calcState.defense.maxWinStreakEver = 0;
-                    calcState.defense.maxLoseStreakEver = 0;
-                    var defLatestG = null;
-                    try { defLatestG = window.__latestGameIDForCalc; } catch (e) {}
-                    var defNextRound = 0;
-                    if (defLatestG != null && defLatestG !== '') { var dn = parseInt(String(defLatestG), 10); if (!isNaN(dn)) defNextRound = dn + 1; }
-                    calcState.defense.first_bet_round = defNextRound;
-                    try {
-                        const defPayload = buildCalcPayload();
-                        defPayload[DEFENSE_ID].first_bet_round = calcState.defense.first_bet_round;
-                        const res = await fetch('/api/calc-state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: localStorage.getItem(CALC_SESSION_KEY), calcs: defPayload }) });
-                        const data = await res.json();
-                        if (data.calcs && data.calcs[DEFENSE_ID]) calcState.defense.started_at = data.calcs[DEFENSE_ID].started_at || 0;
-                        if (data.server_time) lastServerTimeSec = data.server_time;
-                    } catch (e) { console.warn('방어 계산기 실행 저장 실패:', e); }
-                    updateCalcSummary(DEFENSE_ID);
-                    updateCalcDetail(DEFENSE_ID);
-                    updateCalcStatus(DEFENSE_ID);
-                    return;
                 }
                 const durEl = document.getElementById('calc-' + id + '-duration');
                 const checkEl = document.getElementById('calc-' + id + '-duration-check');
@@ -4450,7 +4802,7 @@ RESULTS_HTML = '''
                 const winRateRevRun = document.getElementById('calc-' + id + '-win-rate-reverse');
                 calcState[id].win_rate_reverse = !!(winRateRevRun && winRateRevRun.checked);
                 const winRateThrRun = document.getElementById('calc-' + id + '-win-rate-threshold');
-                var thrRun = (winRateThrRun && parseFloat(winRateThrRun.value) != null && !isNaN(parseFloat(winRateThrRun.value))) ? Math.max(0, Math.min(100, parseFloat(winRateThrRun.value))) : 50;
+                var thrRun = (winRateThrRun && parseFloat(winRateThrRun.value) != null && !isNaN(parseFloat(winRateThrRun.value))) ? Math.max(0, Math.min(100, parseFloat(winRateThrRun.value))) : 46;
                 calcState[id].win_rate_threshold = thrRun;
                 calcState[id].timer_completed = false;
                 calcState[id].running = true;
@@ -4486,8 +4838,9 @@ RESULTS_HTML = '''
         document.querySelectorAll('.calc-stop').forEach(btn => {
             btn.addEventListener('click', function() {
                 const rawId = this.getAttribute('data-calc');
-                const id = rawId === 'defense' ? DEFENSE_ID : parseInt(rawId, 10);
-                const state = id === DEFENSE_ID ? calcState.defense : calcState[id];
+                const id = parseInt(rawId, 10);
+                if (!CALC_IDS.includes(id)) return;
+                const state = calcState[id];
                 if (!state) return;
                 state.running = false;
                 state.timer_completed = false;
@@ -4496,38 +4849,45 @@ RESULTS_HTML = '''
                 updateCalcSummary(id);
                 updateCalcDetail(id);
                 updateCalcStatus(id);
-                if (id === DEFENSE_ID && state.history.length > 0) {
-                    appendCalcLog(DEFENSE_ID);
-                } else if (id !== DEFENSE_ID && state.history.length > 0) {
+                if (state.history.length > 0) {
                     const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
                     if (saveBtn) saveBtn.style.display = 'inline-block';
                 }
             });
         });
         document.querySelectorAll('.calc-reset').forEach(btn => {
-            btn.addEventListener('click', function() {
+            btn.addEventListener('click', async function() {
                 const rawId = this.getAttribute('data-calc');
-                const id = rawId === 'defense' ? DEFENSE_ID : parseInt(rawId, 10);
-                const state = id === DEFENSE_ID ? calcState.defense : calcState[id];
+                const id = parseInt(rawId, 10);
+                if (!CALC_IDS.includes(id)) return;
+                const state = calcState[id];
                 if (!state) return;
                 state.running = false;
                 state.timer_completed = false;
                 if (state.timerId) { clearInterval(state.timerId); state.timerId = null; }
                 state.history = [];
+                state.started_at = 0;
                 state.elapsed = 0;
-                saveCalcStateToServer();
+                state.first_bet_round = 0;
+                state.maxWinStreakEver = 0;
+                state.maxLoseStreakEver = 0;
+                state.pending_round = null;
+                state.pending_predicted = null;
+                state.pending_prob = null;
+                state.pending_color = null;
+                await saveCalcStateToServer();
                 updateCalcSummary(id);
                 updateCalcDetail(id);
                 updateCalcStatus(id);
-                if (id !== DEFENSE_ID) {
-                    const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
-                    if (saveBtn) saveBtn.style.display = 'none';
-                }
+                updateCalcBetCopyLine(id);
+                const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
+                if (saveBtn) saveBtn.style.display = 'none';
             });
         });
         document.querySelectorAll('.calc-save').forEach(btn => {
             btn.addEventListener('click', function() {
                 const id = parseInt(this.getAttribute('data-calc'), 10);
+                if (!CALC_IDS.includes(id) || !calcState[id]) return;
                 if (calcState[id].history.length === 0) return;
                 appendCalcLog(id);
                 this.style.display = 'none';
@@ -4540,6 +4900,32 @@ RESULTS_HTML = '''
             });
             const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
             if (targetEnabledEl) targetEnabledEl.addEventListener('change', () => { updateCalcSummary(id); });
+        });
+        document.addEventListener('click', function(e) {
+            var t = e.target && e.target.closest('.calc-bet-copy-amount');
+            if (!t) return;
+            var amount = t.getAttribute('data-amount') || t.textContent.replace(/[^0-9]/g, '');
+            if (!amount) return;
+            try {
+                navigator.clipboard.writeText(amount).then(function() {
+                    var orig = t.textContent;
+                    t.textContent = '복사됨';
+                    t.style.color = '#ffb74d';
+                    setTimeout(function() { t.textContent = orig; t.style.color = ''; }, 600);
+                });
+            } catch (err) {
+                try {
+                    var ta = document.createElement('textarea');
+                    ta.value = amount;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    var orig = t.textContent;
+                    t.textContent = '복사됨';
+                    setTimeout(function() { t.textContent = orig; }, 600);
+                } catch (e2) {}
+            }
         });
         
         let timerData = { elapsed: 0, lastFetch: 0, round: 0, serverTime: 0 };
@@ -4597,12 +4983,7 @@ RESULTS_HTML = '''
                             
                             if (roundChanged || roundEnded || roundStarted) {
                                 console.log('라운드 변경 감지:', { roundChanged, roundEnded, roundStarted, prevRound, newRound: timerData.round, prevElapsed, newElapsed: data.elapsed });
-                                // 즉시 결과 로드 (승리/실패 결과 빨리 표시)
-                                loadResults();
-                                lastResultsUpdate = Date.now();
-                                [80, 200, 350, 550, 800, 1100].forEach(function(ms) {
-                                    setTimeout(function() { loadResults(); lastResultsUpdate = Date.now(); }, ms);
-                                });
+                                if (now - lastResultsUpdate > 800) { loadResults(); lastResultsUpdate = now; }
                             }
                             // updateBettingInfo는 별도로 실행하므로 여기서 제거
                         }
@@ -4623,17 +5004,14 @@ RESULTS_HTML = '''
                     timeElement.classList.add('warning');
                 }
                 
-                // 타이머가 거의 0이 되면 경기 결과 즉시·반복 새로고침 (승리/실패 결과 빨리 표시)
-                if (remaining <= 1.5 && now - lastResultsUpdate > 100) {
+                // 타이머가 거의 0이 되면 결과 한 번만 요청 (반복 호출로 pending 폭증 방지)
+                if (remaining <= 1.5 && now - lastResultsUpdate > 1000) {
                     loadResults();
                     lastResultsUpdate = now;
                 }
-                if (remaining <= 0 && now - lastResultsUpdate > 50) {
+                if (remaining <= 0 && now - lastResultsUpdate > 1000) {
                     loadResults();
                     lastResultsUpdate = now;
-                    [100, 200, 350, 500, 700, 950, 1200].forEach(function(ms) {
-                        setTimeout(function() { loadResults(); lastResultsUpdate = Date.now(); }, ms);
-                    });
                 }
             } catch (error) {
                 console.error('타이머 업데이트 오류:', error);
@@ -4660,20 +5038,19 @@ RESULTS_HTML = '''
         
         initialLoad();
         
-        // 예측픽·결과 나오면 바로 반영 (150ms 폴링, 결과 있으면 120ms마다 요청)
+        // 결과 폴링: 예측픽 더 빨리 나오게 간격 단축 (서버 부하 고려해 0.9초)
         setInterval(() => {
-            const interval = allResults.length === 0 ? 200 : 120;
+            const interval = allResults.length === 0 ? 500 : 900;
             if (Date.now() - lastResultsUpdate > interval) {
                 loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
-                lastResultsUpdate = Date.now();
             }
-        }, 150);
+        }, 400);
         
         // 계산기 실행 중일 때 서버 상태 주기적으로 가져와 UI 실시간 반영 (멈춰 보이는 현상 방지)
         setInterval(() => {
-            const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running) || (calcState.defense && calcState.defense.running);
+            const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
             if (anyRunning) {
-                loadCalcStateFromServer().then(function() { updateAllCalcs(); }).catch(function(e) { console.warn('계산기 상태 폴링:', e); });
+                loadCalcStateFromServer(false).then(function() { updateAllCalcs(); }).catch(function(e) { console.warn('계산기 상태 폴링:', e); });
             }
         }, 2000);
         
@@ -4689,17 +5066,66 @@ def results_page():
     """경기 결과 웹페이지"""
     return render_template_string(RESULTS_HTML)
 
+def _build_results_payload_db_only(hours=1):
+    """DB만으로 페이로드 생성 (네트워크 없음). 캐시 비어 있을 때 첫 화면 빠르게 표시용."""
+    try:
+        if not DB_AVAILABLE or not DATABASE_URL:
+            return None
+        results = get_recent_results(hours=hours)
+        results = _sort_results_newest_first(results)
+        # 응답 크기·처리 시간 제한 (760+건 → 300건, 먹통·pending 방지)
+        RESULTS_PAYLOAD_LIMIT = 300
+        if len(results) > RESULTS_PAYLOAD_LIMIT:
+            results = results[:RESULTS_PAYLOAD_LIMIT]
+        round_actuals = _build_round_actuals(results)
+        _merge_round_predictions_into_history(round_actuals)
+        ph = get_prediction_history(100)
+        # 안정화: 서버에 저장된 예측만 불러옴. 계산/저장은 스케줄러에서만(ensure_stored_prediction_for_current_round).
+        server_pred = None
+        if len(results) >= 16:
+            try:
+                latest_gid = results[0].get('gameID')
+                predicted_round = int(str(latest_gid or '0'), 10) + 1
+                is_15_joker = len(results) >= 15 and bool(results[14].get('joker'))
+                if not is_15_joker:
+                    stored = get_stored_round_prediction(predicted_round)
+                    if stored and stored.get('predicted'):
+                        server_pred = {
+                            'value': stored['predicted'], 'round': predicted_round,
+                            'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
+                            'warning_u35': False,
+                        }
+            except Exception as e:
+                print(f"[API] server_pred 조회 오류: {str(e)[:100]}")
+        if server_pred is None:
+            server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False}
+        blended = _blended_win_rate(ph)
+        return {
+            'results': results,
+            'count': len(results),
+            'timestamp': datetime.now().isoformat(),
+            'source': 'database',
+            'prediction_history': ph,
+            'server_prediction': server_pred,
+            'blended_win_rate': round(blended, 1) if blended is not None else None,
+            'round_actuals': round_actuals
+        }
+    except Exception as e:
+        print(f"[API] DB 전용 페이로드 오류: {str(e)[:150]}")
+        return None
+
+
 def _build_results_payload():
     """경기 결과 페이로드 생성 (스레드에서 호출, 먹통 시 None 반환)."""
     try:
         latest_results = load_results_data()
         if latest_results is None:
             latest_results = []
-        print(f"[API] 최신 데이터 로드: {len(latest_results)}개")
+        _log_when_changed('api_latest', len(latest_results), lambda v: f"[API] 최신 데이터 로드: {v}개")
         if DB_AVAILABLE and DATABASE_URL:
             # 데이터베이스에서 최근 5시간 데이터 조회
             db_results = get_recent_results(hours=5)
-            print(f"[API] DB 데이터 조회: {len(db_results)}개")
+            _log_when_changed('api_db', len(db_results), lambda v: f"[API] DB 데이터 조회: {v}개")
             
             # 최신 데이터 저장 (백그라운드)
             if latest_results:
@@ -4709,7 +5135,7 @@ def _build_results_payload():
                         if save_game_result(game_data):
                             saved_count += 1
                     if saved_count > 0:
-                        print(f"[💾] 최신 데이터 {saved_count}개 저장 완료")
+                        _log_when_changed('latest_save', saved_count, lambda v: f"[💾] 최신 데이터 {v}개 저장 완료")
                 except Exception as e:
                     print(f"[경고] 최신 데이터 저장 실패: {str(e)[:100]}")
             
@@ -4724,7 +5150,7 @@ def _build_results_payload():
                 # 최신 데이터 + DB 데이터 (최신순) → gameID 기준 정렬로 순서 고정 (그래프 일관성)
                 results = latest_results + db_results_filtered
                 results = _sort_results_newest_first(results)
-                print(f"[API] 병합 결과: 최신 {len(latest_results)}개 + DB {len(db_results_filtered)}개 = 총 {len(results)}개")
+                _log_when_changed('api_merge', (len(latest_results), len(db_results_filtered), len(results)), lambda v: f"[API] 병합 결과: 최신 {v[0]}개 + DB {v[1]}개 = 총 {v[2]}개")
                 
                 # 병합된 전체 결과에 대해 정/꺽 결과 계산 및 추가
                 if len(results) >= 16:
@@ -4813,15 +5239,38 @@ def _build_results_payload():
             
             # 그래프/표시 순서 일관성: 항상 gameID 기준 최신순으로 정렬
             results = _sort_results_newest_first(results)
+            round_actuals = _build_round_actuals(results)
+            _merge_round_predictions_into_history(round_actuals)
             ph = get_prediction_history(100)
-            server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
+            # 안정화: 서버에 저장된 예측만 불러옴. 계산/저장은 스케줄러에서만.
+            server_pred = None
+            if len(results) >= 16:
+                try:
+                    latest_gid = results[0].get('gameID')
+                    predicted_round = int(str(latest_gid or '0'), 10) + 1
+                    is_15_joker = len(results) >= 15 and bool(results[14].get('joker'))
+                    if not is_15_joker:
+                        stored = get_stored_round_prediction(predicted_round)
+                        if stored and stored.get('predicted'):
+                            server_pred = {
+                                'value': stored['predicted'], 'round': predicted_round,
+                                'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
+                                'warning_u35': False,
+                            }
+                except Exception as e:
+                    print(f"[API] server_pred 조회 오류: {str(e)[:100]}")
+            if server_pred is None:
+                server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False}
+            blended = _blended_win_rate(ph)
             return {
                 'results': results,
                 'count': len(results),
                 'timestamp': datetime.now().isoformat(),
                 'source': 'database+json',
                 'prediction_history': ph,
-                'server_prediction': server_pred
+                'server_prediction': server_pred,
+                'blended_win_rate': round(blended, 1) if blended is not None else None,
+                'round_actuals': round_actuals
             }
         else:
             # 데이터베이스가 없으면 기존 방식 (result.json에서 가져오기)
@@ -4858,14 +5307,36 @@ def _build_results_payload():
                             results[i]['colorMatch'] = None
             
             ph = get_prediction_history(100)
-            server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
+            # 한 출처: 해당 회차에 저장된 예측이 있으면 그대로 사용 (DB 없을 때는 매번 계산)
+            server_pred = None
+            if len(results) >= 16 and DB_AVAILABLE and DATABASE_URL:
+                try:
+                    latest_gid = results[0].get('gameID')
+                    predicted_round = int(str(latest_gid or '0'), 10) + 1
+                    is_15_joker = len(results) >= 15 and bool(results[14].get('joker'))
+                    if not is_15_joker:
+                        stored = get_stored_round_prediction(predicted_round)
+                        if stored and stored.get('predicted'):
+                            server_pred = {
+                                'value': stored['predicted'], 'round': predicted_round,
+                                'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
+                                'warning_u35': False,
+                            }
+                except Exception as e:
+                    print(f"[API] server_pred 구성 오류: {str(e)[:100]}")
+            if server_pred is None:
+                server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
+            blended = _blended_win_rate(ph)
+            round_actuals = _build_round_actuals(results)
             return {
                 'results': results,
                 'count': len(results),
                 'timestamp': datetime.now().isoformat(),
                 'source': 'json',
                 'prediction_history': ph,
-                'server_prediction': server_pred
+                'server_prediction': server_pred,
+                'blended_win_rate': round(blended, 1) if blended is not None else None,
+                'round_actuals': round_actuals
             }
     except Exception as e:
         print(f"[❌ 오류] _build_results_payload 실패: {str(e)[:200]}")
@@ -4876,7 +5347,7 @@ _results_refresh_lock = threading.Lock()
 _results_refreshing = False
 
 def _refresh_results_background():
-    """백그라운드에서 캐시 갱신 (요청 스레드 블로킹 없음). 이전보다 오래된 데이터로는 덮어쓰지 않음."""
+    """백그라운드에서 캐시 갱신. 서버가 항상 최신 결과를 송출하려면 유효한 페이로드가 오면 캐시를 덮어쓴다."""
     global results_cache, last_update_time, _results_refreshing
     if not _results_refresh_lock.acquire(blocking=False):
         return
@@ -4884,27 +5355,8 @@ def _refresh_results_background():
     try:
         payload = _build_results_payload()
         if payload is not None and payload.get('results'):
-            new_results = payload['results']
-            new_latest = str(new_results[0].get('gameID') or '0') if new_results else '0'
-            try:
-                new_latest_num = int(new_latest)
-            except (ValueError, TypeError):
-                new_latest_num = 0
-            should_update = True
-            if results_cache and results_cache.get('results'):
-                cur_results = results_cache['results']
-                cur_latest = str(cur_results[0].get('gameID') or '0') if cur_results else '0'
-                try:
-                    cur_latest_num = int(cur_latest)
-                except (ValueError, TypeError):
-                    cur_latest_num = 0
-                if new_latest_num < cur_latest_num:
-                    should_update = False
-                elif new_latest_num == cur_latest_num and len(new_results) <= len(cur_results):
-                    should_update = False
-            if should_update:
-                results_cache = payload
-                last_update_time = time.time() * 1000
+            results_cache = payload
+            last_update_time = time.time() * 1000
     except Exception as e:
         print(f"[API] 백그라운드 갱신 오류: {str(e)[:150]}")
     finally:
@@ -4916,41 +5368,77 @@ def _refresh_results_background():
 
 @app.route('/api/results', methods=['GET'])
 def get_results():
-    """경기 결과 API - 요청 스레드는 절대 블로킹 안 함. 캐시 있으면 즉시 반환, 없으면 이전 캐시/빈값 반환 후 백그라운드 갱신."""
+    """경기 결과 API. 화면 송출 보장: 매 요청마다 DB에서 결과 생성(워커/캐시 무관)."""
     try:
         global results_cache, last_update_time
-        current_time = time.time() * 1000
-        if results_cache and (current_time - last_update_time) < CACHE_TTL:
-            return jsonify(results_cache)
-        # 캐시 만료 시: 즉시 응답(이전 캐시 또는 빈값), 갱신은 백그라운드에서만 (join 없음)
-        if results_cache:
-            if not _results_refreshing:
-                threading.Thread(target=_refresh_results_background, daemon=True).start()
-            return jsonify(results_cache)
-        # 캐시가 한 번도 없으면 갱신 중이 아닐 때만 백그라운드 갱신 후 빈값 즉시 반환
+        result_source = request.args.get('result_source', '').strip()
+
+        # 매 요청마다 DB에서 응답 생성. 24h 사용해 최신 회차 누락 방지 (타임존·커밋 타이밍 이슈 시 5h만 쓰면 과거만 옴)
+        payload = _build_results_payload_db_only(hours=24)
+        if payload and payload.get('results'):
+            results_cache = payload
+            last_update_time = time.time() * 1000
+        if not payload or not payload.get('results'):
+            payload = _build_results_payload_db_only(hours=72) or payload
+            if payload and payload.get('results'):
+                results_cache = payload
+                last_update_time = time.time() * 1000
+        if not payload or not payload.get('results'):
+            if results_cache and results_cache.get('results'):
+                payload = results_cache.copy()
+            else:
+                payload = {
+                    'results': [], 'count': 0, 'timestamp': datetime.now().isoformat(),
+                    'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
+                    'blended_win_rate': None, 'round_actuals': {}
+                }
         if not _results_refreshing:
             threading.Thread(target=_refresh_results_background, daemon=True).start()
-        return jsonify({
-            'results': [],
-            'count': 0,
-            'timestamp': datetime.now().isoformat(),
-            'error': 'loading',
-            'prediction_history': [],
-            'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
-        }), 200
+        
+        # result_source 지정 시: 베팅 사이트와 동일한 결과 소스에서 round_actuals 재조회
+        if result_source:
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(result_source)
+                base = f"{parsed.scheme or 'https'}://{parsed.netloc}" if parsed.netloc else result_source.rstrip('/')
+                results_from_source = load_results_data(base_url=base)
+                if results_from_source and len(results_from_source) >= 16:
+                    ra = _build_round_actuals(_sort_results_newest_first(results_from_source))
+                    payload = dict(payload)
+                    payload['round_actuals'] = ra
+                    payload['result_source_used'] = base
+                    print(f"[API] result_source 적용: {base} → round_actuals {len(ra)}건")
+            except Exception as e:
+                print(f"[API] result_source 조회 실패: {result_source} - {str(e)[:100]}")
+        
+        # 화면 맨 왼쪽 = 최신 회차 보장: 응답 직전에 game_id 기준 내림차순 강제 정렬 (캐시/병합 출처와 무관)
+        if payload and payload.get('results'):
+            payload = dict(payload)
+            payload['results'] = _sort_results_newest_first(list(payload['results']))
+            first_id = (payload['results'][0].get('gameID') if payload['results'] else None)
+            print(f"[API] 응답 결과 수: {len(payload['results'])}개, 맨 앞(최신) gameID: {first_id}")
+        
+        resp = jsonify(payload)
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+        resp.headers['Pragma'] = 'no-cache'
+        return resp
     except Exception as e:
         import traceback
         error_msg = str(e)[:200]
         print(f"[❌ 오류] 결과 로드 실패: {error_msg}")
         print(traceback.format_exc()[:500])
-        return jsonify({
+        err_resp = jsonify({
             'results': [],
             'count': 0,
             'timestamp': datetime.now().isoformat(),
             'error': error_msg,
             'prediction_history': [],
-            'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
-        }), 200
+            'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
+            'blended_win_rate': None,
+            'round_actuals': {}
+        })
+        err_resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+        return err_resp, 200
 
 
 @app.route('/api/calc-state', methods=['GET', 'POST'])
@@ -4966,13 +5454,20 @@ def api_calc_state():
             state = get_calc_state(session_id)
             if state is None:
                 state = {}
-            return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': state}), 200
+            # 계산기 1,2,3만 반환 (레거시 defense 제거 후 클라이언트 호환)
+            _default = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
+            calcs = {}
+            for cid in ('1', '2', '3'):
+                calcs[cid] = state[cid] if (cid in state and isinstance(state.get(cid), dict)) else dict(_default)
+            return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': calcs}), 200
         # POST
         data = request.get_json(force=True, silent=True) or {}
         session_id = (data.get('session_id') or '').strip()
         if not session_id:
             session_id = uuid.uuid4().hex
         calcs = data.get('calcs') or {}
+        # 순익계산기 안정화: 서버에 저장된 history가 더 길면 유지 (클라이언트 덮어쓰기로 누락 방지)
+        current_state = get_calc_state(session_id) or {}
         out = {}
         for cid in ('1', '2', '3'):
             c = calcs.get(cid) or {}
@@ -4981,16 +5476,24 @@ def api_calc_state():
                 started_at = c.get('started_at') or 0
                 if running and not started_at:
                     started_at = server_time
+                client_history = c.get('history') if isinstance(c.get('history'), list) else []
+                current_c = current_state.get(cid) if isinstance(current_state.get(cid), dict) else {}
+                current_history = current_c.get('history') if isinstance(current_c.get('history'), list) else []
+                if len(current_history) > len(client_history):
+                    use_history = current_history
+                else:
+                    use_history = client_history
+                use_history = use_history[-500:] if len(use_history) > 500 else use_history
                 out[cid] = {
                     'running': running,
                     'started_at': started_at,
-                    'history': c.get('history') if isinstance(c.get('history'), list) else [],
+                    'history': use_history,
                     'duration_limit': int(c.get('duration_limit') or 0),
                     'use_duration_limit': bool(c.get('use_duration_limit')),
                     'reverse': bool(c.get('reverse')),
                     'timer_completed': bool(c.get('timer_completed')),
                     'win_rate_reverse': bool(c.get('win_rate_reverse')),
-                    'win_rate_threshold': max(0, min(100, int(c.get('win_rate_threshold') or 50))),
+                    'win_rate_threshold': max(0, min(100, int(c.get('win_rate_threshold') or 46))),
                     'martingale': bool(c.get('martingale')),
                     'martingale_type': str(c.get('martingale_type') or 'pyo'),
                     'target_enabled': bool(c.get('target_enabled')),
@@ -5004,35 +5507,101 @@ def api_calc_state():
                     'pending_color': c.get('pending_color'),
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
-        c = calcs.get('defense') or {}
-        if isinstance(c, dict):
-            running = c.get('running', False)
-            started_at = c.get('started_at') or 0
-            if running and not started_at:
-                started_at = server_time
-            out['defense'] = {
-                'running': running,
-                'started_at': started_at,
-                'history': c.get('history') if isinstance(c.get('history'), list) else [],
-                'duration_limit': int(c.get('duration_limit') or 0),
-                'use_duration_limit': bool(c.get('use_duration_limit')),
-                'timer_completed': bool(c.get('timer_completed')),
-                'linked_calc_id': int(c.get('linked_calc_id') or 1),
-                'full_steps': int(c.get('full_steps') or 3),
-                'reduce_from': int(c.get('reduce_from') or 4),
-                'reduce_div': int(c.get('reduce_div') or 4),
-                'stop_streak': int(c.get('stop_streak') or 0),
-                'max_win_streak_ever': int(c.get('max_win_streak_ever') or 0),
-                'max_lose_streak_ever': int(c.get('max_lose_streak_ever') or 0),
-                'first_bet_round': max(0, int(c.get('first_bet_round') or 0))
-            }
-        else:
-            out['defense'] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'timer_completed': False, 'linked_calc_id': 1, 'full_steps': 3, 'reduce_from': 4, 'reduce_div': 4, 'stop_streak': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
         save_calc_state(session_id, out)
         return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': out}), 200
     except Exception as e:
         return jsonify({'error': str(e)[:200], 'session_id': None, 'server_time': int(time.time()), 'calcs': {}}), 200
+
+
+def _backfill_blended_win_rate(conn):
+    """기존 prediction_history 행 중 blended_win_rate가 null인 행을 과거 이력으로 채움."""
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute('SELECT round_num FROM prediction_history WHERE blended_win_rate IS NULL ORDER BY round_num ASC')
+        null_rounds = [r[0] for r in cur.fetchall()]
+        cur.close()
+        for rn in null_rounds:
+            hist = get_prediction_history_before_round(conn, rn, limit=100)
+            comp = _blended_win_rate_components(hist)
+            if not comp:
+                continue
+            r15, r30, r100, blended = comp
+            cur2 = conn.cursor()
+            cur2.execute('''
+                UPDATE prediction_history SET blended_win_rate = %s, rate_15 = %s, rate_30 = %s, rate_100 = %s WHERE round_num = %s
+            ''', (round(blended, 1), round(r15, 1), round(r30, 1), round(r100, 1), rn))
+            cur2.close()
+        conn.commit()
+    except Exception as e:
+        print(f"[경고] blended_win_rate backfill 실패: {str(e)[:150]}")
+
+
+@app.route('/api/win-rate-buckets', methods=['GET'])
+def api_win_rate_buckets():
+    """합산승률 구간별 승/패 집계. prediction_history의 blended_win_rate 기준 10% 단위 구간. ?backfill=1 시 null 행 보정."""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return jsonify({'buckets': []}), 200
+    try:
+        conn = get_db_connection(statement_timeout_sec=10)
+        if not conn:
+            return jsonify({'buckets': []}), 200
+        if request.args.get('backfill') == '1':
+            _backfill_blended_win_rate(conn)
+        cur = conn.cursor()
+        cur.execute('''
+            SELECT round_num, predicted, actual, blended_win_rate
+            FROM prediction_history
+            WHERE blended_win_rate IS NOT NULL AND actual != 'joker'
+            ORDER BY round_num ASC
+        ''')
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        buckets = {i: {'bucket_min': i * 10, 'bucket_max': i * 10 + 10, 'wins': 0, 'losses': 0} for i in range(10)}
+        for r in rows:
+            b = float(r[3]) if r[3] is not None else None
+            if b is None:
+                continue
+            idx = min(9, max(0, int(b // 10)))
+            win = 1 if r[1] == r[2] else 0
+            buckets[idx]['wins'] += win
+            buckets[idx]['losses'] += (1 - win)
+        out = []
+        for i in range(10):
+            d = buckets[i]
+            total = d['wins'] + d['losses']
+            out.append({
+                'bucket_min': d['bucket_min'],
+                'bucket_max': d['bucket_max'],
+                'wins': d['wins'],
+                'losses': d['losses'],
+                'total': total,
+                'win_pct': round(100 * d['wins'] / total, 1) if total > 0 else None
+            })
+        return jsonify({'buckets': out}), 200
+    except Exception as e:
+        print(f"[❌ 오류] win-rate-buckets 실패: {str(e)[:200]}")
+        return jsonify({'buckets': [], 'error': str(e)[:200]}), 200
+
+
+@app.route('/api/round-prediction', methods=['POST'])
+def api_save_round_prediction():
+    """배팅중(예측) 나올 때마다 회차별로 즉시 저장. round, predicted 필수. pick_color, probability 선택."""
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        round_num = data.get('round')
+        predicted = data.get('predicted')
+        if round_num is None or predicted is None:
+            return jsonify({'ok': False, 'error': 'round, predicted required'}), 400
+        pick_color = data.get('pickColor') or data.get('pick_color')
+        probability = data.get('probability')
+        ok = save_round_prediction(int(round_num), str(predicted), pick_color=pick_color, probability=probability)
+        return jsonify({'ok': ok}), 200
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)[:200]}), 200
 
 
 @app.route('/api/prediction-history', methods=['POST'])
@@ -5047,6 +5616,10 @@ def api_save_prediction_history():
             return jsonify({'ok': False, 'error': 'round, predicted, actual required'}), 400
         probability = data.get('probability')
         pick_color = data.get('pickColor') or data.get('pick_color')
+        if pick_color:
+            s = str(pick_color).strip().upper()
+            if s in ('RED', '빨강'): pick_color = '빨강'
+            elif s in ('BLACK', '검정'): pick_color = '검정'
         ok = save_prediction_record(int(round_num), str(predicted), str(actual), probability=probability, pick_color=pick_color)
         return jsonify({'ok': ok}), 200
     except Exception as e:
@@ -5082,7 +5655,7 @@ def api_current_pick():
         ok = bet_int.set_current_pick(conn, pick_color=pick_color, round_num=round_num, probability=probability, suggested_amount=suggested_amount)
         if ok:
             conn.commit()
-            print(f"[배팅연동] 픽 저장: {pick_color} round {round_num}")
+            _log_when_changed('current_pick', (pick_color, round_num), lambda v: f"[배팅연동] 픽 저장: {v[0]} round {v[1]}")
         conn.close()
         return jsonify({'ok': ok}), 200
     except Exception as e:
@@ -5126,9 +5699,7 @@ def get_current_status():
         # 디버깅: 반환 데이터 확인
         red_count = len(data.get('currentBets', {}).get('red', []))
         black_count = len(data.get('currentBets', {}).get('black', []))
-        print(f"[API 응답] RED: {red_count}명, BLACK: {black_count}명")
-        print(f"[API 응답] 전체 데이터 구조: {list(data.keys())}")
-        print(f"[API 응답] currentBets 키: {list(data.get('currentBets', {}).keys())}")
+        _log_when_changed('current_status', (red_count, black_count), lambda v: f"[API 응답] RED: {v[0]}명, BLACK: {v[1]}명 | 구조: {list(data.keys())}")
         data['server_time'] = int(time.time())  # 계산기 경과시간용
         return jsonify(data), 200
     except Exception as e:
@@ -5215,14 +5786,27 @@ def refresh_data():
     if streaks_data is not None:
         streaks_cache = streaks_data
     if results_data is not None:
-        results_cache = {
-            'results': results_data,
-            'count': len(results_data),
-            'timestamp': datetime.now().isoformat()
-        }
+        # 전체 구조(blended_win_rate 등) 포함해 캐시 갱신
+        payload = _build_results_payload()
+        if payload is not None:
+            results_cache = payload
+        else:
+            # 폴백: 최소 구조 + blended_win_rate + round_actuals
+            ph = get_prediction_history(100)
+            blended = _blended_win_rate(ph)
+            round_actuals = _build_round_actuals(results_data) if results_data else {}
+            results_cache = {
+                'results': results_data,
+                'count': len(results_data),
+                'timestamp': datetime.now().isoformat(),
+                'prediction_history': ph,
+                'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
+                'blended_win_rate': round(blended, 1) if blended is not None else None,
+                'round_actuals': round_actuals
+            }
     if game_data is not None or streaks_data is not None or results_data is not None:
         last_update_time = time.time() * 1000
-    
+
     return jsonify({
         'success': True,
         'gameData': game_data is not None,
