@@ -1,0 +1,11 @@
+# Railway(Nixpacks) 빌드/시작 설정
+# https://docs.railway.com/guides/flask
+
+[phases.setup]
+nixPkgs = ["python311"]
+
+[phases.install]
+cmds = ["pip install -r requirements.txt"]
+
+[start]
+cmd = "gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 30 --keep-alive 5"

@@ -1,6 +1,24 @@
 # Railway 배포 체크리스트
 
-배포가 안 될 때 아래를 순서대로 확인하세요.
+배포가 안 될 때 아래를 **순서대로** 확인하세요.
+
+---
+
+## 🔴 배포가 안 될 때 바로 할 일
+
+1. **Railway 대시보드** → 해당 프로젝트 → **서비스** 클릭
+2. **Settings** 탭에서:
+   - **Root Directory**: **비움** (또는 `.`). `token-hilo-analyzer` 등 서브폴더 이름이 있으면 **지우기**.
+   - **Branch**: **`main`** 인지 확인.
+3. **Deployments** 탭 → **Redeploy** (또는 **Deploy**) 한 번 클릭
+4. 같은 페이지에서 **최신 배포** 클릭 → **View Logs**:
+   - **Build** 로그: `pip install` 실패, Python 버전 에러가 있는지 확인
+   - **Deploy** 로그: 앱이 시작됐는지, 크래시 메시지가 있는지 확인
+5. **Variables** 탭: `DATABASE_URL` 등 필수 환경 변수 있는지 확인 (없으면 앱이 시작 시 크래시할 수 있음)
+
+로그에 나온 **에러 메시지**를 보고 아래 "자주 나오는 에러"에서 맞는 항목을 찾아 수정하세요.
+
+---
 
 ## ⚠️ 먼저 확인 (이걸 잘못 쓰면 푸시해도 배포 안 됨)
 
@@ -29,6 +47,18 @@
 
 ## 4. 환경 변수
 - **Variables** 탭에서 `DATABASE_URL` 등 필요한 환경 변수가 설정되어 있는지 확인 (`.env.example` 참고)
+
+---
+
+## 자주 나오는 에러와 대처
+
+| 로그/증상 | 원인 | 대처 |
+|-----------|------|------|
+| `No such file or directory`, `app.py` 못 찾음 | Root Directory가 잘못됨 | Settings → Root Directory **비우기** |
+| Build 실패, `requirements.txt` 없음 | 루트가 아님 | 위와 동일, Root Directory 비우기 |
+| `pip install` 실패 (psycopg2 등) | 빌드 환경 문제 | Railway가 제공하는 Python 런타임 사용 중이면 대부분 해결됨. `runtime.txt`에 `python-3.11.9` 있음 확인 |
+| Deploy 후 바로 크래시 | 앱 시작 시 예외 (DB 연결 등) | Variables에 `DATABASE_URL` 설정. View Logs에서 Python traceback 확인 |
+| 헬스체크 실패 / 배포 실패 | 앱이 100초 안에 `/health` 200을 안 줌 | 앱이 정상 기동하는지 로그로 확인. DB 등 의존성 때문에 늦게 뜨면 Variables·네트워크 확인 |
 
 ---
 
