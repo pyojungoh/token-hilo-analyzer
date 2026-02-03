@@ -1819,11 +1819,11 @@ if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
     _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=2, id='fetch_results', max_instances=1)
     def _start_scheduler_delayed():
-        time.sleep(45)
+        time.sleep(25)
         _scheduler.start()
         print("[✅] 결과 수집 스케줄러 시작 (2초마다, 예측픽 선제적 갱신)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
-    print("[⏳] 스케줄러는 45초 후 시작 (헬스체크 통과 후)")
+    print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:
     print("[⚠] APScheduler 미설치 - 결과 수집은 브라우저 요청 시에만 동작합니다. pip install APScheduler")
 
@@ -5024,6 +5024,7 @@ RESULTS_HTML = '''
         let timerData = { elapsed: 0, lastFetch: 0, round: 0, serverTime: 0 };
         let lastResultsUpdate = 0;
         let lastTimerUpdate = Date.now();
+        var remainingSecForPoll = 10;  // 10초 경기용: 라운드 종료 직전/직후 폴링 간격 조절
         async function updateTimer() {
             try {
                 const now = Date.now();
@@ -5032,10 +5033,11 @@ RESULTS_HTML = '''
                 if (!timeElement) {
                     return;
                 }
-                // 클라이언트 측 남은 시간 (폴링 간격·결과 새로고침 판단용)
+                // 클라이언트 측 남은 시간 (폴링 간격·결과 새로고침 판단용). 10초 경기 기준
                 const timeDiff = (now - timerData.serverTime) / 1000;
                 const currentElapsed = Math.max(0, timerData.elapsed + timeDiff);
                 const remaining = Math.max(0, 10 - currentElapsed);
+                remainingSecForPoll = remaining;
                 // 라운드 종료 직전/직후에는 더 자주 폴링 (다음 픽을 빨리 보여주기)
                 const nearEnd = remaining < 3;
                 const fetchInterval = nearEnd ? 300 : 500;
@@ -5075,8 +5077,7 @@ RESULTS_HTML = '''
                             const roundStarted = prevElapsed < 1 && data.elapsed > 9;
                             
                             if (roundChanged || roundEnded || roundStarted) {
-                                console.log('라운드 변경 감지:', { roundChanged, roundEnded, roundStarted, prevRound, newRound: timerData.round, prevElapsed, newElapsed: data.elapsed });
-                                if (now - lastResultsUpdate > 800) { loadResults(); lastResultsUpdate = now; }
+                                if (now - lastResultsUpdate > 500) { loadResults(); lastResultsUpdate = now; }
                             }
                             // updateBettingInfo는 별도로 실행하므로 여기서 제거
                         }
@@ -5097,12 +5098,12 @@ RESULTS_HTML = '''
                     timeElement.classList.add('warning');
                 }
                 
-                // 타이머가 거의 0이 되면 결과 한 번만 요청 (반복 호출로 pending 폭증 방지)
-                if (remaining <= 1.5 && now - lastResultsUpdate > 1000) {
+                // 타이머가 거의 0이 되면 결과 요청 (10초 경기: 새 결과·예측픽 빨리 표시)
+                if (remaining <= 1.5 && now - lastResultsUpdate > 500) {
                     loadResults();
                     lastResultsUpdate = now;
                 }
-                if (remaining <= 0 && now - lastResultsUpdate > 1000) {
+                if (remaining <= 0 && now - lastResultsUpdate > 500) {
                     loadResults();
                     lastResultsUpdate = now;
                 }
@@ -5131,9 +5132,11 @@ RESULTS_HTML = '''
         
         initialLoad();
         
-        // 결과 폴링: 예측픽 더 빨리 나오게 간격 단축 (서버 부하 고려해 0.9초)
+        // 결과 폴링: 10초 경기 기준. 종료 직전(3초 이하)·시작 직후(8초 이상) 0.4초, 그 외 0.5초
         setInterval(() => {
-            const interval = allResults.length === 0 ? 500 : 900;
+            const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
+            const criticalPhase = r <= 3 || r >= 8;
+            const interval = allResults.length === 0 ? 500 : (criticalPhase ? 400 : 500);
             if (Date.now() - lastResultsUpdate > interval) {
                 loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
             }
