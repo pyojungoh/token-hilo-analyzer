@@ -586,6 +586,38 @@ def _prediction_history_has_round(round_num):
         return False
 
 
+def get_stored_round_prediction(round_num):
+    """해당 회차에 대해 round_predictions에 저장된 예측이 있으면 반환. 한 출처(서버 저장)로 안정화용."""
+    if not DB_AVAILABLE or not DATABASE_URL or round_num is None:
+        return None
+    conn = get_db_connection(statement_timeout_sec=3)
+    if not conn:
+        return None
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            'SELECT predicted, pick_color, probability FROM round_predictions WHERE round_num = %s LIMIT 1',
+            (int(round_num),)
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not row:
+            return None
+        return {
+            'predicted': str(row[0]) if row[0] else None,
+            'pick_color': str(row[1]).strip() if row[1] else None,
+            'probability': float(row[2]) if row[2] is not None else None,
+        }
+    except Exception as e:
+        print(f"[경고] get_stored_round_prediction 조회 실패: {str(e)[:100]}")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return None
+
+
 def save_round_prediction(round_num, predicted, pick_color=None, probability=None):
     """배팅중(예측) 나올 때마다 회차별로 즉시 저장. 결과 나오면 prediction_history로 머지됨."""
     if not DB_AVAILABLE or not DATABASE_URL or round_num is None or predicted is None:
@@ -3893,12 +3925,21 @@ RESULTS_HTML = '''
                         const card15 = displayResults.length >= 15 ? parseCardValue(displayResults[14].result || '') : null;
                         const is15Red = card15 ? card15.isRed : false;
                         colorToPick = predict === '정' ? (is15Red ? '빨강' : '검정') : (is15Red ? '검정' : '빨강');
-                        if (!lastServerPrediction) {
-                            lastPrediction = { value: predict, round: predictedRoundFull, prob: predProb, color: colorToPick };
-                            setRoundPrediction(predictedRoundFull, lastPrediction);
-                            fetch('/api/round-prediction', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ round: predictedRoundFull, predicted: predict, pickColor: colorToPick, probability: predProb }) }).catch(function() {});
-                        }
+                        // 한 출처: lastPrediction은 서버(loadResults 응답)에서만 설정. 클라이언트 계산으로 덮어쓰지 않음 (깜빡임 방지).
                         colorClass = colorToPick === '빨강' ? 'red' : 'black';
+                    }
+                    // 표시용 픽/색은 서버 출처(lastPrediction)만 사용. 없으면 보류.
+                    if (lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) {
+                        predict = lastPrediction.value;
+                        predProb = (lastPrediction.prob != null && !isNaN(lastPrediction.prob)) ? lastPrediction.prob : predProb;
+                        var serverColor = normalizePickColor(lastPrediction.color);
+                        colorToPick = (serverColor === '빨강' || serverColor === '검정') ? serverColor : (lastPrediction.value === '정' ? '빨강' : '검정');
+                        colorClass = colorToPick === '빨강' ? 'red' : 'black';
+                    } else {
+                        predict = '보류';
+                        colorToPick = '-';
+                        colorClass = 'black';
+                        predProb = 0;
                     }
                     
                     // 연승/연패: 표 형식. 최신 회차가 가장 왼쪽 (reverse). 무효 항목 제외해 먹통 방지
@@ -3987,8 +4028,9 @@ RESULTS_HTML = '''
                         const total = inBucket.length;
                         return { label: b.min + '~' + (b.max === 101 ? '100' : b.max) + '%', total: total, wins: wins, pct: total > 0 ? (100 * wins / total).toFixed(1) : '-', min: b.min, max: b.max };
                     }).filter(function(s) { return s.total > 0; });
-                    // 기존 확률에 30% 반영 (blendData는 전이 확률 표에서 계산됨)
-                    if (blendData && blendData.newProb != null && !is15Joker) predProb = 0.7 * predProb + 0.3 * blendData.newProb;
+                    // 기존 확률에 30% 반영 (blendData는 전이 확률 표에서 계산됨). 한 출처: 서버 픽 표시 중일 때는 서버 확률 유지.
+                    var usingServerPick = lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽');
+                    if (blendData && blendData.newProb != null && !is15Joker && !usingServerPick) predProb = 0.7 * predProb + 0.3 * blendData.newProb;
                     // 깜빡임: 예측픽 확률이 "승률 상위 2개 구간" 안에 있을 때만 (나올 확률 높은 게 아니라, 그 구간이 실제로 많이 이긴 구간일 때만)
                     var pickInBucket = false;
                     if (!is15Joker && predProb != null && bucketStats.length > 0) {
@@ -4016,35 +4058,37 @@ RESULTS_HTML = '''
                     const pickWrapClass = 'prediction-pick' + (pickInBucket ? ' pick-in-bucket' : '');
                     if (resultBarContainer) resultBarContainer.innerHTML = resultBarHtml;
                     const u35WarningBlock = lastWarningU35 ? ('<div class="prediction-warning-u35">⚠ U자+줄 3~5 구간 · 줄(유지) 보정 적용</div>') : '';
-                    const roundIconMain = getRoundIcon(predictedRoundFull);
-                    const leftBlock = is15Joker ? ('<div class="prediction-pick">' +
+                    const displayRoundNum = (lastPrediction && lastPrediction.round) ? lastPrediction.round : predictedRoundFull;
+                    const roundIconMain = getRoundIcon(displayRoundNum);
+                    const showHold = is15Joker || predict === '보류';
+                    const leftBlock = showHold ? ('<div class="prediction-pick">' +
                         '<div class="prediction-pick-title">예측 픽</div>' +
                         '<div class="prediction-card" style="background:#455a64;border-color:#78909c">' +
                         '<span class="pred-value-big" style="color:#fff;font-size:1.2em">보류</span>' +
                         '</div>' +
-                        '<div class="prediction-prob-under" style="color:#ffb74d">15번 카드 조커 · 배팅하지 마세요</div>' +
-                        '<div class="pred-round">' + displayRound(predictedRoundFull) + '회 ' + roundIconMain + '</div>' +
+                        '<div class="prediction-prob-under" style="color:#ffb74d">' + (is15Joker ? '15번 카드 조커 · 배팅하지 마세요' : '서버 예측 대기 중') + '</div>' +
+                        '<div class="pred-round">' + displayRound(displayRoundNum) + '회 ' + roundIconMain + '</div>' +
                         '</div>') : ('<div class="' + pickWrapClass + '">' +
                         '<div class="prediction-pick-title prediction-pick-title-betting">배팅중<br>' + (colorToPick === '빨강' ? 'RED' : 'BLACK') + '</div>' +
                         '<div class="prediction-card card-' + colorClass + '">' +
                         '<span class="pred-value-big">' + predict + '</span>' +
                         '</div>' +
                         '<div class="prediction-prob-under">예측 확률 ' + predProb.toFixed(1) + '%</div>' +
-                        '<div class="pred-round">' + displayRound(predictedRoundFull) + '회 ' + roundIconMain + '</div>' +
+                        '<div class="pred-round">' + displayRound(displayRoundNum) + '회 ' + roundIconMain + '</div>' +
                         u35WarningBlock +
                         '</div>');
                     if (pickContainer) pickContainer.innerHTML = leftBlock;
-                    // 배팅 연동: 현재 픽을 서버에 저장 (GET /api/current-pick 으로 외부 조회 가능)
+                    // 배팅 연동: 현재 픽을 서버에 저장 (GET /api/current-pick 으로 외부 조회 가능). 한 출처(lastPrediction)만 반영.
                     try {
-                        if (is15Joker) {
-                            fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pickColor: null, round: predictedRoundFull, probability: null }) }).catch(function() {});
+                        if (is15Joker || predict === '보류') {
+                            fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pickColor: null, round: displayRoundNum, probability: null }) }).catch(function() {});
                         } else if (lastPrediction && (colorToPick === '빨강' || colorToPick === '검정')) {
                             fetch('/api/current-pick', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
                                     pickColor: colorToPick === '빨강' ? 'RED' : 'BLACK',
-                                    round: predictedRoundFull,
+                                    round: displayRoundNum,
                                     probability: predProb
                                 })
                             }).catch(function() {});
@@ -4888,9 +4932,30 @@ def _build_results_payload_db_only(hours=1):
         round_actuals = _build_round_actuals(results)
         _merge_round_predictions_into_history(round_actuals)
         ph = get_prediction_history(100)
-        server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
-        if server_pred and server_pred.get('round') and server_pred.get('value'):
-            save_round_prediction(server_pred['round'], server_pred['value'], pick_color=server_pred.get('color'), probability=server_pred.get('prob'))
+        # 한 출처: 해당 회차에 저장된 예측이 있으면 그대로 사용 (깜빡임 방지)
+        server_pred = None
+        if len(results) >= 16:
+            try:
+                latest_gid = results[0].get('gameID')
+                predicted_round = int(str(latest_gid or '0'), 10) + 1
+                is_15_joker = len(results) >= 15 and bool(results[14].get('joker'))
+                if not is_15_joker:
+                    stored = get_stored_round_prediction(predicted_round)
+                    if stored and stored.get('predicted'):
+                        server_pred = {
+                            'value': stored['predicted'], 'round': predicted_round,
+                            'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
+                            'warning_u35': False,
+                        }
+                if server_pred is None:
+                    server_pred = compute_prediction(results, ph)
+                    if server_pred and server_pred.get('round') and server_pred.get('value'):
+                        save_round_prediction(server_pred['round'], server_pred['value'], pick_color=server_pred.get('color'), probability=server_pred.get('prob'))
+            except Exception as e:
+                print(f"[API] server_pred 구성 오류: {str(e)[:100]}")
+                server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
+        if server_pred is None:
+            server_pred = {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
         blended = _blended_win_rate(ph)
         return {
             'results': results,
@@ -5034,9 +5099,30 @@ def _build_results_payload():
             round_actuals = _build_round_actuals(results)
             _merge_round_predictions_into_history(round_actuals)
             ph = get_prediction_history(100)
-            server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
-            if server_pred and server_pred.get('round') and server_pred.get('value'):
-                save_round_prediction(server_pred['round'], server_pred['value'], pick_color=server_pred.get('color'), probability=server_pred.get('prob'))
+            # 한 출처: 해당 회차에 저장된 예측이 있으면 그대로 사용 (깜빡임 방지)
+            server_pred = None
+            if len(results) >= 16:
+                try:
+                    latest_gid = results[0].get('gameID')
+                    predicted_round = int(str(latest_gid or '0'), 10) + 1
+                    is_15_joker = len(results) >= 15 and bool(results[14].get('joker'))
+                    if not is_15_joker:
+                        stored = get_stored_round_prediction(predicted_round)
+                        if stored and stored.get('predicted'):
+                            server_pred = {
+                                'value': stored['predicted'], 'round': predicted_round,
+                                'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
+                                'warning_u35': False,
+                            }
+                    if server_pred is None:
+                        server_pred = compute_prediction(results, ph)
+                        if server_pred and server_pred.get('round') and server_pred.get('value'):
+                            save_round_prediction(server_pred['round'], server_pred['value'], pick_color=server_pred.get('color'), probability=server_pred.get('prob'))
+                except Exception as e:
+                    print(f"[API] server_pred 구성 오류: {str(e)[:100]}")
+                    server_pred = compute_prediction(results, ph)
+            if server_pred is None:
+                server_pred = {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
             blended = _blended_win_rate(ph)
             return {
                 'results': results,
@@ -5083,7 +5169,25 @@ def _build_results_payload():
                             results[i]['colorMatch'] = None
             
             ph = get_prediction_history(100)
-            server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
+            # 한 출처: 해당 회차에 저장된 예측이 있으면 그대로 사용 (DB 없을 때는 매번 계산)
+            server_pred = None
+            if len(results) >= 16 and DB_AVAILABLE and DATABASE_URL:
+                try:
+                    latest_gid = results[0].get('gameID')
+                    predicted_round = int(str(latest_gid or '0'), 10) + 1
+                    is_15_joker = len(results) >= 15 and bool(results[14].get('joker'))
+                    if not is_15_joker:
+                        stored = get_stored_round_prediction(predicted_round)
+                        if stored and stored.get('predicted'):
+                            server_pred = {
+                                'value': stored['predicted'], 'round': predicted_round,
+                                'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
+                                'warning_u35': False,
+                            }
+                except Exception as e:
+                    print(f"[API] server_pred 구성 오류: {str(e)[:100]}")
+            if server_pred is None:
+                server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
             blended = _blended_win_rate(ph)
             round_actuals = _build_round_actuals(results)
             return {
