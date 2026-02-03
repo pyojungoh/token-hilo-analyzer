@@ -1636,10 +1636,10 @@ def ensure_database_initialized():
         print(f"[❌ 오류] 트레이스백:\n{traceback.format_exc()}")
         return False
 
-# 모듈 로드 시 DB 초기화는 백그라운드 스레드에서 (앱 시작 블로킹 방지)
+# 모듈 로드 시 DB 초기화는 백그라운드 스레드에서 (앱 시작 블로킹 방지). 헬스체크 통과 후 실행
 def _run_db_init():
     try:
-        time.sleep(1)
+        time.sleep(20)
         ensure_database_initialized()
     except Exception as e:
         print(f"[❌ 오류] DB 초기화 실패: {str(e)}")
@@ -1786,11 +1786,11 @@ if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
     _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=2, id='fetch_results', max_instances=1)
     def _start_scheduler_delayed():
-        time.sleep(25)
+        time.sleep(45)
         _scheduler.start()
         print("[✅] 결과 수집 스케줄러 시작 (2초마다, 예측픽 선제적 갱신)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
-    print("[⏳] 스케줄러는 25초 후 시작 (헬스체크 통과 후)")
+    print("[⏳] 스케줄러는 45초 후 시작 (헬스체크 통과 후)")
 else:
     print("[⚠] APScheduler 미설치 - 결과 수집은 브라우저 요청 시에만 동작합니다. pip install APScheduler")
 
