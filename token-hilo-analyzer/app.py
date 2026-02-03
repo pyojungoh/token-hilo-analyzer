@@ -2980,6 +2980,8 @@ RESULTS_HTML = '''
         var lastIs15Joker = false;  // 15번 카드 조커 여부 (계산기 예측픽에 보류 반영용)
         var roundPredictionBuffer = {};   // 회차별 예측 저장 (표 충돌 방지: 결과 반영 시 해당 회차만 조회)
         var ROUND_PREDICTION_BUFFER_MAX = 50;
+        var savedBetPickByRound = {};     // 배팅중 카드 그릴 때 걸은 픽 저장 (표에 넣을 때 이 값 사용 → 예측픽/재계산과 충돌 방지)
+        var SAVED_BET_PICK_MAX = 50;
         function setRoundPrediction(round, pred) {
             if (round == null || !pred) return;
             roundPredictionBuffer[String(round)] = { value: pred.value, round: round, prob: pred.prob != null ? pred.prob : 0, color: pred.color || null };
@@ -3630,16 +3632,23 @@ RESULTS_HTML = '''
                                 if (firstBetJoker > 0 && currentRoundNum < firstBetJoker) return;
                                 const hasRound = calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; });
                                 if (hasRound) return;
-                                const rev = !!(calcState[id] && calcState[id].reverse);
-                                var pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
-                                const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
-                                var thrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
-                                var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
-                                if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
-                                if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
-                                var betColor = normalizePickColor(predForRound.color);
-                                if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
-                                if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                var pred, betColor;
+                                var saved = savedBetPickByRound[currentRoundNum];
+                                if (saved && (saved.value === '정' || saved.value === '꺽')) {
+                                    pred = saved.value;
+                                    betColor = saved.isRed ? '빨강' : '검정';
+                                } else {
+                                    const rev = !!(calcState[id] && calcState[id].reverse);
+                                    pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
+                                    const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
+                                    var thrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
+                                    var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
+                                    if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
+                                    if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
+                                    betColor = normalizePickColor(predForRound.color);
+                                    if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                    if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                }
                                 calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null });
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
@@ -3655,16 +3664,23 @@ RESULTS_HTML = '''
                                 if (firstBetActual > 0 && currentRoundNum < firstBetActual) return;
                                 const hasRound = calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; });
                                 if (hasRound) return;
-                                const rev = !!(calcState[id] && calcState[id].reverse);
-                                var pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
-                                const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
-                                var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
-                                var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
-                                if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
-                                if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
-                                var betColorActual = normalizePickColor(predForRound.color);
-                                if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
-                                if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                var pred, betColorActual;
+                                var saved = savedBetPickByRound[currentRoundNum];
+                                if (saved && (saved.value === '정' || saved.value === '꺽')) {
+                                    pred = saved.value;
+                                    betColorActual = saved.isRed ? '빨강' : '검정';
+                                } else {
+                                    const rev = !!(calcState[id] && calcState[id].reverse);
+                                    pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
+                                    const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
+                                    var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
+                                    var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
+                                    if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
+                                    if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
+                                    betColorActual = normalizePickColor(predForRound.color);
+                                    if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                    if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                }
                                 calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null });
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + currentRoundFull + '_' + actual;
@@ -3699,16 +3715,23 @@ RESULTS_HTML = '''
                                 const firstBetJoker = calcState[id].first_bet_round || 0;
                                 if (firstBetJoker > 0 && currentRoundNum < firstBetJoker) return;
                                 if (calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) return;
-                                const rev = !!(calcState[id] && calcState[id].reverse);
-                                var pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
-                                const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
-                                var thrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
-                                var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
-                                if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
-                                if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
-                                var betColor = normalizePickColor(predForRound.color);
-                                if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
-                                if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                var pred, betColor;
+                                var saved = savedBetPickByRound[currentRoundNum];
+                                if (saved && (saved.value === '정' || saved.value === '꺽')) {
+                                    pred = saved.value;
+                                    betColor = saved.isRed ? '빨강' : '검정';
+                                } else {
+                                    const rev = !!(calcState[id] && calcState[id].reverse);
+                                    pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
+                                    const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
+                                    var thrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
+                                    var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
+                                    if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
+                                    if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
+                                    betColor = normalizePickColor(predForRound.color);
+                                    if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                    if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                }
                                 calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null });
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
@@ -3722,16 +3745,23 @@ RESULTS_HTML = '''
                                 const firstBetActual = calcState[id].first_bet_round || 0;
                                 if (firstBetActual > 0 && currentRoundNum < firstBetActual) return;
                                 if (calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) return;
-                                const rev = !!(calcState[id] && calcState[id].reverse);
-                                var pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
-                                const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
-                                var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
-                                var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
-                                if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
-                                if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
-                                var betColorActual = normalizePickColor(predForRound.color);
-                                if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
-                                if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                var pred, betColorActual;
+                                var saved = savedBetPickByRound[currentRoundNum];
+                                if (saved && (saved.value === '정' || saved.value === '꺽')) {
+                                    pred = saved.value;
+                                    betColorActual = saved.isRed ? '빨강' : '검정';
+                                } else {
+                                    const rev = !!(calcState[id] && calcState[id].reverse);
+                                    pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
+                                    const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
+                                    var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
+                                    var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
+                                    if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
+                                    if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
+                                    betColorActual = normalizePickColor(predForRound.color);
+                                    if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                    if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                }
                                 calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null });
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + currentRoundFull + '_' + actual;
@@ -4509,6 +4539,11 @@ RESULTS_HTML = '''
                         bettingCardEl.textContent = bettingText;
                         bettingCardEl.className = 'calc-current-card calc-card-betting card-' + (bettingIsRed ? 'jung' : 'kkuk');
                         bettingCardEl.title = '';
+                        if (lastPrediction && lastPrediction.round != null) {
+                            savedBetPickByRound[Number(lastPrediction.round)] = { value: bettingText, isRed: bettingIsRed };
+                            var sbKeys = Object.keys(savedBetPickByRound).map(Number).filter(function(k) { return !isNaN(k); }).sort(function(a,b) { return a - b; });
+                            while (sbKeys.length > SAVED_BET_PICK_MAX) { delete savedBetPickByRound[sbKeys.shift()]; }
+                        }
                         }
                     } else {
                         if (bettingRoundEl) bettingRoundEl.textContent = '';
@@ -4821,7 +4856,7 @@ RESULTS_HTML = '''
             });
         });
         document.querySelectorAll('.calc-reset').forEach(btn => {
-            btn.addEventListener('click', function() {
+            btn.addEventListener('click', async function() {
                 const rawId = this.getAttribute('data-calc');
                 const id = parseInt(rawId, 10);
                 if (!CALC_IDS.includes(id)) return;
@@ -4840,7 +4875,7 @@ RESULTS_HTML = '''
                 state.pending_predicted = null;
                 state.pending_prob = null;
                 state.pending_color = null;
-                saveCalcStateToServer();
+                await saveCalcStateToServer();
                 updateCalcSummary(id);
                 updateCalcDetail(id);
                 updateCalcStatus(id);
