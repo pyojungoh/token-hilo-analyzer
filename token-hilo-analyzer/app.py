@@ -486,11 +486,15 @@ def _blended_win_rate_components(prediction_history):
 
 
 def _apply_results_to_calcs(results):
-    """결과 수집 후 실행 중인 계산기 회차 반영: pending_round 결과 있으면 history 반영 후 다음 예측으로 갱신."""
+    """결과 수집 후 실행 중인 계산기 회차 반영: pending_round 결과 있으면 history 반영 후 다음 예측으로 갱신.
+    안정화: pending_*는 저장된 예측(round_predictions)만 사용. 저장은 스케줄러 ensure_stored에서만."""
     if not results or len(results) < 16:
         return
     try:
-        ph = get_prediction_history(100)
+        latest_gid = results[0].get('gameID')
+        predicted_round = int(str(latest_gid or '0'), 10) + 1
+        stored_for_round = get_stored_round_prediction(predicted_round) if predicted_round else None
+
         session_ids = _get_all_calc_session_ids()
         for session_id in session_ids:
             state = get_calc_state(session_id)
@@ -504,12 +508,11 @@ def _apply_results_to_calcs(results):
                 pending_round = c.get('pending_round')
                 pending_predicted = c.get('pending_predicted')
                 if pending_round is None or pending_predicted is None:
-                    pred = compute_prediction(results, ph)
-                    if pred.get('round') and pred.get('value') is not None:
-                        c['pending_round'] = pred['round']
-                        c['pending_predicted'] = pred['value']
-                        c['pending_prob'] = pred.get('prob')
-                        c['pending_color'] = pred.get('color')
+                    if stored_for_round and stored_for_round.get('predicted'):
+                        c['pending_round'] = predicted_round
+                        c['pending_predicted'] = stored_for_round['predicted']
+                        c['pending_prob'] = stored_for_round.get('probability')
+                        c['pending_color'] = stored_for_round.get('pick_color')
                         updated = True
                     continue
                 actual = _get_actual_for_round(results, pending_round)
@@ -530,13 +533,12 @@ def _apply_results_to_calcs(results):
                 if c.get('win_rate_reverse') and blended is not None and blended <= thr:
                     pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
                 c['history'] = (c.get('history') or []) + [{'round': pending_round, 'predicted': pred_for_calc, 'actual': actual}]
-                ph = get_prediction_history(100)
-                next_pred = compute_prediction(results, ph)
-                c['pending_round'] = next_pred.get('round')
-                c['pending_predicted'] = next_pred.get('value')
-                c['pending_prob'] = next_pred.get('prob')
-                c['pending_color'] = next_pred.get('color')
-                updated = True
+                if stored_for_round and stored_for_round.get('predicted'):
+                    c['pending_round'] = predicted_round
+                    c['pending_predicted'] = stored_for_round['predicted']
+                    c['pending_prob'] = stored_for_round.get('probability')
+                    c['pending_color'] = stored_for_round.get('pick_color')
+                    updated = True
             if updated:
                 save_calc_state(session_id, state)
     except Exception as e:
@@ -618,6 +620,29 @@ def get_stored_round_prediction(round_num):
         return None
 
 
+def ensure_stored_prediction_for_current_round(results):
+    """현재 회차에 대한 예측이 round_predictions에 없으면 한 번만 계산·저장. 스케줄러에서만 호출(저장은 한 곳)."""
+    if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
+        return
+    try:
+        latest_gid = results[0].get('gameID')
+        predicted_round = int(str(latest_gid or '0'), 10) + 1
+        is_15_joker = len(results) >= 15 and bool(results[14].get('joker'))
+        if is_15_joker:
+            return
+        if get_stored_round_prediction(predicted_round):
+            return
+        ph = get_prediction_history(100)
+        pred = compute_prediction(results, ph)
+        if pred and pred.get('round') and pred.get('value') is not None:
+            save_round_prediction(
+                pred['round'], pred['value'],
+                pick_color=pred.get('color'), probability=pred.get('prob')
+            )
+    except Exception as e:
+        print(f"[경고] ensure_stored_prediction_for_current_round 실패: {str(e)[:120]}")
+
+
 def save_round_prediction(round_num, predicted, pick_color=None, probability=None):
     """배팅중(예측) 나올 때마다 회차별로 즉시 저장. 결과 나오면 prediction_history로 머지됨."""
     if not DB_AVAILABLE or not DATABASE_URL or round_num is None or predicted is None:
@@ -630,11 +655,11 @@ def save_round_prediction(round_num, predicted, pick_color=None, probability=Non
         pick_color = str(pick_color).strip() if pick_color else None
         if pick_color:
             pick_color = '빨강' if pick_color.upper() in ('RED', '빨강') else '검정' if pick_color.upper() in ('BLACK', '검정') else pick_color
+        # 안정화: 이미 저장된 회차는 덮어쓰지 않음. 첫 저장(스케줄러)만 유지.
         cur.execute('''
             INSERT INTO round_predictions (round_num, predicted, pick_color, probability)
             VALUES (%s, %s, %s, %s)
-            ON CONFLICT (round_num) DO UPDATE SET predicted = EXCLUDED.predicted, pick_color = EXCLUDED.pick_color,
-                probability = EXCLUDED.probability, created_at = DEFAULT
+            ON CONFLICT (round_num) DO NOTHING
         ''', (int(round_num), str(predicted), pick_color, float(probability) if probability is not None else None))
         conn.commit()
         cur.close()
@@ -1744,12 +1769,13 @@ def load_results_data(base_url=None):
 
 
 def _scheduler_fetch_results():
-    """스케줄러에서 호출: results_cache 갱신 + DB 저장 + 실행 중인 계산기 회차 반영 + prediction_history 누락 보정."""
+    """스케줄러에서 호출: results_cache 갱신 + DB 저장 + 현재 회차 예측 1회 저장(한 곳) + 계산기 회차 반영 + prediction_history 누락 보정."""
     try:
         _refresh_results_background()
         if DB_AVAILABLE and DATABASE_URL:
             results = get_recent_results(hours=1)
             if results and len(results) >= 16:
+                ensure_stored_prediction_for_current_round(results)
                 _apply_results_to_calcs(results)
                 _backfill_latest_round_to_prediction_history(results)
     except Exception as e:
@@ -4932,7 +4958,7 @@ def _build_results_payload_db_only(hours=1):
         round_actuals = _build_round_actuals(results)
         _merge_round_predictions_into_history(round_actuals)
         ph = get_prediction_history(100)
-        # 한 출처: 해당 회차에 저장된 예측이 있으면 그대로 사용 (깜빡임 방지)
+        # 안정화: 서버에 저장된 예측만 불러옴. 계산/저장은 스케줄러에서만(ensure_stored_prediction_for_current_round).
         server_pred = None
         if len(results) >= 16:
             try:
@@ -4947,15 +4973,10 @@ def _build_results_payload_db_only(hours=1):
                             'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
                             'warning_u35': False,
                         }
-                if server_pred is None:
-                    server_pred = compute_prediction(results, ph)
-                    if server_pred and server_pred.get('round') and server_pred.get('value'):
-                        save_round_prediction(server_pred['round'], server_pred['value'], pick_color=server_pred.get('color'), probability=server_pred.get('prob'))
             except Exception as e:
-                print(f"[API] server_pred 구성 오류: {str(e)[:100]}")
-                server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
+                print(f"[API] server_pred 조회 오류: {str(e)[:100]}")
         if server_pred is None:
-            server_pred = {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
+            server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False}
         blended = _blended_win_rate(ph)
         return {
             'results': results,
@@ -5099,7 +5120,7 @@ def _build_results_payload():
             round_actuals = _build_round_actuals(results)
             _merge_round_predictions_into_history(round_actuals)
             ph = get_prediction_history(100)
-            # 한 출처: 해당 회차에 저장된 예측이 있으면 그대로 사용 (깜빡임 방지)
+            # 안정화: 서버에 저장된 예측만 불러옴. 계산/저장은 스케줄러에서만.
             server_pred = None
             if len(results) >= 16:
                 try:
@@ -5114,15 +5135,10 @@ def _build_results_payload():
                                 'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
                                 'warning_u35': False,
                             }
-                    if server_pred is None:
-                        server_pred = compute_prediction(results, ph)
-                        if server_pred and server_pred.get('round') and server_pred.get('value'):
-                            save_round_prediction(server_pred['round'], server_pred['value'], pick_color=server_pred.get('color'), probability=server_pred.get('prob'))
                 except Exception as e:
-                    print(f"[API] server_pred 구성 오류: {str(e)[:100]}")
-                    server_pred = compute_prediction(results, ph)
+                    print(f"[API] server_pred 조회 오류: {str(e)[:100]}")
             if server_pred is None:
-                server_pred = {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
+                server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False}
             blended = _blended_win_rate(ph)
             return {
                 'results': results,
