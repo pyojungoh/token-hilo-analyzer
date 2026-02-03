@@ -3111,10 +3111,15 @@ RESULTS_HTML = '''
             var byRound = {};
             for (var i = 0; i < hist.length; i++) {
                 var h = hist[i];
-                if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                if (!h || typeof h.predicted === 'undefined') continue;
                 var rn = h.round != null ? Number(h.round) : NaN;
                 if (isNaN(rn)) continue;
-                byRound[rn] = h;
+                var existing = byRound[rn];
+                var merged = existing ? Object.assign({}, existing, h) : Object.assign({}, h);
+                if ((!merged.pickColor || merged.pickColor === '') && existing && (existing.pickColor || existing.pick_color)) {
+                    merged.pickColor = existing.pickColor || existing.pick_color;
+                }
+                byRound[rn] = merged;
             }
             var rounds = Object.keys(byRound).map(Number).sort(function(a, b) { return a - b; });
             return rounds.map(function(r) { return byRound[r]; });
@@ -3667,8 +3672,6 @@ RESULTS_HTML = '''
                                 if (!calcState[id].running) return;
                                 const firstBetJoker = calcState[id].first_bet_round || 0;
                                 if (firstBetJoker > 0 && currentRoundNum < firstBetJoker) return;
-                                const hasRound = calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; });
-                                if (hasRound) return;
                                 var pred, betColor;
                                 var saved = savedBetPickByRound[Number(currentRoundNum)];
                                 if (saved && (saved.value === '정' || saved.value === '꺽')) {
@@ -3686,7 +3689,14 @@ RESULTS_HTML = '''
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
                                 }
-                                calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null });
+                                var pendingIdx = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
+                                if (pendingIdx >= 0) {
+                                    calcState[id].history[pendingIdx].actual = 'joker';
+                                    calcState[id].history[pendingIdx].predicted = pred;
+                                    calcState[id].history[pendingIdx].pickColor = betColor || null;
+                                } else {
+                                    calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null });
+                                }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
                             });
@@ -3699,8 +3709,6 @@ RESULTS_HTML = '''
                                 if (!calcState[id].running) return;
                                 const firstBetActual = calcState[id].first_bet_round || 0;
                                 if (firstBetActual > 0 && currentRoundNum < firstBetActual) return;
-                                const hasRound = calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; });
-                                if (hasRound) return;
                                 var pred, betColorActual;
                                 var saved = savedBetPickByRound[Number(currentRoundNum)];
                                 if (saved && (saved.value === '정' || saved.value === '꺽')) {
@@ -3718,7 +3726,14 @@ RESULTS_HTML = '''
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                 }
-                                calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null });
+                                var pendingIdxActual = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
+                                if (pendingIdxActual >= 0) {
+                                    calcState[id].history[pendingIdxActual].actual = actual;
+                                    calcState[id].history[pendingIdxActual].predicted = pred;
+                                    calcState[id].history[pendingIdxActual].pickColor = betColorActual || null;
+                                } else {
+                                    calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null });
+                                }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + currentRoundFull + '_' + actual;
                                 updateCalcSummary(id);
@@ -3751,7 +3766,6 @@ RESULTS_HTML = '''
                                 if (!calcState[id].running) return;
                                 const firstBetJoker = calcState[id].first_bet_round || 0;
                                 if (firstBetJoker > 0 && currentRoundNum < firstBetJoker) return;
-                                if (calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) return;
                                 var pred, betColor;
                                 var saved = savedBetPickByRound[Number(currentRoundNum)];
                                 if (saved && (saved.value === '정' || saved.value === '꺽')) {
@@ -3769,7 +3783,14 @@ RESULTS_HTML = '''
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
                                 }
-                                calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null });
+                                var pendingIdx2 = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
+                                if (pendingIdx2 >= 0) {
+                                    calcState[id].history[pendingIdx2].actual = 'joker';
+                                    calcState[id].history[pendingIdx2].predicted = pred;
+                                    calcState[id].history[pendingIdx2].pickColor = betColor || null;
+                                } else if (!calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) {
+                                    calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null });
+                                }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
                                 updateCalcSummary(id);
@@ -3781,7 +3802,6 @@ RESULTS_HTML = '''
                                 if (!calcState[id].running) return;
                                 const firstBetActual = calcState[id].first_bet_round || 0;
                                 if (firstBetActual > 0 && currentRoundNum < firstBetActual) return;
-                                if (calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) return;
                                 var pred, betColorActual;
                                 var saved = savedBetPickByRound[Number(currentRoundNum)];
                                 if (saved && (saved.value === '정' || saved.value === '꺽')) {
@@ -3799,7 +3819,14 @@ RESULTS_HTML = '''
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                 }
-                                calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null });
+                                var pendingIdx3 = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
+                                if (pendingIdx3 >= 0) {
+                                    calcState[id].history[pendingIdx3].actual = actual;
+                                    calcState[id].history[pendingIdx3].predicted = pred;
+                                    calcState[id].history[pendingIdx3].pickColor = betColorActual || null;
+                                } else if (!calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) {
+                                    calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null });
+                                }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + currentRoundFull + '_' + actual;
                                 updateCalcSummary(id);
@@ -4449,6 +4476,7 @@ RESULTS_HTML = '''
             for (let i = 0; i < hist.length; i++) {
                 const h = hist[i];
                 if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                if (h.actual === 'pending') continue;  // 미결 회차는 배팅금·수익 계산에서 제외
                 var martinTable = getMartinTable(martingaleType);
                 if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
                     currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
@@ -4580,6 +4608,19 @@ RESULTS_HTML = '''
                             savedBetPickByRound[Number(lastPrediction.round)] = { value: bettingText, isRed: bettingIsRed };
                             var sbKeys = Object.keys(savedBetPickByRound).map(Number).filter(function(k) { return !isNaN(k); }).sort(function(a,b) { return a - b; });
                             while (sbKeys.length > SAVED_BET_PICK_MAX) { delete savedBetPickByRound[sbKeys.shift()]; }
+                            // 배팅중 뜨자마자 표에 픽+배팅금액 행 추가 (결과 대기)
+                            var firstBet = calcState[id].first_bet_round || 0;
+                            var roundNum = Number(lastPrediction.round);
+                            if (firstBet > 0 && roundNum < firstBet) { /* 첫배팅 회차 전이면 스킵 */ } else {
+                            var r = getCalcResult(id);
+                            var hasRound = calcState[id].history.some(function(h) { return h && Number(h.round) === roundNum; });
+                            if (!hasRound && r.currentBet > 0) {
+                                calcState[id].history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: r.currentBet, actual: 'pending' });
+                                calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
+                                saveCalcStateToServer();
+                                updateCalcDetail(id);
+                            }
+                            }
                         }
                         }
                     } else {
@@ -4693,10 +4734,10 @@ RESULTS_HTML = '''
                 return;
             }
             const r = getCalcResult(id);
-            const usedLen = (r.processedCount !== undefined && r.processedCount >= 0) ? r.processedCount : hist.length;
-            const usedHist = dedupeCalcHistoryByRound(hist.slice(0, usedLen));
+            const usedHist = dedupeCalcHistoryByRound(hist);
+            const completedHist = usedHist.filter(function(h) { return h && h.actual !== 'pending' && h.actual != null && typeof h.predicted !== 'undefined'; });
             const oddsIn = parseFloat(document.getElementById('calc-' + id + '-odds')?.value) || 1.97;
-            var betAmounts = [], profits = [];
+            var roundToBetProfit = {};
             const capIn = parseFloat(document.getElementById('calc-' + id + '-capital')?.value) || 1000000;
                 const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
                 const martingaleEl = document.getElementById('calc-' + id + '-martingale');
@@ -4705,40 +4746,51 @@ RESULTS_HTML = '''
                 const martingaleType = (martingaleTypeEl && martingaleTypeEl.value) || 'pyo';
                 var martinTableDetail = getMartinTable(martingaleType);
                 let cap = capIn, currentBet = baseIn, martingaleStep = 0;
-                for (let i = 0; i < usedHist.length; i++) {
-                    const h = usedHist[i];
-                    if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') { betAmounts[i] = null; profits[i] = null; continue; }
+                for (let i = 0; i < completedHist.length; i++) {
+                    const h = completedHist[i];
+                    if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
                     if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) currentBet = martinTableDetail[Math.min(martingaleStep, martinTableDetail.length - 1)];
                     const bet = Math.min(currentBet, Math.floor(cap));
-                    if (cap < bet || cap <= 0) { betAmounts[i] = null; profits[i] = null; break; }
+                    if (cap < bet || cap <= 0) break;
                     const isJoker = h.actual === 'joker';
                     const isWin = !isJoker && h.predicted === h.actual;
-                    betAmounts[i] = bet;
-                    profits[i] = isJoker ? -bet : (isWin ? Math.floor(bet * (oddsIn - 1)) : -bet);
+                    const rn = h.round != null ? Number(h.round) : NaN;
+                    if (!isNaN(rn)) roundToBetProfit[rn] = { betAmount: bet, profit: isJoker ? -bet : (isWin ? Math.floor(bet * (oddsIn - 1)) : -bet) };
                     if (isJoker) { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
                     else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = 0; else currentBet = baseIn; }
                     else { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
                 }
-            // 회차별 픽/결과/승패/배팅금액/수익 행 목록 (유효 항목만, 최신순 = 뒤에서부터). 같은 회차는 한 번만 표시(중복 제거)
+            // 회차별 픽/결과/승패/배팅금액/수익 행 목록 (pending=대기, completed=결과·수익)
             let rows = [];
             var seenRoundNums = {};
             for (let i = usedHist.length - 1; i >= 0; i--) {
                 const h = usedHist[i];
-                if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                if (!h || typeof h.predicted === 'undefined') continue;
                 const rn = h.round != null ? Number(h.round) : NaN;
                 if (!isNaN(rn) && seenRoundNums[rn]) continue;
                 if (!isNaN(rn)) seenRoundNums[rn] = true;
                 const roundStr = h.round != null ? String(h.round) : '-';
-                    const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
-                    const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
-                    const pickVal = h.predicted === '정' ? '정' : '꺽';
-                    // 픽(걸은 것) 색: 저장된 pickColor 우선(배팅중과 일치), 없으면 predicted 기준
-                    const pickClass = (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : 'pick-kkuk')));
-                    const resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
-                    const betStr = betAmounts[i] != null ? betAmounts[i].toLocaleString() : '-';
-                    const profitVal = profits[i] != null ? profits[i] : '-';
-                    const profitStr = profitVal === '-' ? '-' : (profitVal >= 0 ? '+' : '') + Number(profitVal).toLocaleString();
-                    rows.push({ roundStr: roundStr, pick: pickVal, pickClass: pickClass, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr });
+                const pickVal = h.predicted === '정' ? '정' : '꺽';
+                const pickClass = (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : 'pick-kkuk')));
+                var betStr, profitStr, res, outcome, resultClass, outClass;
+                if (h.actual === 'pending') {
+                    betStr = (h.betAmount != null && h.betAmount > 0) ? Number(h.betAmount).toLocaleString() : '-';
+                    profitStr = '-';
+                    res = '-';
+                    outcome = '대기';
+                    resultClass = '';
+                    outClass = 'skip';
+                } else {
+                    const bp = roundToBetProfit[rn];
+                    betStr = (bp && bp.betAmount != null) ? bp.betAmount.toLocaleString() : '-';
+                    const profitVal = (bp && bp.profit != null) ? bp.profit : '-';
+                    profitStr = profitVal === '-' ? '-' : (profitVal >= 0 ? '+' : '') + Number(profitVal).toLocaleString();
+                    res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
+                    outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
+                    resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
+                    outClass = outcome === '승' ? 'win' : outcome === '패' ? 'lose' : outcome === '조' ? 'joker' : 'skip';
+                }
+                rows.push({ roundStr: roundStr, pick: pickVal, pickClass: pickClass, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr, outClass: outClass });
             }
             const displayRows = rows.slice(0, 15);
             if (tableWrap) {
@@ -4747,7 +4799,7 @@ RESULTS_HTML = '''
                 } else {
                     let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽(걸은 것)</th><th>배팅금액</th><th>수익</th><th>승패</th></tr></thead><tbody>';
                     displayRows.forEach(function(row) {
-                        const outClass = row.outcome === '승' ? 'win' : row.outcome === '패' ? 'lose' : row.outcome === '조' ? 'joker' : 'skip';
+                        const outClass = row.outClass || (row.outcome === '승' ? 'win' : row.outcome === '패' ? 'lose' : row.outcome === '조' ? 'joker' : 'skip');
                         const profitClass = (typeof row.profit === 'number' && row.profit > 0) || (typeof row.profit === 'string' && row.profit.indexOf('+') === 0) ? 'profit-plus' : (typeof row.profit === 'number' && row.profit < 0) || (typeof row.profit === 'string' && row.profit.indexOf('-') === 0 && row.profit !== '-') ? 'profit-minus' : '';
                         tbl += '<tr><td>' + row.roundStr + '</td><td class="' + row.pickClass + '">' + row.pick + '</td><td class="calc-td-bet">' + row.betAmount + '</td><td class="calc-td-profit ' + profitClass + '">' + row.profit + '</td><td class="' + outClass + '">' + row.outcome + '</td></tr>';
                     });
@@ -4755,10 +4807,10 @@ RESULTS_HTML = '''
                     tableWrap.innerHTML = tbl;
                 }
             }
-            // getCalcResult와 동일 기준: 무효 항목은 표시에서 제외. 경기결과는 최근 30회만 표시(저장은 전부 유지)
+            // 경기결과는 완료된 회차만, 최근 30회 표시
             let arr = [];
-            for (const h of usedHist) {
-                if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+            for (const h of completedHist) {
+                if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined' || h.actual === 'pending') continue;
                 arr.push(h.actual === 'joker' ? 'j' : (h.predicted === h.actual ? 'w' : 'l'));
             }
             const arrRev = arr.slice().reverse();
@@ -4883,14 +4935,16 @@ RESULTS_HTML = '''
                 state.running = false;
                 state.timer_completed = false;
                 if (state.timerId) { clearInterval(state.timerId); state.timerId = null; }
+                state.history = [];
+                state.pending_round = null;
+                state.pending_predicted = null;
+                state.pending_prob = null;
+                state.pending_color = null;
+                lastResetOrRunAt = Date.now();
                 saveCalcStateToServer();
                 updateCalcSummary(id);
                 updateCalcDetail(id);
                 updateCalcStatus(id);
-                if (state.history.length > 0) {
-                    const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
-                    if (saveBtn) saveBtn.style.display = 'inline-block';
-                }
             });
         });
         document.querySelectorAll('.calc-reset').forEach(btn => {
