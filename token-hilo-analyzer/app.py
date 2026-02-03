@@ -5344,6 +5344,8 @@ def api_calc_state():
         if not session_id:
             session_id = uuid.uuid4().hex
         calcs = data.get('calcs') or {}
+        # 순익계산기 안정화: 서버에 저장된 history가 더 길면 유지 (클라이언트 덮어쓰기로 누락 방지)
+        current_state = get_calc_state(session_id) or {}
         out = {}
         for cid in ('1', '2', '3'):
             c = calcs.get(cid) or {}
@@ -5352,10 +5354,18 @@ def api_calc_state():
                 started_at = c.get('started_at') or 0
                 if running and not started_at:
                     started_at = server_time
+                client_history = c.get('history') if isinstance(c.get('history'), list) else []
+                current_c = current_state.get(cid) if isinstance(current_state.get(cid), dict) else {}
+                current_history = current_c.get('history') if isinstance(current_c.get('history'), list) else []
+                if len(current_history) > len(client_history):
+                    use_history = current_history
+                else:
+                    use_history = client_history
+                use_history = use_history[-500:] if len(use_history) > 500 else use_history
                 out[cid] = {
                     'running': running,
                     'started_at': started_at,
-                    'history': c.get('history') if isinstance(c.get('history'), list) else [],
+                    'history': use_history,
                     'duration_limit': int(c.get('duration_limit') or 0),
                     'use_duration_limit': bool(c.get('use_duration_limit')),
                     'reverse': bool(c.get('reverse')),
