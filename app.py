@@ -526,13 +526,24 @@ def _apply_results_to_calcs(results):
                     probability=c.get('pending_prob'), pick_color=c.get('pending_color')
                 )
                 pred_for_calc = pending_predicted
+                bet_color_for_history = _normalize_pick_color_value(c.get('pending_color'))
+                if bet_color_for_history is None:
+                    if pending_predicted == '정':
+                        bet_color_for_history = '빨강'
+                    elif pending_predicted == '꺽':
+                        bet_color_for_history = '검정'
                 if c.get('reverse'):
                     pred_for_calc = '꺽' if pending_predicted == '정' else '정'
+                    bet_color_for_history = _flip_pick_color(bet_color_for_history)
                 blended = _blended_win_rate(get_prediction_history(100))
                 thr = c.get('win_rate_threshold', 46)
                 if c.get('win_rate_reverse') and blended is not None and blended <= thr:
                     pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
-                c['history'] = (c.get('history') or []) + [{'round': pending_round, 'predicted': pred_for_calc, 'actual': actual}]
+                    bet_color_for_history = _flip_pick_color(bet_color_for_history)
+                history_entry = {'round': pending_round, 'predicted': pred_for_calc, 'actual': actual}
+                if bet_color_for_history:
+                    history_entry['pickColor'] = bet_color_for_history
+                c['history'] = (c.get('history') or []) + [history_entry]
                 if stored_for_round and stored_for_round.get('predicted'):
                     c['pending_round'] = predicted_round
                     c['pending_predicted'] = stored_for_round['predicted']
@@ -652,9 +663,7 @@ def save_round_prediction(round_num, predicted, pick_color=None, probability=Non
         return False
     try:
         cur = conn.cursor()
-        pick_color = str(pick_color).strip() if pick_color else None
-        if pick_color:
-            pick_color = '빨강' if pick_color.upper() in ('RED', '빨강') else '검정' if pick_color.upper() in ('BLACK', '검정') else pick_color
+        pick_color = _normalize_pick_color_value(pick_color)
         # 안정화: 이미 저장된 회차는 덮어쓰지 않음. 첫 저장(스케줄러)만 유지.
         cur.execute('''
             INSERT INTO round_predictions (round_num, predicted, pick_color, probability)
@@ -672,6 +681,30 @@ def save_round_prediction(round_num, predicted, pick_color=None, probability=Non
         except Exception:
             pass
         return False
+
+
+def _normalize_pick_color_value(color):
+    """RED/BLACK 또는 빨강/검정을 일관된 문자열로 통일."""
+    if color is None:
+        return None
+    s = str(color).strip()
+    if not s:
+        return None
+    upper = s.upper()
+    if upper in ('RED', '빨강'):
+        return '빨강'
+    if upper in ('BLACK', '검정'):
+        return '검정'
+    return s
+
+
+def _flip_pick_color(color):
+    """빨강/검정을 서로 반전. 기타 값은 그대로."""
+    if color == '빨강':
+        return '검정'
+    if color == '검정':
+        return '빨강'
+    return color
 
 
 # 머지 캐시: 이미 머지한 회차 집합. 새 결과 회차가 생길 때만 머지해서 폴링 시 속도 향상
