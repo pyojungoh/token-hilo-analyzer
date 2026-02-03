@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.venv
+venv
+__pycache__
+*.pyc
+.cursor
+.cursorignore
+.cursorrules
+*.md
+!DEPLOY_RAILWAY.md
+auto-betting-macro/logs
