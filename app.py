@@ -3637,7 +3637,7 @@ RESULTS_HTML = '''
                                 const hasRound = calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; });
                                 if (hasRound) return;
                                 var pred, betColor;
-                                var saved = savedBetPickByRound[currentRoundNum];
+                                var saved = savedBetPickByRound[Number(currentRoundNum)];
                                 if (saved && (saved.value === '정' || saved.value === '꺽')) {
                                     pred = saved.value;
                                     betColor = saved.isRed ? '빨강' : '검정';
@@ -3669,7 +3669,7 @@ RESULTS_HTML = '''
                                 const hasRound = calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; });
                                 if (hasRound) return;
                                 var pred, betColorActual;
-                                var saved = savedBetPickByRound[currentRoundNum];
+                                var saved = savedBetPickByRound[Number(currentRoundNum)];
                                 if (saved && (saved.value === '정' || saved.value === '꺽')) {
                                     pred = saved.value;
                                     betColorActual = saved.isRed ? '빨강' : '검정';
@@ -3720,7 +3720,7 @@ RESULTS_HTML = '''
                                 if (firstBetJoker > 0 && currentRoundNum < firstBetJoker) return;
                                 if (calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) return;
                                 var pred, betColor;
-                                var saved = savedBetPickByRound[currentRoundNum];
+                                var saved = savedBetPickByRound[Number(currentRoundNum)];
                                 if (saved && (saved.value === '정' || saved.value === '꺽')) {
                                     pred = saved.value;
                                     betColor = saved.isRed ? '빨강' : '검정';
@@ -3750,7 +3750,7 @@ RESULTS_HTML = '''
                                 if (firstBetActual > 0 && currentRoundNum < firstBetActual) return;
                                 if (calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) return;
                                 var pred, betColorActual;
-                                var saved = savedBetPickByRound[currentRoundNum];
+                                var saved = savedBetPickByRound[Number(currentRoundNum)];
                                 if (saved && (saved.value === '정' || saved.value === '꺽')) {
                                     pred = saved.value;
                                     betColorActual = saved.isRed ? '빨강' : '검정';
@@ -4699,8 +4699,8 @@ RESULTS_HTML = '''
                     const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
                     const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
                     const pickVal = h.predicted === '정' ? '정' : '꺽';
-                    // 픽(걸은 것) 색은 걸은 픽(h.predicted)만 기준으로 → 배팅중과 일치, 예측픽/서버 색과 충돌 방지
-                    const pickClass = (pickVal === '정' ? 'pick-jung' : 'pick-kkuk');
+                    // 픽(걸은 것) 색: 저장된 pickColor 우선(배팅중과 일치), 없으면 predicted 기준
+                    const pickClass = (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : 'pick-kkuk')));
                     const resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
                     const betStr = betAmounts[i] != null ? betAmounts[i].toLocaleString() : '-';
                     const profitVal = profits[i] != null ? profits[i] : '-';
@@ -4833,6 +4833,7 @@ RESULTS_HTML = '''
                         lastServerTimeSec = data.server_time || lastServerTimeSec;
                     }
                 } catch (e) { console.warn('계산기 실행 저장 실패:', e); }
+                lastResetOrRunAt = Date.now();
                 updateCalcSummary(id);
                 updateCalcDetail(id);
                 updateCalcStatus(id);
@@ -4879,6 +4880,7 @@ RESULTS_HTML = '''
                 state.pending_predicted = null;
                 state.pending_prob = null;
                 state.pending_color = null;
+                lastResetOrRunAt = Date.now();
                 await saveCalcStateToServer();
                 updateCalcSummary(id);
                 updateCalcDetail(id);
@@ -5050,8 +5052,11 @@ RESULTS_HTML = '''
             }
         }, 400);
         
+        // 리셋/실행 직후에는 서버 폴링 스킵 (저장 반영 전에 예전 상태로 덮어쓰는 것 방지)
+        var lastResetOrRunAt = 0;
         // 계산기 실행 중일 때 서버 상태 주기적으로 가져와 UI 실시간 반영 (멈춰 보이는 현상 방지)
         setInterval(() => {
+            if (Date.now() - lastResetOrRunAt < 3500) return;
             const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
             if (anyRunning) {
                 loadCalcStateFromServer(false).then(function() { updateAllCalcs(); }).catch(function(e) { console.warn('계산기 상태 폴링:', e); });
