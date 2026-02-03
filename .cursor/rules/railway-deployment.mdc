@@ -1,0 +1,14 @@
+---
+description: Railway 배포 시 참고 (셋팅은 이미 올바름)
+globs: DEPLOY_RAILWAY.md, Procfile, railway.json
+alwaysApply: false
+---
+
+# Railway 배포 규칙
+
+- **Railway 셋팅은 사용자가 이미 올바르게 해 두었다고 확인된 상태이다.**
+  - Source: `pyojungoh/token-hilo-analyzer`
+  - Root Directory: **비움** (앱이 repo 루트에 있음. `/token-hilo-analyzer` 넣으면 빌드 실패)
+  - Branch: `main`
+- 배포가 안 될 때 **"Root Directory / 브랜치 확인해보세요"** 식으로 설정 재확인을 반복하지 말 것.
+- 대신 **Deployments → View Logs**(빌드/헬스체크 에러), **수동 Redeploy**, 푸시 트리거 등 다른 원인·조치를 우선 안내할 것.

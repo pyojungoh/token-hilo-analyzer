@@ -2,3 +2,6 @@
 - Always respond in Korean.
 - 이 프로젝트는 Flask 웹앱이며 Railway 등에 배포하는 토큰 하이로우 분석기입니다.
 - 예측·계산기 회차 반영은 서버에서 수행하고, 브라우저는 표시만 합니다.
+- **Git 브랜치: 항상 `main`만 사용.** master 등 다른 브랜치 사용 금지. 커밋·푸시·배포는 모두 `main` 기준으로 진행.
+- **회차·결과·히스토리 관련 코딩 시**: `.cursor/rules/token-hilo-analyzer-conventions.mdc` 규칙을 참고한다(맨 왼쪽=최신 회차, prediction_history 보정, 전체 회차 번호 사용 등).
+- **Railway 배포**: 사용자가 Railway 셋팅(Source: pyojungoh/token-hilo-analyzer, Branch: main)을 이미 올바르게 해 두었다고 확인했음. 이 repo는 앱이 저장소 루트에 있으므로 Root Directory는 비워 두어야 함. 배포가 안 될 때 설정 재확인을 반복하지 말고, Deployments 로그·빌드 실패 원인·수동 Redeploy 등 다른 가능성을 우선 안내할 것.
