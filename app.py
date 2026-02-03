@@ -1785,8 +1785,12 @@ def _scheduler_fetch_results():
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
     _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=2, id='fetch_results', max_instances=1)
-    _scheduler.start()
-    print("[✅] 결과 수집 스케줄러 시작 (2초마다, 예측픽 선제적 갱신)")
+    def _start_scheduler_delayed():
+        time.sleep(10)
+        _scheduler.start()
+        print("[✅] 결과 수집 스케줄러 시작 (2초마다, 예측픽 선제적 갱신)")
+    threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
+    print("[⏳] 스케줄러는 10초 후 시작 (헬스체크 통과 후)")
 else:
     print("[⚠] APScheduler 미설치 - 결과 수집은 브라우저 요청 시에만 동작합니다. pip install APScheduler")
 
