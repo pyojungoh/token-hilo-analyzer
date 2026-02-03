@@ -2534,6 +2534,11 @@ RESULTS_HTML = '''
         .calc-settings-table input[type="checkbox"] { margin: 0; }
         .calc-settings-table select { padding: 4px 6px; border-radius: 4px; border: 1px solid #555; background: #1a1a1a; color: #fff; }
         .calc-target-hint { margin-left: 4px; }
+        .calc-bet-copy-line { font-size: 0.95em; color: #bbb; }
+        .calc-bet-copy-amount { cursor: pointer; padding: 2px 6px; border-radius: 4px; background: #37474f; color: #81c784; font-weight: 600; margin-left: 4px; }
+        .calc-bet-copy-amount:hover { background: #455a64; color: #a5d6a7; }
+        .calc-bet-copy-amount:active { background: #546e7a; }
+        .calc-bet-copy-hint { font-size: 0.85em; color: #78909c; margin-left: 4px; }
         @media (max-width: 520px) {
             .calc-dropdown-body { flex-direction: column; }
             .calc-body-row { flex: 1 1 auto; max-width: none; }
@@ -2686,8 +2691,9 @@ RESULTS_HTML = '''
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-1-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label></td></tr>
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="46" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
-                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option></select></label></td></tr>
+                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-1-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-1-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-1-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
+                                    <tr><td>배팅복사</td><td><span id="calc-1-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
                                 </table>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="1">실행</button>
@@ -2720,8 +2726,9 @@ RESULTS_HTML = '''
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-2-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label></td></tr>
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="46" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
-                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option></select></label></td></tr>
+                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-2-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-2-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-2-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
+                                    <tr><td>배팅복사</td><td><span id="calc-2-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
                                 </table>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="2">실행</button>
@@ -2754,8 +2761,9 @@ RESULTS_HTML = '''
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-3-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label></td></tr>
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="46" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
-                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option></select></label></td></tr>
+                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-3-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-3-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-3-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
+                                    <tr><td>배팅복사</td><td><span id="calc-3-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
                                 </table>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="3">실행</button>
@@ -2993,6 +3001,8 @@ RESULTS_HTML = '''
         const CALC_STATE_BACKUP_KEY = 'tokenHiloCalcStateBackup';
         const calcState = {};
         var TABLE_MARTIN_PYO = [10000, 15000, 25000, 40000, 70000, 120000, 200000, 400000, 120000];
+        var TABLE_MARTIN_PYO_HALF = [5000, 7500, 12500, 20000, 35000, 60000, 100000, 200000, 60000];
+        function getMartinTable(type) { return (type === 'pyo_half') ? TABLE_MARTIN_PYO_HALF : TABLE_MARTIN_PYO; }
         CALC_IDS.forEach(id => {
             calcState[id] = {
                 running: false,
@@ -3083,7 +3093,7 @@ RESULTS_HTML = '''
                 var thr = (typeof c.win_rate_threshold === 'number' && c.win_rate_threshold >= 0 && c.win_rate_threshold <= 100) ? c.win_rate_threshold : 46;
                 calcState[id].win_rate_threshold = thr;
                 calcState[id].martingale = !!c.martingale;
-                calcState[id].martingale_type = (c.martingale_type === 'pyo' ? 'pyo' : 'pyo');
+                calcState[id].martingale_type = (c.martingale_type === 'pyo_half' ? 'pyo_half' : 'pyo');
                 calcState[id].target_enabled = !!c.target_enabled;
                 calcState[id].target_amount = Math.max(0, parseInt(c.target_amount, 10) || 0);
                 const durEl = document.getElementById('calc-' + id + '-duration');
@@ -3099,7 +3109,7 @@ RESULTS_HTML = '''
                 const martingaleEl = document.getElementById('calc-' + id + '-martingale');
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 if (martingaleEl) martingaleEl.checked = !!calcState[id].martingale;
-                if (martingaleTypeEl) martingaleTypeEl.value = calcState[id].martingale_type || 'pyo';
+                if (martingaleTypeEl) martingaleTypeEl.value = (calcState[id].martingale_type === 'pyo_half' ? 'pyo_half' : 'pyo');
                 const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
                 const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
                 if (targetEnabledEl) targetEnabledEl.checked = !!calcState[id].target_enabled;
@@ -4353,8 +4363,9 @@ RESULTS_HTML = '''
             for (let i = 0; i < hist.length; i++) {
                 const h = hist[i];
                 if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
-                if (useMartingale && martingaleType === 'pyo') {
-                    currentBet = TABLE_MARTIN_PYO[Math.min(martingaleStep, TABLE_MARTIN_PYO.length - 1)];
+                var martinTable = getMartinTable(martingaleType);
+                if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
+                    currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
                 }
                 const bet = Math.min(currentBet, Math.floor(cap));
                 if (cap < bet || cap <= 0) { bust = true; processedCount = i; break; }
@@ -4362,13 +4373,13 @@ RESULTS_HTML = '''
                 const isWin = !isJoker && h.predicted === h.actual;
                 if (isJoker) {
                     cap -= bet;
-                    if (useMartingale && martingaleType === 'pyo') martingaleStep = Math.min(martingaleStep + 1, TABLE_MARTIN_PYO.length - 1);
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1);
                     else currentBet = Math.min(currentBet * 2, Math.floor(cap));
                     curWin = 0;
                     curLose = 0;
                 } else if (isWin) {
                     cap += bet * (oddsIn - 1);
-                    if (useMartingale && martingaleType === 'pyo') martingaleStep = 0;
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = 0;
                     else currentBet = baseIn;
                     wins++;
                     curWin++;
@@ -4376,7 +4387,7 @@ RESULTS_HTML = '''
                     if (curWin > maxWinStreak) maxWinStreak = curWin;
                 } else {
                     cap -= bet;
-                    if (useMartingale && martingaleType === 'pyo') martingaleStep = Math.min(martingaleStep + 1, TABLE_MARTIN_PYO.length - 1);
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1);
                     else currentBet = Math.min(currentBet * 2, Math.floor(cap));
                     losses++;
                     curLose++;
@@ -4386,8 +4397,9 @@ RESULTS_HTML = '''
                 processedCount = i + 1;
                 if (cap <= 0) { bust = true; break; }
             }
-            if (useMartingale && martingaleType === 'pyo') {
-                currentBet = bust ? 0 : TABLE_MARTIN_PYO[Math.min(martingaleStep, TABLE_MARTIN_PYO.length - 1)];
+            var martinTableFinal = getMartinTable(martingaleType);
+            if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
+                currentBet = bust ? 0 : martinTableFinal[Math.min(martingaleStep, martinTableFinal.length - 1)];
             }
             if (calcState[id]) {
                 calcState[id].maxWinStreakEver = Math.max(calcState[id].maxWinStreakEver || 0, maxWinStreak);
@@ -4512,6 +4524,7 @@ RESULTS_HTML = '''
                     '<span class="label">순익</span><span class="value">-</span>' +
                     '<span class="label">배팅중</span><span class="value">-</span>' +
                     '<span class="label">경과</span><span class="value">' + elapsedStr + '</span></div>';
+                updateCalcBetCopyLine(id);
                 updateCalcStatus(id);
                 return;
             }
@@ -4533,8 +4546,27 @@ RESULTS_HTML = '''
                 '<span class="label">순익</span><span class="value ' + profitClass + '">' + profitStr + '</span>' +
                 '<span class="label">배팅중</span><span class="value">' + r.currentBet.toLocaleString() + '원</span>' +
                 '<span class="label">경과</span><span class="value">' + elapsedStr + '</span></div>';
+            updateCalcBetCopyLine(id, r.currentBet);
             updateCalcStatus(id);
             } catch (e) { console.warn('updateCalcSummary', id, e); }
+        }
+        function updateCalcBetCopyLine(id, currentBetVal) {
+            try {
+                var el = document.getElementById('calc-' + id + '-bet-copy-line');
+                if (!el) return;
+                var state = calcState[id];
+                var round = (state && state.pending_round) ? state.pending_round : (typeof lastPrediction !== 'undefined' && lastPrediction && lastPrediction.round ? lastPrediction.round : null);
+                var amount = (currentBetVal !== undefined && currentBetVal > 0) ? currentBetVal : (state && state.running ? (getCalcResult(id).currentBet || 0) : 0);
+                if (round == null || amount <= 0) {
+                    el.innerHTML = '—';
+                    return;
+                }
+                var roundStr = roundLast4(round) + '회 ';
+                var iconHtml = getRoundIconHtml(round);
+                var amountPlain = String(amount);
+                var amountDisplay = amount.toLocaleString() + '원';
+                el.innerHTML = roundStr + iconHtml + ' <span class="calc-bet-copy-amount" data-amount="' + amountPlain + '" title="클릭하면 금액 복사">' + amountDisplay + '</span> <span class="calc-bet-copy-hint">[클릭 복사]</span>';
+            } catch (e) { console.warn('updateCalcBetCopyLine', id, e); }
         }
         function appendCalcLog(id) {
             const state = calcState[id];
@@ -4580,20 +4612,21 @@ RESULTS_HTML = '''
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 const useMartingale = !!(martingaleEl && martingaleEl.checked);
                 const martingaleType = (martingaleTypeEl && martingaleTypeEl.value) || 'pyo';
+                var martinTableDetail = getMartinTable(martingaleType);
                 let cap = capIn, currentBet = baseIn, martingaleStep = 0;
                 for (let i = 0; i < usedHist.length; i++) {
                     const h = usedHist[i];
                     if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') { betAmounts[i] = null; profits[i] = null; continue; }
-                    if (useMartingale && martingaleType === 'pyo') currentBet = TABLE_MARTIN_PYO[Math.min(martingaleStep, TABLE_MARTIN_PYO.length - 1)];
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) currentBet = martinTableDetail[Math.min(martingaleStep, martinTableDetail.length - 1)];
                     const bet = Math.min(currentBet, Math.floor(cap));
                     if (cap < bet || cap <= 0) { betAmounts[i] = null; profits[i] = null; break; }
                     const isJoker = h.actual === 'joker';
                     const isWin = !isJoker && h.predicted === h.actual;
                     betAmounts[i] = bet;
                     profits[i] = isJoker ? -bet : (isWin ? Math.floor(bet * (oddsIn - 1)) : -bet);
-                    if (isJoker) { cap -= bet; if (useMartingale && martingaleType === 'pyo') martingaleStep = Math.min(martingaleStep + 1, TABLE_MARTIN_PYO.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
-                    else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && martingaleType === 'pyo') martingaleStep = 0; else currentBet = baseIn; }
-                    else { cap -= bet; if (useMartingale && martingaleType === 'pyo') martingaleStep = Math.min(martingaleStep + 1, TABLE_MARTIN_PYO.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
+                    if (isJoker) { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
+                    else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = 0; else currentBet = baseIn; }
+                    else { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
                 }
             // 회차별 픽/결과/승패/배팅금액/수익 행 목록 (유효 항목만, 최신순 = 뒤에서부터)
             let rows = [];
@@ -4804,6 +4837,32 @@ RESULTS_HTML = '''
             });
             const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
             if (targetEnabledEl) targetEnabledEl.addEventListener('change', () => { updateCalcSummary(id); });
+        });
+        document.addEventListener('click', function(e) {
+            var t = e.target && e.target.closest('.calc-bet-copy-amount');
+            if (!t) return;
+            var amount = t.getAttribute('data-amount') || t.textContent.replace(/[^0-9]/g, '');
+            if (!amount) return;
+            try {
+                navigator.clipboard.writeText(amount).then(function() {
+                    var orig = t.textContent;
+                    t.textContent = '복사됨';
+                    t.style.color = '#ffb74d';
+                    setTimeout(function() { t.textContent = orig; t.style.color = ''; }, 600);
+                });
+            } catch (err) {
+                try {
+                    var ta = document.createElement('textarea');
+                    ta.value = amount;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    var orig = t.textContent;
+                    t.textContent = '복사됨';
+                    setTimeout(function() { t.textContent = orig; }, 600);
+                } catch (e2) {}
+            }
         });
         
         let timerData = { elapsed: 0, lastFetch: 0, round: 0, serverTime: 0 };
