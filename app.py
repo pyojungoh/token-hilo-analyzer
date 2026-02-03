@@ -5575,7 +5575,8 @@ def api_calc_state():
                 client_history = c.get('history') if isinstance(c.get('history'), list) else []
                 current_c = current_state.get(cid) if isinstance(current_state.get(cid), dict) else {}
                 current_history = current_c.get('history') if isinstance(current_c.get('history'), list) else []
-                if len(current_history) > len(client_history):
+                # 실행중일 때만 서버 history 유지(클라이언트 누락 방지). 정지/리셋 시 클라이언트 빈 상태 반영
+                if running and len(current_history) > len(client_history):
                     use_history = current_history
                 else:
                     use_history = client_history
