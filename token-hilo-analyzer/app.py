@@ -4637,12 +4637,8 @@ RESULTS_HTML = '''
                     const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
                     const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
                     const pickVal = h.predicted === '정' ? '정' : '꺽';
-                    var pickColorForRow = h.pickColor || h.pick_color;
-                    if (!pickColorForRow && typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) {
-                        var phEntry = predictionHistory.filter(function(p) { return p && p.round === h.round; })[0];
-                        if (phEntry) pickColorForRow = phEntry.pickColor || phEntry.pick_color;
-                    }
-                    const pickClass = pickColorToClass(pickColorForRow) || (pickVal === '정' ? 'pick-jung' : 'pick-kkuk');
+                    // 픽(걸은 것) 색은 걸은 픽(h.predicted)만 기준으로 → 배팅중과 일치, 예측픽/서버 색과 충돌 방지
+                    const pickClass = (pickVal === '정' ? 'pick-jung' : 'pick-kkuk');
                     const resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
                     const betStr = betAmounts[i] != null ? betAmounts[i].toLocaleString() : '-';
                     const profitVal = profits[i] != null ? profits[i] : '-';
