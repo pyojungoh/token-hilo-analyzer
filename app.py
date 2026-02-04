@@ -2694,6 +2694,11 @@ RESULTS_HTML = '''
                 <div id="win-rate-buckets-table-wrap" class="graph-stats" style="margin-top:8px;"><table><thead><tr><th>합산승률 구간</th><th>n</th><th>승</th><th>패</th><th>승률%</th></tr></thead><tbody id="win-rate-buckets-tbody"><tr><td colspan="5" style="color:#888;">로딩 중...</td></tr></tbody></table></div>
                 <p id="win-rate-recommendation" style="font-size:0.9em;color:#81c784;margin:8px 0 4px 0;font-weight:bold;"></p>
                 <p style="font-size:0.8em;color:#888;margin:0 0 0 0;">※ 위 권장값은 표에서 승률 50% 미만인 구간의 상한으로 계산됩니다.</p>
+                <div style="margin-top:14px;padding:8px 10px;background:#2d1f1f;border:1px solid #5d4037;border-radius:6px;">
+                    <div style="font-weight:bold;color:#ffab91;margin-bottom:4px;">배팅 자제 구간 (예측확률 기준)</div>
+                    <p id="dont-bet-ranges-msg" style="font-size:0.95em;color:#ffcc80;margin:0 0 4px 0;font-weight:bold;">로딩 중...</p>
+                    <p style="font-size:0.75em;color:#888;margin:0;">※ 5% 단위 구간, 구간당 n≥25, 승률 50% 미만·95% 신뢰구간 상한 50% 미만인 구간을 인접 합쳐 표시합니다.</p>
+                </div>
             </div>
         </div>
         </div>
@@ -4391,6 +4396,24 @@ RESULTS_HTML = '''
                                 if (recEl) { recEl.textContent = ''; recEl.style.display = 'none'; }
                             });
                         })();
+                        (function loadDontBetRanges() {
+                            var msgEl = document.getElementById('dont-bet-ranges-msg');
+                            if (!msgEl) return;
+                            fetch('/api/dont-bet-ranges?limit=1000').then(function(r) { return r.json(); }).then(function(data) {
+                                var ranges = data.dont_bet_ranges || [];
+                                if (ranges.length === 0) {
+                                    msgEl.textContent = '현재 데이터에서는 배팅 자제 구간이 없습니다. (표본·승률 조건 충족 시 표시)';
+                                    msgEl.style.color = '#9e9e9e';
+                                } else {
+                                    var parts = ranges.map(function(r) { return r.min + '~' + r.max + '%'; });
+                                    msgEl.textContent = '예측확률 ' + parts.join(', ') + ' 구간은 배팅하지 마세요.';
+                                    msgEl.style.color = '#ffcc80';
+                                }
+                            }).catch(function() {
+                                msgEl.textContent = '로드 실패';
+                                msgEl.style.color = '#888';
+                            });
+                        })();
                         var formulaCollapse = document.getElementById('formula-collapse');
                         if (formulaCollapse) formulaCollapse.style.display = '';
                         var graphStatsCollapseHeader = document.getElementById('graph-stats-collapse-header');
@@ -5803,6 +5826,89 @@ def api_win_rate_buckets():
     except Exception as e:
         print(f"[❌ 오류] win-rate-buckets 실패: {str(e)[:200]}")
         return jsonify({'buckets': [], 'error': str(e)[:200]}), 200
+
+
+def _binomial_ci_upper(wins, total, confidence=0.95):
+    """승률의 95% 신뢰구간 상한 (정규 근사). wins/total < 0.5인지 판단용."""
+    if total <= 0:
+        return 1.0
+    p = wins / total
+    import math
+    z = 1.96  # 95%
+    se = math.sqrt(max(0, p * (1 - p) / total))
+    return min(1.0, p + z * se)
+
+
+@app.route('/api/dont-bet-ranges', methods=['GET'])
+def api_dont_bet_ranges():
+    """예측확률 5% 단위 구간별 승률 계산 후, 승률 50% 미만·표본 충분·(선택)신뢰구간 상한 50% 미만인 구간을 인접 합쳐서 '배팅 자제 구간' 반환."""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return jsonify({'dont_bet_ranges': [], 'buckets': []}), 200
+    try:
+        limit = min(2000, max(300, int(request.args.get('limit', 1000))))
+        use_ci = request.args.get('ci', '1') == '1'  # 95% 신뢰구간 상한 < 50% 조건 사용
+        min_sample = max(15, min(50, int(request.args.get('min_n', 25))))
+        history = get_prediction_history(limit)
+        # 5% 단위 20개 구간 (예측확률 기준)
+        buckets = {i: {'bucket_min': i * 5, 'bucket_max': i * 5 + 5, 'wins': 0, 'losses': 0} for i in range(20)}
+        for h in (history or []):
+            if not h or h.get('actual') == 'joker':
+                continue
+            prob = h.get('probability')
+            if prob is None:
+                continue
+            p = float(prob)
+            idx = min(19, max(0, int(p // 5)))
+            win = 1 if (h.get('predicted') or '') == (h.get('actual') or '') else 0
+            buckets[idx]['wins'] += win
+            buckets[idx]['losses'] += (1 - win)
+        out_buckets = []
+        dont_bet_indices = []
+        for i in range(20):
+            d = buckets[i]
+            total = d['wins'] + d['losses']
+            wins = d['wins']
+            win_pct = round(100 * wins / total, 1) if total > 0 else None
+            ci_upper = _binomial_ci_upper(wins, total) * 100 if total > 0 else None
+            out_buckets.append({
+                'bucket_min': d['bucket_min'],
+                'bucket_max': d['bucket_max'],
+                'wins': wins,
+                'losses': d['losses'],
+                'total': total,
+                'win_pct': win_pct,
+                'ci_upper_pct': round(ci_upper, 1) if ci_upper is not None else None,
+            })
+            if total < min_sample:
+                continue
+            if win_pct is None or win_pct >= 50:
+                continue
+            if use_ci and ci_upper is not None and ci_upper >= 50:
+                continue
+            dont_bet_indices.append(i)
+        # 인접한 구간 합치기
+        ranges_merged = []
+        i = 0
+        while i < len(dont_bet_indices):
+            start_idx = dont_bet_indices[i]
+            end_idx = start_idx
+            while i + 1 < len(dont_bet_indices) and dont_bet_indices[i + 1] == end_idx + 1:
+                i += 1
+                end_idx = dont_bet_indices[i]
+            ranges_merged.append({
+                'min': buckets[start_idx]['bucket_min'],
+                'max': buckets[end_idx]['bucket_max'],
+            })
+            i += 1
+        return jsonify({
+            'dont_bet_ranges': ranges_merged,
+            'buckets': out_buckets,
+            'min_sample': min_sample,
+            'use_ci': use_ci,
+        }), 200
+    except Exception as e:
+        print(f"[❌ 오류] dont-bet-ranges 실패: {str(e)[:200]}")
+        return jsonify({'dont_bet_ranges': [], 'buckets': [], 'error': str(e)[:200]}), 200
 
 
 def _compute_losing_streaks(history, min_streak=3):
