@@ -2692,7 +2692,8 @@ RESULTS_HTML = '''
                 <p style="font-size:0.85em;color:#888;margin:0 0 10px 0;">위험 구간: 합산승률 ≤ <input type="number" id="win-rate-danger-threshold" min="0" max="100" value="46" style="width:3em;background:#333;color:#fff;border:1px solid #555;padding:2px 4px;"> % 일 때 패 비율 참고</p>
                 <div class="win-rate-formula-title" style="font-weight:bold;color:#81c784;margin:12px 0 6px 0;">합산승률 구간별 승/패 (5% 단위)</div>
                 <div id="win-rate-buckets-table-wrap" class="graph-stats" style="margin-top:8px;"><table><thead><tr><th>합산승률 구간</th><th>n</th><th>승</th><th>패</th><th>승률%</th></tr></thead><tbody id="win-rate-buckets-tbody"><tr><td colspan="5" style="color:#888;">로딩 중...</td></tr></tbody></table></div>
-                <p style="font-size:0.8em;color:#888;margin:8px 0 0 0;">※ 승률반픽 % 설정: 위 표에서 승률 50% 미만인 구간의 상한(맨 위 %)을 참고하세요.</p>
+                <p id="win-rate-recommendation" style="font-size:0.9em;color:#81c784;margin:8px 0 4px 0;font-weight:bold;"></p>
+                <p style="font-size:0.8em;color:#888;margin:0 0 0 0;">※ 위 권장값은 표에서 승률 50% 미만인 구간의 상한으로 계산됩니다.</p>
             </div>
         </div>
         </div>
@@ -4349,6 +4350,17 @@ RESULTS_HTML = '''
                             if (!tbody) return;
                             fetch('/api/win-rate-buckets').then(function(r) { return r.json(); }).then(function(data) {
                                 var buckets = data.buckets || [];
+                                var recEl = document.getElementById('win-rate-recommendation');
+                                if (recEl) {
+                                    var rec = data.recommended_threshold;
+                                    if (rec != null && typeof rec === 'number') {
+                                        recEl.textContent = '반픽승률을 ' + rec + '%로 설정하시는 걸 추천드립니다.';
+                                        recEl.style.display = '';
+                                    } else {
+                                        recEl.textContent = '';
+                                        recEl.style.display = 'none';
+                                    }
+                                }
                                 if (buckets.length === 0) {
                                     tbody.innerHTML = '<tr><td colspan="5" style="color:#888;">합산승률 데이터 없음 (회차 기록 후 저장되는 값)</td></tr>';
                                     return;
@@ -4362,6 +4374,8 @@ RESULTS_HTML = '''
                                 tbody.innerHTML = rows;
                             }).catch(function() {
                                 if (tbody) tbody.innerHTML = '<tr><td colspan="5" style="color:#888;">로드 실패</td></tr>';
+                                var recEl = document.getElementById('win-rate-recommendation');
+                                if (recEl) { recEl.textContent = ''; recEl.style.display = 'none'; }
                             });
                         })();
                         var formulaCollapse = document.getElementById('formula-collapse');
@@ -5709,18 +5723,25 @@ def api_win_rate_buckets():
             buckets[idx]['wins'] += win
             buckets[idx]['losses'] += (1 - win)
         out = []
+        recommended_upper = None  # 승률 50% 미만인 구간의 상한(맨 위 %)
         for i in range(20):
             d = buckets[i]
             total = d['wins'] + d['losses']
+            win_pct = round(100 * d['wins'] / total, 1) if total > 0 else None
             out.append({
                 'bucket_min': d['bucket_min'],
                 'bucket_max': d['bucket_max'],
                 'wins': d['wins'],
                 'losses': d['losses'],
                 'total': total,
-                'win_pct': round(100 * d['wins'] / total, 1) if total > 0 else None
+                'win_pct': win_pct
             })
-        return jsonify({'buckets': out}), 200
+            # 권장값: 승률 50% 미만이고 표본이 충분한 구간(상한) 중 최대
+            if total >= 5 and win_pct is not None and win_pct < 50:
+                upper = d['bucket_max']
+                if recommended_upper is None or upper > recommended_upper:
+                    recommended_upper = upper
+        return jsonify({'buckets': out, 'recommended_threshold': recommended_upper}), 200
     except Exception as e:
         print(f"[❌ 오류] win-rate-buckets 실패: {str(e)[:200]}")
         return jsonify({'buckets': [], 'error': str(e)[:200]}), 200
