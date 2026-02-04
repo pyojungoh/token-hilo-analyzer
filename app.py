@@ -2690,8 +2690,9 @@ RESULTS_HTML = '''
                 <div class="win-rate-formula-title" style="font-weight:bold;color:#81c784;margin-bottom:8px;">합산승률 공식</div>
                 <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">합산승률 = 15회 승률×<span id="win-rate-w15">0.6</span> + 30회 승률×<span id="win-rate-w30">0.25</span> + 100회 승률×<span id="win-rate-w100">0.15</span></p>
                 <p style="font-size:0.85em;color:#888;margin:0 0 10px 0;">위험 구간: 합산승률 ≤ <input type="number" id="win-rate-danger-threshold" min="0" max="100" value="46" style="width:3em;background:#333;color:#fff;border:1px solid #555;padding:2px 4px;"> % 일 때 패 비율 참고</p>
-                <div class="win-rate-formula-title" style="font-weight:bold;color:#81c784;margin:12px 0 6px 0;">합산승률 구간별 승/패</div>
+                <div class="win-rate-formula-title" style="font-weight:bold;color:#81c784;margin:12px 0 6px 0;">합산승률 구간별 승/패 (5% 단위)</div>
                 <div id="win-rate-buckets-table-wrap" class="graph-stats" style="margin-top:8px;"><table><thead><tr><th>합산승률 구간</th><th>n</th><th>승</th><th>패</th><th>승률%</th></tr></thead><tbody id="win-rate-buckets-tbody"><tr><td colspan="5" style="color:#888;">로딩 중...</td></tr></tbody></table></div>
+                <p style="font-size:0.8em;color:#888;margin:8px 0 0 0;">※ 승률반픽 % 설정: 위 표에서 승률 50% 미만인 구간의 상한(맨 위 %)을 참고하세요.</p>
             </div>
         </div>
         </div>
@@ -5678,7 +5679,7 @@ def _backfill_blended_win_rate(conn):
 
 @app.route('/api/win-rate-buckets', methods=['GET'])
 def api_win_rate_buckets():
-    """합산승률 구간별 승/패 집계. prediction_history의 blended_win_rate 기준 10% 단위 구간. ?backfill=1 시 null 행 보정."""
+    """합산승률 구간별 승/패 집계. prediction_history의 blended_win_rate 기준 5% 단위 구간(승률반픽 % 설정 참고용). ?backfill=1 시 null 행 보정."""
     if not DB_AVAILABLE or not DATABASE_URL:
         return jsonify({'buckets': []}), 200
     try:
@@ -5697,17 +5698,18 @@ def api_win_rate_buckets():
         rows = cur.fetchall()
         cur.close()
         conn.close()
-        buckets = {i: {'bucket_min': i * 10, 'bucket_max': i * 10 + 10, 'wins': 0, 'losses': 0} for i in range(10)}
+        # 5% 단위 20개 구간 (0~5, 5~10, ..., 95~100) — 승률반픽 % 설정 시 참고
+        buckets = {i: {'bucket_min': i * 5, 'bucket_max': i * 5 + 5, 'wins': 0, 'losses': 0} for i in range(20)}
         for r in rows:
             b = float(r[3]) if r[3] is not None else None
             if b is None:
                 continue
-            idx = min(9, max(0, int(b // 10)))
+            idx = min(19, max(0, int(b // 5)))
             win = 1 if r[1] == r[2] else 0
             buckets[idx]['wins'] += win
             buckets[idx]['losses'] += (1 - win)
         out = []
-        for i in range(10):
+        for i in range(20):
             d = buckets[i]
             total = d['wins'] + d['losses']
             out.append({
