@@ -2701,6 +2701,19 @@ RESULTS_HTML = '''
             <div class="prob-bucket-collapse-header" id="prob-bucket-collapse-header" role="button" tabindex="0">예측 확률 구간별 승률</div>
             <div class="prob-bucket-collapse-body" id="prob-bucket-collapse-body"></div>
         </div>
+        <div id="losing-streaks-collapse" class="prob-bucket-collapse collapsed">
+            <div class="prob-bucket-collapse-header" id="losing-streaks-collapse-header" role="button" tabindex="0">연패 구간</div>
+            <div class="prob-bucket-collapse-body" id="losing-streaks-collapse-body">
+                <div id="losing-streaks-section" style="margin-top:8px;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
+                    <div class="win-rate-formula-title" style="font-weight:bold;color:#e57373;margin-bottom:6px;">3연패 이상 구간 분석</div>
+                    <p style="font-size:0.85em;color:#aaa;margin:0 0 8px 0;">연패 구간(3패 이상)에 속한 회차들의 예측확률 분포를 봅니다. 어느 확률대에서 연패가 자주 발생했는지 참고하세요.</p>
+                    <div style="font-weight:bold;color:#b0bec5;margin:10px 0 6px 0;">예측확률 구간별 연패 발생 (연패 구간 내 회차 수)</div>
+                    <div id="losing-streaks-prob-table-wrap" style="margin-top:6px;"><table><thead><tr><th>예측확률 구간</th><th>연패 구간 내 회차 수</th></tr></thead><tbody id="losing-streaks-prob-tbody"><tr><td colspan="2" style="color:#888;">로딩 중...</td></tr></tbody></table></div>
+                    <div style="font-weight:bold;color:#b0bec5;margin:12px 0 6px 0;">최근 연패 구간 목록</div>
+                    <div id="losing-streaks-list-wrap" style="margin-top:6px;"><table><thead><tr><th>시작 회차</th><th>종료 회차</th><th>연패 수</th><th>평균 예측확률</th></tr></thead><tbody id="losing-streaks-list-tbody"><tr><td colspan="4" style="color:#888;">로딩 중...</td></tr></tbody></table></div>
+                </div>
+            </div>
+        </div>
         <div id="symmetry-line-collapse" class="prob-bucket-collapse collapsed">
             <div class="prob-bucket-collapse-header" id="symmetry-line-collapse-header" role="button" tabindex="0">좌우 대칭 / 줄 유사도 (20열 기준)</div>
             <div class="prob-bucket-collapse-body" id="symmetry-line-collapse-body"></div>
@@ -4396,6 +4409,51 @@ RESULTS_HTML = '''
                                 if (el) el.classList.toggle('collapsed');
                             });
                         }
+                        (function loadLosingStreaks() {
+                            var tbodyProb = document.getElementById('losing-streaks-prob-tbody');
+                            var tbodyList = document.getElementById('losing-streaks-list-tbody');
+                            if (!tbodyProb && !tbodyList) return;
+                            fetch('/api/losing-streaks?limit=500').then(function(r) { return r.json(); }).then(function(data) {
+                                var buckets = data.prob_buckets || [];
+                                var streaks = data.streaks || [];
+                                if (tbodyProb) {
+                                    if (buckets.length === 0 && (data.total_streak_rounds || 0) === 0) {
+                                        tbodyProb.innerHTML = '<tr><td colspan="2" style="color:#888;">3연패 이상 구간이 없거나 데이터가 부족합니다.</td></tr>';
+                                    } else {
+                                        var rows = buckets.map(function(b) {
+                                            var label = b.bucket_min + '~' + b.bucket_max + '%';
+                                            return '<tr><td>' + label + '</td><td>' + (b.count || 0) + '</td></tr>';
+                                        }).join('');
+                                        tbodyProb.innerHTML = rows;
+                                    }
+                                }
+                                if (tbodyList) {
+                                    if (streaks.length === 0) {
+                                        tbodyList.innerHTML = '<tr><td colspan="4" style="color:#888;">3연패 이상 구간이 없습니다.</td></tr>';
+                                    } else {
+                                        var listRows = streaks.map(function(s) {
+                                            var startR = s.start_round != null ? s.start_round : '-';
+                                            var endR = s.end_round != null ? s.end_round : '-';
+                                            var len = s.length != null ? s.length : '-';
+                                            var avgP = s.avg_probability != null ? s.avg_probability + '%' : '-';
+                                            return '<tr><td>' + startR + '</td><td>' + endR + '</td><td>' + len + '</td><td>' + avgP + '</td></tr>';
+                                        }).join('');
+                                        tbodyList.innerHTML = listRows;
+                                    }
+                                }
+                            }).catch(function() {
+                                if (tbodyProb) tbodyProb.innerHTML = '<tr><td colspan="2" style="color:#888;">로드 실패</td></tr>';
+                                if (tbodyList) tbodyList.innerHTML = '<tr><td colspan="4" style="color:#888;">로드 실패</td></tr>';
+                            });
+                        })();
+                        var losingStreaksHeader = document.getElementById('losing-streaks-collapse-header');
+                        if (losingStreaksHeader && !losingStreaksHeader.getAttribute('data-bound')) {
+                            losingStreaksHeader.setAttribute('data-bound', '1');
+                            losingStreaksHeader.addEventListener('click', function() {
+                                var el = document.getElementById('losing-streaks-collapse');
+                                if (el) el.classList.toggle('collapsed');
+                            });
+                        }
                         let noticeBlock = '';
                         if (flowAdvice || lowWinRate || symmetryBoostNotice || newSegmentNotice) {
                             const notices = [];
@@ -5745,6 +5803,91 @@ def api_win_rate_buckets():
     except Exception as e:
         print(f"[❌ 오류] win-rate-buckets 실패: {str(e)[:200]}")
         return jsonify({'buckets': [], 'error': str(e)[:200]}), 200
+
+
+def _compute_losing_streaks(history, min_streak=3):
+    """예측 이력에서 min_streak(기본 3)연패 이상 구간 추출. 조커 제외, round 오름차순 가정."""
+    streaks = []
+    current = []
+    for h in (history or []):
+        if not h or not isinstance(h, dict):
+            continue
+        actual = (h.get('actual') or '').strip()
+        if actual == 'joker':
+            if len(current) >= min_streak:
+                streaks.append(list(current))
+            current = []
+            continue
+        predicted = (h.get('predicted') or '').strip()
+        is_loss = (predicted != actual)
+        if is_loss:
+            current.append({
+                'round': h.get('round'),
+                'probability': h.get('probability'),
+            })
+        else:
+            if len(current) >= min_streak:
+                streaks.append(list(current))
+            current = []
+    if len(current) >= min_streak:
+        streaks.append(list(current))
+    return streaks
+
+
+@app.route('/api/losing-streaks', methods=['GET'])
+def api_losing_streaks():
+    """3연패 이상 구간 감지 후, 해당 구간의 예측확률 구간별 집계. 연패 구간 메뉴용."""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return jsonify({'prob_buckets': [], 'streaks': [], 'total_streak_rounds': 0}), 200
+    try:
+        limit = min(2000, max(300, int(request.args.get('limit', 500))))
+        history = get_prediction_history(limit)
+        streaks = _compute_losing_streaks(history, min_streak=3)
+        # 예측확률 10% 단위 구간별: 연패 구간에 속한 회차 수
+        prob_buckets = {i: {'bucket_min': i * 10, 'bucket_max': i * 10 + 10, 'count': 0} for i in range(10)}
+        total_streak_rounds = 0
+        for s in streaks:
+            for r in s:
+                total_streak_rounds += 1
+                prob = r.get('probability')
+                if prob is not None:
+                    p = float(prob)
+                    idx = min(9, max(0, int(p // 10)))
+                    prob_buckets[idx]['count'] += 1
+        out_buckets = []
+        for i in range(10):
+            d = prob_buckets[i]
+            out_buckets.append({
+                'bucket_min': d['bucket_min'],
+                'bucket_max': d['bucket_max'],
+                'count': d['count'],
+            })
+        # 최근 연패 구간 목록 (최대 20개): start_round, end_round, length, avg_prob
+        streak_list = []
+        for s in streaks[-20:]:
+            if not s:
+                continue
+            rounds = [x.get('round') for x in s if x.get('round') is not None]
+            probs = [float(x['probability']) for x in s if x.get('probability') is not None]
+            start_r = min(rounds) if rounds else None
+            end_r = max(rounds) if rounds else None
+            avg_p = round(sum(probs) / len(probs), 1) if probs else None
+            streak_list.append({
+                'start_round': start_r,
+                'end_round': end_r,
+                'length': len(s),
+                'avg_probability': avg_p,
+            })
+        streak_list.reverse()
+        return jsonify({
+            'prob_buckets': out_buckets,
+            'streaks': streak_list,
+            'total_streak_rounds': total_streak_rounds,
+            'total_streaks': len(streaks),
+        }), 200
+    except Exception as e:
+        print(f"[❌ 오류] losing-streaks 실패: {str(e)[:200]}")
+        return jsonify({'prob_buckets': [], 'streaks': [], 'total_streak_rounds': 0, 'error': str(e)[:200]}), 200
 
 
 @app.route('/api/round-prediction', methods=['POST'])
