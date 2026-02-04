@@ -3164,8 +3164,16 @@ RESULTS_HTML = '''
             const fullRestore = restoreUi === true;
             CALC_IDS.forEach(id => {
                 const c = calcs[String(id)] || {};
-                if (Array.isArray(c.history)) calcState[id].history = dedupeCalcHistoryByRound(c.history.slice(-500));
-                else calcState[id].history = [];
+                // 실행 중일 때는 서버 폴링이 로컬 history를 덮어쓰지 않도록 유지 (결과 행 나왔다 사라지는 현상 방지)
+                const serverRunning = !!c.running;
+                const localRunning = !!(calcState[id] && calcState[id].running);
+                if (localRunning && serverRunning) {
+                    // 로컬·서버 모두 실행 중 → history는 로컬 유지, 나머지 필드만 서버로 갱신
+                } else if (Array.isArray(c.history)) {
+                    calcState[id].history = dedupeCalcHistoryByRound(c.history.slice(-500));
+                } else {
+                    calcState[id].history = [];
+                }
                 calcState[id].running = !!c.running;
                 calcState[id].started_at = c.started_at || 0;
                 calcState[id].duration_limit = parseInt(c.duration_limit, 10) || 0;
