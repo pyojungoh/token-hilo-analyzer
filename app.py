@@ -1440,8 +1440,8 @@ def _sort_results_newest_first(results):
     return sorted(results, key=key_fn)
 
 
-def get_recent_results(hours=5):
-    """최근 N시간 데이터 조회 (정/꺽 결과 포함). statement_timeout·LIMIT으로 먹통 방지."""
+def get_recent_results(hours=24):
+    """최근 N시간 데이터 조회 (정/꺽 결과 포함). 규칙: 24h 구간으로 최신 회차 누락 방지. statement_timeout·LIMIT으로 먹통 방지."""
     if not DB_AVAILABLE or not DATABASE_URL:
         return []
     
@@ -1806,7 +1806,7 @@ def _scheduler_fetch_results():
     try:
         _refresh_results_background()
         if DB_AVAILABLE and DATABASE_URL:
-            results = get_recent_results(hours=1)
+            results = get_recent_results(hours=24)
             if results and len(results) >= 16:
                 ensure_stored_prediction_for_current_round(results)
                 _apply_results_to_calcs(results)
@@ -3039,9 +3039,13 @@ RESULTS_HTML = '''
         const CALC_SESSION_KEY = 'tokenHiloCalcSessionId';
         const CALC_STATE_BACKUP_KEY = 'tokenHiloCalcStateBackup';
         const calcState = {};
-        var TABLE_MARTIN_PYO = [10000, 15000, 25000, 40000, 70000, 120000, 200000, 400000, 120000];
-        var TABLE_MARTIN_PYO_HALF = [5000, 7500, 12500, 20000, 35000, 60000, 100000, 200000, 60000];
-        function getMartinTable(type) { return (type === 'pyo_half') ? TABLE_MARTIN_PYO_HALF : TABLE_MARTIN_PYO; }
+        // 표마틴: 기준금액(배팅금액)에 맞게 9단계. 비율 [1, 1.5, 2.5, 4, 7, 12, 20, 40, 40]
+        var MARTIN_PYO_RATIOS = [1, 1.5, 2.5, 4, 7, 12, 20, 40, 40];
+        function getMartinTable(type, baseAmount) {
+            var base = (baseAmount != null && !isNaN(Number(baseAmount)) && Number(baseAmount) > 0) ? Number(baseAmount) : 10000;
+            var table = MARTIN_PYO_RATIOS.map(function(r) { return Math.round(base * r); });
+            return (type === 'pyo_half') ? table.map(function(x) { return Math.floor(x / 2); }) : table;
+        }
         CALC_IDS.forEach(id => {
             calcState[id] = {
                 running: false,
@@ -4477,7 +4481,7 @@ RESULTS_HTML = '''
                 const h = hist[i];
                 if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
                 if (h.actual === 'pending') continue;  // 미결 회차는 배팅금·수익 계산에서 제외
-                var martinTable = getMartinTable(martingaleType);
+                var martinTable = getMartinTable(martingaleType, baseIn);
                 if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
                     currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
                 }
@@ -4511,7 +4515,7 @@ RESULTS_HTML = '''
                 processedCount = i + 1;
                 if (cap <= 0) { bust = true; break; }
             }
-            var martinTableFinal = getMartinTable(martingaleType);
+            var martinTableFinal = getMartinTable(martingaleType, baseIn);
             if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
                 currentBet = bust ? 0 : martinTableFinal[Math.min(martingaleStep, martinTableFinal.length - 1)];
             }
@@ -4526,6 +4530,37 @@ RESULTS_HTML = '''
             const displayMaxLose = (calcState[id] && calcState[id].maxLoseStreakEver != null) ? calcState[id].maxLoseStreakEver : maxLoseStreak;
             return { cap: Math.max(0, Math.floor(cap)), profit, currentBet: bust ? 0 : currentBet, wins, losses, bust, maxWinStreak: displayMaxWin, maxLoseStreak: displayMaxLose, winRate, processedCount: bust ? processedCount : hist.length };
             } catch (e) { console.warn('getCalcResult', id, e); return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-', processedCount: 0 }; }
+        }
+        function getBetForRound(id, roundNum) {
+            try {
+                if (!calcState[id] || roundNum == null) return 0;
+                const capIn = parseFloat(document.getElementById('calc-' + id + '-capital')?.value) || 1000000;
+                const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
+                const oddsIn = parseFloat(document.getElementById('calc-' + id + '-odds')?.value) || 1.97;
+                const martingaleEl = document.getElementById('calc-' + id + '-martingale');
+                const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
+                const useMartingale = !!(martingaleEl && martingaleEl.checked);
+                const martingaleType = (martingaleTypeEl && martingaleTypeEl.value) || 'pyo';
+                const hist = (calcState[id].history || []).filter(function(h) { return h && h.round != null && Number(h.round) < roundNum && h.actual !== 'pending' && h.actual != null && typeof h.actual !== 'undefined'; });
+                const sorted = dedupeCalcHistoryByRound(hist).sort(function(a, b) { return Number(a.round) - Number(b.round); });
+                let cap = capIn, currentBet = baseIn, martingaleStep = 0;
+                var martinTable = getMartinTable(martingaleType, baseIn);
+                for (var i = 0; i < sorted.length; i++) {
+                    var h = sorted[i];
+                    if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
+                    var bet = Math.min(currentBet, Math.floor(cap));
+                    if (cap < bet || cap <= 0) return 0;
+                    var isJoker = h.actual === 'joker';
+                    var isWin = !isJoker && h.predicted === h.actual;
+                    if (isJoker) { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
+                    else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = 0; else currentBet = baseIn; }
+                    else { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
+                    if (cap <= 0) return 0;
+                }
+                if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
+                return Math.min(currentBet, Math.floor(cap));
+            } catch (e) { return 0; }
         }
         function updateCalcStatus(id) {
             try {
@@ -4614,8 +4649,9 @@ RESULTS_HTML = '''
                             if (firstBet > 0 && roundNum < firstBet) { /* 첫배팅 회차 전이면 스킵 */ } else {
                             var r = getCalcResult(id);
                             var hasRound = calcState[id].history.some(function(h) { return h && Number(h.round) === roundNum; });
-                            if (!hasRound && r.currentBet > 0) {
-                                calcState[id].history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: r.currentBet, actual: 'pending' });
+                            var betForThisRound = getBetForRound(id, roundNum);
+                            if (!hasRound && betForThisRound > 0) {
+                                calcState[id].history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: betForThisRound, actual: 'pending' });
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 saveCalcStateToServer();
                                 updateCalcDetail(id);
@@ -4744,7 +4780,7 @@ RESULTS_HTML = '''
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 const useMartingale = !!(martingaleEl && martingaleEl.checked);
                 const martingaleType = (martingaleTypeEl && martingaleTypeEl.value) || 'pyo';
-                var martinTableDetail = getMartinTable(martingaleType);
+                var martinTableDetail = getMartinTable(martingaleType, baseIn);
                 let cap = capIn, currentBet = baseIn, martingaleStep = 0;
                 for (let i = 0; i < completedHist.length; i++) {
                     const h = completedHist[i];
@@ -4774,7 +4810,8 @@ RESULTS_HTML = '''
                 const pickClass = (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : 'pick-kkuk')));
                 var betStr, profitStr, res, outcome, resultClass, outClass;
                 if (h.actual === 'pending') {
-                    betStr = (h.betAmount != null && h.betAmount > 0) ? Number(h.betAmount).toLocaleString() : '-';
+                    var betForRound = getBetForRound(id, rn);
+                    betStr = (betForRound > 0) ? betForRound.toLocaleString() : '-';
                     profitStr = '-';
                     res = '-';
                     outcome = '대기';
@@ -4797,7 +4834,7 @@ RESULTS_HTML = '''
                 if (displayRows.length === 0) {
                     tableWrap.innerHTML = '';
                 } else {
-                    let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽(걸은 것)</th><th>배팅금액</th><th>수익</th><th>승패</th></tr></thead><tbody>';
+                    let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽</th><th>배팅금액</th><th>수익</th><th>승패</th></tr></thead><tbody>';
                     displayRows.forEach(function(row) {
                         const outClass = row.outClass || (row.outcome === '승' ? 'win' : row.outcome === '패' ? 'lose' : row.outcome === '조' ? 'joker' : 'skip');
                         const profitClass = (typeof row.profit === 'number' && row.profit > 0) || (typeof row.profit === 'string' && row.profit.indexOf('+') === 0) ? 'profit-plus' : (typeof row.profit === 'number' && row.profit < 0) || (typeof row.profit === 'string' && row.profit.indexOf('-') === 0 && row.profit !== '-') ? 'profit-minus' : '';
@@ -5165,8 +5202,8 @@ def results_page():
     """경기 결과 웹페이지"""
     return render_template_string(RESULTS_HTML)
 
-def _build_results_payload_db_only(hours=1):
-    """DB만으로 페이로드 생성 (네트워크 없음). 캐시 비어 있을 때 첫 화면 빠르게 표시용."""
+def _build_results_payload_db_only(hours=24):
+    """DB만으로 페이로드 생성 (네트워크 없음). 규칙: 24h 구간. 캐시 비어 있을 때 첫 화면 빠르게 표시용."""
     try:
         if not DB_AVAILABLE or not DATABASE_URL:
             return None
@@ -5222,8 +5259,8 @@ def _build_results_payload():
             latest_results = []
         _log_when_changed('api_latest', len(latest_results), lambda v: f"[API] 최신 데이터 로드: {v}개")
         if DB_AVAILABLE and DATABASE_URL:
-            # 데이터베이스에서 최근 5시간 데이터 조회
-            db_results = get_recent_results(hours=5)
+            # 데이터베이스에서 최근 24시간 데이터 조회 (규칙: 최신 회차 누락 방지)
+            db_results = get_recent_results(hours=24)
             _log_when_changed('api_db', len(db_results), lambda v: f"[API] DB 데이터 조회: {v}개")
             
             # 최신 데이터 저장 (백그라운드)
@@ -6073,7 +6110,7 @@ def debug_results_check():
         # DB 데이터 조회
         db_results = []
         if DB_AVAILABLE and DATABASE_URL:
-            db_results = get_recent_results(hours=5)
+            db_results = get_recent_results(hours=24)
         
         # 병합
         if latest_results:

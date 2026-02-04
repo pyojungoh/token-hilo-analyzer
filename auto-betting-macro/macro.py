@@ -206,8 +206,17 @@ def js_set_value_then_click(amount_x, amount_y, amount_str, pick_x, pick_y):
         "})(%s,%s,%s,%s,%s);"
     ) % (amount_x, amount_y, json.dumps(str(amount_str)), pick_x, pick_y)
 
-# 표마틴 단계별 금액 (원 단위 기준), 표마틴 반 = 절반
-TABLE_MARTIN_PYO = [10000, 15000, 25000, 40000, 70000, 120000, 200000, 400000, 120000]
+# 표마틴: 기준금액에 맞게 9단계. 비율 [1, 1.5, 2.5, 4, 7, 12, 20, 40, 40]
+MARTIN_PYO_RATIOS = [1, 1.5, 2.5, 4, 7, 12, 20, 40, 40]
+
+
+def get_martin_pyo_table(base_amount):
+    """표마틴 9단계 테이블. base_amount(기준금액)에 비율을 곱해 반환. 표마틴 반은 호출처에서 절반 적용."""
+    if base_amount is None or base_amount <= 0:
+        base_amount = 10000
+    return [round(base_amount * r) for r in MARTIN_PYO_RATIOS]
+
+
 DEFAULT_ANALYZER_URL = "https://web-production-fa2dd.up.railway.app/results"
 
 
@@ -1233,9 +1242,10 @@ class MacroWindow(QMainWindow):
                                 last_amt = self.bet_log[-1].get("amount") or self._base_bet
                                 amount = last_amt * 2
                         else:
-                            # 표마틴/표마틴 반: 초기배팅 무시, 무조건 표 금액 (첫 배팅=1단계 10000원)
-                            step = min(consecutive_losses, len(TABLE_MARTIN_PYO) - 1)
-                            amount = TABLE_MARTIN_PYO[step]
+                            # 표마틴/표마틴 반: 기준금액(초기 배팅 금액)에 맞게 9단계
+                            table_pyo = get_martin_pyo_table(self._base_bet)
+                            step = min(consecutive_losses, len(table_pyo) - 1)
+                            amount = table_pyo[step]
                             if self._martingale_type == "pyo_half":
                                 amount = amount // 2
 

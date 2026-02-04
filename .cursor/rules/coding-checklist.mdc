@@ -1,0 +1,40 @@
+---
+description: 회차/결과/히스토리 코딩 시 빠른 체크리스트 (상세는 token-hilo-analyzer-conventions.mdc)
+globs: app.py, betting_integration.py, **/macro.py, **/templates/**
+alwaysApply: false
+---
+
+# 코딩 전 체크리스트 (회차·결과·히스토리)
+
+새 코드나 수정 시 아래만 지키면 규칙 위반을 피할 수 있다.
+
+## 1. 회차(round_num / gameID)
+
+- [ ] **비교·저장·API·클라이언트**에서 끝 3자리/4자리 말고 **정수 전체 회차**만 사용했는가?
+- [ ] 화면 표시 시 `displayRound(round)` 등으로 **전체 회차**를 보여 주는가? (축약 표시는 공간 제약 시만, 비교 키로는 절대 사용 금지)
+
+## 2. API 결과 순서 (맨 앞 = 최신)
+
+- [ ] **API 응답 직전**에 `payload['results']`를 `_sort_results_newest_first(...)`로 한 번 더 정렬했는가?
+- [ ] DB 조회는 **24h(필요 시 72h 폴백)** 구간을 쓰는가?
+- [ ] 클라이언트는 서버 결과 수신 시 **전체 교체**만 하는가? (예전 데이터와 병합해 상위 N개만 쓰는 로직 사용 금지)
+- [ ] **맨 왼쪽 카드 = index 0 = 최신 회차.** DOM/CSS에서 역순으로 그리지 않았는가?
+
+## 3. prediction_history 저장
+
+- [ ] 저장 경로는 **(1) 클라이언트 `/api/save-prediction`**, **(2) 서버 스케줄러 `save_prediction_record()`** 두 가지뿐인가?
+- [ ] 스케줄러에서 최신 회차가 히스토리에 없으면 **`_backfill_latest_round_to_prediction_history`** 보정 로직을 유지했는가?
+- [ ] 보정 시 `results[0]`=최신, `_get_actual_for_round(results, latest_round)`, `compute_prediction(results[1:], ph)` 사용했는가?
+
+## 4. 정렬·필터 요약
+
+| 위치 | 확인 사항 |
+|------|-----------|
+| DB `get_recent_results` | `ORDER BY (game_id 숫자) DESC`, 시간 구간 **24h** |
+| API `get_results()` | 응답 직전 `_sort_results_newest_first(payload['results'])` |
+| 클라이언트 `loadResults` | `allResults = sortResultsNewestFirst(newResults).slice(0, 300)` **전체 교체** |
+| 카드 렌더 | `displayResults = allResults.slice(0, 15)`, index 0부터 append → 맨 왼쪽이 최신 |
+
+---
+
+**원칙 두 가지:** "맨 왼쪽 = 최신 회차", "히스토리 누락 없이 서버 보정"
