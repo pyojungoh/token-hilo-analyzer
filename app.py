@@ -2548,6 +2548,10 @@ RESULTS_HTML = '''
         .calc-round-line .calc-icon-star { color: #ffeb3b; }
         .calc-round-line .calc-icon-triangle { color: #f44336; }
         .calc-round-line .calc-icon-circle { color: #2196f3; }
+        .calc-round-badge { display: inline-block; padding: 2px 8px; border-radius: 6px; font-weight: 600; white-space: nowrap; }
+        .calc-round-badge.calc-round-star { background: rgba(255, 235, 59, 0.25); color: #ffeb3b; border: 1px solid rgba(255, 235, 59, 0.5); }
+        .calc-round-badge.calc-round-triangle { background: rgba(244, 67, 54, 0.2); color: #ff8a80; border: 1px solid rgba(244, 67, 54, 0.45); }
+        .calc-round-badge.calc-round-circle { background: rgba(33, 150, 243, 0.2); color: #82b1ff; border: 1px solid rgba(33, 150, 243, 0.45); }
         .calc-current-card { display: inline-block; text-align: center; vertical-align: middle; border: 1px solid #555; box-sizing: border-box; color: #fff; }
         .calc-current-card.calc-card-betting { width: 44px; height: 28px; line-height: 28px; font-size: 1em; font-weight: bold; }
         .calc-current-card.calc-card-prediction { width: 36px; height: 22px; line-height: 22px; font-size: 0.85em; }
@@ -2603,6 +2607,10 @@ RESULTS_HTML = '''
         .calc-round-table .calc-td-profit { text-align: right; white-space: nowrap; }
         .calc-round-table .profit-plus { color: #81c784; font-weight: 600; }
         .calc-round-table .profit-minus { color: #e57373; font-weight: 500; }
+        .calc-round-table td.calc-td-round-star { background: rgba(255, 235, 59, 0.12); color: #ffeb3b; font-weight: 600; }
+        .calc-round-table td.calc-td-round-triangle { background: rgba(244, 67, 54, 0.12); color: #ff8a80; font-weight: 600; }
+        .calc-round-table td.calc-td-round-circle { background: rgba(33, 150, 243, 0.12); color: #82b1ff; font-weight: 600; }
+        .calc-round-table td .calc-icon { font-size: 1.1em; vertical-align: middle; margin-left: 2px; }
         .calc-streak { margin-bottom: 4px; word-break: break-all; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35; }
         .calc-streak .w { color: #ffeb3b; }
         .calc-streak .l { color: #c62828; }
@@ -3018,6 +3026,13 @@ RESULTS_HTML = '''
             var classes = ['calc-icon calc-icon-star', 'calc-icon calc-icon-triangle', 'calc-icon calc-icon-circle'];
             var chars = ['★', '△', '○'];
             return '<span class="' + classes[idx] + '">' + chars[idx] + '</span>';
+        }
+        // 회차별 아이콘 타입 (별/세모/동그라미) — 배지·표 셀 색상용
+        function getRoundIconType(round) {
+            var r = parseInt(round, 10);
+            if (isNaN(r) || r < 1) return 'star';
+            var types = ['star', 'triangle', 'circle'];
+            return types[(r - 1) % 3];
         }
         // 회차 4자리만 표시 (끝 4자리)
         function roundLast4(round) {
@@ -4720,10 +4735,11 @@ RESULTS_HTML = '''
                     const predictionCardEl = document.getElementById('calc-' + id + '-prediction-card');
                     if (!bettingCardEl || !predictionCardEl) return;
                     if (state.running && lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) {
-                        var roundNum = roundLast4(lastPrediction.round);
-                        var roundLineHtml = roundNum + '회 ' + getRoundIconHtml(lastPrediction.round);
-                        if (bettingRoundEl) bettingRoundEl.innerHTML = roundLineHtml;
-                        if (predictionRoundEl) predictionRoundEl.innerHTML = roundLineHtml;
+                        var roundFull = lastPrediction.round != null ? String(lastPrediction.round) : '-';
+                        var iconType = getRoundIconType(lastPrediction.round);
+                        var roundLineHtml = '<span class="calc-round-badge calc-round-' + iconType + '">' + roundFull + '회 ' + getRoundIconHtml(lastPrediction.round) + '</span>';
+                        if (bettingRoundEl) { bettingRoundEl.innerHTML = roundLineHtml; bettingRoundEl.className = 'calc-round-line'; }
+                        if (predictionRoundEl) { predictionRoundEl.innerHTML = roundLineHtml; predictionRoundEl.className = 'calc-round-line'; }
                         if (lastIs15Joker) {
                             predictionCardEl.textContent = '보류';
                             predictionCardEl.className = 'calc-current-card calc-card-prediction';
@@ -4856,7 +4872,7 @@ RESULTS_HTML = '''
                     el.innerHTML = '—';
                     return;
                 }
-                var roundStr = roundLast4(round) + '회 ';
+                var roundStr = String(round) + '회 ';
                 var iconHtml = getRoundIconHtml(round);
                 var amountPlain = String(amount);
                 var amountDisplay = amount.toLocaleString() + '원';
@@ -4954,7 +4970,7 @@ RESULTS_HTML = '''
                     resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
                     outClass = outcome === '승' ? 'win' : outcome === '패' ? 'lose' : outcome === '조' ? 'joker' : 'skip';
                 }
-                rows.push({ roundStr: roundStr, pick: pickVal, pickClass: pickClass, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr, outClass: outClass });
+                rows.push({ roundStr: roundStr, roundNum: !isNaN(rn) ? rn : null, pick: pickVal, pickClass: pickClass, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr, outClass: outClass });
             }
             const displayRows = rows.slice(0, 15);
             if (tableWrap) {
@@ -4965,7 +4981,9 @@ RESULTS_HTML = '''
                     displayRows.forEach(function(row) {
                         const outClass = row.outClass || (row.outcome === '승' ? 'win' : row.outcome === '패' ? 'lose' : row.outcome === '조' ? 'joker' : 'skip');
                         const profitClass = (typeof row.profit === 'number' && row.profit > 0) || (typeof row.profit === 'string' && row.profit.indexOf('+') === 0) ? 'profit-plus' : (typeof row.profit === 'number' && row.profit < 0) || (typeof row.profit === 'string' && row.profit.indexOf('-') === 0 && row.profit !== '-') ? 'profit-minus' : '';
-                        tbl += '<tr><td>' + row.roundStr + '</td><td class="' + row.pickClass + '">' + row.pick + '</td><td class="calc-td-bet">' + row.betAmount + '</td><td class="calc-td-profit ' + profitClass + '">' + row.profit + '</td><td class="' + outClass + '">' + row.outcome + '</td></tr>';
+                        var roundTdClass = (row.roundNum != null) ? 'calc-td-round-' + getRoundIconType(row.roundNum) : '';
+                        var roundCellHtml = (row.roundNum != null) ? (String(row.roundNum) + getRoundIconHtml(row.roundNum)) : row.roundStr;
+                        tbl += '<tr><td class="' + roundTdClass + '">' + roundCellHtml + '</td><td class="' + row.pickClass + '">' + row.pick + '</td><td class="calc-td-bet">' + row.betAmount + '</td><td class="calc-td-profit ' + profitClass + '">' + row.profit + '</td><td class="' + outClass + '">' + row.outcome + '</td></tr>';
                     });
                     tbl += '</tbody></table>';
                     tableWrap.innerHTML = tbl;
