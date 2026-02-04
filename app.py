@@ -3110,10 +3110,16 @@ RESULTS_HTML = '''
                 if (typeof winRateThr !== 'number' || isNaN(winRateThr)) winRateThr = 46;
                 const martingaleEl = document.getElementById('calc-' + id + '-martingale');
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
+                const capVal = parseFloat(document.getElementById('calc-' + id + '-capital')?.value);
+                const baseVal = parseFloat(document.getElementById('calc-' + id + '-base')?.value);
+                const oddsVal = parseFloat(document.getElementById('calc-' + id + '-odds')?.value);
                 payload[String(id)] = {
                     running: calcState[id].running,
                     started_at: calcState[id].started_at || 0,
                     history: dedupeCalcHistoryByRound((calcState[id].history || []).slice(-500)),
+                    capital: (capVal != null && !isNaN(capVal) && capVal >= 0) ? capVal : 1000000,
+                    base: (baseVal != null && !isNaN(baseVal) && baseVal >= 1) ? baseVal : 10000,
+                    odds: (oddsVal != null && !isNaN(oddsVal) && oddsVal >= 1) ? oddsVal : 1.97,
                     duration_limit: duration_limit,
                     use_duration_limit: use_duration_limit,
                     reverse: !!(revEl && revEl.checked),
@@ -3200,6 +3206,12 @@ RESULTS_HTML = '''
                 const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
                 if (targetEnabledEl) targetEnabledEl.checked = !!calcState[id].target_enabled;
                 if (targetAmountEl) targetAmountEl.value = String(calcState[id].target_amount || 0);
+                const capitalEl = document.getElementById('calc-' + id + '-capital');
+                const baseEl = document.getElementById('calc-' + id + '-base');
+                const oddsEl = document.getElementById('calc-' + id + '-odds');
+                if (capitalEl && typeof c.capital === 'number' && c.capital >= 0) capitalEl.value = String(c.capital);
+                if (baseEl && typeof c.base === 'number' && c.base >= 1) baseEl.value = String(c.base);
+                if (oddsEl && typeof c.odds === 'number' && c.odds >= 1) oddsEl.value = String(c.odds);
             });
         }
         async function loadCalcStateFromServer(restoreUi) {
@@ -5698,7 +5710,7 @@ def api_calc_state():
             if state is None:
                 state = {}
             # 계산기 1,2,3만 반환 (레거시 defense 제거 후 클라이언트 호환)
-            _default = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
+            _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
             calcs = {}
             for cid in ('1', '2', '3'):
                 calcs[cid] = state[cid] if (cid in state and isinstance(state.get(cid), dict)) else dict(_default)
@@ -5728,10 +5740,28 @@ def api_calc_state():
                 else:
                     use_history = client_history
                 use_history = use_history[-500:] if len(use_history) > 500 else use_history
+                try:
+                    cap = int(float(c.get('capital', 1000000))) if c.get('capital') is not None else 1000000
+                except (TypeError, ValueError):
+                    cap = 1000000
+                cap = 1000000 if cap < 0 else cap
+                try:
+                    base = int(float(c.get('base', 10000))) if c.get('base') is not None else 10000
+                except (TypeError, ValueError):
+                    base = 10000
+                base = 10000 if base < 1 else base
+                try:
+                    odds_val = float(c.get('odds', 1.97)) if c.get('odds') is not None else 1.97
+                except (TypeError, ValueError):
+                    odds_val = 1.97
+                odds_val = 1.97 if odds_val < 1 else odds_val
                 out[cid] = {
                     'running': running,
                     'started_at': started_at,
                     'history': use_history,
+                    'capital': cap,
+                    'base': base,
+                    'odds': odds_val,
                     'duration_limit': int(c.get('duration_limit') or 0),
                     'use_duration_limit': bool(c.get('use_duration_limit')),
                     'reverse': bool(c.get('reverse')),
@@ -5751,7 +5781,7 @@ def api_calc_state():
                     'pending_color': c.get('pending_color'),
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
         save_calc_state(session_id, out)
         return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': out}), 200
     except Exception as e:
