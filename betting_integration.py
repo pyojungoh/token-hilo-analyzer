@@ -17,30 +17,58 @@ def get_current_pick(conn, calculator_id=1):
     calculator_id: 1 | 2 | 3 (계산기 번호)
     반환: dict 또는 None
       { 'pick_color': 'RED'|'BLACK', 'round': int, 'probability': float,
-        'suggested_amount': int|None, 'updated_at': str (ISO) }
+        'suggested_amount': int|None, 'updated_at': str (ISO), 'running': bool }
     """
     if conn is None:
         return None
     calc_id = int(calculator_id) if calculator_id in (1, 2, 3) else 1
     try:
         cur = conn.cursor()
-        cur.execute('''
-            SELECT pick_color, round_num, probability, suggested_amount, updated_at
-            FROM current_pick WHERE id = %s
-        ''', (calc_id,))
+        try:
+            cur.execute('''
+                SELECT pick_color, round_num, probability, suggested_amount, updated_at, running
+                FROM current_pick WHERE id = %s
+            ''', (calc_id,))
+            has_running = True
+        except Exception:
+            cur.execute('''
+                SELECT pick_color, round_num, probability, suggested_amount, updated_at
+                FROM current_pick WHERE id = %s
+            ''', (calc_id,))
+            has_running = False
         row = cur.fetchone()
         cur.close()
         if not row:
             return None
-        return {
+        out = {
             'pick_color': row[0],
             'round': row[1],
             'probability': float(row[2]) if row[2] is not None else None,
             'suggested_amount': row[3],
             'updated_at': row[4].isoformat() if row[4] else None,
         }
+        out['running'] = bool(row[5]) if has_running and len(row) > 5 else True
+        return out
     except Exception:
         return None
+
+
+def set_calculator_running(conn, calculator_id, running):
+    """해당 계산기의 running 플래그만 갱신 (목표 달성 등으로 계산기 중지 시 매크로 연동용)."""
+    if conn is None:
+        return False
+    calc_id = int(calculator_id) if calculator_id in (1, 2, 3) else 1
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'current_pick' AND column_name = 'running'")
+        if cur.fetchone() is None:
+            cur.close()
+            return False
+        cur.execute('UPDATE current_pick SET running = %s WHERE id = %s', (bool(running), calc_id))
+        cur.close()
+        return True
+    except Exception:
+        return False
 
 
 def set_current_pick(conn, pick_color=None, round_num=None, probability=None, suggested_amount=None, calculator_id=1):

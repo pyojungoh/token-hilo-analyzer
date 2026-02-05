@@ -203,6 +203,10 @@ def init_database():
                 )
             ''')
             cur.execute('INSERT INTO current_pick (id) VALUES (1), (2), (3) ON CONFLICT (id) DO NOTHING')
+            cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'current_pick' AND column_name = 'running'")
+            if cur.fetchone() is None:
+                cur.execute('ALTER TABLE current_pick ADD COLUMN running BOOLEAN DEFAULT true')
+                cur.execute('UPDATE current_pick SET running = true WHERE running IS NULL')
         except Exception as ex:
             print(f"[경고] current_pick 테이블 생성/초기화 건너뜀 (서버는 계속 기동): {str(ex)[:100]}")
         
@@ -5824,6 +5828,19 @@ def api_calc_state():
             else:
                 out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
         save_calc_state(session_id, out)
+        # 계산기 running 상태를 current_pick에 반영 → 에뮬레이터 매크로가 목표 달성 시 자동 중지
+        if bet_int:
+            conn = get_db_connection(statement_timeout_sec=3)
+            if conn:
+                try:
+                    for cid in ('1', '2', '3'):
+                        if cid in out and isinstance(out[cid], dict):
+                            bet_int.set_calculator_running(conn, int(cid), out[cid].get('running', True))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                finally:
+                    conn.close()
         return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': out}), 200
     except Exception as e:
         return jsonify({'error': str(e)[:200], 'session_id': None, 'server_time': int(time.time()), 'calcs': {}}), 200
@@ -6092,7 +6109,7 @@ def api_save_prediction_history():
 @app.route('/api/current-pick', methods=['GET', 'POST'])
 def api_current_pick():
     """GET: 배팅 연동 현재 예측 픽 조회 (계산기별). POST: 프론트엔드가 픽 갱신 시 저장 (계산기별)."""
-    empty_pick = {'pick_color': None, 'round': None, 'probability': None, 'suggested_amount': None, 'updated_at': None}
+    empty_pick = {'pick_color': None, 'round': None, 'probability': None, 'suggested_amount': None, 'updated_at': None, 'running': True}
     try:
         if not bet_int or not DB_AVAILABLE or not DATABASE_URL:
             return jsonify(empty_pick if request.method == 'GET' else {'ok': False}), 200

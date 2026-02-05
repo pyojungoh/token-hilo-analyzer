@@ -28,7 +28,7 @@ try:
         QLabel, QLineEdit, QPushButton, QGroupBox, QFormLayout, QComboBox,
         QFrame, QScrollArea, QGridLayout,
     )
-    from PyQt5.QtCore import Qt, QTimer, pyqtSlot
+    from PyQt5.QtCore import Qt, QTimer, pyqtSlot, pyqtSignal
     from PyQt5.QtGui import QFont
     HAS_PYQT = True
 except ImportError:
@@ -151,6 +151,8 @@ def adb_input_text(device_id, text):
 
 
 class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
+    connect_result_ready = pyqtSignal(object, object) if HAS_PYQT else None  # (pick, results) 서브스레드 → 메인 스레드
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("에뮬레이터 자동배팅 (LDPlayer)")
@@ -162,6 +164,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._device_id = "127.0.0.1:5555"
         self._poll_interval_sec = 2.0
         self._running = False
+        self._connected = False  # 연결 버튼으로 연결됨 → 계속 폴링해 픽/회차 갱신
         self._last_round_when_started = None  # 시작 시점의 회차 (이 회차는 배팅 안 함)
         self._last_bet_round = None  # 이미 배팅한 회차 (중복 방지)
         self._pending_bet_rounds = {}  # round_num -> { pick_color, amount } (결과 대기 → 승/패/조커 로그)
@@ -179,6 +182,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._load_coords()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._poll)
+        if HAS_PYQT and self.connect_result_ready is not None:
+            self.connect_result_ready.connect(self._apply_connect_result)
 
     def _build_ui(self):
         cw = QWidget()
@@ -371,9 +376,17 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self.connect_status_label.setStyleSheet("color: #666; font-size: 11px;")
 
         def do_fetch():
-            pick = fetch_current_pick(url, calculator_id=calc_id, timeout=8)
-            results = fetch_results(url, timeout=8)
-            QTimer.singleShot(0, lambda: self._apply_connect_result(pick, results))
+            pick = {"pick_color": None, "round": None, "probability": None, "error": None}
+            results = {"blended_win_rate": None, "prediction_history": [], "error": None}
+            try:
+                pick = fetch_current_pick(url, calculator_id=calc_id, timeout=8)
+                results = fetch_results(url, timeout=8)
+            except Exception as e:
+                pick["error"] = str(e)
+                results["error"] = str(e)
+            # 서브스레드에서는 QTimer가 동작하지 않으므로 시그널로 메인 스레드에서 UI 갱신(버튼 복구)
+            if self.connect_result_ready is not None:
+                self.connect_result_ready.emit(pick, results)
 
         thread = threading.Thread(target=do_fetch, daemon=True)
         thread.start()
@@ -392,7 +405,12 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         else:
             self.connect_status_label.setText("연결됨")
             self.connect_status_label.setStyleSheet("color: #2e7d32; font-size: 11px;")
-            self._log("Analyzer 연결됨 — 픽/금액 확인 후 배팅 시작하세요.")
+            self._connected = True
+            self._analyzer_url = self.analyzer_url_edit.text().strip()
+            self._calculator_id = self.calc_combo.currentData()
+            if not self._timer.isActive():
+                self._timer.start(int(self._poll_interval_sec * 1000))
+            self._log("Analyzer 연결됨 — 픽/회차가 계속 갱신됩니다. 확인 후 시작하세요.")
 
     def _log(self, msg):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -428,16 +446,24 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
 
     def _on_stop(self):
         self._running = False
-        self._timer.stop()
+        if not self._connected:
+            self._timer.stop()
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self._log("중지")
+        self._log("배팅 중지 (연결 유지 시 픽은 계속 갱신)")
 
     def _poll(self):
-        if not self._running:
+        # 연결만 했을 때도 폴링해서 픽/회차 계속 갱신, 시작했을 때만 배팅
+        if not self._running and not self._connected:
             return
-        url = self._analyzer_url
+        url = (self._analyzer_url or "").strip() or self.analyzer_url_edit.text().strip()
+        if not url:
+            return
+        self._analyzer_url = url
         calc_id = self._calculator_id
+        if calc_id is None:
+            calc_id = self.calc_combo.currentData()
+            self._calculator_id = calc_id
         try:
             pick = fetch_current_pick(url, calculator_id=calc_id, timeout=5)
             results = fetch_results(url, timeout=5)
@@ -453,16 +479,28 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._update_display()
         self._check_pending_results(results.get("prediction_history") or [])
 
+        # 목표금액 달성 등으로 계산기가 중지되면 매크로도 자동 중지
+        if self._running and pick.get("running") is False:
+            self._running = False
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self._log("목표 달성으로 계산기 중지 — 자동 중지")
+
+        if not self._running:
+            return
+        # 배팅 로직: 다음 픽(회차 변경)부터 실행
         round_num = pick.get("round")
         pick_color = pick.get("pick_color")
         if round_num is None or pick_color not in ("RED", "BLACK"):
             return
-        round_num = int(round_num) if round_num is not None else None
-        if round_num is None:
+        try:
+            round_num = int(round_num)
+        except (TypeError, ValueError):
             return
-        # 시작 직후: 현재 픽의 회차를 "스킵"용으로 기록
+        # 시작 직후: 현재 픽의 회차를 스킵용으로 기록
         if self._last_round_when_started is None:
             self._last_round_when_started = round_num
+            self._log(f"다음 회차부터 배팅합니다 (현재 서버 픽: {round_num}회 스킵)")
             return
         # 다음 픽(회차가 바뀐 경우)에만 배팅
         if round_num <= self._last_round_when_started:
