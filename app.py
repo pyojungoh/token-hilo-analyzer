@@ -202,7 +202,7 @@ def init_database():
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
-            cur.execute('INSERT INTO current_pick (id) VALUES (1) ON CONFLICT (id) DO NOTHING')
+            cur.execute('INSERT INTO current_pick (id) VALUES (1), (2), (3) ON CONFLICT (id) DO NOTHING')
         except Exception as ex:
             print(f"[경고] current_pick 테이블 생성/초기화 건너뜀 (서버는 계속 기동): {str(ex)[:100]}")
         
@@ -231,7 +231,7 @@ def ensure_current_pick_table(conn):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        cur.execute('INSERT INTO current_pick (id) VALUES (1) ON CONFLICT (id) DO NOTHING')
+        cur.execute('INSERT INTO current_pick (id) VALUES (1), (2), (3) ON CONFLICT (id) DO NOTHING')
         cur.close()
         return True
     except Exception as e:
@@ -3383,6 +3383,32 @@ RESULTS_HTML = '''
                 if (Object.prototype.hasOwnProperty.call(data, 'prediction_history') && Array.isArray(data.prediction_history)) {
                     predictionHistory = data.prediction_history.slice(-100).filter(function(h) { return h && typeof h === 'object'; });
                     savePredictionHistory();
+                    // 서버 prediction_history로 계산기 히스토리 '대기' 보정 — 서버에 결과가 있으면 클라이언트 인터넷 환경과 관계없이 승/패/조커 반영
+                    (function syncCalcHistoryFromServerPrediction() {
+                        if (!Array.isArray(predictionHistory) || predictionHistory.length === 0) return;
+                        var byRound = {};
+                        predictionHistory.forEach(function(p) {
+                            if (p && typeof p === 'object' && p.round != null && p.actual != null && p.actual !== '') {
+                                byRound[Number(p.round)] = { actual: p.actual, predicted: p.predicted, pickColor: p.pick_color || p.pickColor };
+                            }
+                        });
+                        var changed = false;
+                        CALC_IDS.forEach(function(id) {
+                            var hist = calcState[id].history || [];
+                            hist.forEach(function(h) {
+                                if (!h || h.actual !== 'pending') return;
+                                var r = Number(h.round);
+                                if (isNaN(r)) return;
+                                var fromServer = byRound[r];
+                                if (!fromServer) return;
+                                h.actual = fromServer.actual;
+                                if (fromServer.predicted != null) h.predicted = fromServer.predicted;
+                                if (fromServer.pickColor != null) h.pickColor = fromServer.pickColor;
+                                changed = true;
+                            });
+                        });
+                        if (changed) try { saveCalcStateToServer(); } catch (e) {}
+                    })();
                 }
                 // lastServerPrediction/lastPrediction은 아래에서 results 수락 시에만 설정 (깜빡임 방지)
                 
@@ -4291,22 +4317,7 @@ RESULTS_HTML = '''
                         u35WarningBlock +
                         '</div>');
                     if (pickContainer) pickContainer.innerHTML = leftBlock;
-                    // 배팅 연동: 현재 픽을 서버에 저장 (GET /api/current-pick 으로 외부 조회 가능). 한 출처(lastPrediction)만 반영.
-                    try {
-                        if (is15Joker || predict === '보류') {
-                            fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pickColor: null, round: displayRoundNum, probability: null }) }).catch(function() {});
-                        } else if (lastPrediction && (colorToPick === '빨강' || colorToPick === '검정')) {
-                            fetch('/api/current-pick', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                    pickColor: colorToPick === '빨강' ? 'RED' : 'BLACK',
-                                    round: displayRoundNum,
-                                    probability: predProb
-                                })
-                            }).catch(function() {});
-                        }
-                    } catch (e) {}
+                    // 배팅 연동: 계산기별 픽은 updateCalcStatus(id) 내에서 POST (GET /api/current-pick?calculator=1|2|3 으로 조회).
                     if (predDiv) {
                         const rateClass50 = count50 > 0 ? (rate50 >= 60 ? 'high' : rate50 >= 50 ? 'mid' : 'low') : '';
                         const blendedStr = (typeof blendedWinRate === 'number' && !isNaN(blendedWinRate)) ? blendedWinRate.toFixed(1) : '-';
@@ -4747,6 +4758,8 @@ RESULTS_HTML = '''
                             bettingCardEl.textContent = '보류';
                             bettingCardEl.className = 'calc-current-card calc-card-betting';
                             bettingCardEl.title = '15번 카드 조커 · 배팅하지 마세요';
+                            var betAmt = (lastPrediction && lastPrediction.round != null && typeof getBetForRound === 'function') ? getBetForRound(id, lastPrediction.round) : 0;
+                            try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: parseInt(id, 10) || 1, pickColor: null, round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: null, suggested_amount: betAmt > 0 ? betAmt : null }) }).catch(function() {}); } catch (e) {}
                         } else {
                         var predictionText = lastPrediction.value;
                         var predColorNorm = normalizePickColor(lastPrediction.color);
@@ -4782,6 +4795,8 @@ RESULTS_HTML = '''
                         bettingCardEl.textContent = bettingText;
                         bettingCardEl.className = 'calc-current-card calc-card-betting card-' + (bettingIsRed ? 'jung' : 'kkuk');
                         bettingCardEl.title = '';
+                        var betAmt = (lastPrediction && lastPrediction.round != null && typeof getBetForRound === 'function') ? getBetForRound(id, lastPrediction.round) : 0;
+                        try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: parseInt(id, 10) || 1, pickColor: bettingIsRed ? 'RED' : 'BLACK', round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: typeof predProb === 'number' && !isNaN(predProb) ? predProb : null, suggested_amount: betAmt > 0 ? betAmt : null }) }).catch(function() {}); } catch (e) {}
                         if (lastPrediction && lastPrediction.round != null) {
                             savedBetPickByRound[Number(lastPrediction.round)] = { value: bettingText, isRed: bettingIsRed };
                             var sbKeys = Object.keys(savedBetPickByRound).map(Number).filter(function(k) { return !isNaN(k); }).sort(function(a,b) { return a - b; });
@@ -6076,20 +6091,32 @@ def api_save_prediction_history():
 
 @app.route('/api/current-pick', methods=['GET', 'POST'])
 def api_current_pick():
-    """GET: 배팅 연동 현재 예측 픽 조회. POST: 프론트엔드가 픽 갱신 시 저장."""
+    """GET: 배팅 연동 현재 예측 픽 조회 (계산기별). POST: 프론트엔드가 픽 갱신 시 저장 (계산기별)."""
     empty_pick = {'pick_color': None, 'round': None, 'probability': None, 'suggested_amount': None, 'updated_at': None}
     try:
         if not bet_int or not DB_AVAILABLE or not DATABASE_URL:
             return jsonify(empty_pick if request.method == 'GET' else {'ok': False}), 200
         if request.method == 'GET':
+            calculator_id = request.args.get('calculator', '1').strip()
+            try:
+                calculator_id = int(calculator_id) if calculator_id in ('1', '2', '3') else 1
+            except (TypeError, ValueError):
+                calculator_id = 1
             conn = get_db_connection(statement_timeout_sec=5)
             if not conn:
                 return jsonify(empty_pick), 200
-            out = bet_int.get_current_pick(conn)
+            ensure_current_pick_table(conn)
+            conn.commit()
+            out = bet_int.get_current_pick(conn, calculator_id=calculator_id)
             conn.close()
             return jsonify(out if out else empty_pick), 200
-        # POST: 테이블 없으면 생성 후 저장 (데이터 충분한데 픽 안 올 때 대비)
+        # POST: 테이블 없으면 생성 후 저장 (계산기별)
         data = request.get_json(force=True, silent=True) or {}
+        calculator_id = data.get('calculator', 1)
+        try:
+            calculator_id = int(calculator_id) if calculator_id in (1, 2, 3) else 1
+        except (TypeError, ValueError):
+            calculator_id = 1
         pick_color = data.get('pickColor') or data.get('pick_color')
         round_num = data.get('round')
         probability = data.get('probability')
@@ -6099,10 +6126,10 @@ def api_current_pick():
             return jsonify({'ok': False}), 200
         ensure_current_pick_table(conn)
         conn.commit()
-        ok = bet_int.set_current_pick(conn, pick_color=pick_color, round_num=round_num, probability=probability, suggested_amount=suggested_amount)
+        ok = bet_int.set_current_pick(conn, pick_color=pick_color, round_num=round_num, probability=probability, suggested_amount=suggested_amount, calculator_id=calculator_id)
         if ok:
             conn.commit()
-            _log_when_changed('current_pick', (pick_color, round_num), lambda v: f"[배팅연동] 픽 저장: {v[0]} round {v[1]}")
+            _log_when_changed('current_pick', (calculator_id, pick_color, round_num), lambda v: f"[배팅연동] 계산기{v[0]} 픽 저장: {v[1]} round {v[2]}")
         conn.close()
         return jsonify({'ok': ok}), 200
     except Exception as e:

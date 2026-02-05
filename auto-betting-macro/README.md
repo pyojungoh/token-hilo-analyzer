@@ -21,6 +21,19 @@ Analyzer 서버의 예측 픽(`/api/current-pick`)을 폴링해서, RED/BLACK �
    pip install -r requirements.txt
    ```
 
+## 에뮬레이터 자동배팅 매크로 (ADB) — 한곳에 통합
+
+**실행**: `python emulator_macro.py` 또는 `run-emulator-macro.bat`
+
+한 창에서 다음을 모두 처리합니다.
+
+- **설정**: Analyzer URL, 계산기 1/2/3 선택, 배팅 금액, ADB 기기(예: 127.0.0.1:5555)
+- **좌표 설정**: 배팅금액·정정·레드·블랙 좌표 찾기 (버튼 누르면 창 최소화 → LDPlayer 화면에서 해당 위치 클릭 → `emulator_coords.json` 저장). 기본 배팅금액 저장 포함.
+- **표시**: 회차(★△○), 금액, 배팅픽, 정/꺽 카드, 경고·합선·승률
+- **동작**: **시작**을 누르면 **다음 픽부터** 배팅 (금액 입력 → 정정 → RED/BLACK 탭, ADB)
+
+의존성: `pynput` (좌표 찾기용), `PyQt5`, `requests` (pip install -r requirements.txt).
+
 ## 실행
 
 1. 터미널에서 매크로를 실행합니다.

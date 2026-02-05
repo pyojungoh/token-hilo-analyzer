@@ -6,25 +6,28 @@
 - 규칙: 기존 로딩·표시·정/꺽 순서에는 관여하지 않습니다.
 """
 
-CURRENT_PICK_ROW_ID = 1
+# 계산기 1,2,3 각각 id=1, id=2, id=3
+CALC_IDS = (1, 2, 3)
 
 
-def get_current_pick(conn):
+def get_current_pick(conn, calculator_id=1):
     """
-    DB에서 현재 예측 픽 1건 조회.
+    DB에서 해당 계산기의 현재 예측 픽 1건 조회.
     conn: psycopg2 연결 (호출자가 열고 닫음)
+    calculator_id: 1 | 2 | 3 (계산기 번호)
     반환: dict 또는 None
       { 'pick_color': 'RED'|'BLACK', 'round': int, 'probability': float,
         'suggested_amount': int|None, 'updated_at': str (ISO) }
     """
     if conn is None:
         return None
+    calc_id = int(calculator_id) if calculator_id in (1, 2, 3) else 1
     try:
         cur = conn.cursor()
         cur.execute('''
             SELECT pick_color, round_num, probability, suggested_amount, updated_at
             FROM current_pick WHERE id = %s
-        ''', (CURRENT_PICK_ROW_ID,))
+        ''', (calc_id,))
         row = cur.fetchone()
         cur.close()
         if not row:
@@ -40,10 +43,11 @@ def get_current_pick(conn):
         return None
 
 
-def set_current_pick(conn, pick_color=None, round_num=None, probability=None, suggested_amount=None):
+def set_current_pick(conn, pick_color=None, round_num=None, probability=None, suggested_amount=None, calculator_id=1):
     """
-    DB에 현재 예측 픽 1건 저장 (id=1 행 upsert).
+    DB에 해당 계산기의 현재 예측 픽 1건 저장 (id=calculator_id 행 upsert).
     conn: psycopg2 연결 (호출자가 commit/close)
+    calculator_id: 1 | 2 | 3
     pick_color: 'RED' | 'BLACK' | None (보류 시 None)
     round_num: 다음 회차 번호
     probability: 확률 0~100
@@ -52,6 +56,7 @@ def set_current_pick(conn, pick_color=None, round_num=None, probability=None, su
     """
     if conn is None:
         return False
+    calc_id = int(calculator_id) if calculator_id in (1, 2, 3) else 1
     try:
         cur = conn.cursor()
         cur.execute('''
@@ -64,7 +69,7 @@ def set_current_pick(conn, pick_color=None, round_num=None, probability=None, su
                 suggested_amount = EXCLUDED.suggested_amount,
                 updated_at = CURRENT_TIMESTAMP
         ''', (
-            CURRENT_PICK_ROW_ID,
+            calc_id,
             pick_color,
             int(round_num) if round_num is not None else None,
             float(probability) if probability is not None else None,
