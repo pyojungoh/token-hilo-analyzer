@@ -3739,11 +3739,14 @@ RESULTS_HTML = '''
                     const is15Joker = displayResults.length >= 15 && !!displayResults[14].joker;  // 15번 카드 조커면 픽/배팅 보류
                     lastIs15Joker = is15Joker;  // 계산기 예측픽에 보류 반영
                     
-                    // 직전 예측의 실제 결과 반영: API prediction_history(서버 머지) 우선, 없으면 버퍼/lastPrediction. 회차 비교는 Number 통일(문자/숫자 혼합 시 중복 방지)
+                    // 직전 예측의 실제 결과 반영. 예측기 밑 표/합산승률은 무조건 예측픽만 사용 — 계산기(승률반픽 등)와 독립.
                     const currentRoundNum = Number(currentRoundFull);
                     const alreadyRecordedRound = predictionHistory.some(function(h) { return h && Number(h.round) === currentRoundNum; });
+                    // predForRound: 계산기 루프에서 반픽/승률반픽 적용할 때 쓸 기준 (기존 로직 유지)
                     var predForRound = (predictionHistory && predictionHistory.find(function(p) { return p && Number(p.round) === currentRoundNum; })) || getRoundPrediction(currentRoundFull) || (lastPrediction && Number(lastPrediction.round) === currentRoundNum ? lastPrediction : null);
                     if (predForRound && predForRound.actual !== undefined) predForRound = { round: predForRound.round, value: predForRound.predicted, prob: predForRound.probability, color: predForRound.pickColor || predForRound.pick_color };
+                    // 예측기표에 넣을 값은 서버·버퍼에서만 취함. predictionHistory.find는 배팅픽 오염 가능으로 사용 안 함.
+                    var predForRecord = getRoundPrediction(currentRoundFull) || (lastPrediction && Number(lastPrediction.round) === currentRoundNum ? lastPrediction : null);
                     var lowWinRateForRecord = false;
                     var blended = 50, c5 = 0, c15 = 0, c30 = 0, c100 = 0;
                     try {
@@ -3771,7 +3774,9 @@ RESULTS_HTML = '''
                     if (!alreadyRecordedRound && predForRound) {
                         const isActualJoker = displayResults.length > 0 && !!displayResults[0].joker;
                         if (isActualJoker) {
-                            predictionHistory.push({ round: currentRoundFull, predicted: predForRound.value, actual: 'joker', probability: predForRound.prob != null ? predForRound.prob : null, pickColor: predForRound.color || null });
+                            if (predForRecord) {
+                                predictionHistory.push({ round: currentRoundFull, predicted: predForRecord.value, actual: 'joker', probability: predForRecord.prob != null ? predForRecord.prob : null, pickColor: predForRecord.color || null });
+                            }
                             var betPredForServer = null, betColorForServer = null;
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
@@ -3807,11 +3812,12 @@ RESULTS_HTML = '''
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
                             });
                             saveCalcStateToServer();
-                            // 상단 실제경고 합산승률/결과는 무조건 예측픽 기준. 서버에도 예측픽만 저장(배팅픽 넣지 않음).
-                            savePredictionHistoryToServer(currentRoundFull, predForRound.value, 'joker', predForRound.prob, predForRound.color || null);
+                            if (predForRecord) { savePredictionHistoryToServer(currentRoundFull, predForRecord.value, 'joker', predForRecord.prob, predForRecord.color || null); }
                         } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
                             const actual = graphValues[0] ? '정' : '꺽';
-                            predictionHistory.push({ round: currentRoundFull, predicted: predForRound.value, actual: actual, probability: predForRound.prob != null ? predForRound.prob : null, pickColor: predForRound.color || null });
+                            if (predForRecord) {
+                                predictionHistory.push({ round: currentRoundFull, predicted: predForRecord.value, actual: actual, probability: predForRecord.prob != null ? predForRecord.prob : null, pickColor: predForRecord.color || null });
+                            }
                             var betPredForServerActual = null, betColorForServerActual = null;
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
@@ -3865,8 +3871,7 @@ RESULTS_HTML = '''
                                 }
                             });
                             saveCalcStateToServer();
-                            // 상단 실제경고 합산승률/결과는 무조건 예측픽 기준. 서버에도 예측픽만 저장(배팅픽 넣지 않음).
-                            savePredictionHistoryToServer(currentRoundFull, predForRound.value, actual, predForRound.prob, predForRound.color || null);
+                            if (predForRecord) { savePredictionHistoryToServer(currentRoundFull, predForRecord.value, actual, predForRecord.prob, predForRecord.color || null); }
                         }
                         predictionHistory = predictionHistory.slice(-100);
                         savePredictionHistory();  // localStorage 백업
@@ -4242,10 +4247,10 @@ RESULTS_HTML = '''
                     })();
                     const streakLine100 = '현재 ' + (currStreak100 > 0 ? currStreak100 + '연' + currStreakType100 : '-') + ' | 최대 연승 ' + (maxWin100 || '-') + ' | 최대 연패 ' + (maxLose100 || '-');
                     
-                    // [예측픽 전용] 예측 픽(표 왼쪽 박스) · 실제 경고 합산승률 · 최근 50회 결과 · 연승연패. 계산기(calcState)와 독립 — 반드시 predictionHistory(예측픽)만 사용.
+                    // [예측픽 전용] 메인 예측기(위) + 예측기표(아래). 계산기(calcState)와 독립 — 반드시 predictionHistory(예측픽)만 사용.
                     const resultBarContainer = document.getElementById('prediction-result-bar');
-                    const pickContainer = document.getElementById('prediction-pick-container');
-                    const predDiv = document.getElementById('prediction-box');
+                    const pickContainer = document.getElementById('prediction-pick-container');  // 메인 예측기: 배팅중 RED, 정/꺽, 예측 확률
+                    const predDiv = document.getElementById('prediction-box');               // 예측기표: 실제 경고 합산승률, 최근 50회, 회차별 표
                     const validHist = predictionHistory.filter(function(h) { return h && typeof h === 'object'; });
                     const hit = validHist.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
                     const losses = validHist.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
@@ -4343,9 +4348,10 @@ RESULTS_HTML = '''
                         '<div class="pred-round">' + displayRound(displayRoundNum) + '회 ' + roundIconMain + '</div>' +
                         u35WarningBlock +
                         '</div>');
-                    if (pickContainer) pickContainer.innerHTML = leftBlock;
+                    if (pickContainer) { pickContainer.innerHTML = leftBlock; pickContainer.setAttribute('data-section', '메인 예측기'); }
                     // 배팅 연동: 계산기별 픽은 updateCalcStatus(id) 내에서 POST (GET /api/current-pick?calculator=1|2|3 으로 조회).
                     if (predDiv) {
+                        predDiv.setAttribute('data-section', '예측기표');
                         const rateClass50 = count50 > 0 ? (rate50 >= 60 ? 'high' : rate50 >= 50 ? 'mid' : 'low') : '';
                         const blendedStr = (typeof blendedWinRate === 'number' && !isNaN(blendedWinRate)) ? blendedWinRate.toFixed(1) : '-';
                         const blendedLow = (typeof blendedWinRate === 'number' && !isNaN(blendedWinRate) && blendedWinRate <= 50);
@@ -4362,6 +4368,7 @@ RESULTS_HTML = '''
                             (count50 > 0 ? '<span class="stat-rate ' + rateClass50 + '">승률 : ' + rate50Str + '%</span>' : '') +
                             '</div>' +
                             '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 예측픽 기준(계산기와 독립) · 합산승률=5·15·30·100 반영(40·30·15·5)</div>';
+                        // 예측기표: 실제 경고 합산승률 + 최근 50회 결과 + 회차별(정/꺽/승·패·조커) 표 — 예측픽만 사용
                         let streakTableBlock = '';
                         try {
                         if (rev.length === 0) {
@@ -4378,7 +4385,7 @@ RESULTS_HTML = '''
                                 const c = out === '승' ? 'streak-win' : out === '패' ? 'streak-lose' : 'streak-joker';
                                 return '<td class="' + c + '">' + out + '</td>';
                             }).join('');
-                            streakTableBlock = '<div class="main-streak-table-wrap"><table class="main-streak-table">' +
+                            streakTableBlock = '<div class="main-streak-table-wrap" data-section="예측기표"><table class="main-streak-table" aria-label="예측기표">' +
                                 '<thead><tr>' + headerCells + '</tr></thead><tbody>' +
                                 '<tr>' + rowProb + '</tr>' +
                                 '<tr>' + rowPick + '</tr>' +

@@ -48,9 +48,13 @@ alwaysApply: true
 
 ## 5. 상단 실제 경고 합산승률 · 결과값 = 예측픽 전용 (계산기와 독립)
 
+- **명칭 (코드/가이드 통일)**  
+  - **메인 예측기**: 상단 왼쪽 박스 — 배팅중 RED/BLACK, 정/꺽 카드, 예측 확률 %, 회차. (`#prediction-pick-container`, `data-section="메인 예측기"`)  
+  - **예측기표**: 메인 예측기 바로 아래 — 실제 경고 합산승률, 최근 50회 결과(승/패/조커), 회차별 표(확률·픽·승/패/조커). (`#prediction-box`, `.main-streak-table`, `data-section="예측기표"`)
 - **상단** 예측기 밑 **실제 경고 합산승률**, **최근 50회 결과**(승/패/조커), **연승연패**, **스트릭 테이블**은 **무조건 예측픽(prediction_history) 기준**으로만 표시한다.
 - **계산기(calcState)** 값은 이 영역에 **절대 사용하지 않는다.** 계산기는 반픽/승률반픽 등 배팅 픽을 쓰고, 상단은 모델이 예측한 픽 대비 적중만 본다.
 - **저장**: `savePredictionHistoryToServer` 및 클라이언트 `predictionHistory.push`에는 **예측픽**(해당 회차의 서버/모델 예측값)만 넣고, 배팅 픽(반픽/승률반픽 적용값)을 넣지 않는다.
+- **기록 시 출처**: prediction_history/표에 넣을 픽은 **반드시** `getRoundPrediction(round)` 또는 `lastPrediction`(서버에서 온 값)에서만 취한다. `predictionHistory.find(round)`는 이미 저장된 값인데 배팅픽이 섞여 있을 수 있으므로 **기록용으로 사용하지 않는다.**
 - 이 기준이 흔들리면 합산승률/결과가 계산기와 섞여 결과값이 자꾸 계산기값을 갖고 오는 버그가 발생한다.
 
 ---
