@@ -472,22 +472,22 @@ def _blended_win_rate(prediction_history):
 
 
 def _blended_win_rate_components(prediction_history):
-    """예측 이력으로 5/15/30/100 승률 및 합산. (r15, r30, r100, blended). 가중치: 5회 40%, 15회 30%, 30회 15%, 100회 5%."""
+    """예측 이력으로 7/15/30/100 승률 및 합산. (r15, r30, r100, blended). 가중치: 7회 40%, 15회 30%, 30회 15%, 100회 5%."""
     valid_hist = [h for h in (prediction_history or []) if h and isinstance(h, dict)]
     if not valid_hist:
         return None
-    v5 = [h for h in valid_hist[-5:] if h.get('actual') != 'joker']
+    v7 = [h for h in valid_hist[-7:] if h.get('actual') != 'joker']
     v15 = [h for h in valid_hist[-15:] if h.get('actual') != 'joker']
     v30 = [h for h in valid_hist[-30:] if h.get('actual') != 'joker']
     v100 = [h for h in valid_hist[-100:] if h.get('actual') != 'joker']
     def rate(arr):
         hit = sum(1 for h in arr if h.get('predicted') == h.get('actual'))
         return 100 * hit / len(arr) if arr else 50
-    r5 = rate(v5)
+    r7 = rate(v7)
     r15 = rate(v15)
     r30 = rate(v30)
     r100 = rate(v100)
-    blended = 0.40 * r5 + 0.30 * r15 + 0.15 * r30 + 0.05 * r100
+    blended = 0.40 * r7 + 0.30 * r15 + 0.15 * r30 + 0.05 * r100
     return (r15, r30, r100, blended)
 
 
@@ -527,7 +527,19 @@ def _apply_results_to_calcs(results):
                 first_bet = c.get('first_bet_round') or 0
                 if first_bet > 0 and pending_round < first_bet:
                     continue
-                # 배팅중 픽(실제로 배팅한 정/꺽) 기준으로 기록·승률 계산. 예측픽이 아닌 배팅 픽 사용.
+                # prediction_history(예측기표)에는 항상 예측기 픽만 저장. 계산기(반픽/승률반픽)는 calc history에만 반영.
+                pred_for_record = pending_predicted
+                pick_color_for_record = _normalize_pick_color_value(c.get('pending_color'))
+                if pick_color_for_record is None:
+                    if pending_predicted == '정':
+                        pick_color_for_record = '빨강'
+                    elif pending_predicted == '꺽':
+                        pick_color_for_record = '검정'
+                save_prediction_record(
+                    pending_round, pred_for_record, actual,
+                    probability=c.get('pending_prob'), pick_color=pick_color_for_record or c.get('pending_color')
+                )
+                # 계산기 히스토리·표시용: 배팅한 픽(반픽/승률반픽 적용)
                 pred_for_calc = pending_predicted
                 bet_color_for_history = _normalize_pick_color_value(c.get('pending_color'))
                 if bet_color_for_history is None:
@@ -543,10 +555,6 @@ def _apply_results_to_calcs(results):
                 if c.get('win_rate_reverse') and blended is not None and blended <= thr:
                     pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
                     bet_color_for_history = _flip_pick_color(bet_color_for_history)
-                save_prediction_record(
-                    pending_round, pred_for_calc, actual,
-                    probability=c.get('pending_prob'), pick_color=bet_color_for_history or c.get('pending_color')
-                )
                 history_entry = {'round': pending_round, 'predicted': pred_for_calc, 'actual': actual}
                 if bet_color_for_history:
                     history_entry['pickColor'] = bet_color_for_history
@@ -3748,14 +3756,14 @@ RESULTS_HTML = '''
                     // 예측기표에 넣을 값은 서버·버퍼에서만 취함. predictionHistory.find는 배팅픽 오염 가능으로 사용 안 함.
                     var predForRecord = getRoundPrediction(currentRoundFull) || (lastPrediction && Number(lastPrediction.round) === currentRoundNum ? lastPrediction : null);
                     var lowWinRateForRecord = false;
-                    var blended = 50, c5 = 0, c15 = 0, c30 = 0, c100 = 0;
+                    var blended = 50, c7 = 0, c15 = 0, c30 = 0, c100 = 0;
                     try {
                         var vh = Array.isArray(predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
-                        var v5 = vh.slice(-5), v15 = vh.slice(-15), v30 = vh.slice(-30), v100 = vh.slice(-100);
-                        var hit5r = v5.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
-                        var loss5 = v5.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-                        c5 = hit5r + loss5;
-                        var r5 = c5 > 0 ? 100 * hit5r / c5 : 50;
+                        var v7 = vh.slice(-7), v15 = vh.slice(-15), v30 = vh.slice(-30), v100 = vh.slice(-100);
+                        var hit7r = v7.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                        var loss7 = v7.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                        c7 = hit7r + loss7;
+                        var r7 = c7 > 0 ? 100 * hit7r / c7 : 50;
                         var hit15r = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
                         var loss15 = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
                         c15 = hit15r + loss15;
@@ -3768,8 +3776,8 @@ RESULTS_HTML = '''
                         var loss100 = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
                         c100 = hit100r + loss100;
                         var r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
-                        blended = 0.40 * r5 + 0.30 * r15 + 0.15 * r30 + 0.05 * r100;
-                        lowWinRateForRecord = (c5 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && blended <= 50;
+                        blended = 0.40 * r7 + 0.30 * r15 + 0.15 * r30 + 0.05 * r100;
+                        lowWinRateForRecord = (c7 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && blended <= 50;
                     } catch (e) {}
                     if (!alreadyRecordedRound && predForRound) {
                         const isActualJoker = displayResults.length > 0 && !!displayResults[0].joker;
@@ -3794,10 +3802,10 @@ RESULTS_HTML = '''
                                     var thrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
                                     var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
                                     if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
-                                    if (useWinRateRev && (c5 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
+                                    if (useWinRateRev && (c7 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
                                     betColor = normalizePickColor(predForRound.color);
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
-                                    if (useWinRateRev && (c5 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                    if (useWinRateRev && (c7 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
                                 }
                                 if (betPredForServer == null) { betPredForServer = pred; betColorForServer = betColor || null; }
                                 var pendingIdx = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
@@ -3835,10 +3843,10 @@ RESULTS_HTML = '''
                                     var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
                                     var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
                                     if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
-                                    if (useWinRateRevActual && (c5 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
+                                    if (useWinRateRevActual && (c7 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
                                     betColorActual = normalizePickColor(predForRound.color);
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
-                                    if (useWinRateRevActual && (c5 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                    if (useWinRateRevActual && (c7 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                 }
                                 if (betPredForServerActual == null) { betPredForServerActual = pred; betColorForServerActual = betColorActual || null; }
                                 var pendingIdxActual = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
@@ -3895,10 +3903,10 @@ RESULTS_HTML = '''
                                     var thrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
                                     var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
                                     if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
-                                    if (useWinRateRev && (c5 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
+                                    if (useWinRateRev && (c7 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) pred = pred === '정' ? '꺽' : '정';
                                     betColor = normalizePickColor(predForRound.color);
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
-                                    if (useWinRateRev && (c5 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                    if (useWinRateRev && (c7 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
                                 }
                                 var pendingIdx2 = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
                                 if (pendingIdx2 >= 0) {
@@ -3931,10 +3939,10 @@ RESULTS_HTML = '''
                                     var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
                                     var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
                                     if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
-                                    if (useWinRateRevActual && (c5 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
+                                    if (useWinRateRevActual && (c7 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) pred = pred === '정' ? '꺽' : '정';
                                     betColorActual = normalizePickColor(predForRound.color);
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
-                                    if (useWinRateRevActual && (c5 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                    if (useWinRateRevActual && (c7 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                 }
                                 var pendingIdx3 = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
                                 if (pendingIdx3 >= 0) {
@@ -4259,14 +4267,14 @@ RESULTS_HTML = '''
                     const countForPct = hit + losses;
                     const hitPctNum = countForPct > 0 ? 100 * hit / countForPct : 0;
                     const hitPct = countForPct > 0 ? hitPctNum.toFixed(1) : '-';
-                    // 승률 낮음·배팅 주의: 5회 40% + 15회 30% + 30회 15% + 100회 5% (연패 시 합산승률이 빨리 떨어지도록)
-                    const validHist5 = validHist.slice(-5);
+                    // 승률 낮음·배팅 주의: 7회 40% + 15회 30% + 30회 15% + 100회 5% (연패 시 합산승률이 빨리 떨어지도록)
+                    const validHist7 = validHist.slice(-7);
                     const validHist15 = validHist.slice(-15);
                     const validHist30 = validHist.slice(-30);
                     const validHist100 = validHist.slice(-100);
-                    const hit5 = validHist5.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
-                    const losses5 = validHist5.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-                    const count5 = hit5 + losses5;
+                    const hit7 = validHist7.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                    const losses7 = validHist7.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                    const count7 = hit7 + losses7;
                     const hit15 = validHist15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
                     const losses15 = validHist15.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
                     const count15 = hit15 + losses15;
@@ -4276,12 +4284,12 @@ RESULTS_HTML = '''
                     const hit100 = validHist100.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
                     const losses100 = validHist100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
                     const count100 = hit100 + losses100;
-                    const rate5 = count5 > 0 ? 100 * hit5 / count5 : 50;
+                    const rate7 = count7 > 0 ? 100 * hit7 / count7 : 50;
                     const rate15 = count15 > 0 ? 100 * hit15 / count15 : 50;
                     const hitPctNum30 = count30 > 0 ? 100 * hit30 / count30 : 50;
                     const rate100 = count100 > 0 ? 100 * hit100 / count100 : 50;
-                    const blendedWinRate = 0.40 * rate5 + 0.30 * rate15 + 0.15 * hitPctNum30 + 0.05 * rate100;
-                    const lowWinRate = (count5 > 0 || count15 > 0 || count30 > 0 || count100 > 0) && blendedWinRate <= 50;
+                    const blendedWinRate = 0.40 * rate7 + 0.30 * rate15 + 0.15 * hitPctNum30 + 0.05 * rate100;
+                    const lowWinRate = (count7 > 0 || count15 > 0 || count30 > 0 || count100 > 0) && blendedWinRate <= 50;
                     // 표시용: 최근 50회 결과 (승/패/조커/합산승률)
                     const validHist50 = validHist.slice(-50);
                     const hit50 = validHist50.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
@@ -4367,7 +4375,7 @@ RESULTS_HTML = '''
                             '<span class="stat-joker">조커 - <span class="num">' + joker50 + '</span>회</span>' +
                             (count50 > 0 ? '<span class="stat-rate ' + rateClass50 + '">승률 : ' + rate50Str + '%</span>' : '') +
                             '</div>' +
-                            '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 예측픽 기준(계산기와 독립) · 합산승률=5·15·30·100 반영(40·30·15·5)</div>';
+                            '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 예측픽 기준(계산기와 독립) · 합산승률=7·15·30·100 반영(40·30·15·5)</div>';
                         // 예측기표: 실제 경고 합산승률 + 최근 50회 결과 + 회차별(정/꺽/승·패·조커) 표 — 예측픽만 사용
                         let streakTableBlock = '';
                         try {
@@ -4813,10 +4821,10 @@ RESULTS_HTML = '''
                             var lowWinRate = false;
                             try {
                                 var vh = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
-                                var v5 = vh.slice(-5), v15 = vh.slice(-15), v30 = vh.slice(-30), v100 = vh.slice(-100);
-                                var hit5r = v5.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
-                                var loss5 = v5.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-                                var c5 = hit5r + loss5, r5 = c5 > 0 ? 100 * hit5r / c5 : 50;
+                                var v7 = vh.slice(-7), v15 = vh.slice(-15), v30 = vh.slice(-30), v100 = vh.slice(-100);
+                                var hit7r = v7.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                                var loss7 = v7.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                                var c7 = hit7r + loss7, r7 = c7 > 0 ? 100 * hit7r / c7 : 50;
                                 var hit15r = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
                                 var loss15 = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
                                 var c15 = hit15r + loss15, r15 = c15 > 0 ? 100 * hit15r / c15 : 50;
@@ -4826,11 +4834,11 @@ RESULTS_HTML = '''
                                 var hit100r = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
                                 var loss100 = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
                                 var c100 = hit100r + loss100, r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
-                                var blended = 0.40 * r5 + 0.30 * r15 + 0.15 * r30 + 0.05 * r100;
+                                var blended = 0.40 * r7 + 0.30 * r15 + 0.15 * r30 + 0.05 * r100;
                                 var thrCardEl = document.getElementById('calc-' + id + '-win-rate-threshold');
                                 var thrCardNum = (thrCardEl && !isNaN(parseFloat(thrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrCardEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
                                 if (typeof thrCardNum !== 'number' || isNaN(thrCardNum)) thrCardNum = 46;
-                                lowWinRate = (c5 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrCardNum;
+                                lowWinRate = (c7 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrCardNum;
                             } catch (e2) {}
                             const useWinRateRevCard = !!(calcState[id] && calcState[id].win_rate_reverse);
                             if (useWinRateRevCard && lowWinRate) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
