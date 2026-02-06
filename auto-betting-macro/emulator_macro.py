@@ -906,6 +906,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._last_round_when_started = None
         self._last_bet_round = None
         self._pick_history.clear()  # 전회차 히스토리 초기화 → 2회 연속 일치 시에만 배팅
+        self._pick_data = {}  # 이전 연결/폴링 잔여 픽 제거 — 계산기 정지 시 매크로만 시작해도 배팅 들어가는 것 방지
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self._log("시작 — 다음 회차부터 빠르게 배팅합니다.")
@@ -958,6 +959,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         # 매크로는 오는 픽만 따라감. 목표금액/중지 판단은 분석기 계산기에서만 함 — running=False 수신해도 여기서 자동 중지하지 않음.
 
         if not self._running:
+            return
+        # 계산기가 정지 상태면 픽이 있어도 배팅하지 않음 (서버가 픽을 비워도 레거시/타이밍으로 값이 올 수 있음)
+        if self._pick_data.get("running") is False:
             return
         round_num = self._pick_data.get("round")
         raw_color = self._pick_data.get("pick_color")

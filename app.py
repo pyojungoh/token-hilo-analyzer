@@ -3852,6 +3852,8 @@ RESULTS_HTML = '''
                                         updateCalcSummary(id);
                                         updateCalcStatus(id);
                                         saveCalcStateToServer();
+                                        // 목표 달성 즉시 current_pick 픽 비움 — 서버 저장 전에 매크로가 픽 받아 배팅하는 것 방지
+                                        try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: null, round: null, probability: null, suggested_amount: null }) }).catch(function() {}); } catch (e) {}
                                     }
                                 }
                             });
@@ -5087,6 +5089,7 @@ RESULTS_HTML = '''
                             saveCalcStateToServer();
                             updateCalcSummary(id);
                             updateCalcStatus(id);
+                            try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: null, round: null, probability: null, suggested_amount: null }) }).catch(function() {}); } catch (e) {}
                             const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
                             if (saveBtn) saveBtn.style.display = 'none';
                         }
@@ -5149,6 +5152,9 @@ RESULTS_HTML = '''
                 updateCalcSummary(id);
                 updateCalcDetail(id);
                 updateCalcStatus(id);
+                // 시작 시 current_pick의 배팅금액을 지금 기준(기본금)으로 덮어씀 — 예전 마틴금액이 매크로에 남아 다른 금액이 찍히는 것 방지
+                var baseVal = Math.max(0, parseInt(document.getElementById('calc-' + id + '-base')?.value, 10) || 10000);
+                try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: null, round: null, probability: null, suggested_amount: baseVal }) }).catch(function() {}); } catch (e) {}
                 document.querySelector('.calc-save[data-calc="' + id + '"]').style.display = 'none';
             });
         });
@@ -5172,6 +5178,8 @@ RESULTS_HTML = '''
                 updateCalcSummary(id);
                 updateCalcDetail(id);
                 updateCalcStatus(id);
+                // 정지 시 current_pick 배팅금액 비움 — 다음 시작 시 예전 마틴금이 남지 않도록
+                try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: null, round: null, probability: null, suggested_amount: null }) }).catch(function() {}); } catch (e) {}
             });
         });
         document.querySelectorAll('.calc-reset').forEach(btn => {
