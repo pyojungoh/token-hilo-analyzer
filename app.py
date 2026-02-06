@@ -5070,6 +5070,23 @@ RESULTS_HTML = '''
                     updateCalcStatus(id);
                     const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
                     if (saveBtn) saveBtn.style.display = 'none';
+                } else {
+                    var targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
+                    var targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
+                    var targetEnabled = !!(targetEnabledEl && targetEnabledEl.checked);
+                    var targetAmount = Math.max(0, parseInt(targetAmountEl && targetAmountEl.value, 10) || 0);
+                    if (targetEnabled && targetAmount > 0) {
+                        var r = getCalcResult(id);
+                        if (r.profit >= targetAmount) {
+                            calcState[id].running = false;
+                            calcState[id].timer_completed = true;
+                            saveCalcStateToServer();
+                            updateCalcSummary(id);
+                            updateCalcStatus(id);
+                            const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
+                            if (saveBtn) saveBtn.style.display = 'none';
+                        }
+                    }
                 }
             });
             }, 1000);
