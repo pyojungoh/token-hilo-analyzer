@@ -3175,6 +3175,10 @@ RESULTS_HTML = '''
                 if ((!merged.pickColor || merged.pickColor === '') && existing && (existing.pickColor || existing.pick_color)) {
                     merged.pickColor = existing.pickColor || existing.pick_color;
                 }
+                // 순익 뻥튀기 방지: 같은 회차에 실제 결과(정/꺽/조커)가 있으면 pending으로 덮어쓰지 않음
+                if (existing && existing.actual && existing.actual !== 'pending' && (!h.actual || h.actual === 'pending')) {
+                    merged.actual = existing.actual;
+                }
                 byRound[rn] = merged;
             }
             var rounds = Object.keys(byRound).map(Number).sort(function(a, b) { return a - b; });
@@ -6148,6 +6152,12 @@ def api_current_pick():
             conn.commit()
             out = bet_int.get_current_pick(conn, calculator_id=calculator_id)
             conn.close()
+            # 목표 달성 등으로 계산기 중지(running=false)면 에뮬레이터에 픽을 보내지 않음 — 픽/회차 비움
+            if out and out.get('running') is False:
+                out = dict(out)
+                out['pick_color'] = None
+                out['round'] = None
+                out['suggested_amount'] = None
             return jsonify(out if out else empty_pick), 200
         # POST: 테이블 없으면 생성 후 저장 (계산기별)
         data = request.get_json(force=True, silent=True) or {}
