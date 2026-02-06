@@ -67,13 +67,19 @@
 - **클라이언트**: 서버에서 결과가 1건이라도 오면 **전체 교체**. 예전 데이터와 병합해 상위 N개만 쓰는 로직 사용 금지.
 - **맨 왼쪽 카드 = index 0 = 최신 회차.** `displayResults[0]`이 현재 회차. DOM/CSS 역순 그리기 금지.
 
-### 3.3 prediction_history 저장
+### 3.3 예측기표 = 메인 예측기 픽 고정 (절대 수정 금지)
+
+- **예측기표에는 무조건 메인 예측기 픽만 고정값으로 들어가야 한다.** 계산기(반픽/승률반픽), 실제 경고 합산승률에 따른 반대픽 등 어떤 보정도 예측기표·prediction_history에 넣지 않는다.
+- **prediction_history** DB 및 `save_prediction_record()` 호출 시에는 **항상 예측픽(메인 예측기 픽)**만 저장. 서버 스케줄러는 `pred_for_record = pending_predicted`(원본)로 저장하고, 반픽/승률반픽 적용값(`pred_for_calc`)은 **계산기 history에만** 사용.
+- 이 원칙을 삭제·완화하지 말 것. 위반 시 합산승률 50% 이하일 때 예측기표에 반대값이 들어가는 버그가 재발한다.
+
+### 3.4 prediction_history 저장
 
 - 저장 경로: (1) 클라이언트 `/api/save-prediction`, (2) 서버 스케줄러 `save_prediction_record()` + **보정**.
 - **보정 로직 `_backfill_latest_round_to_prediction_history` 유지.** 화면 미반영으로 누락된 회차를 서버가 자동 저장.
-- 보정 시: `results[0]` 최신 회차, `_get_actual_for_round(results, latest_round)`, `compute_prediction(results[1:], ph)` 후 `save_prediction_record()` 호출.
+- 보정 시: `results[0]` 최신 회차, `_get_actual_for_round(results, latest_round)`, `compute_prediction(results[1:], ph)` 후 `save_prediction_record()` 호출. 저장값은 **예측픽만** (3.3 준수).
 
-### 3.4 정렬·필터 요약
+### 3.5 정렬·필터 요약
 
 | 위치 | 규칙 |
 |------|------|
@@ -117,7 +123,7 @@
 
 ## 6. 규칙 수정·확장 시
 
-- **“맨 왼쪽 = 최신 회차”** 와 **“히스토리 누락 없이 서버 보정”** 두 원칙은 유지한다.
+- **“맨 왼쪽 = 최신 회차”** 와 **“히스토리 누락 없이 서버 보정”** **"예측기표 = 메인 예측기 픽 고정(절대 수정 금지)"** — 위 세 원칙은 유지한다.
 - 상세 규칙: `.cursor/rules/token-hilo-analyzer-conventions.mdc` 참고.
 
 ---
