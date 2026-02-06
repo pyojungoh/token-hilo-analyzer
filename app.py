@@ -4795,37 +4795,47 @@ RESULTS_HTML = '''
                             var betAmt = (lastPrediction && lastPrediction.round != null && typeof getBetForRound === 'function') ? getBetForRound(id, lastPrediction.round) : 0;
                             try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: parseInt(id, 10) || 1, pickColor: null, round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: null, suggested_amount: betAmt > 0 ? betAmt : null }) }).catch(function() {}); } catch (e) {}
                         } else {
+                        // 배팅중인 회차는 이미 정한 계산기 픽만 유지 — lastPrediction이 잠깐 예측기로 바뀌어도 저장된 픽으로 POST/표시해 예측기 픽으로 배팅 나가는 것 방지
+                        var curRound = lastPrediction && lastPrediction.round != null ? Number(lastPrediction.round) : null;
+                        var saved = (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === curRound) ? calcState[id].lastBetPickForRound : null;
                         var predictionText = lastPrediction.value;
                         var predColorNorm = normalizePickColor(lastPrediction.color);
                         var predictionIsRed = (predColorNorm === '빨강' || predColorNorm === '검정') ? (predColorNorm === '빨강') : (predictionText === '정');
-                        var bettingText = predictionText;
-                        var bettingIsRed = predictionIsRed;
-                        const rev = !!(calcState[id] && calcState[id].reverse);
-                        if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
-                        var lowWinRate = false;
-                        try {
-                            var vh = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
-                            var v5 = vh.slice(-5), v15 = vh.slice(-15), v30 = vh.slice(-30), v100 = vh.slice(-100);
-                            var hit5r = v5.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
-                            var loss5 = v5.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-                            var c5 = hit5r + loss5, r5 = c5 > 0 ? 100 * hit5r / c5 : 50;
-                            var hit15r = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
-                            var loss15 = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-                            var c15 = hit15r + loss15, r15 = c15 > 0 ? 100 * hit15r / c15 : 50;
-                            var hit30r = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
-                            var loss30 = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-                            var c30 = hit30r + loss30, r30 = c30 > 0 ? 100 * hit30r / c30 : 50;
-                            var hit100r = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
-                            var loss100 = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-                            var c100 = hit100r + loss100, r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
-                            var blended = 0.40 * r5 + 0.30 * r15 + 0.15 * r30 + 0.05 * r100;
-                            var thrCardEl = document.getElementById('calc-' + id + '-win-rate-threshold');
-                            var thrCardNum = (thrCardEl && !isNaN(parseFloat(thrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrCardEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
-                            if (typeof thrCardNum !== 'number' || isNaN(thrCardNum)) thrCardNum = 46;
-                            lowWinRate = (c5 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrCardNum;
-                        } catch (e2) {}
-                        const useWinRateRevCard = !!(calcState[id] && calcState[id].win_rate_reverse);
-                        if (useWinRateRevCard && lowWinRate) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                        var bettingText, bettingIsRed;
+                        if (saved && (saved.value === '정' || saved.value === '꺽')) {
+                            bettingText = saved.value;
+                            bettingIsRed = !!saved.isRed;
+                        } else {
+                            bettingText = predictionText;
+                            bettingIsRed = predictionIsRed;
+                            const rev = !!(calcState[id] && calcState[id].reverse);
+                            if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                            var lowWinRate = false;
+                            try {
+                                var vh = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
+                                var v5 = vh.slice(-5), v15 = vh.slice(-15), v30 = vh.slice(-30), v100 = vh.slice(-100);
+                                var hit5r = v5.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                                var loss5 = v5.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                                var c5 = hit5r + loss5, r5 = c5 > 0 ? 100 * hit5r / c5 : 50;
+                                var hit15r = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                                var loss15 = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                                var c15 = hit15r + loss15, r15 = c15 > 0 ? 100 * hit15r / c15 : 50;
+                                var hit30r = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                                var loss30 = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                                var c30 = hit30r + loss30, r30 = c30 > 0 ? 100 * hit30r / c30 : 50;
+                                var hit100r = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                                var loss100 = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                                var c100 = hit100r + loss100, r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
+                                var blended = 0.40 * r5 + 0.30 * r15 + 0.15 * r30 + 0.05 * r100;
+                                var thrCardEl = document.getElementById('calc-' + id + '-win-rate-threshold');
+                                var thrCardNum = (thrCardEl && !isNaN(parseFloat(thrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrCardEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
+                                if (typeof thrCardNum !== 'number' || isNaN(thrCardNum)) thrCardNum = 46;
+                                lowWinRate = (c5 > 0 || c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrCardNum;
+                            } catch (e2) {}
+                            const useWinRateRevCard = !!(calcState[id] && calcState[id].win_rate_reverse);
+                            if (useWinRateRevCard && lowWinRate) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                            if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
+                        }
                         predictionCardEl.textContent = predictionText;
                         predictionCardEl.className = 'calc-current-card calc-card-prediction card-' + (predictionIsRed ? 'jung' : 'kkuk');
                         predictionCardEl.title = '';
@@ -4861,6 +4871,7 @@ RESULTS_HTML = '''
                         bettingCardEl.className = 'calc-current-card calc-card-betting';
                         predictionCardEl.textContent = '';
                         predictionCardEl.className = 'calc-current-card calc-card-prediction';
+                        calcState[id].lastBetPickForRound = null;
                     }
                 } catch (cardErr) { console.warn('updateCalcStatus card', id, cardErr); }
             } catch (e) { console.warn('updateCalcStatus', id, e); }
