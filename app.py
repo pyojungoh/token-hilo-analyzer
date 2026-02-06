@@ -840,7 +840,8 @@ def get_prediction_history(limit=30):
                 if raw == 'joker':
                     o['actualColor'] = None
                 elif raw in ('정', '꺽') and pc:
-                    o['actualColor'] = pc if raw == '정' else ('BLACK' if pc == 'RED' else 'RED')
+                    # 상단 예측픽 결과색: 실제 나온 색 표시 (정=예측색과 동일, 꺽=예측색 반대). 반대로 나오던 표시 수정.
+                    o['actualColor'] = ('BLACK' if pc == 'RED' else 'RED') if raw == '정' else pc
                 else:
                     o['actualColor'] = None
             out.append(o)
