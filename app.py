@@ -525,10 +525,7 @@ def _apply_results_to_calcs(results):
                 first_bet = c.get('first_bet_round') or 0
                 if first_bet > 0 and pending_round < first_bet:
                     continue
-                save_prediction_record(
-                    pending_round, pending_predicted, actual,
-                    probability=c.get('pending_prob'), pick_color=c.get('pending_color')
-                )
+                # 배팅중 픽(실제로 배팅한 정/꺽) 기준으로 기록·승률 계산. 예측픽이 아닌 배팅 픽 사용.
                 pred_for_calc = pending_predicted
                 bet_color_for_history = _normalize_pick_color_value(c.get('pending_color'))
                 if bet_color_for_history is None:
@@ -544,6 +541,10 @@ def _apply_results_to_calcs(results):
                 if c.get('win_rate_reverse') and blended is not None and blended <= thr:
                     pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
                     bet_color_for_history = _flip_pick_color(bet_color_for_history)
+                save_prediction_record(
+                    pending_round, pred_for_calc, actual,
+                    probability=c.get('pending_prob'), pick_color=bet_color_for_history or c.get('pending_color')
+                )
                 history_entry = {'round': pending_round, 'predicted': pred_for_calc, 'actual': actual}
                 if bet_color_for_history:
                     history_entry['pickColor'] = bet_color_for_history
@@ -3762,6 +3763,7 @@ RESULTS_HTML = '''
                         const isActualJoker = displayResults.length > 0 && !!displayResults[0].joker;
                         if (isActualJoker) {
                             predictionHistory.push({ round: currentRoundFull, predicted: predForRound.value, actual: 'joker', probability: predForRound.prob != null ? predForRound.prob : null, pickColor: predForRound.color || null });
+                            var betPredForServer = null, betColorForServer = null;
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
                                 const firstBetJoker = calcState[id].first_bet_round || 0;
@@ -3783,6 +3785,7 @@ RESULTS_HTML = '''
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
                                 }
+                                if (betPredForServer == null) { betPredForServer = pred; betColorForServer = betColor || null; }
                                 var pendingIdx = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
                                 if (pendingIdx >= 0) {
                                     calcState[id].history[pendingIdx].actual = 'joker';
@@ -3795,10 +3798,11 @@ RESULTS_HTML = '''
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
                             });
                             saveCalcStateToServer();
-                            savePredictionHistoryToServer(currentRoundFull, predForRound.value, 'joker', predForRound.prob, predForRound.color);
+                            savePredictionHistoryToServer(currentRoundFull, betPredForServer != null ? betPredForServer : predForRound.value, 'joker', predForRound.prob, betColorForServer != null ? betColorForServer : predForRound.color);
                         } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
                             const actual = graphValues[0] ? '정' : '꺽';
                             predictionHistory.push({ round: currentRoundFull, predicted: predForRound.value, actual: actual, probability: predForRound.prob != null ? predForRound.prob : null, pickColor: predForRound.color || null });
+                            var betPredForServerActual = null, betColorForServerActual = null;
                             CALC_IDS.forEach(id => {
                                 if (!calcState[id].running) return;
                                 const firstBetActual = calcState[id].first_bet_round || 0;
@@ -3820,6 +3824,7 @@ RESULTS_HTML = '''
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                 }
+                                if (betPredForServerActual == null) { betPredForServerActual = pred; betColorForServerActual = betColorActual || null; }
                                 var pendingIdxActual = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
                                 if (pendingIdxActual >= 0) {
                                     calcState[id].history[pendingIdxActual].actual = actual;
@@ -3848,7 +3853,7 @@ RESULTS_HTML = '''
                                 }
                             });
                             saveCalcStateToServer();
-                            savePredictionHistoryToServer(currentRoundFull, predForRound.value, actual, predForRound.prob, predForRound.color);
+                            savePredictionHistoryToServer(currentRoundFull, betPredForServerActual != null ? betPredForServerActual : predForRound.value, actual, predForRound.prob, betColorForServerActual != null ? betColorForServerActual : predForRound.color);
                         }
                         predictionHistory = predictionHistory.slice(-100);
                         savePredictionHistory();  // localStorage 백업

@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 에뮬레이터(LDPlayer) 자동배팅 매크로.
-- 분석기 웹의 계산기1/2/3 중 선택 → 그 계산기와 같은 픽 수신.
-- 회차(별동그라미세모), 금액, 배팅픽, 정/꺽 카드, 경고/합선/승률 표시.
-- 시작 누르면 현재 픽이 아닌 다음 픽부터 배팅: 금액 입력 → 배팅픽(RED/BLACK) 클릭 (ADB).
+- 계산기에서 회차·배팅중 픽·배팅금액만 가져와서 ADB로 배팅. 계산/승패는 분석기 가상배팅 계산기가 담당.
+- 분석기 웹 계산기1/2/3 중 선택 → 해당 계산기 픽/금액 수신 → 금액 입력 → RED/BLACK 탭 → 정정.
 """
 import json
 import os
@@ -11,6 +10,7 @@ import re
 import subprocess
 import threading
 import time
+from collections import deque
 from datetime import datetime
 
 import requests
@@ -26,7 +26,7 @@ try:
     from PyQt5.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QLabel, QLineEdit, QPushButton, QGroupBox, QFormLayout, QComboBox,
-        QFrame, QScrollArea, QGridLayout,
+        QFrame, QScrollArea, QGridLayout, QCheckBox,
     )
     from PyQt5.QtCore import Qt, QTimer, pyqtSlot, pyqtSignal
     from PyQt5.QtGui import QFont
@@ -39,6 +39,19 @@ COORDS_PATH = os.path.join(SCRIPT_DIR, "emulator_coords.json")
 
 # 좌표 찾기용 키·라벨 (한곳에 통합)
 COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드", "black": "블랙"}
+
+
+def _normalize_pick_color(raw):
+    """서버 픽 값(RED/BLACK, 빨강/검정 등)을 항상 'RED' 또는 'BLACK'으로 통일. 모르면 None."""
+    s = (raw or "").strip()
+    if not s:
+        return None
+    u = s.upper()
+    if u == "RED" or s == "빨강":
+        return "RED"
+    if u == "BLACK" or s == "검정":
+        return "BLACK"
+    return None
 
 
 def save_coords(data):
@@ -91,24 +104,6 @@ def fetch_current_pick(analyzer_url, calculator_id=1, timeout=5):
         return {"pick_color": None, "round": None, "probability": None, "error": str(e)}
 
 
-def fetch_results(analyzer_url, timeout=5):
-    """GET /api/results -> blended_win_rate, prediction_history"""
-    base = normalize_analyzer_url(analyzer_url)
-    if not base:
-        return {"blended_win_rate": None, "prediction_history": [], "error": "URL 없음"}
-    try:
-        r = requests.get(base + "/api/results", timeout=timeout)
-        r.raise_for_status()
-        data = r.json()
-        return {
-            "blended_win_rate": data.get("blended_win_rate"),
-            "prediction_history": data.get("prediction_history") or [],
-            "error": None,
-        }
-    except Exception as e:
-        return {"blended_win_rate": None, "prediction_history": [], "error": str(e)}
-
-
 def load_coords():
     if not os.path.exists(COORDS_PATH):
         return {}
@@ -119,39 +114,155 @@ def load_coords():
         return {}
 
 
-def adb_tap(device_id, x, y):
-    """adb -s {device} shell input tap x y"""
-    if device_id:
-        cmd = ["adb", "-s", device_id, "shell", "input", "tap", str(x), str(y)]
-    else:
-        cmd = ["adb", "shell", "input", "tap", str(x), str(y)]
+def get_device_size_via_adb(device_id=None):
+    """adb shell wm size 로 기기 해상도 (width, height) 가져오기. Windows는 CMD와 동일 방식."""
     try:
-        kw = {"capture_output": True, "timeout": 5}
-        if os.name == "nt":
-            kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        rc, out, err = _run_adb_shell_cmd(device_id, "shell", "wm", "size")
+        combined = (out or "") + (err or "")
+        m = re.search(r"(\d+)\s*x\s*(\d+)", combined, re.IGNORECASE)
+        if m:
+            return (int(m.group(1)), int(m.group(2)))
+    except Exception:
+        pass
+    return (0, 0)
+
+
+def get_window_rect_at(screen_x, screen_y):
+    """클릭한 점(screen_x, screen_y)이 속한 최상위 창의 (left, top, width, height) 반환. Windows 전용."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        GA_ROOT = 2
+        class RECT(ctypes.Structure):
+            _fields_ = [("left", wintypes.LONG), ("top", wintypes.LONG), ("right", wintypes.LONG), ("bottom", wintypes.LONG)]
+        class POINT(ctypes.Structure):
+            _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+        pt = POINT(int(screen_x), int(screen_y))
+        hwnd = user32.WindowFromPoint(pt)
+        if not hwnd:
+            return None
+        root = user32.GetAncestor(hwnd, GA_ROOT)
+        if not root:
+            root = hwnd
+        rect = RECT()
+        if not user32.GetWindowRect(root, ctypes.byref(rect)):
+            return None
+        w = rect.right - rect.left
+        h = rect.bottom - rect.top
+        if w <= 0 or h <= 0:
+            return None
+        return (rect.left, rect.top, w, h)
+    except Exception:
+        return None
+
+
+def _apply_window_offset(coords, x, y, key=None):
+    """창 내 상대 좌표 또는 화면 좌표 → 기기 해상도로 스케일. raw_coords=True면 그대로. key=좌표키면 해당 키만 창상대 여부 적용."""
+    try:
+        x, y = int(x), int(y)
+        if coords.get("raw_coords"):
+            return x, y
+        # 해당 키가 창 상대로 저장됐는지 확인(키 없으면 예전 호환: coords_are_window_relative)
+        spaces = coords.get("coord_spaces") or {}
+        is_window_relative = (spaces.get(key, coords.get("coords_are_window_relative")) if key
+                              else coords.get("coords_are_window_relative"))
+        if is_window_relative:
+            rx, ry = x, y
+        else:
+            ox = int(coords.get("window_left") or 0)
+            oy = int(coords.get("window_top") or 0)
+            rx = x - ox
+            ry = y - oy
+        try:
+            win_w = int(coords.get("window_width") or 0)
+            win_h = int(coords.get("window_height") or 0)
+            dev_w = int(coords.get("device_width") or 0)
+            dev_h = int(coords.get("device_height") or 0)
+            if win_w > 0 and win_h > 0 and dev_w > 0 and dev_h > 0:
+                rx = int(rx * dev_w / win_w)
+                ry = int(ry * dev_h / win_h)
+        except (TypeError, ValueError):
+            pass
+        return rx, ry
+    except (TypeError, ValueError):
+        return int(x), int(y)
+
+
+def _run_adb_shell_cmd(device_id, *args):
+    """Windows에서는 CMD와 동일한 환경으로 adb 실행(shell=True). 반환: (returncode, stdout, stderr)."""
+    kw = {"capture_output": True, "text": True, "timeout": 10}
+    if os.name == "nt":
+        if device_id:
+            cmd = "adb -s %s %s" % (device_id, " ".join(str(a) for a in args))
+        else:
+            cmd = "adb " + " ".join(str(a) for a in args)
+        kw["shell"] = True
+    else:
+        cmd = ["adb"] + (["-s", device_id] if device_id else []) + list(args)
+    try:
+        r = subprocess.run(cmd, **kw)
+        out = (r.stdout or "").replace("\r\n", "\n").strip()
+        err = (r.stderr or "").replace("\r\n", "\n").strip()
+        return (r.returncode, out, err)
+    except Exception as e:
+        return (-1, "", str(e))
+
+
+def _run_adb_raw(device_id, *args):
+    """adb 명령 실행. Windows는 shell=True로 CMD와 동일하게 동작하도록 함."""
+    kw = {"capture_output": True, "timeout": 10}
+    if os.name == "nt":
+        cmd = "adb -s %s %s" % (device_id, " ".join(str(a) for a in args)) if device_id else "adb " + " ".join(str(a) for a in args)
+        kw["shell"] = True
+    else:
+        cmd = ["adb"] + (["-s", device_id] if device_id else []) + list(args)
+    try:
         subprocess.run(cmd, **kw)
     except Exception:
         pass
+
+
+def adb_tap(device_id, x, y):
+    """adb -s {device} shell input tap x y"""
+    _run_adb_raw(device_id, "shell", "input", "tap", str(x), str(y))
+
+
+def adb_tap_and_return_cmd(device_id, x, y):
+    """ADB 탭 실행 후 터미널에서 직접 쓸 수 있는 명령 문자열 반환."""
+    if device_id:
+        cmd_str = "adb -s %s shell input tap %s %s" % (device_id, x, y)
+    else:
+        cmd_str = "adb shell input tap %s %s" % (x, y)
+    adb_tap(device_id, x, y)
+    return cmd_str
 
 
 def adb_input_text(device_id, text):
-    """adb shell input text "xxx" (공백은 %s로)"""
+    """adb shell input text \"xxx\" (공백은 %s로)"""
     escaped = text.replace(" ", "%s")
-    if device_id:
-        cmd = ["adb", "-s", device_id, "shell", "input", "text", escaped]
-    else:
-        cmd = ["adb", "shell", "input", "text", escaped]
-    try:
-        kw = {"capture_output": True, "timeout": 5}
-        if os.name == "nt":
-            kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        subprocess.run(cmd, **kw)
-    except Exception:
-        pass
+    _run_adb_raw(device_id, "shell", "input", "text", escaped)
+
+
+def adb_swipe(device_id, x, y, duration_ms=80):
+    """같은 좌표로 swipe → 터치 다운·업으로 클릭."""
+    x, y = int(x), int(y)
+    _run_adb_raw(device_id, "shell", "input", "swipe", str(x), str(y), str(x), str(y), str(duration_ms))
+
+
+def adb_keyevent(device_id, keycode):
+    """adb shell input keyevent KEYCODE (4=BACK, 66=ENTER)."""
+    _run_adb_raw(device_id, "shell", "input", "keyevent", str(keycode))
 
 
 class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
     connect_result_ready = pyqtSignal(object, object) if HAS_PYQT else None  # (pick, results) 서브스레드 → 메인 스레드
+    test_tap_done = pyqtSignal(object, str, str) if HAS_PYQT else None  # (버튼, 복원텍스트, 로그메시지)
+    poll_done = pyqtSignal(object, object) if HAS_PYQT else None  # (pick, results) 폴링 스레드 → 메인 스레드
+    device_size_fetched = pyqtSignal(int, int) if HAS_PYQT else None  # (width, height) 기기 해상도 가져오기 완료
+    adb_device_suggested = pyqtSignal(str) if HAS_PYQT else None  # 연결된 기기 ID로 ADB 칸 자동 채움
 
     def __init__(self):
         super().__init__()
@@ -168,6 +279,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._last_round_when_started = None  # 시작 시점의 회차 (이 회차는 배팅 안 함)
         self._last_bet_round = None  # 이미 배팅한 회차 (중복 방지)
         self._pending_bet_rounds = {}  # round_num -> { pick_color, amount } (결과 대기 → 승/패/조커 로그)
+        self._pick_history = deque(maxlen=5)  # 최근 5회 (round_num, pick_color) — 회차·픽 안정 시에만 배팅
         self._pick_data = {}
         self._results_data = {}
         self._lock = threading.Lock()
@@ -184,6 +296,32 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._timer.timeout.connect(self._poll)
         if HAS_PYQT and self.connect_result_ready is not None:
             self.connect_result_ready.connect(self._apply_connect_result)
+        if HAS_PYQT and self.test_tap_done is not None:
+            self.test_tap_done.connect(self._on_test_tap_done)
+            if self.device_size_fetched is not None:
+                self.device_size_fetched.connect(self._on_device_size_fetched)
+            if self.adb_device_suggested is not None:
+                self.adb_device_suggested.connect(self._on_adb_device_suggested)
+        if HAS_PYQT and self.poll_done is not None:
+            self.poll_done.connect(self._on_poll_done)
+
+    def _on_test_tap_done(self, btn, restore_text, message):
+        """테스트 탭/연결확인 완료 시 버튼 복원 + 로그 (메인 스레드)."""
+        try:
+            if btn:
+                btn.setEnabled(True)
+                btn.setText(restore_text)
+        except Exception:
+            pass
+        self._log(message)
+
+    def _on_adb_device_suggested(self, device_id):
+        """연결 확인 시 동작하는 기기 ID로 ADB 기기 칸 자동 채움."""
+        try:
+            self.device_edit.setText(device_id)
+            self._log("ADB 기기 칸을 [%s] 로 자동 채움." % device_id)
+        except Exception:
+            pass
 
     def _build_ui(self):
         cw = QWidget()
@@ -217,10 +355,24 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
 
         self.device_edit = QLineEdit()
         self.device_edit.setText("127.0.0.1:5555")
-        self.device_edit.setPlaceholderText("ADB device (예: 127.0.0.1:5555)")
+        self.device_edit.setPlaceholderText("예: 127.0.0.1:5555 또는 emulator-5554")
         self.device_edit.setMaximumWidth(180)
         fl.addRow("ADB 기기:", self.device_edit)
-
+        adb_btn_row = QHBoxLayout()
+        self.adb_test_btn = QPushButton("배팅금액 테스트 (5000원)")
+        self.adb_test_btn.setToolTip("배팅금액 칸을 탭한 뒤 5000을 입력해, 금액이 제대로 들어가는지 확인합니다.")
+        self.adb_test_btn.clicked.connect(self._on_adb_test_tap)
+        self.adb_red_btn = QPushButton("레드 1회 탭")
+        self.adb_red_btn.clicked.connect(lambda: self._on_adb_color_tap("red"))
+        self.adb_black_btn = QPushButton("블랙 1회 탭")
+        self.adb_black_btn.clicked.connect(lambda: self._on_adb_color_tap("black"))
+        self.adb_devices_btn = QPushButton("ADB 연결 확인")
+        self.adb_devices_btn.clicked.connect(self._on_adb_devices)
+        adb_btn_row.addWidget(self.adb_test_btn)
+        adb_btn_row.addWidget(self.adb_red_btn)
+        adb_btn_row.addWidget(self.adb_black_btn)
+        adb_btn_row.addWidget(self.adb_devices_btn)
+        fl.addRow("", adb_btn_row)
         g_set.setLayout(fl)
         layout.addWidget(g_set)
 
@@ -245,6 +397,59 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             self._coord_value_labels[key] = val_lbl
             self._coord_status_labels[key] = status_lbl
             fl_coord.addRow(row_w)
+        self.raw_coords_check = QCheckBox("원시 좌표 (창/해상도 보정 안 함 — 저장된 x,y 그대로 전송)")
+        self.raw_coords_check.setChecked(False)
+        self.raw_coords_check.setStyleSheet("color: #888; font-size: 11px;")
+        fl_coord.addRow("", self.raw_coords_check)
+        win_row = QHBoxLayout()
+        win_row.addWidget(QLabel("LDPlayer 창 왼쪽 위 (탭 좌표 보정):"))
+        self.window_left_edit = QLineEdit()
+        self.window_left_edit.setPlaceholderText("X")
+        self.window_left_edit.setMaximumWidth(60)
+        self.window_top_edit = QLineEdit()
+        self.window_top_edit.setPlaceholderText("Y")
+        self.window_top_edit.setMaximumWidth(60)
+        win_row.addWidget(self.window_left_edit)
+        win_row.addWidget(self.window_top_edit)
+        self.window_capture_btn = QPushButton("창 왼쪽 위 잡기")
+        self.window_capture_btn.setToolTip("클릭 후 LDPlayer 창의 왼쪽 위 모서리를 한 번 클릭하면 X, Y가 자동 저장됩니다.")
+        self.window_capture_btn.clicked.connect(lambda: self._start_coord_capture("window_topleft"))
+        win_row.addWidget(self.window_capture_btn)
+        self.window_save_btn = QPushButton("창 위치 저장")
+        self.window_save_btn.clicked.connect(self._save_window_offset)
+        win_row.addWidget(self.window_save_btn)
+        win_row.addWidget(QLabel("(0,0이면 비움)"))
+        win_row.addStretch(1)
+        fl_coord.addRow(win_row)
+        win_hint = QLabel("※ 좌표 찾기로 레드/배팅금액 등을 잡으면 창 위치는 자동으로 채워져서, 위 칸은 건드리지 않아도 됩니다.")
+        win_hint.setStyleSheet("color: #888; font-size: 11px;")
+        fl_coord.addRow("", win_hint)
+        res_row = QHBoxLayout()
+        res_row.addWidget(QLabel("해상도 보정(선택): 창 W/H"))
+        self.window_width_edit = QLineEdit()
+        self.window_width_edit.setPlaceholderText("창가로")
+        self.window_width_edit.setMaximumWidth(50)
+        self.window_height_edit = QLineEdit()
+        self.window_height_edit.setPlaceholderText("창세로")
+        self.window_height_edit.setMaximumWidth(50)
+        res_row.addWidget(self.window_width_edit)
+        res_row.addWidget(self.window_height_edit)
+        res_row.addWidget(QLabel("기기 W/H"))
+        self.device_width_edit = QLineEdit()
+        self.device_width_edit.setPlaceholderText("기기가로")
+        self.device_width_edit.setMaximumWidth(50)
+        self.device_height_edit = QLineEdit()
+        self.device_height_edit.setPlaceholderText("기기세로")
+        self.device_height_edit.setMaximumWidth(50)
+        res_row.addWidget(self.device_width_edit)
+        res_row.addWidget(self.device_height_edit)
+        self.device_size_fetch_btn = QPushButton("기기 해상도 가져오기")
+        self.device_size_fetch_btn.setToolTip("ADB로 연결된 에뮬레이터의 실제 해상도를 가져와 기기 W/H에 채웁니다. 탭이 다른 곳에 눌리면 이 버튼으로 보정하세요.")
+        self.device_size_fetch_btn.clicked.connect(self._on_fetch_device_size)
+        res_row.addWidget(self.device_size_fetch_btn)
+        res_row.addWidget(QLabel("(창과 기기 크기 다르면 입력)"))
+        res_row.addStretch(1)
+        fl_coord.addRow(res_row)
         if not HAS_PYNPUT:
             fl_coord.addRow("", QLabel("pynput 미설치: pip install pynput"))
         g_coord.setLayout(fl_coord)
@@ -274,6 +479,10 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self.status_display_label = QLabel("대기 중 (시작 시 다음 픽부터 배팅)")
         self.status_display_label.setStyleSheet("color: #81c784; font-weight: bold;")
         disp_layout.addWidget(self.status_display_label)
+        self.pick_history_label = QLabel("최근 회차·픽: -")
+        self.pick_history_label.setStyleSheet("color: #666; font-size: 11px;")
+        self.pick_history_label.setWordWrap(True)
+        disp_layout.addWidget(self.pick_history_label)
 
         g_display.setLayout(disp_layout)
         layout.addWidget(g_display)
@@ -308,6 +517,16 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
     def _load_coords(self):
         self._coords = load_coords()
         self._refresh_coord_labels()
+        try:
+            self.window_left_edit.setText(str(self._coords.get("window_left", "") or ""))
+            self.window_top_edit.setText(str(self._coords.get("window_top", "") or ""))
+            self.window_width_edit.setText(str(self._coords.get("window_width", "") or ""))
+            self.window_height_edit.setText(str(self._coords.get("window_height", "") or ""))
+            self.device_width_edit.setText(str(self._coords.get("device_width", "") or ""))
+            self.device_height_edit.setText(str(self._coords.get("device_height", "") or ""))
+            self.raw_coords_check.setChecked(bool(self._coords.get("raw_coords")))
+        except Exception:
+            pass
 
     def _refresh_coord_labels(self):
         for key in COORD_KEYS:
@@ -324,14 +543,17 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
 
     def _start_coord_capture(self, key):
         if not HAS_PYNPUT:
-            self._set_coord_status("bet_amount", "pynput 설치 필요", "red")
+            self._log("pynput 설치 필요: pip install pynput")
             return
         if self._coord_listener is not None:
-            self._set_coord_status(key, "다른 항목 검색 중", "red")
-            QTimer.singleShot(2000, lambda: self._set_coord_status(key, ""))
+            self._log("다른 좌표 잡는 중입니다. 잠시 후 다시 시도하세요.")
             return
         self._coord_capture_key = key
-        self._set_coord_status(key, "검색중", "green")
+        if key == "window_topleft":
+            self._log("창 왼쪽 위 잡기: 이 창이 최소화되면 LDPlayer 창의 왼쪽 위 모서리만 클릭하세요.")
+        else:
+            self._log("좌표 찾기: 이 창이 최소화된 뒤 반드시 LDPlayer 창 안에서만 클릭하세요. (매크로 창과 겹치면 잘못 잡힙니다)")
+            self._set_coord_status(key, "검색중", "green")
         self.showMinimized()
         self._coord_listener = pynput_mouse.Listener(on_click=self._on_coord_click)
         self._coord_listener.start()
@@ -357,12 +579,256 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             return
         key, x, y = self._pending_coord_click
         self._pending_coord_click = None
-        self._coords[key] = [x, y]
-        save_coords(self._coords)
-        self._refresh_coord_labels()
-        self._set_coord_status(key, "저장됨", "green")
+        if key == "window_topleft":
+            self._coords["window_left"] = int(x)
+            self._coords["window_top"] = int(y)
+            self.window_left_edit.setText(str(x))
+            self.window_top_edit.setText(str(y))
+            save_coords(self._coords)
+            self._log("LDPlayer 창 왼쪽 위 저장됨: X=%s, Y=%s — 배팅 좌표가 이 창 기준으로 보정됩니다." % (x, y))
+            return
+        # 레드/블랙/배팅금액 등: 클릭한 점이 속한 창을 자동 감지 → 창 내 상대 좌표로 저장 (창 왼쪽 위 따로 찍을 필요 없음)
+        rect = get_window_rect_at(x, y)
+        if rect is not None:
+            left, top, w, h = rect
+            rel_x, rel_y = x - left, y - top
+            self._coords[key] = [rel_x, rel_y]
+            self._coords["window_left"] = left
+            self._coords["window_top"] = top
+            self._coords["window_width"] = w
+            self._coords["window_height"] = h
+            # 기기 W/H가 비어 있으면 창과 동일하게 채움(1:1). 에뮬이 다르면 '기기 해상도 가져오기'로 덮어쓰기
+            if not int(self._coords.get("device_width") or 0) or not int(self._coords.get("device_height") or 0):
+                self._coords["device_width"] = w
+                self._coords["device_height"] = h
+                self.device_width_edit.setText(str(w))
+                self.device_height_edit.setText(str(h))
+            sp = self._coords.get("coord_spaces") or {}
+            sp[key] = True
+            self._coords["coord_spaces"] = sp
+            self.window_left_edit.setText(str(left))
+            self.window_top_edit.setText(str(top))
+            self.window_width_edit.setText(str(w))
+            self.window_height_edit.setText(str(h))
+            save_coords(self._coords)
+            self._refresh_coord_labels()
+            self._set_coord_status(key, "저장됨(창 자동)", "green")
+            self._log("클릭한 창 자동 감지됨. %s = 창 내 (%s, %s), 창 크기 %s×%s. 레드 1회 탭으로 확인해 보세요." % (COORD_KEYS.get(key, key), rel_x, rel_y, w, h))
+        else:
+            self._coords[key] = [x, y]
+            sp = self._coords.get("coord_spaces") or {}
+            sp[key] = False
+            self._coords["coord_spaces"] = sp
+            try:
+                self._coords["window_left"] = int(self.window_left_edit.text().strip() or 0)
+                self._coords["window_top"] = int(self.window_top_edit.text().strip() or 0)
+                self._coords["raw_coords"] = self.raw_coords_check.isChecked()
+            except (TypeError, ValueError):
+                self._coords["window_left"] = 0
+                self._coords["window_top"] = 0
+            save_coords(self._coords)
+            self._refresh_coord_labels()
+            self._set_coord_status(key, "저장됨", "green")
+            self._log("창 자동 감지 실패(비-Windows 등). 창 왼쪽 위 잡기로 기준점을 잡아주세요.")
         QTimer.singleShot(1500, lambda: self._set_coord_status(key, ""))
 
+    def _save_window_offset(self):
+        try:
+            self._coords["window_left"] = int(self.window_left_edit.text().strip() or 0)
+            self._coords["window_top"] = int(self.window_top_edit.text().strip() or 0)
+            self._coords["raw_coords"] = self.raw_coords_check.isChecked()
+            for key, edit in [("window_width", self.window_width_edit), ("window_height", self.window_height_edit),
+                              ("device_width", self.device_width_edit), ("device_height", self.device_height_edit)]:
+                try:
+                    v = int(edit.text().strip() or 0)
+                    self._coords[key] = v if v > 0 else 0
+                except (TypeError, ValueError):
+                    self._coords[key] = 0
+            save_coords(self._coords)
+            self._log("LDPlayer 창 위치·해상도 저장됨 (탭 좌표 보정에 사용)")
+        except (TypeError, ValueError):
+            self._log("창 X, Y에는 숫자만 입력하세요.")
+
+    def _on_fetch_device_size(self):
+        """ADB로 에뮬레이터 기기 해상도를 가져와 기기 W/H에 채움. 탭이 다른 곳에 눌릴 때 사용."""
+        device = self.device_edit.text().strip() or None
+        self.device_size_fetch_btn.setEnabled(False)
+        self.device_size_fetch_btn.setText("가져오는 중...")
+
+        def run():
+            w, h = get_device_size_via_adb(device)
+            if self.device_size_fetched is not None:
+                self.device_size_fetched.emit(w, h)
+            else:
+                self.device_size_fetch_btn.setEnabled(True)
+                self.device_size_fetch_btn.setText("기기 해상도 가져오기")
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _on_device_size_fetched(self, w, h):
+        """기기 해상도 가져오기 완료 (메인 스레드)."""
+        self.device_size_fetch_btn.setEnabled(True)
+        self.device_size_fetch_btn.setText("기기 해상도 가져오기")
+        if w > 0 and h > 0:
+            self.device_width_edit.setText(str(w))
+            self.device_height_edit.setText(str(h))
+            self._coords["device_width"] = w
+            self._coords["device_height"] = h
+            save_coords(self._coords)
+            self._log("기기 해상도 %s×%s 가져옴. 이제 레드 1회 탭으로 확인해 보세요." % (w, h))
+        else:
+            self._log("기기 해상도 가져오기 실패. ADB 연결 확인 후 다시 시도하세요.")
+
+    def _on_adb_devices(self):
+        """CMD와 동일한 방식으로 adb 실행 후 기기 목록·실제 연결 테스트."""
+        btn = self.adb_devices_btn
+        restore = "ADB 연결 확인"
+        btn.setEnabled(False)
+        btn.setText("확인 중...")
+        self._log("ADB 연결 확인 중... (CMD와 동일한 방식으로 실행)")
+        user_device = (self.device_edit.text().strip() or "").strip() or "127.0.0.1:5555"
+        def run():
+            msg = ""
+            try:
+                # 1) adb start-server 먼저 (CMD에서 첫 adb 명령과 동일)
+                _run_adb_shell_cmd(None, "start-server")
+                time.sleep(0.3)
+                # 2) adb devices — Windows는 shell=True로 CMD와 동일 환경
+                code, out, err = _run_adb_shell_cmd(None, "devices")
+                out = out or ""
+                err = err or ""
+                msg = "ADB devices (원본):\n" + (out if out else "(stdout 없음)")
+                if err:
+                    msg += "\n[stderr] " + err
+                # \r 제거 후 파싱
+                raw_lines = out.replace("\r", "").split("\n")
+                device_ids = []
+                for line in raw_lines:
+                    line = line.strip()
+                    if "\t" in line and line.endswith("device"):
+                        device_ids.append(line.split("\t")[0].strip())
+
+                def test_connection(dev):
+                    rc, o, e = _run_adb_shell_cmd(dev, "shell", "echo", "ok")
+                    return rc == 0
+
+                ok_user = test_connection(user_device)
+                if ok_user:
+                    msg += "\n→ 연결됨. [%s] 로 실제 명령 전송 확인됨." % user_device
+                elif not device_ids:
+                    # 진단 정보 없이: LDPlayer/에뮬 자주 쓰는 포트 자동 시도
+                    common_ports = [5554, 5555, 5556, 5557, 62001]
+                    tried = []
+                    connected_device = None
+                    for port in common_ports:
+                        addr = "127.0.0.1:%s" % port
+                        tried.append(addr)
+                        _run_adb_shell_cmd(None, "connect", addr)
+                        time.sleep(0.2)
+                        if test_connection(addr):
+                            connected_device = addr
+                            break
+                    if connected_device:
+                        msg += "\n→ 기기 목록 비었으나 포트 자동 시도 → [%s] 연결됨. ADB 기기 칸 채움." % connected_device
+                        if self.adb_device_suggested is not None:
+                            self.adb_device_suggested.emit(connected_device)
+                    else:
+                        msg += "\n→ 기기 목록 비어 있음. 시도한 주소: " + ", ".join(tried)
+                        msg += "\n   LDPlayer가 실행 중인지, 설정 → 기타 설정 → ADB 디버깅 켜기 확인."
+                        if err:
+                            msg += "\n   [원인 추정] stderr: " + err[:200]
+                else:
+                    working = []
+                    for did in device_ids:
+                        if test_connection(did):
+                            working.append(did)
+                    if working:
+                        msg += "\n→ [%s] 로는 실패. [%s] 로 연결됨 → ADB 기기 칸 자동 채움." % (user_device, working[0])
+                        if self.adb_device_suggested is not None:
+                            self.adb_device_suggested.emit(working[0])
+                    else:
+                        msg += "\n→ 기기는 보이지만 shell 명령 실패. stderr 확인."
+            except Exception as e:
+                msg += "\n예외: " + str(e)
+            if self.test_tap_done is not None:
+                self.test_tap_done.emit(btn, restore, msg)
+        threading.Thread(target=run, daemon=True).start()
+
+    def _on_adb_test_tap(self):
+        """배팅금액 좌표 탭 후 5000원 입력 (테스트로 금액이 들어가는지 확인)."""
+        btn = self.adb_test_btn
+        restore = "배팅금액 테스트 (5000원)"
+        self._coords = load_coords()
+        bet_xy = self._coords.get("bet_amount")
+        if not bet_xy or len(bet_xy) < 2:
+            self._log("배팅금액 좌표를 먼저 잡아주세요.")
+            return
+        device = self.device_edit.text().strip() or None
+        btn.setEnabled(False)
+        btn.setText("테스트 중...")
+        self._log("배팅금액 테스트 중... (탭 → 5000 입력 → BACK)")
+        coords = dict(self._coords)
+        bet_xy_copy = [int(bet_xy[0]), int(bet_xy[1])]
+
+        def run():
+            msg = ""
+            try:
+                # ADB 연결 확인 (Windows에서 CMD와 동일한 방식)
+                rc, _, _ = _run_adb_shell_cmd(device, "shell", "echo", "ok")
+                if rc != 0:
+                    msg = "ADB 연결 실패. ADB 기기 칸 확인 후 'ADB 연결 확인' 버튼으로 테스트하세요."
+                    if self.test_tap_done is not None:
+                        self.test_tap_done.emit(btn, restore, msg)
+                    return
+                tx, ty = _apply_window_offset(coords, bet_xy_copy[0], bet_xy_copy[1], key="bet_amount")
+                adb_swipe(device, tx, ty, 100)
+                time.sleep(0.6)
+                adb_input_text(device, "5000")
+                time.sleep(0.4)
+                adb_keyevent(device, 4)  # BACK
+                cmd_str = "adb -s %s shell input swipe %s %s %s %s 100" % (device or "", tx, ty, tx, ty) if device else "adb shell input swipe %s %s %s %s 100" % (tx, ty, tx, ty)
+                msg = "배팅금액 테스트 완료. 보정 (%s,%s) | 직접 테스트: %s" % (tx, ty, cmd_str)
+            except Exception as e:
+                msg = "배팅금액 테스트 실패: " + str(e)
+            if self.test_tap_done is not None:
+                self.test_tap_done.emit(btn, restore, msg)
+        threading.Thread(target=run, daemon=True).start()
+
+    def _on_adb_color_tap(self, color_key):
+        """레드 또는 블랙 좌표 1회 탭 (즉시 반응 + 스레드에서 실행)."""
+        label = "레드" if color_key == "red" else "블랙"
+        btn = self.adb_red_btn if color_key == "red" else self.adb_black_btn
+        restore = "레드 1회 탭" if color_key == "red" else "블랙 1회 탭"
+        self._coords = load_coords()
+        xy = self._coords.get(color_key)
+        if not xy or len(xy) < 2:
+            self._log("%s 좌표를 먼저 잡아주세요." % label)
+            return
+        # 해당 키가 창 상대가 아니고, 창 왼쪽 위도 비어 있으면 탭 위치가 어긋날 수 있음
+        spaces = self._coords.get("coord_spaces") or {}
+        if not self._coords.get("raw_coords") and not spaces.get(color_key) and not self._coords.get("coords_are_window_relative"):
+            wleft = int(self._coords.get("window_left") or 0)
+            wtop = int(self._coords.get("window_top") or 0)
+            if wleft == 0 and wtop == 0:
+                self._log("참고: 레드/블랙 좌표 찾기로 버튼을 클릭해 저장하면 창이 자동 감지됩니다. 그후 탭 테스트해 보세요.")
+        btn.setEnabled(False)
+        btn.setText("탭 중...")
+        self._log("%s 버튼 탭 실행 중..." % label)
+        device = self.device_edit.text().strip() or None
+        coords = dict(self._coords)
+        xy_list = [int(xy[0]), int(xy[1])]
+        def run():
+            msg = ""
+            try:
+                tx, ty = _apply_window_offset(coords, xy_list[0], xy_list[1], key=color_key)
+                adb_swipe(device, tx, ty, 100)
+                cmd_str = "adb -s %s shell input swipe %s %s %s %s 100" % (device or "", tx, ty, tx, ty) if device else "adb shell input swipe %s %s %s %s 100" % (tx, ty, tx, ty)
+                msg = "%s 테스트 완료. 보정 (%s,%s) | 직접: %s" % (label, tx, ty, cmd_str)
+            except Exception as e:
+                msg = "%s 테스트 실패: %s" % (label, e)
+            if self.test_tap_done is not None:
+                self.test_tap_done.emit(btn, restore, msg)
+        threading.Thread(target=run, daemon=True).start()
 
     def _on_connect_analyzer(self):
         """Analyzer URL/계산기로 1회 조회 후 픽·금액 표시 — 배팅 정보가 자연스럽게 들어오는지 확인용."""
@@ -377,16 +843,12 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
 
         def do_fetch():
             pick = {"pick_color": None, "round": None, "probability": None, "error": None}
-            results = {"blended_win_rate": None, "prediction_history": [], "error": None}
             try:
                 pick = fetch_current_pick(url, calculator_id=calc_id, timeout=8)
-                results = fetch_results(url, timeout=8)
             except Exception as e:
                 pick["error"] = str(e)
-                results["error"] = str(e)
-            # 서브스레드에서는 QTimer가 동작하지 않으므로 시그널로 메인 스레드에서 UI 갱신(버튼 복구)
             if self.connect_result_ready is not None:
-                self.connect_result_ready.emit(pick, results)
+                self.connect_result_ready.emit(pick, {})
 
         thread = threading.Thread(target=do_fetch, daemon=True)
         thread.start()
@@ -397,7 +859,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             self._pick_data = pick if isinstance(pick, dict) else {}
             self._results_data = results if isinstance(results, dict) else {}
         self._update_display()
-        err = self._pick_data.get("error") or self._results_data.get("error")
+        err = self._pick_data.get("error")
         if err:
             self.connect_status_label.setText("연결 실패")
             self.connect_status_label.setStyleSheet("color: #c62828; font-size: 11px;")
@@ -417,6 +879,12 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         line = f"[{ts}] {msg}"
         if hasattr(self.log_text, "append"):
             self.log_text.append(line)
+            try:
+                sb = self.log_text.verticalScrollBar()
+                if sb:
+                    sb.setValue(sb.maximum())
+            except Exception:
+                pass
         else:
             self.log_text.setText(line)
 
@@ -428,10 +896,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._analyzer_url = url
         self._calculator_id = self.calc_combo.currentData()
         self._device_id = self.device_edit.text().strip() or "127.0.0.1:5555"
-        try:
-            self._poll_interval_sec = max(1.0, min(10.0, float(2)))
-        except ValueError:
-            self._poll_interval_sec = 2.0
+        # 배팅 중에는 픽을 빠르게 받기 위해 1초 간격 (누락 방지)
+        self._poll_interval_sec = 1.0
         self._coords = load_coords()
         if not self._coords.get("bet_amount") or not self._coords.get("red") or not self._coords.get("black"):
             self._log("좌표를 먼저 설정하세요. coord_picker.py로 배팅금액/정정/레드/블랙 좌표를 잡으세요.")
@@ -439,10 +905,12 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._running = True
         self._last_round_when_started = None
         self._last_bet_round = None
+        self._pick_history.clear()  # 전회차 히스토리 초기화 → 2회 연속 일치 시에만 배팅
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self._log("시작 — 다음 픽부터 배팅합니다.")
+        self._log("시작 — 다음 회차부터 빠르게 배팅합니다.")
         self._timer.start(int(self._poll_interval_sec * 1000))
+        QTimer.singleShot(100, self._poll)  # 시작 직후 0.1초 뒤 1회 즉시 폴링
 
     def _on_stop(self):
         self._running = False
@@ -453,7 +921,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._log("배팅 중지 (연결 유지 시 픽은 계속 갱신)")
 
     def _poll(self):
-        # 연결만 했을 때도 폴링해서 픽/회차 계속 갱신, 시작했을 때만 배팅
+        """타이머에서 호출: 스레드에서 서버 요청 후 결과만 메인 스레드로 전달 (UI 멈춤 방지)."""
         if not self._running and not self._connected:
             return
         url = (self._analyzer_url or "").strip() or self.analyzer_url_edit.text().strip()
@@ -464,59 +932,99 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         if calc_id is None:
             calc_id = self.calc_combo.currentData()
             self._calculator_id = calc_id
-        try:
-            pick = fetch_current_pick(url, calculator_id=calc_id, timeout=5)
-            results = fetch_results(url, timeout=5)
-        except Exception as e:
-            with self._lock:
-                self._pick_data = {"error": str(e)}
-                self._results_data = {}
-            self._update_display()
-            return
-        with self._lock:
-            self._pick_data = pick
-            self._results_data = results
-        self._update_display()
-        self._check_pending_results(results.get("prediction_history") or [])
+        url_snap = url
+        calc_snap = calc_id
 
-        # 목표금액 달성 등으로 계산기가 중지되면 매크로도 자동 중지
-        if self._running and pick.get("running") is False:
+        def do_fetch():
+            """계산기에서 회차·배팅중 픽·배팅금액만 가져옴. 계산/승패는 분석기 가상배팅 계산기가 담당."""
+            try:
+                pick = fetch_current_pick(url_snap, calculator_id=calc_snap, timeout=4)
+            except Exception as e:
+                pick = {"error": str(e)}
+            if pick is None:
+                pick = {"error": "픽 조회 지연"}
+            if self.poll_done is not None:
+                self.poll_done.emit(pick, {})
+
+        threading.Thread(target=do_fetch, daemon=True).start()
+
+    def _on_poll_done(self, pick, results):
+        """폴링 결과 수신: 회차·배팅중 픽·금액만 반영하고 배팅. 계산/승패는 분석기에서."""
+        with self._lock:
+            self._pick_data = pick if isinstance(pick, dict) else {}
+            self._results_data = results if isinstance(results, dict) else {}
+        self._update_display()
+
+        # 목표금액 도달 시 계산기가 running=False 로 저장 → 서버 current_pick.running 반영 → 여기서 수신 시 배팅 완전 중지
+        if self._running and self._pick_data.get("running") is False:
             self._running = False
+            try:
+                self._timer.stop()
+            except Exception:
+                pass
             self.start_btn.setEnabled(True)
             self.stop_btn.setEnabled(False)
-            self._log("목표 달성으로 계산기 중지 — 자동 중지")
+            self._log("목표 달성으로 계산기 중지 — 자동 중지 (더 이상 픽 발생·배팅 없음)")
 
         if not self._running:
             return
-        # 배팅 로직: 다음 픽(회차 변경)부터 실행
-        round_num = pick.get("round")
-        pick_color = pick.get("pick_color")
-        if round_num is None or pick_color not in ("RED", "BLACK"):
+        round_num = self._pick_data.get("round")
+        raw_color = self._pick_data.get("pick_color")
+        # 서버는 RED/BLACK 또는 빨강/검정 올 수 있음 → 항상 RED/BLACK으로 통일
+        pick_color = _normalize_pick_color(raw_color)
+        amount = self._pick_data.get("suggested_amount")
+        if round_num is None or pick_color is None:
+            self._log("서버 픽 없음 (회차=%s, 픽=%s, 금액=%s) — 분석기에서 해당 계산기 실행·픽 확인" % (round_num, raw_color or "(없음)", amount))
             return
         try:
             round_num = int(round_num)
         except (TypeError, ValueError):
             return
-        # 시작 직후: 현재 픽의 회차를 스킵용으로 기록
+        # 전회차·현재회차 구분용 히스토리 (표시만, 배팅은 즉시)
+        self._pick_history.append((round_num, pick_color))
+        # 실행 누르면 "다음 회차부터" 배팅: 현재 화면 회차는 건너뛰기
         if self._last_round_when_started is None:
             self._last_round_when_started = round_num
-            self._log(f"다음 회차부터 배팅합니다 (현재 서버 픽: {round_num}회 스킵)")
+            self._log("다음 회차(%s)부터 배팅합니다. 현재 %s회는 건너뜁니다." % (round_num + 1, round_num))
             return
-        # 다음 픽(회차가 바뀐 경우)에만 배팅
         if round_num <= self._last_round_when_started:
-            return
+            return  # 아직 시작 시점 회차거나 그 이전이면 스킵
+        # 이미 이 회차로 배팅했으면 스킵 (중복 배팅 방지). 오래된 회차는 목록에서 제거
+        with self._lock:
+            for old_r in list(self._pending_bet_rounds.keys()):
+                if old_r < round_num - 20:
+                    self._pending_bet_rounds.pop(old_r, None)
+            if round_num in self._pending_bet_rounds:
+                return
         if self._last_bet_round is not None and round_num <= self._last_bet_round:
             return
         self._last_bet_round = round_num
-        amount = pick.get("suggested_amount")
+        amt_val = amount if amount is not None else 0
+        try:
+            amt_val = int(amt_val)
+        except (TypeError, ValueError):
+            amt_val = 0
+        self._log("배팅 실행: %s회 %s %s원" % (round_num, pick_color, amt_val))
         self._do_bet(round_num, pick_color, amount)
+        # 다음 회차 픽을 빨리 받기 위해 배팅 직후 0.4초 뒤 한 번 더 폴링
+        if HAS_PYQT:
+            QTimer.singleShot(400, self._poll)
 
     def _do_bet(self, round_num, pick_color, amount_from_calc=None):
-        """금액 입력 → 정정(선택) → RED 또는 BLACK 탭. 금액은 계산기에서 전달된 값만 사용."""
-        if amount_from_calc is None or int(amount_from_calc) <= 0:
-            self._log("계산기에서 금액 미전달 — 배팅 생략")
+        """금액 입력 → RED/BLACK 픽대로 레드 또는 블랙 탭 → 마지막에 정정(선택)."""
+        try:
+            amt = int(amount_from_calc) if amount_from_calc is not None else 0
+        except (TypeError, ValueError):
+            amt = 0
+        if amt <= 0:
+            self._log("배팅금액이 없습니다. 분석기 웹에서 해당 계산기 배팅금액 입력 후 저장하세요.")
             return
-        bet_amount = str(int(amount_from_calc))
+        # 배팅 시작 전에 이 회차를 대기 목록에 넣어, 동시에 같은 회차로 또 배팅하는 것 방지
+        with self._lock:
+            if round_num in self._pending_bet_rounds:
+                return
+            self._pending_bet_rounds[round_num] = {"pick_color": pick_color, "amount": amt}
+        bet_amount = str(amt)
         coords = self._coords
         device = self._device_id or None
 
@@ -525,71 +1033,51 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         red_xy = coords.get("red")
         black_xy = coords.get("black")
         if not bet_xy or len(bet_xy) < 2:
-            self._log("배팅금액 좌표 없음")
+            self._log("배팅금액 좌표 없음 — 좌표 찾기로 배팅금액 위치를 잡아주세요.")
             return
         if pick_color == "RED" and (not red_xy or len(red_xy) < 2):
-            self._log("레드 좌표 없음")
+            self._log("레드 좌표 없음 — 좌표 찾기로 레드 버튼 위치를 잡아주세요.")
             return
         if pick_color == "BLACK" and (not black_xy or len(black_xy) < 2):
-            self._log("블랙 좌표 없음")
+            self._log("블랙 좌표 없음 — 좌표 찾기로 블랙 버튼 위치를 잡아주세요.")
             return
 
-        adb_tap(device, bet_xy[0], bet_xy[1])
-        time.sleep(0.2)
+        def tap_swipe(ax, ay, coord_key=None):
+            """tap 대신 swipe(터치 다운·업) — 웹/앱에서 버튼이 tap에 안 먹을 때 사용."""
+            tx, ty = _apply_window_offset(coords, ax, ay, key=coord_key)
+            adb_swipe(device, tx, ty, 100)
+
+        # 1) 배팅금액 칸 탭 → 금액 입력 → 키보드 닫기
+        tap_swipe(bet_xy[0], bet_xy[1], "bet_amount")
+        time.sleep(0.4)
         adb_input_text(device, bet_amount)
-        time.sleep(0.15)
+        time.sleep(0.3)
+        adb_keyevent(device, 4)  # BACK
+        time.sleep(0.5)
+        # 2) 픽 RED=레드 버튼, 픽 BLACK=블랙 버튼 (계산기 픽 그대로)
+        tap_red_button = pick_color == "RED"
+        color_xy = red_xy if tap_red_button else black_xy
+        color_key = "red" if tap_red_button else "black"
+        button_name = "레드" if tap_red_button else "블랙"
+        cx, cy = _apply_window_offset(coords, color_xy[0], color_xy[1], key=color_key)
+        self._log("ADB: 픽 %s → %s 버튼 탭 (%s,%s)" % (pick_color, button_name, cx, cy))
+        tap_swipe(color_xy[0], color_xy[1], color_key)
+        time.sleep(0.4)
+        # 3) 마지막에 정정 버튼 (배팅 확정)
         if confirm_xy and len(confirm_xy) >= 2:
-            adb_tap(device, confirm_xy[0], confirm_xy[1])
-            time.sleep(0.15)
-        if pick_color == "RED":
-            adb_tap(device, red_xy[0], red_xy[1])
-        else:
-            adb_tap(device, black_xy[0], black_xy[1])
-        # 로그: N회차 정/꺽 RED|BLACK 배팅금액 N원
+            tap_swipe(confirm_xy[0], confirm_xy[1], "confirm")
+            time.sleep(0.3)
+
         pred_text = "정" if pick_color == "RED" else "꺽"
         self._log(f"{round_num}회차 {pred_text} {pick_color} {bet_amount}원")
-        with self._lock:
-            self._pending_bet_rounds[round_num] = {"pick_color": pick_color, "amount": int(bet_amount)}
-
-    def _check_pending_results(self, prediction_history):
-        """prediction_history에서 우리가 배팅한 회차 결과가 나왔으면 승/패/조커 로그 후 대기 목록에서 제거."""
-        if not prediction_history:
-            return
-        hist_by_round = {}
-        for h in prediction_history:
-            if not h or not isinstance(h, dict):
-                continue
-            r = h.get("round")
-            if r is not None:
-                hist_by_round[int(r)] = h
-        with self._lock:
-            pending = list(self._pending_bet_rounds.keys())
-        for round_num in pending:
-            entry = hist_by_round.get(round_num)
-            if not entry:
-                continue
-            actual = entry.get("actual")
-            with self._lock:
-                info = self._pending_bet_rounds.get(round_num)
-            if not info:
-                continue
-            pick_color = info.get("pick_color") or ""
-            if actual == "joker":
-                result_text = "조커"
-            else:
-                # 승: RED→정, BLACK→꺽 와 actual 일치
-                win = (pick_color == "RED" and actual == "정") or (pick_color == "BLACK" and actual == "꺽")
-                result_text = "승" if win else "패"
-            self._log(f"{round_num}회차 결과: {result_text}")
-            with self._lock:
-                self._pending_bet_rounds.pop(round_num, None)
 
     def _update_display(self):
         with self._lock:
             pick = self._pick_data.copy()
             results = self._results_data.copy()
         round_num = pick.get("round")
-        pick_color = pick.get("pick_color")
+        raw_color = pick.get("pick_color")
+        pick_color = _normalize_pick_color(raw_color)  # RED/BLACK 통일 (표시·배팅 동일 기준)
         prob = pick.get("probability")
         icon_ch, _ = get_round_icon(round_num)
         round_str = f"{round_num}회 {icon_ch}" if round_num is not None else "-"
@@ -601,7 +1089,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             amount_str = "-"
         self.amount_label.setText(f"금액: {amount_str} (계산기에서 전달)")
 
-        # 정/꺽 + 색깔 카드 (웹과 동일: 정=빨강, 꺽=검정)
+        # 정/꺽 + 색깔 카드 (RED=정·빨강, BLACK=꺽·검정)
         if pick_color == "RED":
             self.pick_card_label.setText("정 · 빨강 (RED)")
             self.pick_card_label.setStyleSheet("font-size: 16px; font-weight: bold; padding: 8px; border-radius: 6px; background: #ffcdd2; color: #b71c1c;")
@@ -612,15 +1100,19 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             self.pick_card_label.setText("보류")
             self.pick_card_label.setStyleSheet("font-size: 16px; font-weight: bold; padding: 8px; border-radius: 6px; background: #eee; color: #666;")
 
-        blended = results.get("blended_win_rate")
-        if blended is not None and not isinstance(blended, str):
-            try:
-                blended_str = f"{float(blended):.1f}%"
-            except (TypeError, ValueError):
-                blended_str = "-"
+        # 계산/승패/합산승률은 분석기 가상배팅 계산기에서 처리
+        self.stats_label.setText("")
+
+        # 전회차 최대 5회 표시 (회차·픽 확인용) (회차매칭 확인용). 현재 픽 포함해 최근 5개
+        recent = list(self._pick_history)
+        if round_num is not None and pick_color:
+            recent = recent + [(round_num, pick_color)]
+        recent = recent[-5:]
+        if recent:
+            hist_str = ", ".join("%s회 %s" % (r, c) for r, c in recent)
+            self.pick_history_label.setText("최근 회차·픽: " + hist_str)
         else:
-            blended_str = "-"
-        self.stats_label.setText(f"실제 경고 합산승률: {blended_str}%")
+            self.pick_history_label.setText("최근 회차·픽: -")
 
         if self._running:
             if self._last_round_when_started is None:
