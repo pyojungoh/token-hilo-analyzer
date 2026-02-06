@@ -3388,13 +3388,13 @@ RESULTS_HTML = '''
                 if (Object.prototype.hasOwnProperty.call(data, 'prediction_history') && Array.isArray(data.prediction_history)) {
                     predictionHistory = data.prediction_history.slice(-100).filter(function(h) { return h && typeof h === 'object'; });
                     savePredictionHistory();
-                    // 서버 prediction_history로 계산기 히스토리 '대기' 보정 — 서버에 결과가 있으면 클라이언트 인터넷 환경과 관계없이 승/패/조커 반영
+                    // 서버 prediction_history로 계산기 히스토리 '대기' 보정 — actual(결과)만 서버 값으로 채움. 픽(predicted/pickColor)은 배팅중 픽 유지(덮어쓰지 않음)
                     (function syncCalcHistoryFromServerPrediction() {
                         if (!Array.isArray(predictionHistory) || predictionHistory.length === 0) return;
                         var byRound = {};
                         predictionHistory.forEach(function(p) {
                             if (p && typeof p === 'object' && p.round != null && p.actual != null && p.actual !== '') {
-                                byRound[Number(p.round)] = { actual: p.actual, predicted: p.predicted, pickColor: p.pick_color || p.pickColor };
+                                byRound[Number(p.round)] = { actual: p.actual };
                             }
                         });
                         var changed = false;
@@ -3407,8 +3407,6 @@ RESULTS_HTML = '''
                                 var fromServer = byRound[r];
                                 if (!fromServer) return;
                                 h.actual = fromServer.actual;
-                                if (fromServer.predicted != null) h.predicted = fromServer.predicted;
-                                if (fromServer.pickColor != null) h.pickColor = fromServer.pickColor;
                                 changed = true;
                             });
                         });
