@@ -955,16 +955,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             self._results_data = results if isinstance(results, dict) else {}
         self._update_display()
 
-        # 목표금액 도달 시 계산기가 running=False 로 저장 → 서버 current_pick.running 반영 → 여기서 수신 시 배팅 완전 중지
-        if self._running and self._pick_data.get("running") is False:
-            self._running = False
-            try:
-                self._timer.stop()
-            except Exception:
-                pass
-            self.start_btn.setEnabled(True)
-            self.stop_btn.setEnabled(False)
-            self._log("목표 달성으로 계산기 중지 — 자동 중지 (더 이상 픽 발생·배팅 없음)")
+        # 매크로는 오는 픽만 따라감. 목표금액/중지 판단은 분석기 계산기에서만 함 — running=False 수신해도 여기서 자동 중지하지 않음.
 
         if not self._running:
             return

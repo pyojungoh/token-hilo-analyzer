@@ -4256,6 +4256,7 @@ RESULTS_HTML = '''
                     const rate15 = count15 > 0 ? 100 * hit15 / count15 : 50;
                     const hitPctNum30 = count30 > 0 ? 100 * hit30 / count30 : 50;
                     const rate100 = count100 > 0 ? 100 * hit100 / count100 : 50;
+                    // 실제 경고 합산승률 공식: 0.6*최근15회승률 + 0.25*최근30회승률 + 0.15*최근100회승률 (조커 제외, predicted===actual 기준)
                     const blendedWinRate = 0.6 * rate15 + 0.25 * hitPctNum30 + 0.15 * rate100;
                     const lowWinRate = (count15 > 0 || count30 > 0 || count100 > 0) && blendedWinRate <= 50;
                     // 표시용: 최근 50회 결과 (승/패/조커/합산승률)
