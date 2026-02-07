@@ -2651,6 +2651,12 @@ RESULTS_HTML = '''
         .bet-calc-log .log-detail td.lose { color: #c62828; }
         .bet-log-actions { margin-bottom: 8px; }
         .bet-log-actions button { padding: 4px 10px; font-size: 0.8em; border-radius: 4px; border: 1px solid #555; background: #2a2a2a; color: #bbb; cursor: pointer; }
+        .pause-guide-desc { font-size: 0.85em; color: #aaa; margin: 0 0 10px; }
+        .pause-guide-table-wrap { overflow-x: auto; margin-top: 8px; }
+        .pause-guide-table-wrap table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+        .pause-guide-table-wrap th, .pause-guide-table-wrap td { padding: 6px 10px; text-align: left; border: 1px solid #444; }
+        .pause-guide-table-wrap th { background: #2a2a2a; color: #ccc; }
+        .pause-guide-table-wrap tr.best-row { background: #1b3d1b; color: #81c784; }
         .status {
             text-align: center;
             margin-top: 15px;
@@ -2755,6 +2761,7 @@ RESULTS_HTML = '''
             <div class="bet-calc-tabs">
                 <span class="tab active" data-tab="calc">계산기</span>
                 <span class="tab" data-tab="log">로그</span>
+                <span class="tab" data-tab="pause-guide">멈춤 기준 추천</span>
             </div>
             <div id="bet-calc-panel" class="bet-calc-panel active">
                 <div class="calc-dropdowns">
@@ -2871,6 +2878,14 @@ RESULTS_HTML = '''
             <div id="bet-log-panel" class="bet-log-panel">
                 <div class="bet-log-actions"><button type="button" id="bet-log-clear-all">전체 삭제</button></div>
                 <div id="bet-calc-log" class="bet-calc-log"></div>
+            </div>
+            <div id="bet-pause-guide-panel" class="bet-log-panel">
+                <p class="pause-guide-desc">각 기준(15회 승률 ≤ N%일 때 멈춤)으로 시뮬레이션했을 때, <strong>실제로 배팅했을 구간</strong>의 승률입니다. 조커는 패로 반영.</p>
+                <div class="bet-log-actions">
+                    <label>데이터 <select id="pause-guide-source"><option value="pred">예측기 전체</option><option value="1">계산기 1</option><option value="2">계산기 2</option><option value="3">계산기 3</option></select></label>
+                    <button type="button" id="pause-guide-calc">계산</button>
+                </div>
+                <div id="pause-guide-table-wrap" class="pause-guide-table-wrap"></div>
             </div>
         </div>
         <div class="status" id="status">로딩 중...</div>
@@ -4844,6 +4859,74 @@ RESULTS_HTML = '''
                 updateCalcDetail(id);
             }
         }
+        function getPauseGuideList(source) {
+            var raw = [];
+            if (source === 'pred' && typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) {
+                raw = predictionHistory.filter(function(h) {
+                    if (!h) return false;
+                    var a = h.actual;
+                    return a === '정' || a === '꺽' || a === 'joker' || a === true || a === false;
+                }).map(function(h) {
+                    var pred = (h.predicted != null ? h.predicted : (h.value != null ? h.value : ''));
+                    var a = h.actual;
+                    if (a === true) a = '정'; else if (a === false) a = '꺽';
+                    return { round: h.round, predicted: pred, actual: a };
+                });
+            } else if (source === '1' || source === '2' || source === '3') {
+                var id = parseInt(source, 10);
+                var hist = calcState[id] && calcState[id].history;
+                if (!Array.isArray(hist)) return [];
+                raw = hist.filter(function(h) { return h && h.actual && h.actual !== 'pending'; }).map(function(h) { return { round: h.round, predicted: h.predicted, actual: h.actual }; });
+            }
+            raw.sort(function(a, b) { return Number(a.round) - Number(b.round); });
+            return raw;
+        }
+        function computePauseGuide(list) {
+            var thresholds = [35, 40, 45, 50, 55, 60];
+            var out = [];
+            for (var t = 0; t < thresholds.length; t++) {
+                var thr = thresholds[t];
+                var wins = 0, bets = 0;
+                for (var i = 0; i < list.length; i++) {
+                    var window = list.slice(Math.max(0, i - 15), i);
+                    var rate15 = 50;
+                    if (window.length >= 1) {
+                        var wWins = window.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                        rate15 = (wWins / window.length) * 100;
+                    }
+                    if (rate15 <= thr) continue;
+                    bets++;
+                    if (list[i].actual !== 'joker' && list[i].predicted === list[i].actual) wins++;
+                }
+                var actualWinRate = bets > 0 ? (wins / bets * 100) : null;
+                out.push({ threshold: thr, bets: bets, wins: wins, actualWinRate: actualWinRate });
+            }
+            return out;
+        }
+        function renderPauseGuideTable() {
+            var wrap = document.getElementById('pause-guide-table-wrap');
+            var sel = document.getElementById('pause-guide-source');
+            if (!wrap || !sel) return;
+            var source = sel.value || 'pred';
+            var list = getPauseGuideList(source);
+            if (list.length < 15) {
+                wrap.innerHTML = '<p class="pause-guide-desc" style="color:#888;">완료된 회차가 15회 미만입니다. 예측기/계산기 데이터를 더 쌓은 뒤 다시 계산하세요.</p>';
+                return;
+            }
+            var rows = computePauseGuide(list);
+            var bestRate = -1;
+            for (var r = 0; r < rows.length; r++) { if (rows[r].actualWinRate != null && rows[r].actualWinRate > bestRate) bestRate = rows[r].actualWinRate; }
+            var tbl = '<table class="pause-guide-table"><thead><tr><th>멈춤 기준 (15회 승률 ≤)</th><th>배팅한 회차 수</th><th>실제 승률</th></tr></thead><tbody>';
+            for (var i = 0; i < rows.length; i++) {
+                var row = rows[i];
+                var rateStr = row.actualWinRate != null ? row.actualWinRate.toFixed(1) + '%' : '-';
+                var trClass = (row.actualWinRate != null && row.actualWinRate === bestRate) ? ' class="best-row"' : '';
+                tbl += '<tr' + trClass + '><td>' + row.threshold + '%</td><td>' + row.bets + '</td><td>' + rateStr + '</td></tr>';
+            }
+            tbl += '</tbody></table>';
+            wrap.innerHTML = tbl;
+        }
+        document.getElementById('pause-guide-calc')?.addEventListener('click', function() { renderPauseGuideTable(); });
         function updateCalcStatus(id) {
             try {
             const statusId = 'calc-' + id + '-status';
@@ -5192,8 +5275,11 @@ RESULTS_HTML = '''
                 this.classList.add('active');
                 const calcPanel = document.getElementById('bet-calc-panel');
                 const logPanel = document.getElementById('bet-log-panel');
+                const pauseGuidePanel = document.getElementById('bet-pause-guide-panel');
                 if (calcPanel) calcPanel.classList.toggle('active', t === 'calc');
                 if (logPanel) logPanel.classList.toggle('active', t === 'log');
+                if (pauseGuidePanel) pauseGuidePanel.classList.toggle('active', t === 'pause-guide');
+                if (t === 'pause-guide' && typeof renderPauseGuideTable === 'function') renderPauseGuideTable();
             });
         });
         document.getElementById('bet-log-clear-all')?.addEventListener('click', function() {
