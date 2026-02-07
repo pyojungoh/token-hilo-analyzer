@@ -2607,7 +2607,7 @@ RESULTS_HTML = '''
         .calc-buttons button.calc-reset { background: #455a64; }
         .calc-buttons button.calc-save { background: #1565c0; border-color: #1976d2; }
         .calc-detail { font-size: 0.85em; color: #bbb; flex: 1 1 280px; min-width: 0; }
-        .calc-round-table-wrap { margin-bottom: 6px; overflow-x: auto; }
+        .calc-round-table-wrap { margin-bottom: 6px; overflow-x: auto; max-height: 32em; overflow-y: auto; }
         .calc-round-table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
         .calc-round-table th, .calc-round-table td { padding: 4px 6px; border: 1px solid #444; text-align: center; }
         .calc-round-table th { background: #333; color: #81c784; }
@@ -2774,6 +2774,7 @@ RESULTS_HTML = '''
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-1-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label></td></tr>
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="46" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                    <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-1-pause-low-win-rate"> 승률≤<input type="number" id="calc-1-pause-win-rate-threshold" min="0" max="100" value="45" style="width:3em" title="최근 15회 승률이 이 값 이하·연패 시 배팅멈춤(픽만 유지, 금액 미전송). 승 나온 뒤에만 멈춤">% 이하·연패 시 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-1-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-1-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-1-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
@@ -2809,6 +2810,7 @@ RESULTS_HTML = '''
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-2-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label></td></tr>
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="46" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                    <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-2-pause-low-win-rate"> 승률≤<input type="number" id="calc-2-pause-win-rate-threshold" min="0" max="100" value="45" style="width:3em" title="최근 15회 승률이 이 값 이하·연패 시 배팅멈춤(픽만 유지, 금액 미전송). 승 나온 뒤에만 멈춤">% 이하·연패 시 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-2-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-2-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-2-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
@@ -2844,6 +2846,7 @@ RESULTS_HTML = '''
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-3-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label></td></tr>
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="46" style="width:3em" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                    <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-3-pause-low-win-rate"> 승률≤<input type="number" id="calc-3-pause-win-rate-threshold" min="0" max="100" value="45" style="width:3em" title="최근 15회 승률이 이 값 이하·연패 시 배팅멈춤(픽만 유지, 금액 미전송). 승 나온 뒤에만 멈춤">% 이하·연패 시 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-3-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-3-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-3-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
@@ -3119,7 +3122,10 @@ RESULTS_HTML = '''
                 timerId: null,
                 maxWinStreakEver: 0,
                 maxLoseStreakEver: 0,
-                first_bet_round: 0
+                first_bet_round: 0,
+                pause_low_win_rate_enabled: false,
+                pause_win_rate_threshold: 45,
+                paused: false
             };
         });
         let lastServerTimeSec = 0;  // /api/current-status 등에서 갱신
@@ -3139,6 +3145,10 @@ RESULTS_HTML = '''
                 if (typeof winRateThr !== 'number' || isNaN(winRateThr)) winRateThr = 46;
                 const martingaleEl = document.getElementById('calc-' + id + '-martingale');
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
+                const pauseLowEl = document.getElementById('calc-' + id + '-pause-low-win-rate');
+                const pauseThrEl = document.getElementById('calc-' + id + '-pause-win-rate-threshold');
+                var pauseThr = (pauseThrEl && !isNaN(parseFloat(pauseThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(pauseThrEl.value))) : 45;
+                if (typeof pauseThr !== 'number' || isNaN(pauseThr)) pauseThr = 45;
                 const capVal = parseFloat(document.getElementById('calc-' + id + '-capital')?.value);
                 const baseVal = parseFloat(document.getElementById('calc-' + id + '-base')?.value);
                 const oddsVal = parseFloat(document.getElementById('calc-' + id + '-odds')?.value);
@@ -3158,6 +3168,9 @@ RESULTS_HTML = '''
                     martingale_type: (martingaleTypeEl && martingaleTypeEl.value) || 'pyo',
                     target_enabled: !!(document.getElementById('calc-' + id + '-target-enabled') && document.getElementById('calc-' + id + '-target-enabled').checked),
                     target_amount: Math.max(0, parseInt(document.getElementById('calc-' + id + '-target-amount')?.value, 10) || 0),
+                    pause_low_win_rate_enabled: !!(pauseLowEl && pauseLowEl.checked),
+                    pause_win_rate_threshold: pauseThr,
+                    paused: !!calcState[id].paused,
                     timer_completed: !!calcState[id].timer_completed,
                     max_win_streak_ever: calcState[id].maxWinStreakEver || 0,
                     max_lose_streak_ever: calcState[id].maxLoseStreakEver || 0,
@@ -3220,6 +3233,10 @@ RESULTS_HTML = '''
                 calcState[id].pending_predicted = c.pending_predicted != null ? c.pending_predicted : null;
                 calcState[id].pending_prob = c.pending_prob != null ? c.pending_prob : null;
                 calcState[id].pending_color = c.pending_color || null;
+                var pauseThrRestore = (typeof c.pause_win_rate_threshold === 'number' && c.pause_win_rate_threshold >= 0 && c.pause_win_rate_threshold <= 100) ? c.pause_win_rate_threshold : 45;
+                calcState[id].pause_low_win_rate_enabled = !!c.pause_low_win_rate_enabled;
+                calcState[id].pause_win_rate_threshold = pauseThrRestore;
+                calcState[id].paused = !!c.paused;
                 if (!fullRestore) return;
                 calcState[id].reverse = !!c.reverse;
                 calcState[id].win_rate_reverse = !!c.win_rate_reverse;
@@ -3247,6 +3264,10 @@ RESULTS_HTML = '''
                 const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
                 if (targetEnabledEl) targetEnabledEl.checked = !!calcState[id].target_enabled;
                 if (targetAmountEl) targetAmountEl.value = String(calcState[id].target_amount || 0);
+                const pauseLowEl = document.getElementById('calc-' + id + '-pause-low-win-rate');
+                const pauseThrEl = document.getElementById('calc-' + id + '-pause-win-rate-threshold');
+                if (pauseLowEl) pauseLowEl.checked = !!calcState[id].pause_low_win_rate_enabled;
+                if (pauseThrEl) pauseThrEl.value = String(Math.round(calcState[id].pause_win_rate_threshold || 45));
                 const capitalEl = document.getElementById('calc-' + id + '-capital');
                 const baseEl = document.getElementById('calc-' + id + '-base');
                 const oddsEl = document.getElementById('calc-' + id + '-odds');
@@ -3853,6 +3874,7 @@ RESULTS_HTML = '''
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + currentRoundFull + '_' + actual;
+                                if (pred === actual) checkPauseAfterWin(id);
                                 updateCalcSummary(id);
                                 updateCalcDetail(id);
                                 var targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
@@ -3948,6 +3970,7 @@ RESULTS_HTML = '''
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + currentRoundFull + '_' + actual;
+                                if (pred === actual) checkPauseAfterWin(id);
                                 updateCalcSummary(id);
                                 updateCalcDetail(id);
                             });
@@ -4746,6 +4769,21 @@ RESULTS_HTML = '''
                 return Math.min(currentBet, Math.floor(cap));
             } catch (e) { return 0; }
         }
+        function getCalcRecent15WinRate(id) {
+            var hist = calcState[id] && calcState[id].history;
+            if (!Array.isArray(hist) || hist.length === 0) return 50;
+            var completed = hist.filter(function(h) { return h.actual && h.actual !== 'pending'; });
+            var last15 = completed.slice(-15);
+            if (last15.length < 1) return 50;
+            var wins = last15.filter(function(h) { return h.predicted === h.actual; });
+            return (wins.length / last15.length) * 100;
+        }
+        function checkPauseAfterWin(id) {
+            if (!calcState[id].pause_low_win_rate_enabled) return;
+            var rate15 = getCalcRecent15WinRate(id);
+            var thr = (typeof calcState[id].pause_win_rate_threshold === 'number') ? calcState[id].pause_win_rate_threshold : 45;
+            if (rate15 <= thr) calcState[id].paused = true;
+        }
         function updateCalcStatus(id) {
             try {
             const statusId = 'calc-' + id + '-status';
@@ -4753,6 +4791,11 @@ RESULTS_HTML = '''
             if (!el) return;
             const state = calcState[id];
             if (!state) return;
+            if (state.paused && state.pause_low_win_rate_enabled) {
+                var rate15 = getCalcRecent15WinRate(id);
+                var thrPause = (typeof state.pause_win_rate_threshold === 'number') ? state.pause_win_rate_threshold : 45;
+                if (rate15 > thrPause) state.paused = false;
+            }
             el.className = 'calc-status';
             if (state.running) {
                 el.classList.add('running');
@@ -4837,7 +4880,7 @@ RESULTS_HTML = '''
                         bettingCardEl.className = 'calc-current-card calc-card-betting card-' + (bettingIsRed ? 'jung' : 'kkuk');
                         bettingCardEl.title = '';
                         var betAmt = (lastPrediction && lastPrediction.round != null && typeof getBetForRound === 'function') ? getBetForRound(id, lastPrediction.round) : 0;
-                        try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: parseInt(id, 10) || 1, pickColor: bettingIsRed ? 'RED' : 'BLACK', round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: typeof predProb === 'number' && !isNaN(predProb) ? predProb : null, suggested_amount: betAmt > 0 ? betAmt : null }) }).catch(function() {}); } catch (e) {}
+                        try { var suggestedAmt = (calcState[id].paused ? null : (betAmt > 0 ? betAmt : null)); fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: parseInt(id, 10) || 1, pickColor: bettingIsRed ? 'RED' : 'BLACK', round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: typeof predProb === 'number' && !isNaN(predProb) ? predProb : null, suggested_amount: suggestedAmt }) }).catch(function() {}); } catch (e) {}
                         if (lastPrediction && lastPrediction.round != null) {
                             savedBetPickByRound[Number(lastPrediction.round)] = { value: bettingText, isRed: bettingIsRed };
                             var sbKeys = Object.keys(savedBetPickByRound).map(Number).filter(function(k) { return !isNaN(k); }).sort(function(a,b) { return a - b; });
@@ -4849,7 +4892,7 @@ RESULTS_HTML = '''
                             var r = getCalcResult(id);
                             var hasRound = calcState[id].history.some(function(h) { return h && Number(h.round) === roundNum; });
                             var betForThisRound = getBetForRound(id, roundNum);
-                            if (!hasRound && betForThisRound > 0) {
+                            if (!hasRound && betForThisRound > 0 && !calcState[id].paused) {
                                 calcState[id].history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: betForThisRound, actual: 'pending' });
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 saveCalcStateToServer();
@@ -5029,7 +5072,7 @@ RESULTS_HTML = '''
                 }
                 rows.push({ roundStr: roundStr, roundNum: !isNaN(rn) ? rn : null, pick: pickVal, pickClass: pickClass, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr, outClass: outClass });
             }
-            const displayRows = rows.slice(0, 15);
+            const displayRows = rows.slice(0, 50);
             if (tableWrap) {
                 if (displayRows.length === 0) {
                     tableWrap.innerHTML = '';
@@ -5150,6 +5193,11 @@ RESULTS_HTML = '''
                 const winRateThrRun = document.getElementById('calc-' + id + '-win-rate-threshold');
                 var thrRun = (winRateThrRun && parseFloat(winRateThrRun.value) != null && !isNaN(parseFloat(winRateThrRun.value))) ? Math.max(0, Math.min(100, parseFloat(winRateThrRun.value))) : 46;
                 calcState[id].win_rate_threshold = thrRun;
+                const pauseLowRun = document.getElementById('calc-' + id + '-pause-low-win-rate');
+                const pauseThrRunEl = document.getElementById('calc-' + id + '-pause-win-rate-threshold');
+                calcState[id].pause_low_win_rate_enabled = !!(pauseLowRun && pauseLowRun.checked);
+                calcState[id].pause_win_rate_threshold = (pauseThrRunEl && !isNaN(parseFloat(pauseThrRunEl.value))) ? Math.max(0, Math.min(100, parseFloat(pauseThrRunEl.value))) : 45;
+                calcState[id].paused = false;
                 calcState[id].timer_completed = false;
                 calcState[id].running = true;
                 calcState[id].history = [];
@@ -5229,6 +5277,7 @@ RESULTS_HTML = '''
                 state.pending_predicted = null;
                 state.pending_prob = null;
                 state.pending_color = null;
+                state.paused = false;
                 lastResetOrRunAt = Date.now();
                 await saveCalcStateToServer();
                 updateCalcSummary(id);
@@ -5816,7 +5865,7 @@ def api_calc_state():
             if state is None:
                 state = {}
             # 계산기 1,2,3만 반환 (레거시 defense 제거 후 클라이언트 호환)
-            _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
+            _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
             calcs = {}
             for cid in ('1', '2', '3'):
                 calcs[cid] = state[cid] if (cid in state and isinstance(state.get(cid), dict)) else dict(_default)
@@ -5878,6 +5927,9 @@ def api_calc_state():
                     'martingale_type': str(c.get('martingale_type') or 'pyo'),
                     'target_enabled': bool(c.get('target_enabled')),
                     'target_amount': max(0, int(c.get('target_amount') or 0)),
+                    'pause_low_win_rate_enabled': bool(c.get('pause_low_win_rate_enabled')),
+                    'pause_win_rate_threshold': max(0, min(100, int(c.get('pause_win_rate_threshold') or 45))),
+                    'paused': bool(c.get('paused')),
                     'max_win_streak_ever': int(c.get('max_win_streak_ever') or 0),
                     'max_lose_streak_ever': int(c.get('max_lose_streak_ever') or 0),
                     'first_bet_round': max(0, int(c.get('first_bet_round') or 0)),
@@ -5887,7 +5939,7 @@ def api_calc_state():
                     'pending_color': c.get('pending_color'),
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
         save_calc_state(session_id, out)
         # 계산기 running 상태를 current_pick에 반영 → 에뮬레이터 매크로가 목표 달성 시 자동 중지
         if bet_int:
