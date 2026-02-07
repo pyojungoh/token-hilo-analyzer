@@ -38,7 +38,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 COORDS_PATH = os.path.join(SCRIPT_DIR, "emulator_coords.json")
 
 # 좌표 찾기용 키·라벨 (한곳에 통합)
-COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드", "black": "블랙"}
+COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드", "black": "블랙", "timer": "남은시간(숫자)"}
 
 
 def _normalize_pick_color(raw):
@@ -114,6 +114,74 @@ def fetch_server_time(analyzer_url, timeout=2):
         r.raise_for_status()
         d = r.json()
         return d.get("server_time") if isinstance(d, dict) else None
+    except Exception:
+        return None
+
+
+def _run_adb_exec_out(device_id, *args):
+    """adb 실행 후 stdout 바이너리 반환. (returncode, stdout_bytes)"""
+    kw = {"capture_output": True, "timeout": 8}
+    if os.name == "nt":
+        cmd = "adb -s %s %s" % (device_id, " ".join(str(a) for a in args)) if device_id else "adb " + " ".join(str(a) for a in args)
+        kw["shell"] = True
+    else:
+        cmd = ["adb"] + (["-s", device_id] if device_id else []) + list(args)
+    try:
+        r = subprocess.run(cmd, **kw)
+        return (r.returncode, (r.stdout or b""))
+    except Exception:
+        return (-1, b"")
+
+
+def adb_screencap(device_id):
+    """에뮬레이터 화면 PNG 캡처. 성공 시 PNG 바이트, 실패 시 None."""
+    code, out = _run_adb_exec_out(device_id, "exec-out", "screencap", "-p")
+    if code != 0 or not out or len(out) < 100:
+        return None
+    return out
+
+
+# 게임 "남은 시간 X.XX 초" OCR용 크롭 크기 (창 좌표 기준 픽셀, 스케일됨)
+TIMER_CROP_W, TIMER_CROP_H = 90, 32
+
+
+def read_game_remaining_seconds(coords, device_id):
+    """게임 화면 상단 '남은 시간 X.XX 초' 숫자 영역을 캡처·OCR해 남은 초( float ) 반환. 읽기 실패 시 None."""
+    timer_xy = coords.get("timer")
+    if not timer_xy or not isinstance(timer_xy, (list, tuple)) or len(timer_xy) < 2:
+        return None
+    png = adb_screencap(device_id)
+    if not png:
+        return None
+    try:
+        from io import BytesIO
+        from PIL import Image
+        img = Image.open(BytesIO(png))
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        dev_w, dev_h = img.size[0], img.size[1]
+        win_w = int(coords.get("window_width") or 0)
+        win_h = int(coords.get("window_height") or 0)
+        if not win_w or not win_h:
+            win_w, win_h = dev_w, dev_h
+        dx, dy = _apply_window_offset(coords, int(timer_xy[0]), int(timer_xy[1]), "timer")
+        cw = max(20, int(TIMER_CROP_W * dev_w / win_w) if win_w else TIMER_CROP_W)
+        ch = max(12, int(TIMER_CROP_H * dev_h / win_h) if win_h else TIMER_CROP_H)
+        left = max(0, dx - cw // 2)
+        top = max(0, dy - ch // 2)
+        right = min(dev_w, left + cw)
+        bottom = min(dev_h, top + ch)
+        crop = img.crop((left, top, right, bottom))
+        try:
+            import pytesseract
+            text = (pytesseract.image_to_string(crop, config="--psm 7 -c tessedit_char_whitelist=0123456789.") or "").strip()
+        except Exception:
+            return None
+        text = text.replace(",", ".")
+        m = re.search(r"(\d+\.?\d*)", text)
+        if not m:
+            return None
+        return float(m.group(1))
     except Exception:
         return None
 
@@ -442,6 +510,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         win_hint = QLabel("※ 좌표 찾기로 레드/배팅금액 등을 잡으면 창 위치는 자동으로 채워져서, 위 칸은 건드리지 않아도 됩니다.")
         win_hint.setStyleSheet("color: #888; font-size: 11px;")
         fl_coord.addRow("", win_hint)
+        timer_hint = QLabel("※ 남은시간(숫자): 상단 빨간 타이머 'X.XX 초' 숫자 위치 클릭 → 게임 실제 배팅 가능 구간에 맞춤 (Pillow·pytesseract·Tesseract 설치 필요)")
+        timer_hint.setStyleSheet("color: #888; font-size: 11px;")
+        fl_coord.addRow("", timer_hint)
         res_row = QHBoxLayout()
         res_row.addWidget(QLabel("해상도 보정(선택): 창 W/H"))
         self.window_width_edit = QLineEdit()
@@ -1012,29 +1083,48 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         if self._last_bet_round is not None and round_num <= self._last_bet_round:
             return
         if getattr(self, "_scheduled_bet_round", None) == round_num:
-            return  # 이미 이 회차 배팅 예약됨 (네이버 시계 동기화 대기 중)
+            return  # 이미 이 회차 배팅 예약됨 (게임 타이머 대기 중)
+        self._coords = load_coords()
         amt_val = amount if amount is not None else 0
         try:
             amt_val = int(amt_val)
         except (TypeError, ValueError):
             amt_val = 0
-        # 네이버 시계·15초 주기: 9초 배팅가능(0~8), 6초 배팅불가(9~14) → 불가 구간이면 다음 주기까지 대기
-        delay_sec = 0
-        url = (self._analyzer_url or "").strip() or self.analyzer_url_edit.text().strip()
-        if url and amt_val > 0:
-            server_time = fetch_server_time(url, timeout=2)
-            if server_time is not None:
-                phase_15 = int(server_time) % 15
-                if phase_15 >= 9:
-                    delay_sec = 15 - phase_15
-                    self._log("네이버 시계 동기화: %s회 %s초 후 배팅 (15초 주기: 9초 배팅가능/6초 배팅불가, 현재 %s초)" % (round_num, delay_sec, phase_15))
-        if delay_sec > 0:
+        # 게임 화면 '남은 시간 X.XX 초'로 배팅 가능 구간 판단 (남은시간 좌표 설정 시). 미설정이면 즉시 배팅
+        delay_ms = 0
+        schedule_recheck = False
+        device = self._device_id or None
+        timer_xy = (self._coords or {}).get("timer")
+        if amt_val > 0 and device and timer_xy and isinstance(timer_xy, (list, tuple)) and len(timer_xy) >= 2:
+            remaining = read_game_remaining_seconds(self._coords, device)
+            if remaining is not None:
+                if remaining >= 2.0:
+                    self._log("게임 타이머: 남은 %s초 — 배팅 실행" % round(remaining, 2))
+                    delay_ms = 0
+                else:
+                    delay_sec = remaining + 0.5
+                    delay_ms = int(delay_sec * 1000)
+                    self._log("게임 타이머: 남은 %s초 — %s초 후 배팅 (배팅 불가 구간 대기)" % (round(remaining, 2), round(delay_sec, 1)))
+            else:
+                delay_ms = 1000
+                schedule_recheck = True
+                self._log("게임 타이머: 읽기 실패(결과 구간?) — 1초 후 재확인")
+        if delay_ms > 0:
             self._scheduled_bet_round = round_num
             if HAS_PYQT:
-                QTimer.singleShot(
-                    int(delay_sec * 1000),
-                    lambda r=round_num, c=pick_color, a=amount: self._run_bet(r, c, a),
-                )
+                if schedule_recheck:
+                    def _recheck():
+                        self._scheduled_bet_round = None
+                        self._try_bet_or_schedule(round_num, pick_color, amount)
+                    QTimer.singleShot(delay_ms, _recheck)
+                else:
+                    QTimer.singleShot(delay_ms, lambda r=round_num, c=pick_color, a=amount: self._run_bet(r, c, a))
+            else:
+                time.sleep(delay_ms / 1000.0)
+                if schedule_recheck:
+                    self._try_bet_or_schedule(round_num, pick_color, amount)
+                else:
+                    self._run_bet(round_num, pick_color, amount)
             return
         self._run_bet(round_num, pick_color, amount)
 
