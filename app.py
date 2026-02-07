@@ -2790,7 +2790,7 @@ RESULTS_HTML = '''
                             <div class="calc-detail" id="calc-1-detail">
                                 <div class="calc-round-table-wrap" id="calc-1-round-table-wrap"></div>
                                 <div class="calc-streak" id="calc-1-streak">경기결과 (최근 30회): -</div>
-                                <div class="calc-stats" id="calc-1-stats">최대연승: - | 최대연패: - | 승률: -</div>
+                                <div class="calc-stats" id="calc-1-stats">최대연승: - | 최대연패: - | 승률: - | 15회승률: -</div>
                             </div>
                         </div>
                     </div>
@@ -2826,7 +2826,7 @@ RESULTS_HTML = '''
                             <div class="calc-detail" id="calc-2-detail">
                                 <div class="calc-round-table-wrap" id="calc-2-round-table-wrap"></div>
                                 <div class="calc-streak" id="calc-2-streak">경기결과 (최근 30회): -</div>
-                                <div class="calc-stats" id="calc-2-stats">최대연승: - | 최대연패: - | 승률: -</div>
+                                <div class="calc-stats" id="calc-2-stats">최대연승: - | 최대연패: - | 승률: - | 15회승률: -</div>
                             </div>
                         </div>
                     </div>
@@ -2862,7 +2862,7 @@ RESULTS_HTML = '''
                             <div class="calc-detail" id="calc-3-detail">
                                 <div class="calc-round-table-wrap" id="calc-3-round-table-wrap"></div>
                                 <div class="calc-streak" id="calc-3-streak">경기결과 (최근 30회): -</div>
-                                <div class="calc-stats" id="calc-3-stats">최대연승: - | 최대연패: - | 승률: -</div>
+                                <div class="calc-stats" id="calc-3-stats">최대연승: - | 최대연패: - | 승률: - | 15회승률: -</div>
                             </div>
                         </div>
                     </div>
@@ -5008,7 +5008,7 @@ RESULTS_HTML = '''
             const hist = state.history || [];
             if (hist.length === 0) {
                 streakEl.textContent = '경기결과 (최근 30회): -';
-                statsEl.textContent = '최대연승: - | 최대연패: - | 승률: -';
+                statsEl.textContent = '최대연승: - | 최대연패: - | 승률: - | 15회승률: -';
                 if (tableWrap) tableWrap.innerHTML = '';
                 return;
             }
@@ -5102,7 +5102,9 @@ RESULTS_HTML = '''
                 return '<span class="' + (a === 'w' ? 'w' : a === 'l' ? 'l' : 'j') + '">' + (a === 'w' ? '승' : a === 'l' ? '패' : '조') + '</span>';
             }).join(' ');
             streakEl.innerHTML = '경기결과 (최근 30회←): ' + streakStr;
-            statsEl.textContent = '최대연승: ' + r.maxWinStreak + ' | 최대연패: ' + r.maxLoseStreak + ' | 승률: ' + r.winRate + '%';
+            var rate15 = getCalcRecent15WinRate(id);
+            var rate15Str = (completedHist.length < 1) ? '-' : (rate15.toFixed(1) + '%');
+            statsEl.textContent = '최대연승: ' + r.maxWinStreak + ' | 최대연패: ' + r.maxLoseStreak + ' | 승률: ' + r.winRate + '% | 15회승률: ' + rate15Str;
             } catch (e) { console.warn('updateCalcDetail', id, e); }
         }
         document.querySelectorAll('.calc-dropdown-header').forEach(h => {
