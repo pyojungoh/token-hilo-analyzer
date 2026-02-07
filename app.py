@@ -4788,14 +4788,24 @@ RESULTS_HTML = '''
         }
         function checkPauseAfterWin(id) {
             if (!calcState[id].pause_low_win_rate_enabled) return;
+            var hist = calcState[id].history || [];
+            var completed = hist.filter(function(h) { return h.actual && h.actual !== 'pending'; });
             var martingaleEl = document.getElementById('calc-' + id + '-martingale');
-            if (martingaleEl && martingaleEl.checked) return;  // 마틴 사용 중에는 멈춤 미적용(마틴 끝날 때까지 배팅 유지)
+            var useMartingale = !!(martingaleEl && martingaleEl.checked);
+            // 마틴 사용 중: 연패 중 승(마틴 한 사이클 끝)일 때만 멈춤 검사. 그 외에는 마틴 끝날 때까지 배팅 유지.
+            if (useMartingale) {
+                if (completed.length < 2) return;  // 직전 회차와 비교할 수 없으면 스킵
+                var last = completed[completed.length - 1];
+                var prev = completed[completed.length - 2];
+                var lastIsWin = last.actual !== 'joker' && last.predicted === last.actual;
+                var prevWasLoss = prev.actual !== 'joker' && prev.predicted !== prev.actual;
+                if (!lastIsWin || !prevWasLoss) return;  // 연패중승이 아니면 멈춤 미적용
+            }
             var rate15 = getCalcRecent15WinRate(id);
             var thr = (typeof calcState[id].pause_win_rate_threshold === 'number') ? calcState[id].pause_win_rate_threshold : 45;
             if (rate15 <= thr) {
                 calcState[id].paused = true;
                 // 승 반영 전에 이미 추가된 pending 행은 배팅금액 0 + no_bet 플래그 (새로고침 후 복원용)
-                var hist = calcState[id].history || [];
                 for (var j = 0; j < hist.length; j++) {
                     if (hist[j] && hist[j].actual === 'pending') { hist[j].betAmount = 0; hist[j].no_bet = true; }
                 }
