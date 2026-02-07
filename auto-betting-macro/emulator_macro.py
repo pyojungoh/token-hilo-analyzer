@@ -1018,16 +1018,16 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             amt_val = int(amt_val)
         except (TypeError, ValueError):
             amt_val = 0
-        # 네이버 시계·15초 주기 동기화: 결과 구간(10~14초)이면 다음 게임 시작(1초)까지 대기 후 배팅
+        # 네이버 시계·15초 주기: 9초 배팅가능(0~8), 6초 배팅불가(9~14) → 불가 구간이면 다음 주기까지 대기
         delay_sec = 0
         url = (self._analyzer_url or "").strip() or self.analyzer_url_edit.text().strip()
         if url and amt_val > 0:
             server_time = fetch_server_time(url, timeout=2)
             if server_time is not None:
                 phase_15 = int(server_time) % 15
-                if phase_15 >= 10:
-                    delay_sec = 16 - phase_15
-                    self._log("네이버 시계 동기화: %s회 %s초 후 배팅 (15초 주기, 현재 구간 %s초)" % (round_num, delay_sec, phase_15))
+                if phase_15 >= 9:
+                    delay_sec = 15 - phase_15
+                    self._log("네이버 시계 동기화: %s회 %s초 후 배팅 (15초 주기: 9초 배팅가능/6초 배팅불가, 현재 %s초)" % (round_num, delay_sec, phase_15))
         if delay_sec > 0:
             self._scheduled_bet_round = round_num
             if HAS_PYQT:
