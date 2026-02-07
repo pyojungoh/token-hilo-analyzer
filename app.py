@@ -4788,6 +4788,8 @@ RESULTS_HTML = '''
         }
         function checkPauseAfterWin(id) {
             if (!calcState[id].pause_low_win_rate_enabled) return;
+            var martingaleEl = document.getElementById('calc-' + id + '-martingale');
+            if (martingaleEl && martingaleEl.checked) return;  // 마틴 사용 중에는 멈춤 미적용(마틴 끝날 때까지 배팅 유지)
             var rate15 = getCalcRecent15WinRate(id);
             var thr = (typeof calcState[id].pause_win_rate_threshold === 'number') ? calcState[id].pause_win_rate_threshold : 45;
             if (rate15 <= thr) {
