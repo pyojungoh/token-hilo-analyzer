@@ -85,3 +85,13 @@
   - 서버: `/api/calc-state` POST 시 저장할 `use_history`를 `use_history[-50000:]` 로 자르고 저장.  
   - 상세 테이블: `displayRows = rows.slice(0, 50)` 유지(최근 50행만 표시).
 - 50,000은 한 세션에서 정지 전까지 수천 회까지 가정한 상한이며, 필요 시 상수만 키우면 된다.
+
+---
+
+## 8. 탭 백그라운드 후 복귀 시 동기화 (모바일·창 내렸다 올림)
+
+- **문제**: 모바일에서 탭을 내리거나 창을 백그라운드로 두면 브라우저가 해당 탭의 JS를 거의 멈춰, 결과 폴링·15회 승률·멈춤/재개 판단이 갱신되지 않는다. 그래서 다시 탭을 열어도 **꺼둔 시점 상태**가 그대로 보이고, 새로고침해야 반영된다.
+- **해결**: **Page Visibility API**로 탭이 다시 보일 때(`visibilitychange` → `document.visibilityState === 'visible'`) 곧바로 **최신 결과**와 **계산기 상태**를 서버에서 가져와 UI를 갱신한다.
+- **적용**  
+  - `document.addEventListener('visibilitychange', ...)` 에서 visible 시 `loadResults()` → `loadCalcStateFromServer(false)` → `updateAllCalcs()` 순으로 호출.  
+  - 새로고침 없이도 복귀 시점의 결과·멈춤·승률이 정확히 반영되도록 유지한다.

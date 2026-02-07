@@ -5633,6 +5633,17 @@ RESULTS_HTML = '''
         
         // 0.2초마다 타이머 업데이트 (UI만 업데이트, 서버 요청은 1초마다)
         setInterval(updateTimer, 200);
+
+        // 탭이 다시 보일 때(모바일에서 창 내렸다 올림 등): 최신 결과·계산기 상태 동기화 → 멈춤/승률 정확히 반영
+        document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState !== 'visible') return;
+            lastResultsUpdate = 0;
+            loadResults().then(function() {
+                return loadCalcStateFromServer(false);
+            }).then(function() {
+                if (typeof updateAllCalcs === 'function') updateAllCalcs();
+            }).catch(function(e) { console.warn('visibilitychange 동기화:', e); });
+        });
     </script>
 </body>
 </html>
