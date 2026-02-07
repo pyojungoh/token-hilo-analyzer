@@ -3155,7 +3155,7 @@ RESULTS_HTML = '''
                 payload[String(id)] = {
                     running: calcState[id].running,
                     started_at: calcState[id].started_at || 0,
-                    history: dedupeCalcHistoryByRound((calcState[id].history || []).slice(-500)),
+                    history: dedupeCalcHistoryByRound((calcState[id].history || []).slice(-50000)),
                     capital: (capVal != null && !isNaN(capVal) && capVal >= 0) ? capVal : 1000000,
                     base: (baseVal != null && !isNaN(baseVal) && baseVal >= 1) ? baseVal : 10000,
                     odds: (oddsVal != null && !isNaN(oddsVal) && oddsVal >= 1) ? oddsVal : 1.97,
@@ -3218,7 +3218,7 @@ RESULTS_HTML = '''
                 if (localRunning && serverRunning) {
                     // 로컬·서버 모두 실행 중 → history는 로컬 유지, 나머지 필드만 서버로 갱신
                 } else if (Array.isArray(c.history)) {
-                    var raw = c.history.slice(-500);
+                    var raw = c.history.slice(-50000);
                     raw.forEach(function(h) {
                         if (!h) return;
                         if (h.no_bet === true) h.betAmount = 0;
@@ -5983,7 +5983,7 @@ def api_calc_state():
                     use_history = current_history
                 else:
                     use_history = client_history
-                use_history = use_history[-500:] if len(use_history) > 500 else use_history
+                use_history = use_history[-50000:] if len(use_history) > 50000 else use_history
                 for ent in use_history:
                     if not isinstance(ent, dict):
                         continue
