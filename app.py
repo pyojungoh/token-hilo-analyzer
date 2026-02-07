@@ -3200,6 +3200,8 @@ RESULTS_HTML = '''
                 if (existing && existing.actual && existing.actual !== 'pending' && (!h.actual || h.actual === 'pending')) {
                     merged.actual = existing.actual;
                 }
+                // 멈춤(no_bet) 복원: 기존 또는 새 데이터에 no_bet이 있으면 배팅금액 0 유지
+                if (merged.no_bet === true) merged.betAmount = 0;
                 byRound[rn] = merged;
             }
             var rounds = Object.keys(byRound).map(Number).sort(function(a, b) { return a - b; });
@@ -3216,7 +3218,9 @@ RESULTS_HTML = '''
                 if (localRunning && serverRunning) {
                     // 로컬·서버 모두 실행 중 → history는 로컬 유지, 나머지 필드만 서버로 갱신
                 } else if (Array.isArray(c.history)) {
-                    calcState[id].history = dedupeCalcHistoryByRound(c.history.slice(-500));
+                    var raw = c.history.slice(-500);
+                    raw.forEach(function(h) { if (h && h.no_bet === true) h.betAmount = 0; });
+                    calcState[id].history = dedupeCalcHistoryByRound(raw);
                 } else {
                     calcState[id].history = [];
                 }
@@ -4688,7 +4692,7 @@ RESULTS_HTML = '''
                 const h = hist[i];
                 if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
                 if (h.actual === 'pending') continue;  // 미결 회차는 배팅금·수익 계산에서 제외
-                if (h.betAmount != null && h.betAmount === 0) continue;  // 멈춤 회차(배팅 안 함)는 순익/자본 계산에서 제외
+                if (h.no_bet === true || (h.betAmount != null && h.betAmount === 0)) continue;  // 멈춤 회차(배팅 안 함)는 순익/자본 계산에서 제외
                 var martinTable = getMartinTable(martingaleType, baseIn);
                 if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
                     currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
@@ -4756,7 +4760,7 @@ RESULTS_HTML = '''
                 for (var i = 0; i < sorted.length; i++) {
                     var h = sorted[i];
                     if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
-                    if (h.betAmount != null && h.betAmount === 0) continue;  // 멈춤 회차는 배팅 없음 → 자본/마틴 단계 변화 없음
+                    if (h.no_bet === true || (h.betAmount != null && h.betAmount === 0)) continue;  // 멈춤 회차는 배팅 없음 → 자본/마틴 단계 변화 없음
                     if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
                     var bet = Math.min(currentBet, Math.floor(cap));
                     if (cap < bet || cap <= 0) return 0;
@@ -4786,10 +4790,10 @@ RESULTS_HTML = '''
             var thr = (typeof calcState[id].pause_win_rate_threshold === 'number') ? calcState[id].pause_win_rate_threshold : 45;
             if (rate15 <= thr) {
                 calcState[id].paused = true;
-                // 승 반영 전에 이미 추가된 pending 행은 배팅금액 0으로 보정 (마지막 승 이후 배팅 금지)
+                // 승 반영 전에 이미 추가된 pending 행은 배팅금액 0 + no_bet 플래그 (새로고침 후 복원용)
                 var hist = calcState[id].history || [];
                 for (var j = 0; j < hist.length; j++) {
-                    if (hist[j] && hist[j].actual === 'pending') hist[j].betAmount = 0;
+                    if (hist[j] && hist[j].actual === 'pending') { hist[j].betAmount = 0; hist[j].no_bet = true; }
                 }
                 calcState[id].history = dedupeCalcHistoryByRound(hist);
                 saveCalcStateToServer();
@@ -4906,7 +4910,7 @@ RESULTS_HTML = '''
                             var betForThisRound = getBetForRound(id, roundNum);
                             if (!hasRound && (betForThisRound > 0 || calcState[id].paused)) {
                                 var amt = calcState[id].paused ? 0 : betForThisRound;
-                                calcState[id].history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: amt, actual: 'pending' });
+                                calcState[id].history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: amt, no_bet: !!calcState[id].paused, actual: 'pending' });
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 saveCalcStateToServer();
                                 updateCalcDetail(id);
@@ -5042,7 +5046,7 @@ RESULTS_HTML = '''
                     const h = completedHist[i];
                     if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
                     const rn = h.round != null ? Number(h.round) : NaN;
-                    var wasPaused = (h.betAmount != null && h.betAmount === 0);
+                    var wasPaused = (h.no_bet === true || (h.betAmount != null && h.betAmount === 0));
                     if (wasPaused && !isNaN(rn)) {
                         roundToBetProfit[rn] = { betAmount: 0, profit: 0 };
                         continue;
@@ -5071,11 +5075,11 @@ RESULTS_HTML = '''
                 const pickClass = (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : 'pick-kkuk')));
                 var betStr, profitStr, res, outcome, resultClass, outClass;
                 if (h.actual === 'pending') {
-                    var amt = (h.betAmount != null && h.betAmount > 0) ? h.betAmount : 0;
+                    var amt = (h.no_bet === true || !h.betAmount) ? 0 : (h.betAmount > 0 ? h.betAmount : 0);
                     betStr = amt > 0 ? Number(amt).toLocaleString() : '-';
                     profitStr = '-';
                     res = '-';
-                    outcome = amt > 0 ? '대기' : '멈춤';
+                    outcome = (h.no_bet === true || amt === 0) ? '멈춤' : '대기';
                     resultClass = '';
                     outClass = amt > 0 ? 'skip' : 'skip';
                 } else {
