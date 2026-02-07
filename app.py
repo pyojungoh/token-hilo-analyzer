@@ -4805,7 +4805,8 @@ RESULTS_HTML = '''
             var completed = hist.filter(function(h) { return h.actual && h.actual !== 'pending'; });
             var last15 = completed.slice(-15);
             if (last15.length < 1) return 50;
-            var wins = last15.filter(function(h) { return h.predicted === h.actual; });
+            // 조커는 패로 간주: 승 = 실제 정/꺽이고 예측 적중한 경우만
+            var wins = last15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; });
             return (wins.length / last15.length) * 100;
         }
         function checkPauseAfterWin(id) {
