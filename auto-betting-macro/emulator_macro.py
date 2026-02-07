@@ -896,8 +896,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._analyzer_url = url
         self._calculator_id = self.calc_combo.currentData()
         self._device_id = self.device_edit.text().strip() or "127.0.0.1:5555"
-        # 배팅 중에는 픽을 빠르게 받기 위해 1초 간격 (누락 방지)
-        self._poll_interval_sec = 1.0
+        # 배팅 중: 0.3초 간격 (분당 4게임=15초 사이클에서 회차 놓침 방지. 웹도 0.3초마다 픽 전송)
+        self._poll_interval_sec = 0.3
         self._coords = load_coords()
         if not self._coords.get("bet_amount") or not self._coords.get("red") or not self._coords.get("black"):
             self._log("좌표를 먼저 설정하세요. coord_picker.py로 배팅금액/정정/레드/블랙 좌표를 잡으세요.")
@@ -1001,9 +1001,10 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             amt_val = 0
         self._log("배팅 실행: %s회 %s %s원" % (round_num, pick_color, amt_val))
         self._do_bet(round_num, pick_color, amount)
-        # 다음 회차 픽을 빨리 받기 위해 배팅 직후 0.4초 뒤 한 번 더 폴링
+        # 다음 회차 픽을 빨리 받기 위해 배팅 직후 0.2초·0.5초 뒤 추가 폴링 (누락 방지)
         if HAS_PYQT:
-            QTimer.singleShot(400, self._poll)
+            QTimer.singleShot(200, self._poll)
+            QTimer.singleShot(500, self._poll)
 
     def _do_bet(self, round_num, pick_color, amount_from_calc=None):
         """금액 입력 → RED/BLACK 픽대로 레드 또는 블랙 탭 → 마지막에 정정(선택)."""

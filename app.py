@@ -5471,15 +5471,22 @@ RESULTS_HTML = '''
         
         initialLoad();
         
-        // 결과 폴링: 10초 경기 기준. 종료 직전(3초 이하)·시작 직후(8초 이상) 0.4초, 그 외 0.5초
+        // 결과 폴링: 분당 4게임(15초 사이클) 기준. 계산기 실행 중이면 250ms로 빠르게 해서 회차 놓침 방지
         setInterval(() => {
+            const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
             const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
             const criticalPhase = r <= 3 || r >= 8;
-            const interval = allResults.length === 0 ? 500 : (criticalPhase ? 400 : 500);
+            const interval = allResults.length === 0 ? 500 : (anyRunning ? 250 : (criticalPhase ? 400 : 500));
             if (Date.now() - lastResultsUpdate > interval) {
                 loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
             }
-        }, 400);
+        }, 250);
+        
+        // 계산기 실행 중: 0.3초마다 픽을 서버로 전송 → 매크로가 회차 놓치지 않도록 (분당 4게임 15초 사이클 대응)
+        setInterval(() => {
+            const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
+            if (anyRunning) CALC_IDS.forEach(id => { updateCalcStatus(id); });
+        }, 300);
         
         // 리셋/실행 직후에는 서버 폴링 스킵 (저장 반영 전에 예전 상태로 덮어쓰는 것 방지)
         var lastResetOrRunAt = 0;
