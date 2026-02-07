@@ -104,6 +104,20 @@ def fetch_current_pick(analyzer_url, calculator_id=1, timeout=5):
         return {"pick_color": None, "round": None, "probability": None, "error": str(e)}
 
 
+def fetch_server_time(analyzer_url, timeout=2):
+    """GET {analyzer_url}/api/server-time → 네이버 시계 동기화·15초 주기 배팅 타이밍용."""
+    base = normalize_analyzer_url(analyzer_url)
+    if not base:
+        return None
+    try:
+        r = requests.get(base + "/api/server-time", timeout=timeout)
+        r.raise_for_status()
+        d = r.json()
+        return d.get("server_time") if isinstance(d, dict) else None
+    except Exception:
+        return None
+
+
 def load_coords():
     if not os.path.exists(COORDS_PATH):
         return {}
@@ -280,6 +294,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._last_bet_round = None  # 이미 배팅한 회차 (중복 방지)
         self._pending_bet_rounds = {}  # round_num -> { pick_color, amount } (결과 대기 → 승/패/조커 로그)
         self._pick_history = deque(maxlen=5)  # 최근 5회 (round_num, pick_color) — 회차·픽 안정 시에만 배팅
+        self._scheduled_bet_round = None  # 네이버 시계 동기화로 지연 배팅 예약된 회차 (중복 예약 방지)
         self._pick_data = {}
         self._results_data = {}
         self._lock = threading.Lock()
@@ -385,6 +400,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             row.setContentsMargins(0, 2, 0, 2)
             row_w.setLayout(row)
             btn = QPushButton(f"{label} 좌표 찾기")
+            btn.setMinimumHeight(36)
             btn.clicked.connect(lambda checked=False, k=key: self._start_coord_capture(k))
             row.addWidget(btn)
             val_lbl = QLabel("(미설정)")
@@ -412,10 +428,12 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         win_row.addWidget(self.window_left_edit)
         win_row.addWidget(self.window_top_edit)
         self.window_capture_btn = QPushButton("창 왼쪽 위 잡기")
+        self.window_capture_btn.setMinimumHeight(36)
         self.window_capture_btn.setToolTip("클릭 후 LDPlayer 창의 왼쪽 위 모서리를 한 번 클릭하면 X, Y가 자동 저장됩니다.")
         self.window_capture_btn.clicked.connect(lambda: self._start_coord_capture("window_topleft"))
         win_row.addWidget(self.window_capture_btn)
         self.window_save_btn = QPushButton("창 위치 저장")
+        self.window_save_btn.setMinimumHeight(36)
         self.window_save_btn.clicked.connect(self._save_window_offset)
         win_row.addWidget(self.window_save_btn)
         win_row.addWidget(QLabel("(0,0이면 비움)"))
@@ -993,32 +1011,59 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 return
         if self._last_bet_round is not None and round_num <= self._last_bet_round:
             return
-        self._last_bet_round = round_num
+        if getattr(self, "_scheduled_bet_round", None) == round_num:
+            return  # 이미 이 회차 배팅 예약됨 (네이버 시계 동기화 대기 중)
         amt_val = amount if amount is not None else 0
         try:
             amt_val = int(amt_val)
         except (TypeError, ValueError):
             amt_val = 0
-        self._log("배팅 실행: %s회 %s %s원" % (round_num, pick_color, amt_val))
-        self._do_bet(round_num, pick_color, amount)
-        # 다음 회차 픽을 빨리 받기 위해 배팅 직후 0.2초·0.5초 뒤 추가 폴링 (누락 방지)
-        if HAS_PYQT:
-            QTimer.singleShot(200, self._poll)
-            QTimer.singleShot(500, self._poll)
+        # 네이버 시계·15초 주기 동기화: 결과 구간(10~14초)이면 다음 게임 시작(1초)까지 대기 후 배팅
+        delay_sec = 0
+        url = (self._analyzer_url or "").strip() or self.analyzer_url_edit.text().strip()
+        if url and amt_val > 0:
+            server_time = fetch_server_time(url, timeout=2)
+            if server_time is not None:
+                phase_15 = int(server_time) % 15
+                if phase_15 >= 10:
+                    delay_sec = 16 - phase_15
+                    self._log("네이버 시계 동기화: %s회 %s초 후 배팅 (15초 주기, 현재 구간 %s초)" % (round_num, delay_sec, phase_15))
+        if delay_sec > 0:
+            self._scheduled_bet_round = round_num
+            if HAS_PYQT:
+                QTimer.singleShot(
+                    int(delay_sec * 1000),
+                    lambda r=round_num, c=pick_color, a=amount: self._run_bet(r, c, a),
+                )
+            return
+        self._run_bet(round_num, pick_color, amount)
+
+    def _run_bet(self, round_num, pick_color, amount):
+        """실제 배팅 실행 (즉시 또는 네이버 시계 지연 후). 성공 시 _last_bet_round 갱신."""
+        self._scheduled_bet_round = None
+        self._log("배팅 실행: %s회 %s %s원" % (round_num, pick_color, amount))
+        ok = self._do_bet(round_num, pick_color, amount)
+        if ok:
+            self._last_bet_round = round_num
+            if HAS_PYQT:
+                QTimer.singleShot(200, self._poll)
+                QTimer.singleShot(500, self._poll)
+        else:
+            pass
 
     def _do_bet(self, round_num, pick_color, amount_from_calc=None):
-        """금액 입력 → RED/BLACK 픽대로 레드 또는 블랙 탭 → 마지막에 정정(선택)."""
+        """금액 입력 → RED/BLACK 픽대로 레드 또는 블랙 탭 → 마지막에 정정(선택). 성공 시 True, 실패(스킵) 시 False."""
         try:
             amt = int(amount_from_calc) if amount_from_calc is not None else 0
         except (TypeError, ValueError):
             amt = 0
         if amt <= 0:
             self._log("배팅금액이 없습니다. 분석기 웹에서 해당 계산기 배팅금액 입력 후 저장하세요.")
-            return
+            return False
         # 배팅 시작 전에 이 회차를 대기 목록에 넣어, 동시에 같은 회차로 또 배팅하는 것 방지
         with self._lock:
             if round_num in self._pending_bet_rounds:
-                return
+                return False
             self._pending_bet_rounds[round_num] = {"pick_color": pick_color, "amount": amt}
         bet_amount = str(amt)
         coords = self._coords
@@ -1030,42 +1075,57 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         black_xy = coords.get("black")
         if not bet_xy or len(bet_xy) < 2:
             self._log("배팅금액 좌표 없음 — 좌표 찾기로 배팅금액 위치를 잡아주세요.")
-            return
+            with self._lock:
+                self._pending_bet_rounds.pop(round_num, None)
+            return False
         if pick_color == "RED" and (not red_xy or len(red_xy) < 2):
             self._log("레드 좌표 없음 — 좌표 찾기로 레드 버튼 위치를 잡아주세요.")
-            return
+            with self._lock:
+                self._pending_bet_rounds.pop(round_num, None)
+            return False
         if pick_color == "BLACK" and (not black_xy or len(black_xy) < 2):
             self._log("블랙 좌표 없음 — 좌표 찾기로 블랙 버튼 위치를 잡아주세요.")
-            return
+            with self._lock:
+                self._pending_bet_rounds.pop(round_num, None)
+            return False
 
         def tap_swipe(ax, ay, coord_key=None):
             """tap 대신 swipe(터치 다운·업) — 웹/앱에서 버튼이 tap에 안 먹을 때 사용."""
             tx, ty = _apply_window_offset(coords, ax, ay, key=coord_key)
             adb_swipe(device, tx, ty, 100)
 
-        # 1) 배팅금액 칸 탭 → 금액 입력 → 키보드 닫기
-        tap_swipe(bet_xy[0], bet_xy[1], "bet_amount")
-        time.sleep(0.4)
-        adb_input_text(device, bet_amount)
-        time.sleep(0.3)
-        adb_keyevent(device, 4)  # BACK
-        time.sleep(0.5)
-        # 2) 픽 RED=레드 버튼, 픽 BLACK=블랙 버튼 (계산기 픽 그대로)
-        tap_red_button = pick_color == "RED"
-        color_xy = red_xy if tap_red_button else black_xy
-        color_key = "red" if tap_red_button else "black"
-        button_name = "레드" if tap_red_button else "블랙"
-        cx, cy = _apply_window_offset(coords, color_xy[0], color_xy[1], key=color_key)
-        self._log("ADB: 픽 %s → %s 버튼 탭 (%s,%s)" % (pick_color, button_name, cx, cy))
-        tap_swipe(color_xy[0], color_xy[1], color_key)
-        time.sleep(0.4)
-        # 3) 마지막에 정정 버튼 (배팅 확정)
-        if confirm_xy and len(confirm_xy) >= 2:
-            tap_swipe(confirm_xy[0], confirm_xy[1], "confirm")
-            time.sleep(0.3)
+        try:
+            # 1) 배팅금액 칸 탭 → 포커스 대기 → 금액 입력 → 키보드 닫기
+            tap_swipe(bet_xy[0], bet_xy[1], "bet_amount")
+            time.sleep(0.45)
+            adb_input_text(device, bet_amount)
+            time.sleep(0.35)
+            adb_keyevent(device, 4)  # BACK
+            time.sleep(0.45)
+            # 2) 픽 RED=레드 / BLACK=블랙 (한 번만 탭 — 두 번 탭 시 금액이 두 번 들어감)
+            tap_red_button = pick_color == "RED"
+            color_xy = red_xy if tap_red_button else black_xy
+            color_key = "red" if tap_red_button else "black"
+            button_name = "레드" if tap_red_button else "블랙"
+            cx, cy = _apply_window_offset(coords, color_xy[0], color_xy[1], key=color_key)
+            self._log("ADB: 픽 %s → %s 버튼 탭 (%s,%s)" % (pick_color, button_name, cx, cy))
+            tap_swipe(color_xy[0], color_xy[1], color_key)
+            time.sleep(0.45)
+            # 3) 정정 버튼(배팅 확정) — 두 번 탭해서 확정 반영되도록
+            if confirm_xy and len(confirm_xy) >= 2:
+                tap_swipe(confirm_xy[0], confirm_xy[1], "confirm")
+                time.sleep(0.2)
+                tap_swipe(confirm_xy[0], confirm_xy[1], "confirm")
+                time.sleep(0.35)
 
-        pred_text = "정" if pick_color == "RED" else "꺽"
-        self._log(f"{round_num}회차 {pred_text} {pick_color} {bet_amount}원")
+            pred_text = "정" if pick_color == "RED" else "꺽"
+            self._log(f"{round_num}회차 {pred_text} {pick_color} {bet_amount}원 (ADB 완료 — 사이트 반영은 화면에서 확인)")
+            return True
+        except Exception as e:
+            self._log("배팅 실행 중 오류: %s — 같은 회차 다음 폴링에 재시도됩니다." % str(e)[:80])
+            with self._lock:
+                self._pending_bet_rounds.pop(round_num, None)
+            return False
 
     def _update_display(self):
         with self._lock:

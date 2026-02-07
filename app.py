@@ -6336,6 +6336,12 @@ def serve_tampermonkey_script():
         return Response('// Script file not found', status=404, mimetype='application/javascript')
 
 
+@app.route('/api/server-time', methods=['GET'])
+def api_server_time():
+    """매크로 네이버 시계 동기화용. 분당 4게임(15초 주기) 배팅 타이밍 계산에 사용."""
+    return jsonify({'server_time': int(time.time())}), 200
+
+
 @app.route('/api/current-status', methods=['GET'])
 def get_current_status():
     """현재 게임 상태"""
