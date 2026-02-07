@@ -5029,12 +5029,17 @@ RESULTS_HTML = '''
                 for (let i = 0; i < completedHist.length; i++) {
                     const h = completedHist[i];
                     if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                    const rn = h.round != null ? Number(h.round) : NaN;
+                    var wasPaused = (h.betAmount != null && h.betAmount === 0);
+                    if (wasPaused && !isNaN(rn)) {
+                        roundToBetProfit[rn] = { betAmount: 0, profit: 0 };
+                        continue;
+                    }
                     if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) currentBet = martinTableDetail[Math.min(martingaleStep, martinTableDetail.length - 1)];
                     const bet = Math.min(currentBet, Math.floor(cap));
                     if (cap < bet || cap <= 0) break;
                     const isJoker = h.actual === 'joker';
                     const isWin = !isJoker && h.predicted === h.actual;
-                    const rn = h.round != null ? Number(h.round) : NaN;
                     if (!isNaN(rn)) roundToBetProfit[rn] = { betAmount: bet, profit: isJoker ? -bet : (isWin ? Math.floor(bet * (oddsIn - 1)) : -bet) };
                     if (isJoker) { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
                     else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = 0; else currentBet = baseIn; }
@@ -5063,7 +5068,7 @@ RESULTS_HTML = '''
                     outClass = amt > 0 ? 'skip' : 'skip';
                 } else {
                     const bp = roundToBetProfit[rn];
-                    betStr = (bp && bp.betAmount != null) ? bp.betAmount.toLocaleString() : '-';
+                    betStr = (bp && bp.betAmount != null && bp.betAmount > 0) ? bp.betAmount.toLocaleString() : '-';
                     const profitVal = (bp && bp.profit != null) ? bp.profit : '-';
                     profitStr = profitVal === '-' ? '-' : (profitVal >= 0 ? '+' : '') + Number(profitVal).toLocaleString();
                     res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
