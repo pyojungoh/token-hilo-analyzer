@@ -4892,8 +4892,9 @@ RESULTS_HTML = '''
                             var r = getCalcResult(id);
                             var hasRound = calcState[id].history.some(function(h) { return h && Number(h.round) === roundNum; });
                             var betForThisRound = getBetForRound(id, roundNum);
-                            if (!hasRound && betForThisRound > 0 && !calcState[id].paused) {
-                                calcState[id].history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: betForThisRound, actual: 'pending' });
+                            if (!hasRound && (betForThisRound > 0 || calcState[id].paused)) {
+                                var amt = calcState[id].paused ? 0 : betForThisRound;
+                                calcState[id].history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: amt, actual: 'pending' });
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 saveCalcStateToServer();
                                 updateCalcDetail(id);
@@ -5053,13 +5054,13 @@ RESULTS_HTML = '''
                 const pickClass = (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : 'pick-kkuk')));
                 var betStr, profitStr, res, outcome, resultClass, outClass;
                 if (h.actual === 'pending') {
-                    var betForRound = getBetForRound(id, rn);
-                    betStr = (betForRound > 0) ? betForRound.toLocaleString() : '-';
+                    var amt = (h.betAmount != null && h.betAmount > 0) ? h.betAmount : 0;
+                    betStr = amt > 0 ? Number(amt).toLocaleString() : '-';
                     profitStr = '-';
                     res = '-';
-                    outcome = '대기';
+                    outcome = amt > 0 ? '대기' : '멈춤';
                     resultClass = '';
-                    outClass = 'skip';
+                    outClass = amt > 0 ? 'skip' : 'skip';
                 } else {
                     const bp = roundToBetProfit[rn];
                     betStr = (bp && bp.betAmount != null) ? bp.betAmount.toLocaleString() : '-';
