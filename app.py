@@ -4688,6 +4688,7 @@ RESULTS_HTML = '''
                 const h = hist[i];
                 if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
                 if (h.actual === 'pending') continue;  // 미결 회차는 배팅금·수익 계산에서 제외
+                if (h.betAmount != null && h.betAmount === 0) continue;  // 멈춤 회차(배팅 안 함)는 순익/자본 계산에서 제외
                 var martinTable = getMartinTable(martingaleType, baseIn);
                 if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
                     currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
@@ -4755,6 +4756,7 @@ RESULTS_HTML = '''
                 for (var i = 0; i < sorted.length; i++) {
                     var h = sorted[i];
                     if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                    if (h.betAmount != null && h.betAmount === 0) continue;  // 멈춤 회차는 배팅 없음 → 자본/마틴 단계 변화 없음
                     if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
                     var bet = Math.min(currentBet, Math.floor(cap));
                     if (cap < bet || cap <= 0) return 0;
