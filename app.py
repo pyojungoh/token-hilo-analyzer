@@ -3874,7 +3874,8 @@ RESULTS_HTML = '''
                                     calcState[id].history[pendingIdxActual].predicted = pred;
                                     calcState[id].history[pendingIdxActual].pickColor = betColorActual || null;
                                 } else {
-                                    calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null });
+                                    var noBetPush = !!(calcState[id].paused);
+                                    calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null, betAmount: noBetPush ? 0 : undefined, no_bet: noBetPush });
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + currentRoundFull + '_' + actual;
@@ -3970,7 +3971,8 @@ RESULTS_HTML = '''
                                     calcState[id].history[pendingIdx3].predicted = pred;
                                     calcState[id].history[pendingIdx3].pickColor = betColorActual || null;
                                 } else if (!calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) {
-                                    calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null });
+                                    var noBetPush3 = !!(calcState[id].paused);
+                                    calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null, betAmount: noBetPush3 ? 0 : undefined, no_bet: noBetPush3 });
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + currentRoundFull + '_' + actual;
@@ -4807,6 +4809,7 @@ RESULTS_HTML = '''
             if (!el) return;
             const state = calcState[id];
             if (!state) return;
+            var pausedAtStart = !!state.paused;
             if (state.paused && state.pause_low_win_rate_enabled) {
                 var rate15 = getCalcRecent15WinRate(id);
                 var thrPause = (typeof state.pause_win_rate_threshold === 'number') ? state.pause_win_rate_threshold : 45;
@@ -4909,8 +4912,9 @@ RESULTS_HTML = '''
                             var hasRound = calcState[id].history.some(function(h) { return h && Number(h.round) === roundNum; });
                             var betForThisRound = getBetForRound(id, roundNum);
                             if (!hasRound && (betForThisRound > 0 || calcState[id].paused)) {
-                                var amt = calcState[id].paused ? 0 : betForThisRound;
-                                calcState[id].history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: amt, no_bet: !!calcState[id].paused, actual: 'pending' });
+                                var isNoBet = pausedAtStart || !!calcState[id].paused;
+                                var amt = isNoBet ? 0 : betForThisRound;
+                                calcState[id].history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: amt, no_bet: isNoBet, actual: 'pending' });
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 saveCalcStateToServer();
                                 updateCalcDetail(id);
