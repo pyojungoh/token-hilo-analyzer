@@ -4809,7 +4809,14 @@ RESULTS_HTML = '''
             return (wins.length / last15.length) * 100;
         }
         function checkPauseAfterWin(id) {
-            if (!calcState[id].pause_low_win_rate_enabled) return;
+            var pauseLowEl = document.getElementById('calc-' + id + '-pause-low-win-rate');
+            var pauseThrEl = document.getElementById('calc-' + id + '-pause-win-rate-threshold');
+            if (!pauseLowEl || !pauseLowEl.checked) return;  // DOM 기준: 멈춤 옵션 켜져 있을 때만
+            if (calcState[id]) {
+                calcState[id].pause_low_win_rate_enabled = true;
+                var thrNum = (pauseThrEl && !isNaN(parseFloat(pauseThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(pauseThrEl.value))) : 45;
+                calcState[id].pause_win_rate_threshold = thrNum;
+            }
             var hist = calcState[id].history || [];
             var completed = hist.filter(function(h) { return h.actual && h.actual !== 'pending'; });
             var martingaleEl = document.getElementById('calc-' + id + '-martingale');
@@ -4824,7 +4831,7 @@ RESULTS_HTML = '''
                 if (!lastIsWin || !prevWasLoss) return;  // 연패중승이 아니면 멈춤 미적용
             }
             var rate15 = getCalcRecent15WinRate(id);
-            var thr = (typeof calcState[id].pause_win_rate_threshold === 'number') ? calcState[id].pause_win_rate_threshold : 45;
+            var thr = (pauseThrEl && !isNaN(parseFloat(pauseThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(pauseThrEl.value))) : 45;
             if (rate15 <= thr) {
                 calcState[id].paused = true;
                 // 승 반영 전에 이미 추가된 pending 행은 배팅금액 0 + no_bet 플래그 (새로고침 후 복원용)
@@ -4844,9 +4851,13 @@ RESULTS_HTML = '''
             const state = calcState[id];
             if (!state) return;
             var pausedAtStart = !!state.paused;
-            if (state.paused && state.pause_low_win_rate_enabled) {
+            var pauseLowEl = document.getElementById('calc-' + id + '-pause-low-win-rate');
+            var pauseThrEl = document.getElementById('calc-' + id + '-pause-win-rate-threshold');
+            var pauseEnabled = !!(pauseLowEl && pauseLowEl.checked);
+            var thrPause = (pauseThrEl && !isNaN(parseFloat(pauseThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(pauseThrEl.value))) : 45;
+            if (calcState[id]) { calcState[id].pause_low_win_rate_enabled = pauseEnabled; calcState[id].pause_win_rate_threshold = thrPause; }
+            if (state.paused && pauseEnabled) {
                 var rate15 = getCalcRecent15WinRate(id);
-                var thrPause = (typeof state.pause_win_rate_threshold === 'number') ? state.pause_win_rate_threshold : 45;
                 if (rate15 > thrPause) state.paused = false;
             }
             el.className = 'calc-status';
