@@ -4784,7 +4784,17 @@ RESULTS_HTML = '''
             if (!calcState[id].pause_low_win_rate_enabled) return;
             var rate15 = getCalcRecent15WinRate(id);
             var thr = (typeof calcState[id].pause_win_rate_threshold === 'number') ? calcState[id].pause_win_rate_threshold : 45;
-            if (rate15 <= thr) calcState[id].paused = true;
+            if (rate15 <= thr) {
+                calcState[id].paused = true;
+                // 승 반영 전에 이미 추가된 pending 행은 배팅금액 0으로 보정 (마지막 승 이후 배팅 금지)
+                var hist = calcState[id].history || [];
+                for (var j = 0; j < hist.length; j++) {
+                    if (hist[j] && hist[j].actual === 'pending') hist[j].betAmount = 0;
+                }
+                calcState[id].history = dedupeCalcHistoryByRound(hist);
+                saveCalcStateToServer();
+                updateCalcDetail(id);
+            }
         }
         function updateCalcStatus(id) {
             try {
