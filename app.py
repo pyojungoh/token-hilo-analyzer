@@ -3219,7 +3219,11 @@ RESULTS_HTML = '''
                     // 로컬·서버 모두 실행 중 → history는 로컬 유지, 나머지 필드만 서버로 갱신
                 } else if (Array.isArray(c.history)) {
                     var raw = c.history.slice(-500);
-                    raw.forEach(function(h) { if (h && h.no_bet === true) h.betAmount = 0; });
+                    raw.forEach(function(h) {
+                        if (!h) return;
+                        if (h.no_bet === true) h.betAmount = 0;
+                        if (h.betAmount === 0 || h.betAmount === undefined || h.betAmount === null) h.no_bet = true;
+                    });
                     calcState[id].history = dedupeCalcHistoryByRound(raw);
                 } else {
                     calcState[id].history = [];
@@ -3829,11 +3833,16 @@ RESULTS_HTML = '''
                                 if (betPredForServer == null) { betPredForServer = pred; betColorForServer = betColor || null; }
                                 var pendingIdx = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
                                 if (pendingIdx >= 0) {
-                                    calcState[id].history[pendingIdx].actual = 'joker';
-                                    calcState[id].history[pendingIdx].predicted = pred;
-                                    calcState[id].history[pendingIdx].pickColor = betColor || null;
+                                    var rowJ = calcState[id].history[pendingIdx];
+                                    rowJ.actual = 'joker';
+                                    rowJ.predicted = pred;
+                                    rowJ.pickColor = betColor || null;
+                                    var isNoBetJ = !!(calcState[id].paused || rowJ.no_bet);
+                                    rowJ.no_bet = isNoBetJ;
+                                    rowJ.betAmount = isNoBetJ ? 0 : (rowJ.betAmount != null ? rowJ.betAmount : undefined);
                                 } else {
-                                    calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null });
+                                    var noBetJoker = !!(calcState[id].paused);
+                                    calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null, betAmount: noBetJoker ? 0 : undefined, no_bet: noBetJoker });
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
@@ -3870,9 +3879,13 @@ RESULTS_HTML = '''
                                 if (betPredForServerActual == null) { betPredForServerActual = pred; betColorForServerActual = betColorActual || null; }
                                 var pendingIdxActual = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
                                 if (pendingIdxActual >= 0) {
-                                    calcState[id].history[pendingIdxActual].actual = actual;
-                                    calcState[id].history[pendingIdxActual].predicted = pred;
-                                    calcState[id].history[pendingIdxActual].pickColor = betColorActual || null;
+                                    var row = calcState[id].history[pendingIdxActual];
+                                    row.actual = actual;
+                                    row.predicted = pred;
+                                    row.pickColor = betColorActual || null;
+                                    var isNoBet = !!(calcState[id].paused || row.no_bet);
+                                    row.no_bet = isNoBet;
+                                    row.betAmount = isNoBet ? 0 : (row.betAmount != null ? row.betAmount : undefined);
                                 } else {
                                     var noBetPush = !!(calcState[id].paused);
                                     calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null, betAmount: noBetPush ? 0 : undefined, no_bet: noBetPush });
@@ -3931,11 +3944,16 @@ RESULTS_HTML = '''
                                 }
                                 var pendingIdx2 = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
                                 if (pendingIdx2 >= 0) {
-                                    calcState[id].history[pendingIdx2].actual = 'joker';
-                                    calcState[id].history[pendingIdx2].predicted = pred;
-                                    calcState[id].history[pendingIdx2].pickColor = betColor || null;
+                                    var rowJ2 = calcState[id].history[pendingIdx2];
+                                    rowJ2.actual = 'joker';
+                                    rowJ2.predicted = pred;
+                                    rowJ2.pickColor = betColor || null;
+                                    var isNoBetJ2 = !!(calcState[id].paused || rowJ2.no_bet);
+                                    rowJ2.no_bet = isNoBetJ2;
+                                    rowJ2.betAmount = isNoBetJ2 ? 0 : (rowJ2.betAmount != null ? rowJ2.betAmount : undefined);
                                 } else if (!calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) {
-                                    calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null });
+                                    var noBetJoker2 = !!(calcState[id].paused);
+                                    calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null, betAmount: noBetJoker2 ? 0 : undefined, no_bet: noBetJoker2 });
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
@@ -3967,9 +3985,13 @@ RESULTS_HTML = '''
                                 }
                                 var pendingIdx3 = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
                                 if (pendingIdx3 >= 0) {
-                                    calcState[id].history[pendingIdx3].actual = actual;
-                                    calcState[id].history[pendingIdx3].predicted = pred;
-                                    calcState[id].history[pendingIdx3].pickColor = betColorActual || null;
+                                    var row3 = calcState[id].history[pendingIdx3];
+                                    row3.actual = actual;
+                                    row3.predicted = pred;
+                                    row3.pickColor = betColorActual || null;
+                                    var isNoBet3 = !!(calcState[id].paused || row3.no_bet);
+                                    row3.no_bet = isNoBet3;
+                                    row3.betAmount = isNoBet3 ? 0 : (row3.betAmount != null ? row3.betAmount : undefined);
                                 } else if (!calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) {
                                     var noBetPush3 = !!(calcState[id].paused);
                                     calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null, betAmount: noBetPush3 ? 0 : undefined, no_bet: noBetPush3 });
@@ -5916,6 +5938,15 @@ def api_calc_state():
             calcs = {}
             for cid in ('1', '2', '3'):
                 calcs[cid] = state[cid] if (cid in state and isinstance(state.get(cid), dict)) else dict(_default)
+            for cid in ('1', '2', '3'):
+                hist = calcs[cid].get('history') if isinstance(calcs[cid].get('history'), list) else []
+                for ent in hist:
+                    if not isinstance(ent, dict):
+                        continue
+                    if ent.get('no_bet') is True:
+                        ent['betAmount'] = 0
+                    if ent.get('betAmount') in (0, None):
+                        ent['no_bet'] = True
             return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': calcs}), 200
         # POST
         data = request.get_json(force=True, silent=True) or {}
@@ -5942,6 +5973,13 @@ def api_calc_state():
                 else:
                     use_history = client_history
                 use_history = use_history[-500:] if len(use_history) > 500 else use_history
+                for ent in use_history:
+                    if not isinstance(ent, dict):
+                        continue
+                    if ent.get('no_bet') is True:
+                        ent['betAmount'] = 0
+                    if ent.get('betAmount') in (0, None):
+                        ent['no_bet'] = True
                 try:
                     cap = int(float(c.get('capital', 1000000))) if c.get('capital') is not None else 1000000
                 except (TypeError, ValueError):
