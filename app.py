@@ -5826,6 +5826,14 @@ def _build_results_payload_db_only(hours=24):
                             'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
                             'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {},
                         }
+                        # 퐁당/덩어리 판별 메뉴용: 저장 픽은 유지하되 현재 그래프 기준 phase/debug만 계산해 병합
+                        try:
+                            computed = compute_prediction(results, ph)
+                            if computed:
+                                server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
+                                server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
+                        except Exception:
+                            pass
             except Exception as e:
                 print(f"[API] server_pred 조회 오류: {str(e)[:100]}")
         if server_pred is None:
@@ -5988,6 +5996,13 @@ def _build_results_payload():
                                 'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
                                 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {},
                             }
+                            try:
+                                computed = compute_prediction(results, ph)
+                                if computed:
+                                    server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
+                                    server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
+                            except Exception:
+                                pass
                 except Exception as e:
                     print(f"[API] server_pred 조회 오류: {str(e)[:100]}")
             if server_pred is None:
@@ -6053,6 +6068,13 @@ def _build_results_payload():
                                 'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
                                 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {},
                             }
+                            try:
+                                computed = compute_prediction(results, ph)
+                                if computed:
+                                    server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
+                                    server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
+                            except Exception:
+                                pass
                 except Exception as e:
                     print(f"[API] server_pred 구성 오류: {str(e)[:100]}")
             if server_pred is None:
