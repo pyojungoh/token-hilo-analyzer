@@ -3321,10 +3321,19 @@ RESULTS_HTML = '''
                 const capVal = parseFloat(document.getElementById('calc-' + id + '-capital')?.value);
                 const baseVal = parseFloat(document.getElementById('calc-' + id + '-base')?.value);
                 const oddsVal = parseFloat(document.getElementById('calc-' + id + '-odds')?.value);
+                var histRaw = dedupeCalcHistoryByRound((calcState[id].history || []).slice(-50000));
+                var baseAmt = (baseVal != null && !isNaN(baseVal) && baseVal >= 1) ? baseVal : 10000;
+                var histNorm = histRaw.map(function(h) {
+                    var out = Object.assign({}, h);
+                    if (out.no_bet === true) out.betAmount = 0;
+                    else if (out.betAmount == null || isNaN(Number(out.betAmount))) out.betAmount = baseAmt;
+                    else out.betAmount = Number(out.betAmount);
+                    return out;
+                });
                 payload[String(id)] = {
                     running: calcState[id].running,
                     started_at: calcState[id].started_at || 0,
-                    history: dedupeCalcHistoryByRound((calcState[id].history || []).slice(-50000)),
+                    history: histNorm,
                     capital: (capVal != null && !isNaN(capVal) && capVal >= 0) ? capVal : 1000000,
                     base: (baseVal != null && !isNaN(baseVal) && baseVal >= 1) ? baseVal : 10000,
                     odds: (oddsVal != null && !isNaN(oddsVal) && oddsVal >= 1) ? oddsVal : 1.97,
@@ -3391,7 +3400,7 @@ RESULTS_HTML = '''
                     raw.forEach(function(h) {
                         if (!h) return;
                         if (h.no_bet === true) h.betAmount = 0;
-                        if (h.betAmount === 0 || h.betAmount === undefined || h.betAmount === null) h.no_bet = true;
+                        if (h.betAmount === 0) h.no_bet = true;
                     });
                     calcState[id].history = dedupeCalcHistoryByRound(raw);
                 } else {
@@ -6259,6 +6268,7 @@ def api_calc_state():
             calcs = {}
             for cid in ('1', '2', '3'):
                 calcs[cid] = state[cid] if (cid in state and isinstance(state.get(cid), dict)) else dict(_default)
+            # no_bet ↔ betAmount 0 한 쌍 유지. betAmount 없으면 no_bet 덮어쓰지 않음(배팅했던 회차가 멈춤으로 복원되는 버그 방지)
             for cid in ('1', '2', '3'):
                 hist = calcs[cid].get('history') if isinstance(calcs[cid].get('history'), list) else []
                 for ent in hist:
@@ -6266,7 +6276,7 @@ def api_calc_state():
                         continue
                     if ent.get('no_bet') is True:
                         ent['betAmount'] = 0
-                    if ent.get('betAmount') in (0, None):
+                    elif ent.get('betAmount') is not None and ent.get('betAmount') == 0:
                         ent['no_bet'] = True
             return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': calcs}), 200
         # POST
@@ -6300,7 +6310,7 @@ def api_calc_state():
                         continue
                     if ent.get('no_bet') is True:
                         ent['betAmount'] = 0
-                    if ent.get('betAmount') in (0, None):
+                    elif ent.get('betAmount') is not None and ent.get('betAmount') == 0:
                         ent['no_bet'] = True
                 try:
                     cap = int(float(c.get('capital', 1000000))) if c.get('capital') is not None else 1000000
