@@ -445,7 +445,7 @@ class MacroWindow(QMainWindow):
         poll_hint.setStyleSheet("color: #888; font-size: 11px;")
         poll_hint.setWordWrap(True)
         fl3.addRow(poll_hint)
-        seq_hint = QLabel("※ 시퀀스: 금액 입력 → 0.35초 후 RED/BLACK 클릭. 배팅 지연 최소화.")
+        seq_hint = QLabel("※ 금액 입력 → 0.35초(고액 5만↑ 0.5초) 후 클릭. 큐 150ms 처리로 5단계 마틴 놓침 완화.")
         seq_hint.setStyleSheet("color: #666; font-size: 10px;")
         seq_hint.setWordWrap(True)
         fl3.addRow("", seq_hint)
@@ -572,7 +572,7 @@ class MacroWindow(QMainWindow):
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._process_queue)
-        self._timer.start(400)
+        self._timer.start(150)  # 150ms: do_click 등 배팅 지연 최소화(5단계 마틴 놓침 방지)
 
         # 드롭다운 휠 무시: 앱 전체 휠 이벤트에서 콤보일 때 흡수
         if HAS_PYQT:
@@ -1308,8 +1308,9 @@ class MacroWindow(QMainWindow):
             else:
                 ax, ay = amount_parsed[1], amount_parsed[2]
                 page.runJavaScript(js_set_value_at_xy(ax, ay, amount_str))
-            # 2) 0.35초 대기 후 RED/BLACK 클릭 (금액 반영 시간 확보, 배팅 지연 최소화)
-            QTimer.singleShot(350, lambda: self._do_click_in_page(pick_color))
+            # 2) 금액 반영 대기 후 RED/BLACK 클릭. 고액(5단계 마틴 등)은 사이트 반영이 느릴 수 있어 대기 연장
+            delay_ms = 500 if (amount is not None and int(amount) >= 50000) else 350
+            QTimer.singleShot(delay_ms, lambda: self._do_click_in_page(pick_color))
             self.set_status("마지막: %s 회차" % pick_color)
         except Exception as e:
             self.log("[배팅 실패] %s" % e)
