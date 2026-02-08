@@ -210,17 +210,26 @@ def init_database():
         except Exception as ex:
             print(f"[경고] current_pick 테이블 생성/초기화 건너뜀 (서버는 계속 기동): {str(ex)[:100]}")
         
-        # shape_win_stats: 자주 나오는 그래프 모양별 정/꺽 예측 시 승률 (예측픽 추가 반영용)
+        # shape_win_stats: 자주 나온 그래프 모양별 "그 다음 실제 결과" 누적 (정/꺽 예측 무관, 모양→다음 결과만)
         cur.execute('''
             CREATE TABLE IF NOT EXISTS shape_win_stats (
                 signature TEXT PRIMARY KEY,
-                pred_jung_win INTEGER DEFAULT 0,
-                pred_jung_total INTEGER DEFAULT 0,
-                pred_kkeok_win INTEGER DEFAULT 0,
-                pred_kkeok_total INTEGER DEFAULT 0,
+                next_jung_count INTEGER DEFAULT 0,
+                next_kkeok_count INTEGER DEFAULT 0,
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             )
         ''')
+        for col, typ in [('next_jung_count', 'INTEGER DEFAULT 0'), ('next_kkeok_count', 'INTEGER DEFAULT 0')]:
+            cur.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'shape_win_stats' AND column_name = %s",
+                (col,)
+            )
+            if cur.fetchone() is None:
+                try:
+                    cur.execute('ALTER TABLE shape_win_stats ADD COLUMN ' + col + ' ' + typ)
+                except Exception as alter_err:
+                    if 'already exists' not in str(alter_err).lower():
+                        print(f"[경고] shape_win_stats 컬럼 추가: {str(alter_err)[:100]}")
         
         conn.commit()
         cur.close()
@@ -391,29 +400,25 @@ def _get_shape_signature(results):
 
 
 def get_shape_win_stats(conn, signature):
-    """모양 시그니처별 정/꺽 예측 시 승률 통계. 반환: {jung_win, jung_total, kkeok_win, kkeok_total} 또는 None."""
+    """모양 시그니처별 '그 다음 실제 결과' 누적. 반환: {jung_count, kkeok_count} (이 모양 다음에 정/꺽 나온 횟수) 또는 None."""
     if not conn or not signature:
         return None
     try:
         cur = conn.cursor()
         cur.execute('''
-            SELECT pred_jung_win, pred_jung_total, pred_kkeok_win, pred_kkeok_total
-            FROM shape_win_stats WHERE signature = %s
+            SELECT next_jung_count, next_kkeok_count FROM shape_win_stats WHERE signature = %s
         ''', (signature,))
         row = cur.fetchone()
         cur.close()
         if not row:
             return None
-        return {
-            'jung_win': row[0] or 0, 'jung_total': row[1] or 0,
-            'kkeok_win': row[2] or 0, 'kkeok_total': row[3] or 0,
-        }
+        return {'jung_count': row[0] or 0, 'kkeok_count': row[1] or 0}
     except Exception:
         return None
 
 
 def _get_shape_stats_for_results(results):
-    """현재 results에 해당하는 그래프 모양의 저장된 승률 통계. 예측픽 계산 시 shape_win_stats 인자로 넘길 때 사용."""
+    """현재 results에 해당하는 그래프 모양의 '다음 결과' 누적 통계. 예측픽 계산 시 shape_win_stats 인자로 넘길 때 사용."""
     if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
         return None
     sig = _get_shape_signature(results)
@@ -431,34 +436,29 @@ def _get_shape_stats_for_results(results):
             pass
 
 
-def update_shape_win_stats(conn, signature, predicted, actual):
-    """예측 기록 저장 시 호출: 해당 회차 예측 시점의 모양 시그니처에 맞춰 정/꺽 승률 통계 갱신."""
+def update_shape_win_stats(conn, signature, actual):
+    """예측 기록 저장 시 호출: 해당 회차 예측 시점의 모양 다음에 실제로 나온 결과(정/꺽)만 누적. 예측값은 사용 안 함."""
     if not conn or not signature:
         return
-    pred_norm = '정' if (predicted == '정' or (isinstance(predicted, str) and '정' in predicted)) else '꺽'
-    actual_norm = '정' if (actual == '정' or (isinstance(actual, str) and '정' in actual)) else '꺽'
+    is_jung = (actual == '정' or (isinstance(actual, str) and '정' in actual))
     try:
         cur = conn.cursor()
-        if pred_norm == '정':
-            win_inc = 1 if pred_norm == actual_norm else 0
+        if is_jung:
             cur.execute('''
-                INSERT INTO shape_win_stats (signature, pred_jung_win, pred_jung_total, pred_kkeok_win, pred_kkeok_total, updated_at)
-                VALUES (%s, %s, 1, 0, 0, NOW())
+                INSERT INTO shape_win_stats (signature, next_jung_count, next_kkeok_count, updated_at)
+                VALUES (%s, 1, 0, NOW())
                 ON CONFLICT (signature) DO UPDATE SET
-                    pred_jung_win = shape_win_stats.pred_jung_win + %s,
-                    pred_jung_total = shape_win_stats.pred_jung_total + 1,
+                    next_jung_count = shape_win_stats.next_jung_count + 1,
                     updated_at = NOW()
-            ''', (signature, win_inc, win_inc))
+            ''', (signature,))
         else:
-            win_inc = 1 if pred_norm == actual_norm else 0
             cur.execute('''
-                INSERT INTO shape_win_stats (signature, pred_jung_win, pred_jung_total, pred_kkeok_win, pred_kkeok_total, updated_at)
-                VALUES (%s, 0, 0, %s, 1, NOW())
+                INSERT INTO shape_win_stats (signature, next_jung_count, next_kkeok_count, updated_at)
+                VALUES (%s, 0, 1, NOW())
                 ON CONFLICT (signature) DO UPDATE SET
-                    pred_kkeok_win = shape_win_stats.pred_kkeok_win + %s,
-                    pred_kkeok_total = shape_win_stats.pred_kkeok_total + 1,
+                    next_kkeok_count = shape_win_stats.next_kkeok_count + 1,
                     updated_at = NOW()
-            ''', (signature, win_inc, win_inc))
+            ''', (signature,))
         conn.commit()
         cur.close()
     except Exception as e:
@@ -916,7 +916,7 @@ def _merge_round_predictions_into_history(round_actuals, results=None):
                     conn2 = get_db_connection(statement_timeout_sec=3)
                     if conn2:
                         try:
-                            update_shape_win_stats(conn2, sig, pred_val, actual)
+                            update_shape_win_stats(conn2, sig, actual)
                         finally:
                             try:
                                 conn2.close()
@@ -966,7 +966,7 @@ def _backfill_latest_round_to_prediction_history(results):
             conn = get_db_connection(statement_timeout_sec=3)
             if conn:
                 try:
-                    update_shape_win_stats(conn, sig, pred['value'], actual)
+                    update_shape_win_stats(conn, sig, actual)
                 finally:
                     try:
                         conn.close()
@@ -1479,7 +1479,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     results: 최신순 결과 리스트, 각 항목 dict(result, joker, gameID 등)
     prediction_history: [{round, predicted, actual}, ...], actual이 'joker'면 제외 후 사용
     prev_symmetry_counts: {left, right} 이전 좌우 줄 개수(선택)
-    shape_win_stats: {jung_win, jung_total, kkeok_win, kkeok_total} 저장된 모양별 정/꺽 승률(선택). 있으면 보정 반영.
+    shape_win_stats: {jung_count, kkeok_count} 저장된 모양별 '그 다음 실제 결과' 누적(선택). 있으면 해당 모양 가중치 반영.
     반환: {'value': '정'|'꺽'|None, 'round': int, 'prob': float, 'color': '빨강'|'검정'|None}
     15번 카드가 조커면 value=None, color=None (픽 보류).
     좌우 대칭·줄 유사도는 15·20·30열 가중 평균으로 반영(데이터 있으면).
@@ -1708,18 +1708,18 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     elif balance_phase == 'transition_to_high':
         line_w += 0.06
         pong_w = max(0.0, pong_w - 0.03)
-    # 저장된 모양별 승률 보정: 이 모양일 때 정 예측 승률이 높으면 줄 쪽, 꺽 예측 승률이 높으면 퐁당 쪽 소폭 가산
+    # 저장된 모양 가중치: 자주 나온 모양일 때, 그 모양 다음에 정이 많았으면 줄 쪽, 꺽이 많았으면 퐁당 쪽 소폭 가산 (예측값 무관)
     if shape_win_stats:
-        jw, jt = shape_win_stats.get('jung_win') or 0, shape_win_stats.get('jung_total') or 0
-        kw, kt = shape_win_stats.get('kkeok_win') or 0, shape_win_stats.get('kkeok_total') or 0
-        total = jt + kt
-        if total >= 20 and jt >= 5 and kt >= 5:
-            jr = jw / jt if jt else 0
-            kr = kw / kt if kt else 0
-            if jr >= kr + 0.05:
+        jc = shape_win_stats.get('jung_count') or 0
+        kc = shape_win_stats.get('kkeok_count') or 0
+        total = jc + kc
+        if total >= 20:
+            jr = jc / total if total else 0
+            kr = kc / total if total else 0
+            if jr >= 0.55:
                 line_w += 0.05
                 pong_w = max(0.0, pong_w - 0.025)
-            elif kr >= jr + 0.05:
+            elif kr >= 0.55:
                 pong_w += 0.05
                 line_w = max(0.0, line_w - 0.025)
     total_w = line_w + pong_w
