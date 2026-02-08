@@ -1108,7 +1108,10 @@ def _detect_u_35_pattern(line_runs):
 
 
 def _detect_line1_pong1_pattern(line_runs, pong_runs, first_is_line):
-    """줄 하나 퐁당 하나 줄 하나 퐁당 하나 교차 패턴인지. 최근 8 run 정도에서 1,1,1,1 교차면 True."""
+    """
+    정정꺽꺽정정꺽꺽 같은 덩어리: 줄1·퐁당1·줄1·퐁당1 교차 패턴.
+    run 길이가 모두 1이면 (블록이 2개씩 반복) True. 최소 3 run 이상에서 4개가 1,1,1,1이면 인정.
+    """
     if not line_runs or not pong_runs:
         return False
     # 최신 순: 첫 run이 줄이면 [line0, pong0, line1, pong1, ...], 퐁당이면 [pong0, line0, ...]
@@ -1129,10 +1132,11 @@ def _detect_line1_pong1_pattern(line_runs, pong_runs, first_is_line):
             elif i % 2 == 1 and li < len(line_runs):
                 runs.append(line_runs[li])
                 li += 1
-    if len(runs) < 4:
+    # 정정꺽꺽 한 쌍만 있어도(3 run) 덩어리로 인정; 4 run 이상이면 6개까지 모두 1인지 확인
+    if len(runs) < 3:
         return False
-    # 모두 길이 1이면 줄1퐁당1 반복
-    if all(r == 1 for r in runs[:6]):
+    n = min(6, len(runs))
+    if all(r == 1 for r in runs[:n]):
         return True
     return False
 
@@ -1203,6 +1207,16 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
     if diff_short_prev >= 20:
         debug['segment_type'] = 'pong'
         return 'chunk_to_pong', debug
+    # 덩어리 직후 퐁당 진입: 맨 앞이 퐁당 run이고, 그 다음(과거)에 줄 run 2 이상 있으면 chunk_to_pong
+    if not first_is_line and pong_runs and line_runs and len(pong_runs) >= 1 and line_runs[0] >= 2:
+        debug['segment_type'] = 'pong'
+        debug['chunk_shape'] = 'chunk_then_pong'
+        return 'chunk_to_pong', debug
+    # 퐁당 1~2회 직후 긴 줄: 맨 앞이 퐁당 run(1~2), 그 다음(과거)에 줄 run 5 이상 → 줄 쪽 가산(pong_to_chunk)
+    if not first_is_line and pong_runs and line_runs and 1 <= current_run_len <= 2 and line_runs[0] >= 5:
+        debug['segment_type'] = 'chunk'
+        debug['chunk_shape'] = 'pong_then_long_line'
+        return 'pong_to_chunk', debug
     if first_is_line:
         # 줄 구간: 긴 줄(5 이상) → 유지(줄) 가중치
         if current_run_len >= 5:
@@ -1215,8 +1229,8 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
             return 'chunk_phase', debug
         return 'chunk_start', debug
     else:
-        # 퐁당: 2회 이상 바뀜이 이어질 때만
-        if current_run_len >= 2:
+        # 퐁당: 맨 앞이 바뀜(정꺽/꺽정)이면 퐁당 구간. 1회만 있어도 퐁당(덩어리 직후 퐁당 진입 포함)
+        if current_run_len >= 1:
             debug['segment_type'] = 'pong'
             return 'pong_phase', debug
         return None, debug
