@@ -5245,13 +5245,11 @@ RESULTS_HTML = '''
                     const predDivEmpty = document.getElementById('prediction-box');
                     const probBucketBodyEmpty = document.getElementById('prob-bucket-collapse-body');
                     const symmetryLineBodyEmpty = document.getElementById('symmetry-line-collapse-body');
-                    const analysisTabsWrapEmpty = document.getElementById('analysis-tabs-wrap');
                     if (resultBarEmpty) resultBarEmpty.innerHTML = '';
                     if (pickEmpty) pickEmpty.innerHTML = '';
                     if (predDivEmpty) predDivEmpty.innerHTML = '';
                     if (probBucketBodyEmpty) probBucketBodyEmpty.innerHTML = '';
                     if (symmetryLineBodyEmpty) symmetryLineBodyEmpty.innerHTML = '';
-                    if (analysisTabsWrapEmpty) analysisTabsWrapEmpty.style.display = 'none';
                 }
                 } catch (renderErr) {
                     if (statusEl) statusEl.textContent = '표시 오류 - 새로고침 해 주세요';
@@ -5860,17 +5858,17 @@ RESULTS_HTML = '''
                 if (t === 'pause-guide' && typeof renderPauseGuideTable === 'function') renderPauseGuideTable();
             });
         });
-        document.querySelectorAll('#analysis-tabs-wrap .analysis-tab').forEach(function(tab) {
-            tab.addEventListener('click', function() {
-                var panelId = this.getAttribute('data-panel');
-                if (!panelId) return;
-                document.querySelectorAll('#analysis-tabs-wrap .analysis-tab').forEach(function(x) { x.classList.remove('active'); x.removeAttribute('aria-selected'); });
-                document.querySelectorAll('#analysis-tabs-wrap .analysis-panel').forEach(function(p) { p.classList.remove('active'); });
-                this.classList.add('active');
-                this.setAttribute('aria-selected', 'true');
-                var panel = document.getElementById('panel-' + panelId);
-                if (panel) panel.classList.add('active');
-            });
+        document.addEventListener('click', function(e) {
+            var tab = e.target && e.target.closest('#analysis-tabs-wrap .analysis-tab');
+            if (!tab) return;
+            var panelId = tab.getAttribute('data-panel');
+            if (!panelId) return;
+            document.querySelectorAll('#analysis-tabs-wrap .analysis-tab').forEach(function(x) { x.classList.remove('active'); x.removeAttribute('aria-selected'); });
+            document.querySelectorAll('#analysis-tabs-wrap .analysis-panel').forEach(function(p) { p.classList.remove('active'); });
+            tab.classList.add('active');
+            tab.setAttribute('aria-selected', 'true');
+            var panel = document.getElementById('panel-' + panelId);
+            if (panel) panel.classList.add('active');
         });
         document.getElementById('bet-log-clear-all')?.addEventListener('click', function() {
             if (betCalcLog.length === 0) return;
