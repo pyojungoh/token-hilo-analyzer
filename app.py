@@ -1285,6 +1285,18 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
     if u35_detected:
         line_w += 0.10
         pong_w = max(0.0, pong_w - 0.05)
+    # 연패 길이 보정: 현재 꺽(연패) run이 길면 퐁당(바뀜) 가중치를 올려 다음에 정이 나올 가능성 반영
+    current_run_len = 1
+    for ri in range(1, len(use_for_pattern)):
+        v = use_for_pattern[ri]
+        if v is True or v is False:
+            if v == last:
+                current_run_len += 1
+            else:
+                break
+    if last is False and current_run_len >= 4:
+        pong_w += 0.14
+        line_w = max(0.0, line_w - 0.07)
     total_w = line_w + pong_w
     if total_w > 0:
         line_w /= total_w
@@ -2725,6 +2737,7 @@ RESULTS_HTML = '''
                         <li><strong>가중치 정규화</strong> · 위에서 나온 줄 가중치(lineW)와 퐁당 가중치(pongW)를 더한 뒤 1이 되도록 나눔.</li>
                         <li><strong>V자 패턴 보정</strong> · 그래프가 «긴 줄 → 퐁당 1~2개 → 짧은 줄 → 퐁당 → …» 형태(V자 밸런스)일 때 연패가 많아서, 퐁당(바뀜) 가중치를 올려 이 구간을 넘기기 쉽게 보정함.</li>
                         <li><strong>U자 + 줄 3~5 보정</strong> · 그래프가 «높은 줄 → 낮은 줄(1~2) → 다시 3~5 길이 줄» 형태(U자 박스)를 만들 때 연패가 많음. 이 구간을 감지하면(현재 줄 길이 3~5이고 직전에 짧은 줄 1~2가 있었을 때) 줄(유지) 가중치를 +0.10 올리고 퐁당 가중치를 줄여, 유지 쪽 픽을 내도록 보정함. 예측 확률은 58% 상한 적용.</li>
+                        <li><strong>연패 길이 보정</strong> · 맨 왼쪽(최신) 열이 꺽(연패)이고 그 연속 길이가 4 이상이면, 퐁당(바뀜) 가중치를 올려 «다음은 정» 쪽으로 픽을 내도록 보정함. (그래프만 봤을 때 연패 구간에서 승을 끌어올리기 위한 보정)</li>
                         <li><strong>유지 vs 바뀜</strong> · «유지 확률 = 전이에서 구한 유지 확률», «바뀜 확률 = 전이에서 구한 바뀜 확률». 각각 lineW, pongW를 곱해 <em>adjSame</em>, <em>adjChange</em> 계산 후 다시 합으로 나누어 0~1로 만듦.</li>
                         <li><strong>최종 픽</strong> · adjSame ≥ adjChange 이면 직전과 <strong>같은 방향</strong>(직전 정→정, 직전 꺽→꺽), 아니면 <strong>반대</strong>(직전 정→꺽, 직전 꺽→정). 15번 카드가 빨강이면 정=빨강/꺽=검정, 검정이면 정=검정/꺽=빨강으로 <em>배팅 색</em> 결정.</li>
                     </ol>
@@ -6104,9 +6117,13 @@ def api_calc_state():
                 client_history = c.get('history') if isinstance(c.get('history'), list) else []
                 current_c = current_state.get(cid) if isinstance(current_state.get(cid), dict) else {}
                 current_history = current_c.get('history') if isinstance(current_c.get('history'), list) else []
-                # 회차별 병합: 클라이언트 행 우선(no_bet/betAmount 유지). 새로고침 후에도 멈춤·배팅 구간 정확히 복원
-                use_history = _merge_calc_histories(client_history, current_history)
-                use_history = use_history[-50000:] if len(use_history) > 50000 else use_history
+                # 계산기 정지 시 클라이언트가 history=[]로 보내면 기록 전체 삭제 — 이때는 병합하지 않고 빈 배열 저장
+                if len(client_history) == 0:
+                    use_history = []
+                else:
+                    # 회차별 병합: 클라이언트 행 우선(no_bet/betAmount 유지). 새로고침 후에도 멈춤·배팅 구간 정확히 복원
+                    use_history = _merge_calc_histories(client_history, current_history)
+                    use_history = use_history[-50000:] if len(use_history) > 50000 else use_history
                 for ent in use_history:
                     if not isinstance(ent, dict):
                         continue

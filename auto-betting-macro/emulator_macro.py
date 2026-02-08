@@ -283,7 +283,6 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._pick_history = deque(maxlen=5)  # 최근 5회 (round_num, pick_color) — 회차·픽 안정 시에만 배팅
         self._pick_data = {}
         self._results_data = {}
-        self._prev_poll_pick = None  # (round, pick_color) 이전 폴링값 — 2회 연속 같을 때만 배팅해 RED/BLACK 깜빡임 방지
         self._lock = threading.Lock()
         # 좌표 찾기 (한곳에 통합)
         self._coord_listener = None
@@ -983,16 +982,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             round_num = int(round_num)
         except (TypeError, ValueError):
             return
-        # RED/BLACK 깜빡임 방지: (회차, 픽)이 2회 연속 같을 때만 배팅
-        current_pick = (round_num, pick_color)
-        prev = getattr(self, "_prev_poll_pick", None)
-        if prev is None:
-            self._prev_poll_pick = current_pick
-            return
-        if prev != current_pick:
-            self._prev_poll_pick = current_pick
-            return
-        self._prev_poll_pick = current_pick
+        # 픽 수신 즉시 배팅 (속도 우선)
         # 전회차·현재회차 구분용 히스토리 (표시만, 배팅은 즉시)
         self._pick_history.append((round_num, pick_color))
         # 실행 누르면 "다음 회차부터" 배팅: 현재 화면 회차는 건너뛰기
