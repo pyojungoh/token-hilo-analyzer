@@ -438,14 +438,14 @@ class MacroWindow(QMainWindow):
         self.black_capture_btn.clicked.connect(lambda: self._start_capture("BLACK"))
         fl3.addRow(self.black_capture_btn)
         self.poll_interval_edit = QLineEdit()
-        self.poll_interval_edit.setText("0.3")
+        self.poll_interval_edit.setText("0.2")
         self.poll_interval_edit.setMaximumWidth(60)
         fl3.addRow("픽 확인 주기(초):", self.poll_interval_edit)
-        poll_hint = QLabel("= Analyzer 픽/결과 조회 간격. 0.2~0.3초 권장(예측 빨리 반영)")
+        poll_hint = QLabel("= Analyzer 픽/결과 조회 간격. 0.2초 기본(빠른 반영), 0.3초도 가능")
         poll_hint.setStyleSheet("color: #888; font-size: 11px;")
         poll_hint.setWordWrap(True)
         fl3.addRow(poll_hint)
-        seq_hint = QLabel("※ 시퀀스: 금액 칸 좌표 있으면 → 금액 입력 → 약 0.3초 후 예측픽(RED/BLACK) 클릭. 실제 브라우저 사용·간격으로 자연스럽게 동작.")
+        seq_hint = QLabel("※ 시퀀스: 금액 입력 → 0.35초 후 RED/BLACK 클릭. 배팅 지연 최소화.")
         seq_hint.setStyleSheet("color: #666; font-size: 10px;")
         seq_hint.setWordWrap(True)
         fl3.addRow("", seq_hint)
@@ -1308,8 +1308,8 @@ class MacroWindow(QMainWindow):
             else:
                 ax, ay = amount_parsed[1], amount_parsed[2]
                 page.runJavaScript(js_set_value_at_xy(ax, ay, amount_str))
-            # 2) 0.7초 대기 후 RED/BLACK 클릭 (금액 반영 시간 확보)
-            QTimer.singleShot(700, lambda: self._do_click_in_page(pick_color))
+            # 2) 0.35초 대기 후 RED/BLACK 클릭 (금액 반영 시간 확보, 배팅 지연 최소화)
+            QTimer.singleShot(350, lambda: self._do_click_in_page(pick_color))
             self.set_status("마지막: %s 회차" % pick_color)
         except Exception as e:
             self.log("[배팅 실패] %s" % e)

@@ -5420,12 +5420,13 @@ RESULTS_HTML = '''
                 if (remain <= 0) targetNote = '<span class="calc-timer-note" style="color:#81c784;font-weight:bold;grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 달성</span>';
                 else targetNote = '<span class="calc-timer-note" style="grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 목표까지: ' + remain.toLocaleString() + '원 남음</span>';
             }
+            var betDisplay = (state.paused) ? '-' : (r.currentBet.toLocaleString() + '원');
             el.innerHTML = '<div class="calc-summary-grid">' + timerNote + targetNote +
                 '<span class="label">보유자산</span><span class="value">' + r.cap.toLocaleString() + '원</span>' +
                 '<span class="label">순익</span><span class="value ' + profitClass + '">' + profitStr + '</span>' +
-                '<span class="label">배팅중</span><span class="value">' + r.currentBet.toLocaleString() + '원</span>' +
+                '<span class="label">배팅중</span><span class="value">' + betDisplay + '</span>' +
                 '<span class="label">경과</span><span class="value">' + elapsedStr + '</span></div>';
-            updateCalcBetCopyLine(id, r.currentBet);
+            updateCalcBetCopyLine(id, state.paused ? 0 : r.currentBet);
             updateCalcStatus(id);
             } catch (e) { console.warn('updateCalcSummary', id, e); }
         }
