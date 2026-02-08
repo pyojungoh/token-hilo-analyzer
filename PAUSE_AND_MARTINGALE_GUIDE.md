@@ -66,7 +66,7 @@
 - **적용 (계산기 1, 2, 3 동일)**  
   - **클라이언트 로드** (`applyCalcsToState`): 서버에서 받은 `c.history`를 쓸 때, 각 항목에 대해 `no_bet === true` → `betAmount = 0`, `betAmount === 0`/undefined/null → `no_bet = true` 로 정규화한 뒤 `calcState[id].history`에 넣는다.  
   - **서버 GET** (`/api/calc-state`): 응답 내 `calcs['1'|'2'|'3'].history` 각 항목을 같은 규칙으로 정규화한 뒤 반환.  
-  - **서버 POST** (`/api/calc-state`): 저장할 `use_history` 각 항목을 같은 규칙으로 정규화한 뒤 저장.  
+  - **서버 POST** (`/api/calc-state`): 저장할 history는 **회차별 병합**으로 만든다. `_merge_calc_histories(client_history, current_history)` — 같은 회차는 **클라이언트 행 우선**(no_bet·betAmount 정확히 유지). 이렇게 하면 서버에 “더 긴 예전 history”만 썼을 때 no_bet이 빠지던 문제가 사라지고, 새로고침·다시 켜도 **실행되던 상황이 그대로** 복원된다. 병합 후 각 항목을 같은 규칙으로 정규화한 뒤 저장.  
   이렇게 하면 새로고침 후에도 멈춤 회차는 계속 `no_bet`/금액 0으로만 표시·계산된다.
 
 이 가이드를 참고하면 멈춤/마틴 로직을 수정할 때 일관되게 유지할 수 있다.

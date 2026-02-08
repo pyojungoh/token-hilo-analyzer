@@ -398,6 +398,28 @@ def save_calc_state(session_id, state_dict):
     return True
 
 
+def _merge_calc_histories(client_hist, server_hist):
+    """회차별로 병합. 같은 회차는 클라이언트 행 우선(no_bet/betAmount 정확히 유지). 새로고침 후에도 멈춤·배팅 구간이 맞게 복원되도록."""
+    by_round = {}
+    for h in (server_hist or []):
+        if not isinstance(h, dict):
+            continue
+        rn = h.get('round')
+        if rn is not None:
+            by_round[rn] = dict(h)
+    for h in (client_hist or []):
+        if not isinstance(h, dict):
+            continue
+        rn = h.get('round')
+        if rn is not None:
+            by_round[rn] = dict(h)
+    try:
+        rounds = sorted(by_round.keys(), key=lambda x: (x if isinstance(x, (int, float)) else 0))
+    except (TypeError, ValueError):
+        rounds = sorted(by_round.keys())
+    return [by_round[r] for r in rounds]
+
+
 def _get_all_calc_session_ids():
     """실행 중인 계산기 세션 ID 목록 (회차 반영용). DB 사용 시 calc_sessions 전체, 미사용 시 메모리 키."""
     if DB_AVAILABLE and DATABASE_URL:
@@ -6076,11 +6098,8 @@ def api_calc_state():
                 client_history = c.get('history') if isinstance(c.get('history'), list) else []
                 current_c = current_state.get(cid) if isinstance(current_state.get(cid), dict) else {}
                 current_history = current_c.get('history') if isinstance(current_c.get('history'), list) else []
-                # 실행중일 때만 서버 history 유지(클라이언트 누락 방지). 정지/리셋 시 클라이언트 빈 상태 반영
-                if running and len(current_history) > len(client_history):
-                    use_history = current_history
-                else:
-                    use_history = client_history
+                # 회차별 병합: 클라이언트 행 우선(no_bet/betAmount 유지). 새로고침 후에도 멈춤·배팅 구간 정확히 복원
+                use_history = _merge_calc_histories(client_history, current_history)
                 use_history = use_history[-50000:] if len(use_history) > 50000 else use_history
                 for ent in use_history:
                     if not isinstance(ent, dict):
