@@ -345,7 +345,7 @@ def save_prediction_record(round_num, predicted, actual, probability=None, pick_
 _calc_state_memory = {}
 
 def get_calc_state(session_id):
-    """계산기 세션 상태 조회. 없으면 None. statement_timeout으로 먹통 방지."""
+    """계산기 세션 상태 조회. 없으면 None. DB 사용 시 DB 우선(모바일/PC 새로고침·재접속 시 저장된 값 복원). statement_timeout으로 먹통 방지."""
     if not session_id:
         return None
     sk = str(session_id)[:64]
@@ -360,6 +360,7 @@ def get_calc_state(session_id):
                 conn.close()
                 if row and row[0]:
                     return json.loads(row[0])
+                return None
             except Exception as e:
                 print(f"[❌ 오류] 계산기 상태 조회 실패: {str(e)[:200]}")
                 try:
@@ -1049,7 +1050,10 @@ def _detect_u_35_pattern(line_runs):
 def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_short, pong_pct_prev):
     """
     퐁당 주다 덩어리 만들다 패턴: 지금이 퐁당 구간인지 덩어리(줄) 구간인지 판별.
-    반환: (phase, debug_info). phase는 'pong_phase'|'chunk_start'|'chunk_phase'|'chunk_long'|'pong_to_chunk'|'chunk_to_pong'|None.
+    - 덩어리: 같은 결과가 이어지면 줄(계속 붙어서 올라옴). 최신 1~2회차로 판별.
+    - 퐁당: 한 번만 옆으로 가면 퐁당으로 보지 않음(덩어리 시작일 수 있음). 바뀜이 2회 이상일 때만 퐁당으로 판별.
+    - 줄1 퐁당1 줄1 퐁당1: 전체 그림으로 번갈아 나오는 패턴 감지.
+    반환: (phase, debug_info).
     """
     debug = {'first_run_type': None, 'first_run_len': 0, 'pong_pct_short': pong_pct_short, 'pong_pct_prev': pong_pct_prev}
     if not line_runs and not pong_runs:
@@ -1069,6 +1073,15 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
         debug['first_run_len'] = current_run_len
     else:
         return None, debug
+    # 줄1 퐁당1 줄1 퐁당1 패턴: 전체 그림 — 맨 앞 run들이 1,1,1,1 번갈아 나오면
+    if first_is_line and len(line_runs) >= 2 and len(pong_runs) >= 2:
+        if line_runs[0] == 1 and line_runs[1] == 1 and pong_runs[0] == 1 and pong_runs[1] == 1:
+            debug['pattern'] = 'line1_pong1_line1_pong1'
+            return 'line_pong_alternating', debug
+    if not first_is_line and len(pong_runs) >= 2 and len(line_runs) >= 2:
+        if pong_runs[0] == 1 and pong_runs[1] == 1 and line_runs[0] == 1 and line_runs[1] == 1:
+            debug['pattern'] = 'pong1_line1_pong1_line1'
+            return 'line_pong_alternating', debug
     # 전환 구간: 직전 15개 vs 최근 15개 퐁당% 차이
     diff_prev_short = (pong_pct_prev - pong_pct_short) if pong_pct_prev is not None and pong_pct_short is not None else 0
     diff_short_prev = (pong_pct_short - pong_pct_prev) if pong_pct_short is not None and pong_pct_prev is not None else 0
@@ -1083,7 +1096,8 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
             return 'chunk_phase', debug
         return 'chunk_start', debug
     else:
-        if 1 <= current_run_len <= 2:
+        # 퐁당은 2번 이상 바뀌어야 구별. 한 번만 옆으로 가면 덩어리 시작일 수 있으므로 퐁당으로 간주하지 않음(연패 방지)
+        if current_run_len >= 2:
             return 'pong_phase', debug
         return None, debug
 
@@ -1358,6 +1372,11 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
     elif phase == 'chunk_long':
         pong_w += 0.06
         line_w = max(0.0, line_w - 0.03)
+        pong_chunk_phase = phase
+    elif phase == 'line_pong_alternating':
+        # 줄1 퐁당1 줄1 퐁당1: 전체 그림 반영 — 한쪽만 과하게 주지 않고 줄 쪽 살짝 우대(낮은 줄 연속 시 연패 방지)
+        line_w += 0.05
+        pong_w = max(0.0, pong_w - 0.03)
         pong_chunk_phase = phase
     total_w = line_w + pong_w
     if total_w > 0:
@@ -3453,11 +3472,13 @@ RESULTS_HTML = '''
                 try {
                     localStorage.setItem(CALC_STATE_BACKUP_KEY, JSON.stringify(payload));
                 } catch (e) { /* ignore */ }
-                await fetch('/api/calc-state', {
+                const saveRes = await fetch('/api/calc-state', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ session_id: session_id, calcs: payload })
                 });
+                const saveData = await saveRes.json().catch(function() { return {}; });
+                if (saveData.session_id) localStorage.setItem(CALC_SESSION_KEY, saveData.session_id);
             } catch (e) { console.warn('계산기 상태 저장 실패:', e); }
         }
         const BET_LOG_KEY = 'tokenHiloBetCalcLog';
@@ -4634,7 +4655,7 @@ RESULTS_HTML = '''
                         var pongChunkTbody = document.getElementById('pong-chunk-tbody');
                         var pongChunkCollapse = document.getElementById('pong-chunk-collapse');
                         if (pongChunkTbody && pongChunkCollapse) {
-                            var phaseLabels = { 'pong_phase': '퐁당 구간', 'chunk_start': '덩어리 막 시작', 'chunk_phase': '덩어리 만드는 중', 'chunk_long': '긴 덩어리', 'pong_to_chunk': '퐁당→덩어리 전환', 'chunk_to_pong': '덩어리→퐁당 전환' };
+                            var phaseLabels = { 'pong_phase': '퐁당 구간', 'chunk_start': '덩어리 막 시작', 'chunk_phase': '덩어리 만드는 중', 'chunk_long': '긴 덩어리', 'pong_to_chunk': '퐁당→덩어리 전환', 'chunk_to_pong': '덩어리→퐁당 전환', 'line_pong_alternating': '줄1 퐁당1 반복' };
                             var phaseLabel = (lastPongChunkPhase && phaseLabels[lastPongChunkPhase]) ? phaseLabels[lastPongChunkPhase] : (lastPongChunkPhase || '—');
                             var d = lastPongChunkDebug || {};
                             var rows = '<tr><td>판별 구간</td><td>' + phaseLabel + '</td></tr>' +
