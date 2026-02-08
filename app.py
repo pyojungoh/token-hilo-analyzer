@@ -3422,6 +3422,7 @@ RESULTS_HTML = '''
                 if (data.session_id) localStorage.setItem(CALC_SESSION_KEY, data.session_id);
                 lastServerTimeSec = data.server_time || Math.floor(Date.now() / 1000);
                 let calcs = data.calcs || {};
+                // 가이드 §6: 서버에 실행 중/히스토리 없으면 localStorage 백업으로 복원(새로고침 후 실행 상태 유지)
                 const hasRunning = CALC_IDS.some(id => calcs[String(id)] && calcs[String(id)].running);
                 const hasHistory = CALC_IDS.some(id => calcs[String(id)] && Array.isArray(calcs[String(id)].history) && calcs[String(id)].history.length > 0);
                 if (!hasRunning && !hasHistory) {
@@ -5521,10 +5522,13 @@ RESULTS_HTML = '''
                     const session_id = localStorage.getItem(CALC_SESSION_KEY);
                     const res = await fetch('/api/calc-state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: session_id, calcs: payload }) });
                     const data = await res.json();
+                    if (data.session_id) localStorage.setItem(CALC_SESSION_KEY, data.session_id);
                     if (data.calcs && data.calcs[String(id)]) {
                         calcState[id].started_at = data.calcs[String(id)].started_at || 0;
                         lastServerTimeSec = data.server_time || lastServerTimeSec;
                     }
+                    // 가이드 §6: 새로고침 후 실행 상태 복원 — 실행 직후 백업 저장 (서버 상태 유실 시 백업으로 복원)
+                    try { localStorage.setItem(CALC_STATE_BACKUP_KEY, JSON.stringify(buildCalcPayload())); } catch (e2) { /* ignore */ }
                 } catch (e) { console.warn('계산기 실행 저장 실패:', e); }
                 lastResetOrRunAt = Date.now();
                 updateCalcSummary(id);
