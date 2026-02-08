@@ -41,15 +41,16 @@ def parse_selector_or_xy(value):
     return ("selector", s)
 
 
-def fetch_current_pick(analyzer_url, timeout=5):
-    """GET {analyzer_url}/api/current-pick -> { pick_color, round, ... }"""
-    url = analyzer_url.rstrip("/") + "/api/current-pick"
+def fetch_current_pick(analyzer_url, calculator_id=1, timeout=5):
+    """GET {analyzer_url}/api/current-pick?calculator=1|2|3 -> { pick_color, round, suggested_amount, ... }"""
+    base = analyzer_url.rstrip("/")
+    url = base + "/api/current-pick?calculator=" + str(int(calculator_id) if calculator_id in (1, 2, 3) else 1)
     try:
         r = requests.get(url, timeout=timeout)
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        return {"pick_color": None, "round": None, "error": str(e)}
+        return {"pick_color": None, "round": None, "suggested_amount": None, "error": str(e)}
 
 
 def normalize_analyzer_url(analyzer_url):
@@ -379,6 +380,12 @@ class MacroWindow(QMainWindow):
         self.analyzer_url_edit.setPlaceholderText("비우면 기본 Railway 사용")
         self.analyzer_url_edit.setText(DEFAULT_ANALYZER_URL)
         fl1.addRow("Analyzer URL:", self.analyzer_url_edit)
+        self.calculator_id_spin = QSpinBox()
+        self.calculator_id_spin.setMinimum(1)
+        self.calculator_id_spin.setMaximum(3)
+        self.calculator_id_spin.setValue(1)
+        self.calculator_id_spin.setToolTip("멈춤 연동할 계산기 번호. 계산기 표 1/2/3번과 동일.")
+        fl1.addRow("연동 계산기 (1~3):", self.calculator_id_spin)
         self.connect_btn = QPushButton("연결")
         self.connect_btn.clicked.connect(self._on_connect)
         fl1.addRow("", self.connect_btn)
@@ -1102,6 +1109,7 @@ class MacroWindow(QMainWindow):
             self._odds = 1.97
         self._start_time = time.time()
         self._target_enabled = self.target_enabled_check.isChecked()
+        self._calculator_id = max(1, min(3, self.calculator_id_spin.value()))
         self.set_status("픽 폴링 중...")
         self.log("[시작] 폴링 시작. (오른쪽에서 배팅 사이트가 보이면 그곳에 클릭됩니다.)")
         # 경과시간 1초마다 갱신
@@ -1162,6 +1170,16 @@ class MacroWindow(QMainWindow):
                         time.sleep(interval)
                         continue
                     round_actuals = data.get("round_actuals") or {}
+                    # 계산기 멈춤 연동: current-pick의 suggested_amount가 없으면 이 회차는 배팅 스킵(계산기 표와 동일)
+                    try:
+                        cp = fetch_current_pick(analyzer_url, calculator_id=getattr(self, "_calculator_id", 1), timeout=3)
+                        if cp.get("suggested_amount") is None or cp.get("suggested_amount") == 0:
+                            self.update_queue.put(("log", "[멈춤] 계산기 멈춤 구간 - 회차 %s 배팅 스킵" % round_num))
+                            self.last_clicked_round = round_num
+                            time.sleep(interval)
+                            continue
+                    except Exception:
+                        pass
                     # 결과 대기: 직전 배팅(last_clicked_round) 결과가 round_actuals 또는 ph에 있어야 마틴/승률반픽 정상 동작
                     if self.last_clicked_round is not None:
                         rid = str(int(self.last_clicked_round))
