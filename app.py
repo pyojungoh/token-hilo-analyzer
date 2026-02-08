@@ -1201,14 +1201,64 @@ def _compute_blend_data(prediction_history):
     return {'p15': p15, 'p30': p30, 'p100': p100, 'newProb': new_prob}
 
 
+def _symmetry_line_for_n(graph_values, n):
+    """
+    최근 n열만 사용해 좌우 대칭·줄 개수 계산. n=15(8+7), 20(10+10), 30(15+15) 지원.
+    반환: dict(symmetryPct, leftLineCount, rightLineCount, avgLeft, avgRight, lineSimilarityPct, maxLeftRunLength, recentRunLength) 또는 None.
+    """
+    arr = [v for v in graph_values[:n] if v is True or v is False]
+    if len(arr) < n:
+        return None
+    half = n // 2
+    pair_count = half  # 15→7, 20→10, 30→15
+    left = arr[:half]
+    right = arr[half:n]
+
+    def get_run_lengths(a):
+        r, cur, c = [], None, 0
+        for x in a:
+            if x == cur:
+                c += 1
+            else:
+                if cur is not None:
+                    r.append(c)
+                cur = x
+                c = 1
+        if cur is not None:
+            r.append(c)
+        return r
+
+    sym_count = sum(1 for si in range(pair_count) if arr[si] == arr[n - 1 - si])
+    left_runs = get_run_lengths(left)
+    right_runs = get_run_lengths(right)
+    avg_l = sum(left_runs) / len(left_runs) if left_runs else 0
+    avg_r = sum(right_runs) / len(right_runs) if right_runs else 0
+    line_diff = abs(avg_l - avg_r)
+    max_left_run = max(left_runs) if left_runs else 0
+    recent_run_len = 1
+    for ri in range(1, len(arr)):
+        if arr[ri] == arr[0]:
+            recent_run_len += 1
+        else:
+            break
+    return {
+        'symmetryPct': sym_count / pair_count * 100 if pair_count else 0,
+        'avgLeft': avg_l, 'avgRight': avg_r,
+        'lineSimilarityPct': max(0, 100 - min(100, line_diff * 25)),
+        'leftLineCount': len(left_runs), 'rightLineCount': len(right_runs),
+        'maxLeftRunLength': max_left_run, 'recentRunLength': recent_run_len,
+    }
+
+
 def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
     """
     서버 측 예측 공식. JS와 동일한 입력·출력.
     results: 최신순 결과 리스트, 각 항목 dict(result, joker, gameID 등)
     prediction_history: [{round, predicted, actual}, ...], actual이 'joker'면 제외 후 사용
-    prev_symmetry_counts: {left, right} 이전 20열 줄 개수(선택)
+    prev_symmetry_counts: {left, right} 이전 좌우 줄 개수(선택)
     반환: {'value': '정'|'꺽'|None, 'round': int, 'prob': float, 'color': '빨강'|'검정'|None}
     15번 카드가 조커면 value=None, color=None (픽 보류).
+    좌우 대칭·줄 유사도는 15·20·30열 가중 평균으로 반영(데이터 있으면).
     """
     if not results or len(results) < 16:
         return {'value': None, 'round': 0, 'prob': 0, 'color': None}
@@ -1297,45 +1347,32 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
     elif surge_unknown:
         flow_state = 'surge_unknown'
 
+    # 15·20·30열 각각 계산 후 가중 평균(폭 넓힌 대칭·줄 반영). 데이터 부족 시 사용 가능한 구간만 사용.
+    SYM_WINDOWS = (15, 20, 30)
+    SYM_WEIGHTS = (0.2, 0.5, 0.3)
+    per_n = {}
+    for w in SYM_WINDOWS:
+        data = _symmetry_line_for_n(graph_values, w)
+        if data is not None:
+            per_n[w] = data
     symmetry_line_data = None
-    arr20 = [v for v in graph_values[:20] if v is True or v is False]
-    if len(arr20) >= 20:
-        def get_run_lengths(a):
-            r, cur, c = [], None, 0
-            for x in a:
-                if x == cur:
-                    c += 1
-                else:
-                    if cur is not None:
-                        r.append(c)
-                    cur = x
-                    c = 1
-            if cur is not None:
-                r.append(c)
-            return r
-        sym_count = sum(1 for si in range(10) if arr20[si] == arr20[19 - si])
-        left10, right10 = arr20[:10], arr20[10:20]
-        left_runs = get_run_lengths(left10)
-        right_runs = get_run_lengths(right10)
-        avg_l = sum(left_runs) / len(left_runs) if left_runs else 0
-        avg_r = sum(right_runs) / len(right_runs) if right_runs else 0
-        line_diff = abs(avg_l - avg_r)
-        max_left_run = max(left_runs) if left_runs else 0
-        recent_run_len = 1
-        if len(arr20) >= 2:
-            v0 = arr20[0]
-            for ri in range(1, len(arr20)):
-                if arr20[ri] == v0:
-                    recent_run_len += 1
-                else:
-                    break
-        symmetry_line_data = {
-            'symmetryPct': sym_count / 10 * 100,
-            'avgLeft': avg_l, 'avgRight': avg_r,
-            'lineSimilarityPct': max(0, 100 - min(100, line_diff * 25)),
-            'leftLineCount': len(left_runs), 'rightLineCount': len(right_runs),
-            'maxLeftRunLength': max_left_run, 'recentRunLength': recent_run_len,
-        }
+    symmetry_windows_used = []  # 예측픽에 반영된 구간(15·20·30 중 사용된 열)
+    if per_n:
+        total_w = 0
+        for i, w in enumerate(SYM_WINDOWS):
+            if w in per_n:
+                total_w += SYM_WEIGHTS[i]
+        if total_w > 0:
+            symmetry_windows_used = [w for w in SYM_WINDOWS if w in per_n]
+            blend = {}
+            for key in ('symmetryPct', 'avgLeft', 'avgRight', 'lineSimilarityPct', 'leftLineCount', 'rightLineCount', 'maxLeftRunLength', 'recentRunLength'):
+                blend[key] = 0
+                for i, w in enumerate(SYM_WINDOWS):
+                    if w in per_n:
+                        blend[key] += (SYM_WEIGHTS[i] / total_w) * per_n[w][key]
+                if key in ('leftLineCount', 'rightLineCount', 'maxLeftRunLength', 'recentRunLength'):
+                    blend[key] = round(blend[key])
+            symmetry_line_data = blend
 
     SYM_LINE_PONG_BOOST = 0.15
     SYM_SAME_BOOST = 0.05
@@ -1460,6 +1497,9 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
     # U+3~5 구간이면 확률 상한 적용(과신 방지)
     if u35_detected and pred_prob > 58:
         pred_prob = 58.0
+    if isinstance(pong_chunk_debug, dict):
+        pong_chunk_debug = dict(pong_chunk_debug)
+        pong_chunk_debug['symmetry_windows_used'] = symmetry_windows_used
     return {
         'value': predict, 'round': predicted_round_full, 'prob': round(pred_prob, 1), 'color': color_to_pick,
         'warning_u35': u35_detected,
@@ -2879,7 +2919,7 @@ RESULTS_HTML = '''
                         <li><strong>전이 확률</strong> · 인접한 두 회차 쌍(정→정, 정→꺽, 꺽→정, 꺽→꺽) 비율을 최근 15회·30회·전체로 계산. 직전이 정이면 «정 유지/정→꺽», 꺽이면 «꺽 유지/꺽→정» 확률 사용.</li>
                         <li><strong>퐁당 / 줄</strong> · 최근 15회에서 «바뀜» 비율 = 퐁당%, «유지» 비율 = 줄%. 퐁당%·줄%로 각각 가중치 초기값 설정.</li>
                         <li><strong>흐름 보정</strong> · 15회 vs 30회 유지 확률 차이가 15%p 이상이면 «줄 강함» 또는 «퐁당 강함»으로 판단. 줄 강함이면 줄 가중치 +0.25, 퐁당 강함이면 퐁당 가중치 +0.25.</li>
-                        <li><strong>20열 대칭·줄</strong> · 최근 20개를 왼쪽 10 / 오른쪽 10으로 나누어 대칭도·줄 개수 계산. 새 구간 감지(우측 줄 많고 좌측 줄 적음)면 줄 가중치 +0.22. 대칭 70% 이상·우측 줄 적으면 줄 +0.28 등으로 보정.</li>
+                        <li><strong>15·20·30열 대칭·줄</strong> · 15열·20열·30열 각각 좌반/우반 대칭도·줄 개수 계산 후 가중 평균(0.2·0.5·0.3) 반영. 새 구간 감지 시 줄 +0.22, 대칭 70% 이상·우측 줄 적으면 줄 +0.28 등 보정.</li>
                         <li><strong>30회 패턴</strong> · «덩어리»(줄이 2개 이상 이어짐) 비율·«띄엄»(줄 1개씩)·«두줄한개» 비율을 지수로 계산. 덩어리/두줄한개는 줄 가중치에, 띄엄은 퐁당 가중치에 반영.</li>
                         <li><strong>가중치 정규화</strong> · 위에서 나온 줄 가중치(lineW)와 퐁당 가중치(pongW)를 더한 뒤 1이 되도록 나눔.</li>
                         <li><strong>V자 패턴 보정</strong> · 그래프가 «긴 줄 → 퐁당 1~2개 → 짧은 줄 → 퐁당 → …» 형태(V자 밸런스)일 때 연패가 많아서, 퐁당(바뀜) 가중치를 올려 이 구간을 넘기기 쉽게 보정함.</li>
@@ -2936,7 +2976,7 @@ RESULTS_HTML = '''
             </div>
         </div>
         <div id="symmetry-line-collapse" class="prob-bucket-collapse collapsed">
-            <div class="prob-bucket-collapse-header" id="symmetry-line-collapse-header" role="button" tabindex="0">좌우 대칭 / 줄 유사도 (20열 기준)</div>
+            <div class="prob-bucket-collapse-header" id="symmetry-line-collapse-header" role="button" tabindex="0">좌우 대칭 / 줄 유사도 (15·20·30열 반영)</div>
             <div class="prob-bucket-collapse-body" id="symmetry-line-collapse-body"></div>
         </div>
         <div id="pong-chunk-collapse" class="prob-bucket-collapse collapsed">
@@ -3943,6 +3983,7 @@ RESULTS_HTML = '''
                 if (statsDiv && graphValues && Array.isArray(graphValues) && graphValues.length >= 2) {
                     if (!Array.isArray(predictionHistory)) predictionHistory = [];
                     let symmetryLineData = null;
+                    let symmetryWindowsUsed = [];
                     const full = calcTransitions(graphValues);
                     const recent30 = calcTransitions(graphValues.slice(0, 30));
                     const short15 = graphValues.length >= 15 ? calcTransitions(graphValues.slice(0, 15)) : null;
@@ -4357,34 +4398,33 @@ RESULTS_HTML = '''
                         flowAdvice = '확률 급상승 구간(방향 불명) → 보수적 배팅 권장';
                     }
                     
-                    // 20열 기준 좌우대칭·줄 데이터 (예측픽 보정 + 아래 표에 사용). 오류 시 symmetryLineData=null로 무시.
+                    // 15·20·30열 각각 계산 후 가중 평균 (서버와 동일). 예측픽 보정 + 아래 표에 사용.
                     try {
-                        var arr20 = (graphValues && graphValues.filter(function(v) { return v === true || v === false; }).slice(0, 20)) || [];
-                        if (arr20 && arr20.length >= 20) {
-                            function getRunLengths(a) {
-                                var r = [], cur = null, c = 0, i;
-                                for (i = 0; i < a.length; i++) {
-                                    if (a[i] === cur) c++;
-                                    else { if (cur !== null) r.push(c); cur = a[i]; c = 1; }
-                                }
-                                if (cur !== null) r.push(c);
-                                return r;
+                        function getRunLengths(a) {
+                            var r = [], cur = null, c = 0, i;
+                            for (i = 0; i < a.length; i++) {
+                                if (a[i] === cur) c++;
+                                else { if (cur !== null) r.push(c); cur = a[i]; c = 1; }
                             }
+                            if (cur !== null) r.push(c);
+                            return r;
+                        }
+                        function symmetryForN(gv, n) {
+                            var arr = (gv && gv.filter(function(v) { return v === true || v === false; }).slice(0, n)) || [];
+                            if (arr.length < n) return null;
+                            var half = Math.floor(n / 2), pairCount = half;
+                            var left = arr.slice(0, half), right = arr.slice(half, n);
                             var symCount = 0;
-                            for (var si = 0; si < 10; si++) { if (arr20[si] === arr20[19 - si]) symCount++; }
-                            var left10 = arr20.slice(0, 10), right10 = arr20.slice(10, 20);
-                            var leftRuns = getRunLengths(left10), rightRuns = getRunLengths(right10);
+                            for (var si = 0; si < pairCount; si++) { if (arr[si] === arr[n - 1 - si]) symCount++; }
+                            var leftRuns = getRunLengths(left), rightRuns = getRunLengths(right);
                             var avgL = leftRuns.length ? leftRuns.reduce(function(s, x) { return s + x; }, 0) / leftRuns.length : 0;
                             var avgR = rightRuns.length ? rightRuns.reduce(function(s, x) { return s + x; }, 0) / rightRuns.length : 0;
                             var lineDiff = Math.abs(avgL - avgR);
                             var maxLeftRun = (leftRuns && leftRuns.length) ? Math.max.apply(null, leftRuns) : 0;
                             var recentRunLen = 1;
-                            if (arr20 && arr20.length >= 2) {
-                                var v0 = arr20[0];
-                                for (var ri = 1; ri < arr20.length; ri++) { if (arr20[ri] === v0) recentRunLen++; else break; }
-                            }
-                            symmetryLineData = {
-                                symmetryPct: symCount / 10 * 100,
+                            for (var ri = 1; ri < arr.length; ri++) { if (arr[ri] === arr[0]) recentRunLen++; else break; }
+                            return {
+                                symmetryPct: pairCount ? symCount / pairCount * 100 : 0,
                                 avgLeft: avgL, avgRight: avgR,
                                 lineSimilarityPct: Math.max(0, 100 - Math.min(100, lineDiff * 25)),
                                 leftLineCount: leftRuns.length,
@@ -4393,13 +4433,46 @@ RESULTS_HTML = '''
                                 recentRunLength: recentRunLen
                             };
                         }
-                    } catch (symErr) { symmetryLineData = null; console.warn('20열 symmetry/line calc:', symErr); }
-                    var symmetryBoostNotice = false;  // 20열 보정 반영 시 경고문구용
+                        var SYM_WINDOWS = [15, 20, 30], SYM_WEIGHTS = [0.2, 0.5, 0.3];
+                        var perN = {};
+                        for (var wi = 0; wi < SYM_WINDOWS.length; wi++) {
+                            var d = symmetryForN(graphValues, SYM_WINDOWS[wi]);
+                            if (d) perN[SYM_WINDOWS[wi]] = d;
+                        }
+                        if (Object.keys(perN).length > 0) {
+                            var totalW = 0;
+                            for (var wi = 0; wi < SYM_WINDOWS.length; wi++) {
+                                if (perN[SYM_WINDOWS[wi]]) totalW += SYM_WEIGHTS[wi];
+                            }
+                            if (totalW > 0) {
+                                var blend = { symmetryPct: 0, avgLeft: 0, avgRight: 0, lineSimilarityPct: 0, leftLineCount: 0, rightLineCount: 0, maxLeftRunLength: 0, recentRunLength: 0 };
+                                for (var wi = 0; wi < SYM_WINDOWS.length; wi++) {
+                                    var w = SYM_WINDOWS[wi];
+                                    if (!perN[w]) continue;
+                                    var frac = SYM_WEIGHTS[wi] / totalW;
+                                    blend.symmetryPct += frac * perN[w].symmetryPct;
+                                    blend.avgLeft += frac * perN[w].avgLeft;
+                                    blend.avgRight += frac * perN[w].avgRight;
+                                    blend.lineSimilarityPct += frac * perN[w].lineSimilarityPct;
+                                    blend.leftLineCount += frac * perN[w].leftLineCount;
+                                    blend.rightLineCount += frac * perN[w].rightLineCount;
+                                    blend.maxLeftRunLength += frac * perN[w].maxLeftRunLength;
+                                    blend.recentRunLength += frac * perN[w].recentRunLength;
+                                }
+                                blend.leftLineCount = Math.round(blend.leftLineCount);
+                                blend.rightLineCount = Math.round(blend.rightLineCount);
+                                blend.maxLeftRunLength = Math.round(blend.maxLeftRunLength);
+                                blend.recentRunLength = Math.round(blend.recentRunLength);
+                                symmetryLineData = blend;
+                                symmetryWindowsUsed = Object.keys(perN).map(Number).sort(function(a, b) { return a - b; });
+                            }
+                        }
+                    } catch (symErr) { symmetryLineData = null; symmetryWindowsUsed = []; console.warn('15·20·30열 symmetry/line calc:', symErr); }
+                    var symmetryBoostNotice = false;  // 15·20·30열 보정 반영 시 경고문구용
                     var newSegmentNotice = false;    // 새 구간 구성 중 경고문구용
                     
                     // 예측픽 합산 공식: (유지확률×줄가중치) vs (바뀜확률×퐁당가중치) → 정규화 후 큰 쪽이 예측.
-                    // 가중치(lineW,pongW) 구성: ①최근15회 줄/퐁당% ②흐름전환(줄강/퐁당강) ±0.25 ③20열(줄개수 ±0.15, 대칭도 +0.05 또는 ×0.95) ④30회패턴(chunk/scatter/twoOne) → 합산 후 정규화.
-                    // 20열 반영 비중(조절 가능): 줄개수 보정 +0.15, 대칭도 높을 때 +0.05, 낮을 때 ×0.95.
+                    // 가중치: ①최근15회 줄/퐁당% ②흐름전환 ±0.25 ③15·20·30열 가중평균(줄개수·대칭도) ④30회패턴 → 합산 후 정규화.
                     var SYM_LINE_PONG_BOOST = 0.15;   // 20열 줄개수: 적으면 lineW, 많으면 pongW에 더하는 값 (0~0.2 권장)
                     var SYM_SAME_BOOST = 0.05;        // 20열 대칭도>=70%일 때 lineW에 더하는 값
                     var SYM_LOW_MUL = 0.95;           // 20열 대칭도<=30%일 때 보수적: lineW,pongW 둘 다 곱하는 값
@@ -4701,16 +4774,20 @@ RESULTS_HTML = '''
                         if (symmetryLineBody && symmetryLineCollapse) {
                             if (symmetryLineData) {
                                 var s = symmetryLineData;
+                                var windowsLabel = (lastPongChunkDebug && Array.isArray(lastPongChunkDebug.symmetry_windows_used) && lastPongChunkDebug.symmetry_windows_used.length)
+                                    ? lastPongChunkDebug.symmetry_windows_used.join('·') + '열'
+                                    : (symmetryWindowsUsed && symmetryWindowsUsed.length) ? symmetryWindowsUsed.join('·') + '열' : '15·20·30열';
                                 symmetryLineBody.innerHTML = '<table class="symmetry-line-table" cellspacing="0" cellpadding="0"><thead><tr><th>항목</th><th>값</th><th>비고</th></tr></thead><tbody>' +
-                                    '<tr><td>좌우 대칭도</td><td>' + s.symmetryPct.toFixed(1) + '%</td><td>1~10열 vs 11~20열 대칭 매칭(10쌍)</td></tr>' +
-                                    '<tr><td>왼쪽(1~10열) 줄 개수</td><td>' + s.leftLineCount + '</td><td>적을수록 긴 줄(추세), 많을수록 퐁당</td></tr>' +
-                                    '<tr><td>오른쪽(11~20열) 줄 개수</td><td>' + s.rightLineCount + '</td><td>적을수록 긴 줄(추세), 많을수록 퐁당</td></tr>' +
-                                    '<tr><td>왼쪽(1~10열) 평균 줄길이</td><td>' + s.avgLeft.toFixed(2) + '</td><td>연속 정/꺽 평균</td></tr>' +
-                                    '<tr><td>오른쪽(11~20열) 평균 줄길이</td><td>' + s.avgRight.toFixed(2) + '</td><td>연속 정/꺽 평균</td></tr>' +
+                                    '<tr><td>반영 구간</td><td>' + windowsLabel + '</td><td>가중 평균(서버 예측픽 동일)</td></tr>' +
+                                    '<tr><td>좌우 대칭도</td><td>' + s.symmetryPct.toFixed(1) + '%</td><td>좌반·우반 대칭 매칭</td></tr>' +
+                                    '<tr><td>왼쪽 절반 줄 개수</td><td>' + s.leftLineCount + '</td><td>적을수록 긴 줄(추세), 많을수록 퐁당</td></tr>' +
+                                    '<tr><td>오른쪽 절반 줄 개수</td><td>' + s.rightLineCount + '</td><td>적을수록 긴 줄(추세), 많을수록 퐁당</td></tr>' +
+                                    '<tr><td>왼쪽 평균 줄길이</td><td>' + s.avgLeft.toFixed(2) + '</td><td>연속 정/꺽 평균</td></tr>' +
+                                    '<tr><td>오른쪽 평균 줄길이</td><td>' + s.avgRight.toFixed(2) + '</td><td>연속 정/꺽 평균</td></tr>' +
                                     '<tr><td>줄 유사도</td><td>' + s.lineSimilarityPct.toFixed(1) + '%</td><td>양쪽 평균 줄길이 차이 반영</td></tr></tbody></table>';
                                 symmetryLineCollapse.style.display = '';
                             } else {
-                                symmetryLineBody.innerHTML = '<p style="color:#888;font-size:0.9em">최근 20열(정/꺽) 데이터가 부족합니다.</p>';
+                                symmetryLineBody.innerHTML = '<p style="color:#888;font-size:0.9em">최근 15열 이상(정/꺽) 데이터가 부족합니다.</p>';
                                 symmetryLineCollapse.style.display = '';
                             }
                         }
