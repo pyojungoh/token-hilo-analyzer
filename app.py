@@ -2726,6 +2726,7 @@ RESULTS_HTML = '''
         .analysis-tab.active { background: #444; color: #fff; font-weight: 600; }
         .analysis-panel { display: none; padding: 14px 18px; border-top: none; }
         .analysis-panel.active { display: block; }
+        .analysis-panel .prob-bucket-collapse-body { display: block !important; }
         .formula-explanation { font-size: clamp(13px, 1.8vw, 15px); color: #ccc; line-height: 1.55; max-width: 720px; margin: 0 auto; }
         .formula-explanation .formula-intro { margin-bottom: 12px; color: #ddd; }
         .formula-explanation .formula-steps { margin: 0 0 12px 0; padding-left: 1.4em; }
