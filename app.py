@@ -210,6 +210,18 @@ def init_database():
         except Exception as ex:
             print(f"[경고] current_pick 테이블 생성/초기화 건너뜀 (서버는 계속 기동): {str(ex)[:100]}")
         
+        # shape_win_stats: 자주 나오는 그래프 모양별 정/꺽 예측 시 승률 (예측픽 추가 반영용)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS shape_win_stats (
+                signature TEXT PRIMARY KEY,
+                pred_jung_win INTEGER DEFAULT 0,
+                pred_jung_total INTEGER DEFAULT 0,
+                pred_kkeok_win INTEGER DEFAULT 0,
+                pred_kkeok_total INTEGER DEFAULT 0,
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        ''')
+        
         conn.commit()
         cur.close()
         conn.close()
@@ -339,6 +351,118 @@ def save_prediction_record(round_num, predicted, actual, probability=None, pick_
         except:
             pass
         return False
+
+
+def _get_shape_signature(results):
+    """
+    결과 리스트(최신순)로부터 '그래프 모양' 시그니처 문자열 생성.
+    줄/퐁당 run 길이를 최대 5개까지 L/P 접두어와 함께 붙임. 예: L6,P1,L2,P1,L2
+    """
+    if not results or len(results) < 16:
+        return ""
+    graph_values = _build_graph_values(results)
+    if len(graph_values) < 4:
+        return ""
+    use = graph_values[:30]
+    line_runs, pong_runs = _get_line_pong_runs(use)
+    if not line_runs and not pong_runs:
+        return ""
+    first_is_line = True
+    if len(use) >= 2 and (use[0] is True or use[0] is False) and (use[1] is True or use[1] is False):
+        first_is_line = (use[0] == use[1])
+    parts = []
+    li, pi = 0, 0
+    for i in range(5):
+        if first_is_line:
+            if i % 2 == 0 and li < len(line_runs):
+                parts.append("L%d" % line_runs[li])
+                li += 1
+            elif i % 2 == 1 and pi < len(pong_runs):
+                parts.append("P%d" % pong_runs[pi])
+                pi += 1
+        else:
+            if i % 2 == 0 and pi < len(pong_runs):
+                parts.append("P%d" % pong_runs[pi])
+                pi += 1
+            elif i % 2 == 1 and li < len(line_runs):
+                parts.append("L%d" % line_runs[li])
+                li += 1
+    return ",".join(parts) if parts else ""
+
+
+def get_shape_win_stats(conn, signature):
+    """모양 시그니처별 정/꺽 예측 시 승률 통계. 반환: {jung_win, jung_total, kkeok_win, kkeok_total} 또는 None."""
+    if not conn or not signature:
+        return None
+    try:
+        cur = conn.cursor()
+        cur.execute('''
+            SELECT pred_jung_win, pred_jung_total, pred_kkeok_win, pred_kkeok_total
+            FROM shape_win_stats WHERE signature = %s
+        ''', (signature,))
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            return None
+        return {
+            'jung_win': row[0] or 0, 'jung_total': row[1] or 0,
+            'kkeok_win': row[2] or 0, 'kkeok_total': row[3] or 0,
+        }
+    except Exception:
+        return None
+
+
+def _get_shape_stats_for_results(results):
+    """현재 results에 해당하는 그래프 모양의 저장된 승률 통계. 예측픽 계산 시 shape_win_stats 인자로 넘길 때 사용."""
+    if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
+        return None
+    sig = _get_shape_signature(results)
+    if not sig:
+        return None
+    conn = get_db_connection(statement_timeout_sec=3)
+    if not conn:
+        return None
+    try:
+        return get_shape_win_stats(conn, sig)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def update_shape_win_stats(conn, signature, predicted, actual):
+    """예측 기록 저장 시 호출: 해당 회차 예측 시점의 모양 시그니처에 맞춰 정/꺽 승률 통계 갱신."""
+    if not conn or not signature:
+        return
+    pred_norm = '정' if (predicted == '정' or (isinstance(predicted, str) and '정' in predicted)) else '꺽'
+    actual_norm = '정' if (actual == '정' or (isinstance(actual, str) and '정' in actual)) else '꺽'
+    try:
+        cur = conn.cursor()
+        if pred_norm == '정':
+            win_inc = 1 if pred_norm == actual_norm else 0
+            cur.execute('''
+                INSERT INTO shape_win_stats (signature, pred_jung_win, pred_jung_total, pred_kkeok_win, pred_kkeok_total, updated_at)
+                VALUES (%s, %s, 1, 0, 0, NOW())
+                ON CONFLICT (signature) DO UPDATE SET
+                    pred_jung_win = shape_win_stats.pred_jung_win + %s,
+                    pred_jung_total = shape_win_stats.pred_jung_total + 1,
+                    updated_at = NOW()
+            ''', (signature, win_inc, win_inc))
+        else:
+            win_inc = 1 if pred_norm == actual_norm else 0
+            cur.execute('''
+                INSERT INTO shape_win_stats (signature, pred_jung_win, pred_jung_total, pred_kkeok_win, pred_kkeok_total, updated_at)
+                VALUES (%s, 0, 0, %s, 1, NOW())
+                ON CONFLICT (signature) DO UPDATE SET
+                    pred_kkeok_win = shape_win_stats.pred_kkeok_win + %s,
+                    pred_kkeok_total = shape_win_stats.pred_kkeok_total + 1,
+                    updated_at = NOW()
+            ''', (signature, win_inc, win_inc))
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        print(f"[경고] shape_win_stats 갱신 실패: {str(e)[:150]}")
 
 
 # DB 없을 때 계산기 상태 in-memory 저장 (새로고침 시 유지, 서버 재시작 시 초기화)
@@ -746,8 +870,9 @@ def _flip_pick_color(color):
 _merge_rounds_cache = set()
 
 
-def _merge_round_predictions_into_history(round_actuals):
+def _merge_round_predictions_into_history(round_actuals, results=None):
     """round_actuals에 있는 회차 중 prediction_history에 없는 것은 round_predictions에서 꺼내 저장 후 삭제.
+    results(최신순) 있으면 해당 회차 예측 시점 모양으로 shape_win_stats 갱신.
     새로 결과가 나온 회차가 있을 때만 DB 접근(폴링마다 머지하지 않음)."""
     global _merge_rounds_cache
     if not round_actuals or not DB_AVAILABLE or not DATABASE_URL:
@@ -785,6 +910,18 @@ def _merge_round_predictions_into_history(round_actuals):
             cur.close()
             conn.close()
             save_prediction_record(rnd, pred_val, actual, probability=prob, pick_color=pick_color)
+            if results and len(results) >= 17 and str(results[0].get('gameID')) == str(rnd):
+                sig = _get_shape_signature(results[1:])
+                if sig:
+                    conn2 = get_db_connection(statement_timeout_sec=3)
+                    if conn2:
+                        try:
+                            update_shape_win_stats(conn2, sig, pred_val, actual)
+                        finally:
+                            try:
+                                conn2.close()
+                            except Exception:
+                                pass
             conn = get_db_connection(statement_timeout_sec=3)
             if not conn:
                 return
@@ -824,6 +961,17 @@ def _backfill_latest_round_to_prediction_history(results):
             latest_round, pred['value'], actual,
             probability=pred.get('prob'), pick_color=pred.get('color')
         )
+        sig = _get_shape_signature(results[1:])
+        if sig and DB_AVAILABLE and DATABASE_URL:
+            conn = get_db_connection(statement_timeout_sec=3)
+            if conn:
+                try:
+                    update_shape_win_stats(conn, sig, pred['value'], actual)
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
         print(f"[API] prediction_history 보정 저장: round {latest_round} predicted={pred.get('value')} actual={actual}")
     except Exception as e:
         print(f"[경고] prediction_history 보정 실패: {str(e)[:150]}")
@@ -1325,12 +1473,13 @@ def _symmetry_line_for_n(graph_values, n):
     }
 
 
-def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
+def compute_prediction(results, prediction_history, prev_symmetry_counts=None, shape_win_stats=None):
     """
     서버 측 예측 공식. JS와 동일한 입력·출력.
     results: 최신순 결과 리스트, 각 항목 dict(result, joker, gameID 등)
     prediction_history: [{round, predicted, actual}, ...], actual이 'joker'면 제외 후 사용
     prev_symmetry_counts: {left, right} 이전 좌우 줄 개수(선택)
+    shape_win_stats: {jung_win, jung_total, kkeok_win, kkeok_total} 저장된 모양별 정/꺽 승률(선택). 있으면 보정 반영.
     반환: {'value': '정'|'꺽'|None, 'round': int, 'prob': float, 'color': '빨강'|'검정'|None}
     15번 카드가 조커면 value=None, color=None (픽 보류).
     좌우 대칭·줄 유사도는 15·20·30열 가중 평균으로 반영(데이터 있으면).
@@ -1559,6 +1708,20 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
     elif balance_phase == 'transition_to_high':
         line_w += 0.06
         pong_w = max(0.0, pong_w - 0.03)
+    # 저장된 모양별 승률 보정: 이 모양일 때 정 예측 승률이 높으면 줄 쪽, 꺽 예측 승률이 높으면 퐁당 쪽 소폭 가산
+    if shape_win_stats:
+        jw, jt = shape_win_stats.get('jung_win') or 0, shape_win_stats.get('jung_total') or 0
+        kw, kt = shape_win_stats.get('kkeok_win') or 0, shape_win_stats.get('kkeok_total') or 0
+        total = jt + kt
+        if total >= 20 and jt >= 5 and kt >= 5:
+            jr = jw / jt if jt else 0
+            kr = kw / kt if kt else 0
+            if jr >= kr + 0.05:
+                line_w += 0.05
+                pong_w = max(0.0, pong_w - 0.025)
+            elif kr >= jr + 0.05:
+                pong_w += 0.05
+                line_w = max(0.0, line_w - 0.025)
     total_w = line_w + pong_w
     if total_w > 0:
         line_w /= total_w
@@ -6075,7 +6238,7 @@ def _build_results_payload_db_only(hours=24):
         if len(results) > RESULTS_PAYLOAD_LIMIT:
             results = results[:RESULTS_PAYLOAD_LIMIT]
         round_actuals = _build_round_actuals(results)
-        _merge_round_predictions_into_history(round_actuals)
+        _merge_round_predictions_into_history(round_actuals, results=results)
         ph = get_prediction_history(100)
         # 안정화: 서버에 저장된 예측만 불러옴. 계산/저장은 스케줄러에서만(ensure_stored_prediction_for_current_round).
         server_pred = None
@@ -6092,9 +6255,10 @@ def _build_results_payload_db_only(hours=24):
                             'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
                             'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {},
                         }
-                        # 퐁당/덩어리 판별 메뉴용: 저장 픽은 유지하되 현재 그래프 기준 phase/debug만 계산해 병합
+                        # 퐁당/덩어리 판별 메뉴용: 저장 픽은 유지하되 현재 그래프 기준 phase/debug만 계산해 병합. 모양별 승률 보정 반영.
                         try:
-                            computed = compute_prediction(results, ph)
+                            shape_stats = _get_shape_stats_for_results(results)
+                            computed = compute_prediction(results, ph, shape_win_stats=shape_stats)
                             if computed:
                                 server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                 server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
@@ -6245,7 +6409,7 @@ def _build_results_payload():
             # 그래프/표시 순서 일관성: 항상 gameID 기준 최신순으로 정렬
             results = _sort_results_newest_first(results)
             round_actuals = _build_round_actuals(results)
-            _merge_round_predictions_into_history(round_actuals)
+            _merge_round_predictions_into_history(round_actuals, results=results)
             ph = get_prediction_history(100)
             # 안정화: 서버에 저장된 예측만 불러옴. 계산/저장은 스케줄러에서만.
             server_pred = None
@@ -6263,7 +6427,8 @@ def _build_results_payload():
                                 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {},
                             }
                             try:
-                                computed = compute_prediction(results, ph)
+                                shape_stats = _get_shape_stats_for_results(results)
+                                computed = compute_prediction(results, ph, shape_win_stats=shape_stats)
                                 if computed:
                                     server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                     server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
@@ -6335,7 +6500,8 @@ def _build_results_payload():
                                 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {},
                             }
                             try:
-                                computed = compute_prediction(results, ph)
+                                shape_stats = _get_shape_stats_for_results(results)
+                                computed = compute_prediction(results, ph, shape_win_stats=shape_stats)
                                 if computed:
                                     server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                     server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
@@ -6344,7 +6510,8 @@ def _build_results_payload():
                 except Exception as e:
                     print(f"[API] server_pred 구성 오류: {str(e)[:100]}")
             if server_pred is None:
-                server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
+                shape_stats = _get_shape_stats_for_results(results) if len(results) >= 16 else None
+                server_pred = compute_prediction(results, ph, shape_win_stats=shape_stats) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
             blended = _blended_win_rate(ph)
             round_actuals = _build_round_actuals(results)
             return {
