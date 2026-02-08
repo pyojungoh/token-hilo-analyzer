@@ -974,6 +974,67 @@ def _pong_line_pct(arr):
     return pong_pct, line_pct
 
 
+def _balance_raw_series(graph_values, window=10):
+    """
+    구간별 '같은 게 나온 비율' 리스트. docs/BALANCE_SEGMENT_SPEC.md 참고.
+    graph_values[i]가 True면 정(줄), False면 꺽(퐁당). 인덱스 0이 최신.
+    반환: [balance_0, balance_1, ...] 각 항목 0.0~1.0 또는 None.
+    """
+    if not graph_values or len(graph_values) < window:
+        return []
+    out = []
+    for i in range(len(graph_values) - window + 1):
+        window_i = graph_values[i : i + window]
+        valid = [v for v in window_i if v is True or v is False]
+        if not valid:
+            out.append(None)
+            continue
+        out.append(sum(1 for v in valid if v is True) / len(valid))
+    return out
+
+
+def _balance_segment_phase(graph_values, w_balance=10, l_ref=60, p_high=60, p_low=40):
+    """
+    밸런스(같은 게 나오는 확률) 구간 전환점 캐치. BALANCE_SEGMENT_SPEC.md 참고.
+    반환: 'transition_to_low' | 'transition_to_high' | None
+    """
+    if not graph_values or len(graph_values) < w_balance + 5:
+        return None
+    balance_raw = _balance_raw_series(graph_values, window=w_balance)
+    if len(balance_raw) < 2:
+        return None
+    ref_values = [balance_raw[i] for i in range(min(l_ref, len(balance_raw))) if balance_raw[i] is not None]
+    if len(ref_values) < 20:
+        return None
+    sorted_ref = sorted(ref_values)
+    n = len(sorted_ref)
+    idx_high = min(int(n * p_high / 100), n - 1)
+    idx_low = min(int(n * p_low / 100), n - 1)
+    threshold_high = sorted_ref[idx_high]
+    threshold_low = sorted_ref[idx_low]
+    if threshold_high <= threshold_low:
+        return None
+
+    def _segment(b):
+        if b is None:
+            return 'mid'
+        if b >= threshold_high:
+            return 'high'
+        if b <= threshold_low:
+            return 'low'
+        return 'mid'
+
+    current_balance = balance_raw[0]
+    prev_balance = balance_raw[1] if len(balance_raw) > 1 else None
+    segment = _segment(current_balance)
+    prev_segment = _segment(prev_balance)
+    if prev_segment == 'high' and segment == 'low':
+        return 'transition_to_low'
+    if prev_segment == 'low' and segment == 'high':
+        return 'transition_to_high'
+    return None
+
+
 def _get_line_pong_runs(arr):
     """줄(1)/퐁당(0) 쌍으로 run 길이 리스트."""
     pairs = []
@@ -1476,6 +1537,14 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
             pong_w += 0.04
             line_w = max(0.0, line_w - 0.02)
         pong_chunk_phase = phase
+    # 밸런스 구간 전환점 보정: 서서히 올라갔다 최고점 후 내려가는 등 구간 전환 시 line_w/pong_w 소폭 반영
+    balance_phase = _balance_segment_phase(graph_values)
+    if balance_phase == 'transition_to_low':
+        pong_w += 0.06
+        line_w = max(0.0, line_w - 0.03)
+    elif balance_phase == 'transition_to_high':
+        line_w += 0.06
+        pong_w = max(0.0, pong_w - 0.03)
     total_w = line_w + pong_w
     if total_w > 0:
         line_w /= total_w
@@ -1501,6 +1570,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
         pong_chunk_debug = dict(pong_chunk_debug)
         pong_chunk_debug['symmetry_windows_used'] = symmetry_windows_used
         pong_chunk_debug['u_shape'] = u35_detected  # U자 구간(연패 많음): 유지 가중치 보정·멈춤 권장
+        pong_chunk_debug['balance_phase'] = balance_phase  # 밸런스 구간 전환(transition_to_low/high)
     return {
         'value': predict, 'round': predicted_round_full, 'prob': round(pred_prob, 1), 'color': color_to_pick,
         'warning_u35': u35_detected,
