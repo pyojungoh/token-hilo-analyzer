@@ -1432,11 +1432,11 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
     if _detect_v_pattern(line_runs, pong_runs, use_for_pattern[:2] if len(use_for_pattern) >= 2 else None):
         pong_w += 0.12
         line_w = max(0.0, line_w - 0.06)
-    # U자 + 줄 3~5 구간: 연패가 많으므로 줄(유지) 쪽 가중치 보정
+    # U자 + 줄 3~5 구간: 연패가 많으므로 줄(유지) 가산·반전(퐁당) 축소. 멈춤 권장.
     u35_detected = _detect_u_35_pattern(line_runs)
     if u35_detected:
-        line_w += 0.10
-        pong_w = max(0.0, pong_w - 0.05)
+        line_w += 0.14
+        pong_w = max(0.0, pong_w - 0.07)
     # 연패 길이 보정: 현재 꺽(연패) run이 길면 퐁당(바뀜) 가중치를 올려 다음에 정이 나올 가능성 반영
     current_run_len = 1
     for ri in range(1, len(use_for_pattern)):
@@ -1500,6 +1500,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
     if isinstance(pong_chunk_debug, dict):
         pong_chunk_debug = dict(pong_chunk_debug)
         pong_chunk_debug['symmetry_windows_used'] = symmetry_windows_used
+        pong_chunk_debug['u_shape'] = u35_detected  # U자 구간(연패 많음): 유지 가중치 보정·멈춤 권장
     return {
         'value': predict, 'round': predicted_round_full, 'prob': round(pred_prob, 1), 'color': color_to_pick,
         'warning_u35': u35_detected,
@@ -2923,7 +2924,7 @@ RESULTS_HTML = '''
                         <li><strong>30회 패턴</strong> · «덩어리»(줄이 2개 이상 이어짐) 비율·«띄엄»(줄 1개씩)·«두줄한개» 비율을 지수로 계산. 덩어리/두줄한개는 줄 가중치에, 띄엄은 퐁당 가중치에 반영.</li>
                         <li><strong>가중치 정규화</strong> · 위에서 나온 줄 가중치(lineW)와 퐁당 가중치(pongW)를 더한 뒤 1이 되도록 나눔.</li>
                         <li><strong>V자 패턴 보정</strong> · 그래프가 «긴 줄 → 퐁당 1~2개 → 짧은 줄 → 퐁당 → …» 형태(V자 밸런스)일 때 연패가 많아서, 퐁당(바뀜) 가중치를 올려 이 구간을 넘기기 쉽게 보정함.</li>
-                        <li><strong>U자 + 줄 3~5 보정</strong> · 그래프가 «높은 줄 → 낮은 줄(1~2) → 다시 3~5 길이 줄» 형태(U자 박스)를 만들 때 연패가 많음. 이 구간을 감지하면(현재 줄 길이 3~5이고 직전에 짧은 줄 1~2가 있었을 때) 줄(유지) 가중치를 +0.10 올리고 퐁당 가중치를 줄여, 유지 쪽 픽을 내도록 보정함. 예측 확률은 58% 상한 적용.</li>
+                        <li><strong>U자 구간 보정</strong> · «높은 줄 → 낮은 줄(1~2) → 다시 3~5 길이 줄»(U자 모양)일 때 연패가 많음. 감지 시 줄(유지) 가중치 +0.14, 퐁당(반전) -0.07로 유지 쪽 픽 강화·과한 반전 픽 축소. 58% 상한 적용. 계산기에서는 멈춤 권장.</li>
                         <li><strong>연패 길이 보정</strong> · 맨 왼쪽(최신) 열이 꺽(연패)이고 그 연속 길이가 4 이상이면, 퐁당(바뀜) 가중치를 올려 «다음은 정» 쪽으로 픽을 내도록 보정함. (그래프만 봤을 때 연패 구간에서 승을 끌어올리기 위한 보정)</li>
                         <li><strong>퐁당/덩어리/줄 구간 판별</strong> · 세 구간으로 나눔: <em>줄</em>(한쪽으로 길게 이어짐)→유지 가중치 가산, <em>퐁당</em>(2회 이상 바뀜)→바뀜 가중치 가산, <em>덩어리</em>(블록 반복·줄2~4)→줄 가중치 우선. 덩어리 모양 321(줄어듦)이면 바뀜 소폭 가산.</li>
                         <li><strong>유지 vs 바뀜</strong> · «유지 확률 = 전이에서 구한 유지 확률», «바뀜 확률 = 전이에서 구한 바뀜 확률». 각각 lineW, pongW를 곱해 <em>adjSame</em>, <em>adjChange</em> 계산 후 다시 합으로 나누어 0~1로 만듦.</li>
@@ -2980,10 +2981,10 @@ RESULTS_HTML = '''
             <div class="prob-bucket-collapse-body" id="symmetry-line-collapse-body"></div>
         </div>
         <div id="pong-chunk-collapse" class="prob-bucket-collapse collapsed">
-            <div class="prob-bucket-collapse-header" id="pong-chunk-collapse-header" role="button" tabindex="0">퐁당 / 덩어리 / 줄 구간 판별</div>
+            <div class="prob-bucket-collapse-header" id="pong-chunk-collapse-header" role="button" tabindex="0">퐁당 / 덩어리 / 줄 / U자 구간 판별</div>
             <div class="prob-bucket-collapse-body" id="pong-chunk-collapse-body">
                 <div id="pong-chunk-section" style="margin-top:8px;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
-                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">최근 그래프에서 <strong>줄(유지)</strong>·<strong>퐁당(바뀜)</strong>·<strong>덩어리(블록 반복)</strong> 세 구간을 나누어 가중치에 반영합니다. 덩어리일 때 321·123·블록반복 모양도 표시합니다.</p>
+                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">최근 그래프에서 <strong>줄(유지)</strong>·<strong>퐁당(바뀜)</strong>·<strong>덩어리(블록 반복)</strong>·<strong>U자 구간</strong>을 판별해 가중치에 반영합니다. U자 구간은 연패가 많아 유지 쪽 보정·멈춤 권장.</p>
                     <div id="pong-chunk-data" style="font-size:0.9em;color:#ccc;"><table class="symmetry-line-table" style="width:100%;max-width:420px;"><tbody id="pong-chunk-tbody"><tr><td colspan="2" style="color:#888;">데이터 로딩 후 표시</td></tr></tbody></table></div>
                 </div>
             </div>
@@ -4809,9 +4810,11 @@ RESULTS_HTML = '''
                             var d = lastPongChunkDebug || {};
                             var segmentLabel = (d.segment_type && segmentLabels[d.segment_type]) ? segmentLabels[d.segment_type] : (d.segment_type || '—');
                             var chunkShapeLabel = (d.chunk_shape && chunkShapeLabels[d.chunk_shape]) ? chunkShapeLabels[d.chunk_shape] : (d.chunk_shape || '—');
+                            var uShapeLabel = (d.u_shape === true) ? '감지됨 (유지 가중치↑, 멈춤 권장)' : '—';
                             var rows = '<tr><td>판별 구간</td><td>' + phaseLabel + '</td></tr>' +
                                 '<tr><td>구간 유형</td><td>' + segmentLabel + '</td></tr>' +
                                 '<tr><td>덩어리 모양</td><td>' + chunkShapeLabel + '</td></tr>' +
+                                '<tr><td>U자 구간</td><td>' + uShapeLabel + '</td></tr>' +
                                 '<tr><td>맨 앞 run 타입</td><td>' + (d.first_run_type || '—') + '</td></tr>' +
                                 '<tr><td>맨 앞 run 길이</td><td>' + (d.first_run_len != null ? d.first_run_len : '—') + '</td></tr>' +
                                 '<tr><td>최근 15개 퐁당%</td><td>' + (d.pong_pct_short != null ? d.pong_pct_short.toFixed(1) + '%' : '—') + '</td></tr>' +
