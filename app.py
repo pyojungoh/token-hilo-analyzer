@@ -1046,6 +1046,48 @@ def _detect_u_35_pattern(line_runs):
     return False
 
 
+def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_short, pong_pct_prev):
+    """
+    퐁당 주다 덩어리 만들다 패턴: 지금이 퐁당 구간인지 덩어리(줄) 구간인지 판별.
+    반환: (phase, debug_info). phase는 'pong_phase'|'chunk_start'|'chunk_phase'|'chunk_long'|'pong_to_chunk'|'chunk_to_pong'|None.
+    """
+    debug = {'first_run_type': None, 'first_run_len': 0, 'pong_pct_short': pong_pct_short, 'pong_pct_prev': pong_pct_prev}
+    if not line_runs and not pong_runs:
+        return None, debug
+    first_is_line = True
+    if graph_values_head is not None and len(graph_values_head) >= 2:
+        a, b = graph_values_head[0], graph_values_head[1]
+        if a is True or a is False:
+            first_is_line = (a == b)
+    if first_is_line and line_runs:
+        current_run_len = line_runs[0]
+        debug['first_run_type'] = 'line'
+        debug['first_run_len'] = current_run_len
+    elif not first_is_line and pong_runs:
+        current_run_len = pong_runs[0]
+        debug['first_run_type'] = 'pong'
+        debug['first_run_len'] = current_run_len
+    else:
+        return None, debug
+    # 전환 구간: 직전 15개 vs 최근 15개 퐁당% 차이
+    diff_prev_short = (pong_pct_prev - pong_pct_short) if pong_pct_prev is not None and pong_pct_short is not None else 0
+    diff_short_prev = (pong_pct_short - pong_pct_prev) if pong_pct_short is not None and pong_pct_prev is not None else 0
+    if diff_prev_short >= 20:
+        return 'pong_to_chunk', debug
+    if diff_short_prev >= 20:
+        return 'chunk_to_pong', debug
+    if first_is_line:
+        if current_run_len >= 5:
+            return 'chunk_long', debug
+        if current_run_len >= 2:
+            return 'chunk_phase', debug
+        return 'chunk_start', debug
+    else:
+        if 1 <= current_run_len <= 2:
+            return 'pong_phase', debug
+        return None, debug
+
+
 def _compute_blend_data(prediction_history):
     """예측 이력(actual!=joker)으로 15/30/100 구간 반영 확률."""
     valid = [h for h in (prediction_history or []) if h and isinstance(h, dict)]
@@ -1297,6 +1339,26 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
     if last is False and current_run_len >= 4:
         pong_w += 0.14
         line_w = max(0.0, line_w - 0.07)
+    # 퐁당 ↔ 덩어리 구간 보정: phase에 따라 줄/퐁당 가중치 조정
+    pong_chunk_phase = None
+    pong_chunk_debug = {}
+    phase, pong_chunk_debug = _detect_pong_chunk_phase(
+        line_runs, pong_runs,
+        use_for_pattern[:2] if len(use_for_pattern) >= 2 else None,
+        pong_pct, pong_prev15
+    )
+    if phase == 'pong_phase' or phase == 'chunk_to_pong':
+        pong_w += 0.10
+        line_w = max(0.0, line_w - 0.05)
+        pong_chunk_phase = phase
+    elif phase in ('chunk_start', 'chunk_phase', 'pong_to_chunk'):
+        line_w += 0.08
+        pong_w = max(0.0, pong_w - 0.04)
+        pong_chunk_phase = phase
+    elif phase == 'chunk_long':
+        pong_w += 0.06
+        line_w = max(0.0, line_w - 0.03)
+        pong_chunk_phase = phase
     total_w = line_w + pong_w
     if total_w > 0:
         line_w /= total_w
@@ -1321,6 +1383,8 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None):
     return {
         'value': predict, 'round': predicted_round_full, 'prob': round(pred_prob, 1), 'color': color_to_pick,
         'warning_u35': u35_detected,
+        'pong_chunk_phase': pong_chunk_phase,
+        'pong_chunk_debug': pong_chunk_debug,
     }
 
 
@@ -2350,6 +2414,9 @@ RESULTS_HTML = '''
         #symmetry-line-collapse-body .symmetry-line-table td:nth-child(2) { text-align: center; font-weight: 600; color: #81c784; }
         #symmetry-line-collapse-body .symmetry-line-table td:nth-child(3) { font-size: 0.92em; color: #999; }
         #symmetry-line-collapse-body .symmetry-line-table tbody tr:last-child td { border-bottom: none; }
+        #pong-chunk-collapse-body .symmetry-line-table { border-collapse: collapse; width: 100%; max-width: 420px; }
+        #pong-chunk-collapse-body .symmetry-line-table th, #pong-chunk-collapse-body .symmetry-line-table td { padding: 8px 12px; border: 1px solid #444; text-align: left; background: #2a2a2a; }
+        #pong-chunk-collapse-body .symmetry-line-table td:nth-child(2) { font-weight: 600; color: #81c784; }
         /* 예측픽이 해당 확률 구간에 있을 때 아웃라인 깜빡임 (강승부 구간 강조) */
         .prediction-pick.pick-in-bucket .prediction-card {
             animation: bucketOutlineBlink 1.4s ease-in-out infinite;
@@ -2791,6 +2858,15 @@ RESULTS_HTML = '''
             <div class="prob-bucket-collapse-header" id="symmetry-line-collapse-header" role="button" tabindex="0">좌우 대칭 / 줄 유사도 (20열 기준)</div>
             <div class="prob-bucket-collapse-body" id="symmetry-line-collapse-body"></div>
         </div>
+        <div id="pong-chunk-collapse" class="prob-bucket-collapse collapsed">
+            <div class="prob-bucket-collapse-header" id="pong-chunk-collapse-header" role="button" tabindex="0">퐁당 / 덩어리 구간 판별</div>
+            <div class="prob-bucket-collapse-body" id="pong-chunk-collapse-body">
+                <div id="pong-chunk-section" style="margin-top:8px;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
+                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">최근 그래프에서 «퐁당(바뀜)» vs «덩어리(줄)» 구간을 판별해 가중치에 반영합니다.</p>
+                    <div id="pong-chunk-data" style="font-size:0.9em;color:#ccc;"><table class="symmetry-line-table" style="width:100%;max-width:420px;"><tbody id="pong-chunk-tbody"><tr><td colspan="2" style="color:#888;">데이터 로딩 후 표시</td></tr></tbody></table></div>
+                </div>
+            </div>
+        </div>
         <div class="bet-calc">
             <h4>가상 배팅 계산기</h4>
             <div class="bet-calc-tabs">
@@ -3139,6 +3215,8 @@ RESULTS_HTML = '''
             return roundPredictionBuffer[String(round)] || null;
         }
         var lastWarningU35 = false;       // U자+줄 3~5 구간 감지 시 서버가 보낸 경고
+        var lastPongChunkPhase = null;    // 퐁당/덩어리 구간 판별 결과
+        var lastPongChunkDebug = {};      // 퐁당/덩어리 판별 디버그 데이터
         let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
         let lastLoseEffectRound = null;  // 실패 이펙트를 이미 보여준 회차 (한 번만 표시)
         var prevSymmetryCounts = { left: null, right: null };  // 이전 시점 20열 줄 개수 (새 구간 빨리 캐치용)
@@ -3546,6 +3624,8 @@ RESULTS_HTML = '''
                     const sp = data.server_prediction;
                     lastServerPrediction = (sp && (sp.value === '정' || sp.value === '꺽')) ? sp : null;
                     lastWarningU35 = !!(lastServerPrediction && sp && sp.warning_u35);
+                    lastPongChunkPhase = (sp && (sp.pong_chunk_phase != null && sp.pong_chunk_phase !== '')) ? sp.pong_chunk_phase : null;
+                    lastPongChunkDebug = (sp && sp.pong_chunk_debug && typeof sp.pong_chunk_debug === 'object') ? sp.pong_chunk_debug : {};
                     if (lastServerPrediction) {
                         var newRound = lastServerPrediction.round != null ? Number(lastServerPrediction.round) : NaN;
                         var prevRound = (lastPrediction && lastPrediction.round != null) ? Number(lastPrediction.round) : NaN;
@@ -4547,6 +4627,28 @@ RESULTS_HTML = '''
                             symmetryLineHeader.setAttribute('data-bound', '1');
                             symmetryLineHeader.addEventListener('click', function() {
                                 var el = document.getElementById('symmetry-line-collapse');
+                                if (el) el.classList.toggle('collapsed');
+                            });
+                        }
+                        var pongChunkTbody = document.getElementById('pong-chunk-tbody');
+                        var pongChunkCollapse = document.getElementById('pong-chunk-collapse');
+                        if (pongChunkTbody && pongChunkCollapse) {
+                            var phaseLabels = { 'pong_phase': '퐁당 구간', 'chunk_start': '덩어리 막 시작', 'chunk_phase': '덩어리 만드는 중', 'chunk_long': '긴 덩어리', 'pong_to_chunk': '퐁당→덩어리 전환', 'chunk_to_pong': '덩어리→퐁당 전환' };
+                            var phaseLabel = (lastPongChunkPhase && phaseLabels[lastPongChunkPhase]) ? phaseLabels[lastPongChunkPhase] : (lastPongChunkPhase || '—');
+                            var d = lastPongChunkDebug || {};
+                            var rows = '<tr><td>판별 구간</td><td>' + phaseLabel + '</td></tr>' +
+                                '<tr><td>맨 앞 run 타입</td><td>' + (d.first_run_type || '—') + '</td></tr>' +
+                                '<tr><td>맨 앞 run 길이</td><td>' + (d.first_run_len != null ? d.first_run_len : '—') + '</td></tr>' +
+                                '<tr><td>최근 15개 퐁당%</td><td>' + (d.pong_pct_short != null ? d.pong_pct_short.toFixed(1) + '%' : '—') + '</td></tr>' +
+                                '<tr><td>직전 15개 퐁당%</td><td>' + (d.pong_pct_prev != null ? d.pong_pct_prev.toFixed(1) + '%' : '—') + '</td></tr>';
+                            pongChunkTbody.innerHTML = rows;
+                            pongChunkCollapse.style.display = '';
+                        }
+                        var pongChunkHeader = document.getElementById('pong-chunk-collapse-header');
+                        if (pongChunkHeader && !pongChunkHeader.getAttribute('data-bound')) {
+                            pongChunkHeader.setAttribute('data-bound', '1');
+                            pongChunkHeader.addEventListener('click', function() {
+                                var el = document.getElementById('pong-chunk-collapse');
                                 if (el) el.classList.toggle('collapsed');
                             });
                         }
@@ -5722,12 +5824,12 @@ def _build_results_payload_db_only(hours=24):
                         server_pred = {
                             'value': stored['predicted'], 'round': predicted_round,
                             'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
-                            'warning_u35': False,
+                            'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {},
                         }
             except Exception as e:
                 print(f"[API] server_pred 조회 오류: {str(e)[:100]}")
         if server_pred is None:
-            server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False}
+            server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
         blended = _blended_win_rate(ph)
         return {
             'results': results,
@@ -5884,12 +5986,12 @@ def _build_results_payload():
                             server_pred = {
                                 'value': stored['predicted'], 'round': predicted_round,
                                 'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
-                                'warning_u35': False,
+                                'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {},
                             }
                 except Exception as e:
                     print(f"[API] server_pred 조회 오류: {str(e)[:100]}")
             if server_pred is None:
-                server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False}
+                server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
             blended = _blended_win_rate(ph)
             return {
                 'results': results,
@@ -5949,12 +6051,12 @@ def _build_results_payload():
                             server_pred = {
                                 'value': stored['predicted'], 'round': predicted_round,
                                 'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
-                                'warning_u35': False,
+                                'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {},
                             }
                 except Exception as e:
                     print(f"[API] server_pred 구성 오류: {str(e)[:100]}")
             if server_pred is None:
-                server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False}
+                server_pred = compute_prediction(results, ph) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
             blended = _blended_win_rate(ph)
             round_actuals = _build_round_actuals(results)
             return {
@@ -6018,7 +6120,7 @@ def get_results():
             else:
                 payload = {
                     'results': [], 'count': 0, 'timestamp': datetime.now().isoformat(),
-                    'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
+                    'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}},
                     'blended_win_rate': None, 'round_actuals': {}
                 }
         if not _results_refreshing:
@@ -6062,7 +6164,7 @@ def get_results():
             'timestamp': datetime.now().isoformat(),
             'error': error_msg,
             'prediction_history': [],
-            'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
+            'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}},
             'blended_win_rate': None,
             'round_actuals': {}
         })
@@ -6652,7 +6754,7 @@ def refresh_data():
                 'count': len(results_data),
                 'timestamp': datetime.now().isoformat(),
                 'prediction_history': ph,
-                'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False},
+                'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}},
                 'blended_win_rate': round(blended, 1) if blended is not None else None,
                 'round_actuals': round_actuals
             }
