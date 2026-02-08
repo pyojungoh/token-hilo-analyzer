@@ -3534,10 +3534,16 @@ RESULTS_HTML = '''
                     lastServerPrediction = (sp && (sp.value === '정' || sp.value === '꺽')) ? sp : null;
                     lastWarningU35 = !!(lastServerPrediction && sp && sp.warning_u35);
                     if (lastServerPrediction) {
-                        var normColor = normalizePickColor(lastServerPrediction.color) || lastServerPrediction.color || null;
-                        lastPrediction = { value: lastServerPrediction.value, round: lastServerPrediction.round, prob: lastServerPrediction.prob != null ? lastServerPrediction.prob : 0, color: normColor };
-                        setRoundPrediction(lastServerPrediction.round, lastPrediction);
-                        fetch('/api/round-prediction', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ round: lastServerPrediction.round, predicted: lastServerPrediction.value, pickColor: normColor || lastServerPrediction.color, probability: lastServerPrediction.prob }) }).catch(function() {});
+                        var newRound = lastServerPrediction.round != null ? Number(lastServerPrediction.round) : NaN;
+                        var prevRound = (lastPrediction && lastPrediction.round != null) ? Number(lastPrediction.round) : NaN;
+                        if (isNaN(newRound) || (!isNaN(prevRound) && newRound < prevRound)) {
+                            // 회차가 뒤로 돌아가면 lastPrediction 유지 → RED/BLACK 깜빡임 방지
+                        } else {
+                            var normColor = normalizePickColor(lastServerPrediction.color) || lastServerPrediction.color || null;
+                            lastPrediction = { value: lastServerPrediction.value, round: lastServerPrediction.round, prob: lastServerPrediction.prob != null ? lastServerPrediction.prob : 0, color: normColor };
+                            setRoundPrediction(lastServerPrediction.round, lastPrediction);
+                            fetch('/api/round-prediction', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ round: lastServerPrediction.round, predicted: lastServerPrediction.value, pickColor: normColor || lastServerPrediction.color, probability: lastServerPrediction.prob }) }).catch(function() {});
+                        }
                     }
                     lastResultsUpdate = Date.now();  // 갱신 완료 시점에 폴링 간격 리셋
                     try { CALC_IDS.forEach(function(id) { updateCalcStatus(id); }); } catch (e) {}
