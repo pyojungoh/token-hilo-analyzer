@@ -1748,6 +1748,10 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         pong_chunk_debug['symmetry_windows_used'] = symmetry_windows_used
         pong_chunk_debug['u_shape'] = u35_detected  # U자 구간(연패 많음): 유지 가중치 보정·멈춤 권장
         pong_chunk_debug['balance_phase'] = balance_phase  # 밸런스 구간 전환(transition_to_low/high)
+        pong_chunk_debug['shape_signature'] = _get_shape_signature(results)  # 저장·대조용 모양 코드 (L6,P1,L2…)
+        if shape_win_stats:
+            pong_chunk_debug['shape_jung_count'] = shape_win_stats.get('jung_count')
+            pong_chunk_debug['shape_kkeok_count'] = shape_win_stats.get('kkeok_count')
     return {
         'value': predict, 'round': predicted_round_full, 'prob': round(pred_prob, 1), 'color': color_to_pick,
         'warning_u35': u35_detected,
@@ -2714,6 +2718,14 @@ RESULTS_HTML = '''
             border-top: 1px solid #333;
         }
         .prob-bucket-collapse:not(.collapsed) .prob-bucket-collapse-body { display: block; }
+        /* 모양 판별 등 통합 탭 (가로 탭, 클릭 시 해당 패널만 표시) */
+        .analysis-tabs-wrap { margin-top: 12px; border: 1px solid #444; border-radius: 8px; background: rgba(255,255,255,0.03); overflow: hidden; }
+        .analysis-tabs { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid #444; background: #252525; }
+        .analysis-tab { padding: 10px 14px; cursor: pointer; font-size: 0.95em; color: #aaa; user-select: none; white-space: nowrap; }
+        .analysis-tab:hover { background: rgba(255,255,255,0.06); color: #fff; }
+        .analysis-tab.active { background: #444; color: #fff; font-weight: 600; }
+        .analysis-panel { display: none; padding: 14px 18px; border-top: none; }
+        .analysis-panel.active { display: block; }
         .formula-explanation { font-size: clamp(13px, 1.8vw, 15px); color: #ccc; line-height: 1.55; max-width: 720px; margin: 0 auto; }
         .formula-explanation .formula-intro { margin-bottom: 12px; color: #ddd; }
         .formula-explanation .formula-steps { margin: 0 0 12px 0; padding-left: 1.4em; }
@@ -3157,9 +3169,25 @@ RESULTS_HTML = '''
             <div id="prediction-pick-container"></div>
             <div id="prediction-box" class="prediction-box"></div>
         </div>
-        <div id="formula-collapse" class="prob-bucket-collapse collapsed">
-            <div class="prob-bucket-collapse-header" id="formula-collapse-header" role="button" tabindex="0">예측 픽 계산 공식 (접기/펼치기)</div>
-            <div class="prob-bucket-collapse-body" id="formula-collapse-body">
+        <div class="analysis-tabs-wrap" id="analysis-tabs-wrap">
+            <div class="analysis-tabs" role="tablist">
+                <span class="analysis-tab active" role="tab" data-panel="pong-chunk" aria-selected="true">모양 판별</span>
+                <span class="analysis-tab" role="tab" data-panel="formula">예측 공식</span>
+                <span class="analysis-tab" role="tab" data-panel="graph-stats">승률관리</span>
+                <span class="analysis-tab" role="tab" data-panel="prob-bucket">확률 구간</span>
+                <span class="analysis-tab" role="tab" data-panel="losing-streaks">연패 구간</span>
+                <span class="analysis-tab" role="tab" data-panel="symmetry-line">대칭/줄</span>
+            </div>
+            <div id="panel-pong-chunk" class="analysis-panel active">
+                <div id="pong-chunk-collapse-body" class="prob-bucket-collapse-body">
+                <div id="pong-chunk-section" style="margin-top:0;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
+                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">최근 그래프에서 <strong>줄(유지)</strong>·<strong>퐁당(바뀜)</strong>·<strong>덩어리(블록 반복)</strong>·<strong>U자 구간</strong>을 판별해 가중치에 반영합니다. U자 구간은 연패가 많아 유지 쪽 보정·멈춤 권장. <strong>감지된 모양</strong>은 저장·대조용 코드(L=줄 run 길이, P=퐁당 run 길이, 왼쪽이 최신).</p>
+                    <div id="pong-chunk-data" style="font-size:0.9em;color:#ccc;"><table class="symmetry-line-table" style="width:100%;max-width:420px;"><tbody id="pong-chunk-tbody"><tr><td colspan="2" style="color:#888;">데이터 로딩 후 표시</td></tr></tbody></table></div>
+                </div>
+                </div>
+            </div>
+            <div id="panel-formula" class="analysis-panel">
+                <div id="formula-collapse-body" class="prob-bucket-collapse-body">
                 <div class="formula-explanation">
                     <p class="formula-intro">위에 표시되는 <strong>정/꺽</strong> 예측은 아래 단계로 계산됩니다. (서버와 동일 공식)</p>
                     <ol class="formula-steps">
@@ -3179,11 +3207,10 @@ RESULTS_HTML = '''
                     </ol>
                     <p class="formula-note">※ 15번 카드가 조커면 예측 픽은 보류(배팅 보류). ※ 반픽·승률반픽은 계산기에서만 적용되며, 위 공식은 «정/꺽» 자체의 계산만 설명합니다.</p>
                 </div>
+                </div>
             </div>
-        </div>
-        <div id="graph-stats-collapse" class="prob-bucket-collapse collapsed">
-            <div class="prob-bucket-collapse-header" id="graph-stats-collapse-header" role="button" tabindex="0">승률관리</div>
-            <div class="prob-bucket-collapse-body" id="graph-stats-collapse-body">
+            <div id="panel-graph-stats" class="analysis-panel">
+                <div id="graph-stats-collapse-body" class="prob-bucket-collapse-body">
             <div id="graph-stats" class="graph-stats"></div>
             <div id="win-rate-formula-section" class="win-rate-formula-section" style="margin-top:12px;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
                 <div class="win-rate-formula-title" style="font-weight:bold;color:#81c784;margin-bottom:8px;">합산승률 공식</div>
@@ -3199,15 +3226,13 @@ RESULTS_HTML = '''
                     <p style="font-size:0.75em;color:#888;margin:0;">※ 2연패가 발생한 회차들의 예측확률 범위입니다.</p>
                 </div>
             </div>
-        </div>
-        </div>
-        <div id="prob-bucket-collapse" class="prob-bucket-collapse collapsed">
-            <div class="prob-bucket-collapse-header" id="prob-bucket-collapse-header" role="button" tabindex="0">예측 확률 구간별 승률</div>
-            <div class="prob-bucket-collapse-body" id="prob-bucket-collapse-body"></div>
-        </div>
-        <div id="losing-streaks-collapse" class="prob-bucket-collapse collapsed">
-            <div class="prob-bucket-collapse-header" id="losing-streaks-collapse-header" role="button" tabindex="0">연패 구간</div>
-            <div class="prob-bucket-collapse-body" id="losing-streaks-collapse-body">
+                </div>
+            </div>
+            <div id="panel-prob-bucket" class="analysis-panel">
+                <div id="prob-bucket-collapse-body" class="prob-bucket-collapse-body"></div>
+            </div>
+            <div id="panel-losing-streaks" class="analysis-panel">
+                <div id="losing-streaks-collapse-body" class="prob-bucket-collapse-body">
                 <div id="losing-streaks-section" style="margin-top:8px;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
                     <div style="margin-bottom:12px;padding:8px 10px;background:#2d1f1f;border:1px solid #5d4037;border-radius:6px;">
                         <div style="font-weight:bold;color:#ffab91;margin-bottom:4px;">배팅 자제 구간 (2연패 기준)</div>
@@ -3221,19 +3246,10 @@ RESULTS_HTML = '''
                     <div style="font-weight:bold;color:#b0bec5;margin:12px 0 6px 0;">최근 연패 구간 목록</div>
                     <div id="losing-streaks-list-wrap" style="margin-top:6px;"><table><thead><tr><th>시작 회차</th><th>종료 회차</th><th>연패 수</th><th>평균 예측확률</th></tr></thead><tbody id="losing-streaks-list-tbody"><tr><td colspan="4" style="color:#888;">로딩 중...</td></tr></tbody></table></div>
                 </div>
-            </div>
-        </div>
-        <div id="symmetry-line-collapse" class="prob-bucket-collapse collapsed">
-            <div class="prob-bucket-collapse-header" id="symmetry-line-collapse-header" role="button" tabindex="0">좌우 대칭 / 줄 유사도 (15·20·30열 반영)</div>
-            <div class="prob-bucket-collapse-body" id="symmetry-line-collapse-body"></div>
-        </div>
-        <div id="pong-chunk-collapse" class="prob-bucket-collapse collapsed">
-            <div class="prob-bucket-collapse-header" id="pong-chunk-collapse-header" role="button" tabindex="0">퐁당 / 덩어리 / 줄 / U자 구간 판별</div>
-            <div class="prob-bucket-collapse-body" id="pong-chunk-collapse-body">
-                <div id="pong-chunk-section" style="margin-top:8px;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
-                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">최근 그래프에서 <strong>줄(유지)</strong>·<strong>퐁당(바뀜)</strong>·<strong>덩어리(블록 반복)</strong>·<strong>U자 구간</strong>을 판별해 가중치에 반영합니다. U자 구간은 연패가 많아 유지 쪽 보정·멈춤 권장.</p>
-                    <div id="pong-chunk-data" style="font-size:0.9em;color:#ccc;"><table class="symmetry-line-table" style="width:100%;max-width:420px;"><tbody id="pong-chunk-tbody"><tr><td colspan="2" style="color:#888;">데이터 로딩 후 표시</td></tr></tbody></table></div>
                 </div>
+            </div>
+            <div id="panel-symmetry-line" class="analysis-panel">
+                <div id="symmetry-line-collapse-body" class="prob-bucket-collapse-body"></div>
             </div>
         </div>
         <div class="bet-calc">
@@ -5003,12 +5019,12 @@ RESULTS_HTML = '''
                                     return '<tr><td>' + s.label + '</td><td>' + s.total + '</td><td>' + s.wins + '</td><td class="stat-rate ' + rowClass + '">' + s.pct + '%</td></tr>';
                                 }).join('');
                                 probBucketBody.innerHTML = '<table class="prob-bucket-table"><thead><tr><th>구간</th><th>n</th><th>승</th><th>%</th></tr></thead><tbody>' + bucketRows + '</tbody></table>';
-                                probBucketCollapse.style.display = '';
                             } else {
                                 probBucketBody.innerHTML = '';
-                                probBucketCollapse.style.display = 'none';
                             }
                         }
+                        var analysisTabsWrap = document.getElementById('analysis-tabs-wrap');
+                        if (analysisTabsWrap) analysisTabsWrap.style.display = '';
                         var collapseHeader = document.getElementById('prob-bucket-collapse-header');
                         if (collapseHeader && !collapseHeader.getAttribute('data-bound')) {
                             collapseHeader.setAttribute('data-bound', '1');
@@ -5018,8 +5034,7 @@ RESULTS_HTML = '''
                             });
                         }
                         var symmetryLineBody = document.getElementById('symmetry-line-collapse-body');
-                        var symmetryLineCollapse = document.getElementById('symmetry-line-collapse');
-                        if (symmetryLineBody && symmetryLineCollapse) {
+                        if (symmetryLineBody) {
                             if (symmetryLineData) {
                                 var s = symmetryLineData;
                                 var windowsLabel = (lastPongChunkDebug && Array.isArray(lastPongChunkDebug.symmetry_windows_used) && lastPongChunkDebug.symmetry_windows_used.length)
@@ -5033,10 +5048,8 @@ RESULTS_HTML = '''
                                     '<tr><td>왼쪽 평균 줄길이</td><td>' + s.avgLeft.toFixed(2) + '</td><td>연속 정/꺽 평균</td></tr>' +
                                     '<tr><td>오른쪽 평균 줄길이</td><td>' + s.avgRight.toFixed(2) + '</td><td>연속 정/꺽 평균</td></tr>' +
                                     '<tr><td>줄 유사도</td><td>' + s.lineSimilarityPct.toFixed(1) + '%</td><td>양쪽 평균 줄길이 차이 반영</td></tr></tbody></table>';
-                                symmetryLineCollapse.style.display = '';
                             } else {
                                 symmetryLineBody.innerHTML = '<p style="color:#888;font-size:0.9em">최근 15열 이상(정/꺽) 데이터가 부족합니다.</p>';
-                                symmetryLineCollapse.style.display = '';
                             }
                         }
                         var symmetryLineHeader = document.getElementById('symmetry-line-collapse-header');
@@ -5048,8 +5061,7 @@ RESULTS_HTML = '''
                             });
                         }
                         var pongChunkTbody = document.getElementById('pong-chunk-tbody');
-                        var pongChunkCollapse = document.getElementById('pong-chunk-collapse');
-                        if (pongChunkTbody && pongChunkCollapse) {
+                        if (pongChunkTbody) {
                             var phaseLabels = { 'line_phase': '줄 구간', 'pong_phase': '퐁당 구간', 'chunk_start': '덩어리 막 시작', 'chunk_phase': '덩어리 만드는 중', 'pong_to_chunk': '퐁당→덩어리 전환', 'chunk_to_pong': '덩어리→퐁당 전환' };
                             var phaseLabel = (lastPongChunkPhase && phaseLabels[lastPongChunkPhase]) ? phaseLabels[lastPongChunkPhase] : (lastPongChunkPhase || '—');
                             var segmentLabels = { 'line': '줄', 'pong': '퐁당', 'chunk': '덩어리' };
@@ -5058,16 +5070,23 @@ RESULTS_HTML = '''
                             var segmentLabel = (d.segment_type && segmentLabels[d.segment_type]) ? segmentLabels[d.segment_type] : (d.segment_type || '—');
                             var chunkShapeLabel = (d.chunk_shape && chunkShapeLabels[d.chunk_shape]) ? chunkShapeLabels[d.chunk_shape] : (d.chunk_shape || '—');
                             var uShapeLabel = (d.u_shape === true) ? '감지됨 (유지 가중치↑, 멈춤 권장)' : '—';
+                            var shapeSig = (d.shape_signature && String(d.shape_signature).trim()) ? d.shape_signature : '—';
+                            var shapeStatsLabel = '—';
+                            if (d.shape_jung_count != null && d.shape_kkeok_count != null) {
+                                var j = Number(d.shape_jung_count) || 0, k = Number(d.shape_kkeok_count) || 0;
+                                shapeStatsLabel = '다음 정 ' + j + '회, 꺽 ' + k + '회 (저장된 통계)';
+                            }
                             var rows = '<tr><td>판별 구간</td><td>' + phaseLabel + '</td></tr>' +
                                 '<tr><td>구간 유형</td><td>' + segmentLabel + '</td></tr>' +
                                 '<tr><td>덩어리 모양</td><td>' + chunkShapeLabel + '</td></tr>' +
                                 '<tr><td>U자 구간</td><td>' + uShapeLabel + '</td></tr>' +
+                                '<tr><td><strong>감지된 모양(시그니처)</strong></td><td><code style="font-size:0.9em">' + shapeSig + '</code></td></tr>' +
+                                '<tr><td>모양별 다음 결과 통계</td><td>' + shapeStatsLabel + '</td></tr>' +
                                 '<tr><td>맨 앞 run 타입</td><td>' + (d.first_run_type || '—') + '</td></tr>' +
                                 '<tr><td>맨 앞 run 길이</td><td>' + (d.first_run_len != null ? d.first_run_len : '—') + '</td></tr>' +
                                 '<tr><td>최근 15개 퐁당%</td><td>' + (d.pong_pct_short != null ? d.pong_pct_short.toFixed(1) + '%' : '—') + '</td></tr>' +
                                 '<tr><td>직전 15개 퐁당%</td><td>' + (d.pong_pct_prev != null ? d.pong_pct_prev.toFixed(1) + '%' : '—') + '</td></tr>';
                             pongChunkTbody.innerHTML = rows;
-                            pongChunkCollapse.style.display = '';
                         }
                         var pongChunkHeader = document.getElementById('pong-chunk-collapse-header');
                         if (pongChunkHeader && !pongChunkHeader.getAttribute('data-bound')) {
@@ -5077,8 +5096,6 @@ RESULTS_HTML = '''
                                 if (el) el.classList.toggle('collapsed');
                             });
                         }
-                        var graphStatsCollapse = document.getElementById('graph-stats-collapse');
-                        if (graphStatsCollapse) graphStatsCollapse.style.display = '';
                         (function loadWinRateBuckets() {
                             var tbody = document.getElementById('win-rate-buckets-tbody');
                             if (!tbody) return;
@@ -5136,8 +5153,6 @@ RESULTS_HTML = '''
                                 if (msgEl2) { msgEl2.textContent = failText; msgEl2.style.color = '#888'; }
                             });
                         })();
-                        var formulaCollapse = document.getElementById('formula-collapse');
-                        if (formulaCollapse) formulaCollapse.style.display = '';
                         var graphStatsCollapseHeader = document.getElementById('graph-stats-collapse-header');
                         if (graphStatsCollapseHeader && !graphStatsCollapseHeader.getAttribute('data-bound')) {
                             graphStatsCollapseHeader.setAttribute('data-bound', '1');
@@ -5229,20 +5244,14 @@ RESULTS_HTML = '''
                     const pickEmpty = document.getElementById('prediction-pick-container');
                     const predDivEmpty = document.getElementById('prediction-box');
                     const probBucketBodyEmpty = document.getElementById('prob-bucket-collapse-body');
-                    const probBucketCollapseEmpty = document.getElementById('prob-bucket-collapse');
                     const symmetryLineBodyEmpty = document.getElementById('symmetry-line-collapse-body');
-                    const symmetryLineCollapseEmpty = document.getElementById('symmetry-line-collapse');
-                    const graphStatsCollapseEmpty = document.getElementById('graph-stats-collapse');
+                    const analysisTabsWrapEmpty = document.getElementById('analysis-tabs-wrap');
                     if (resultBarEmpty) resultBarEmpty.innerHTML = '';
                     if (pickEmpty) pickEmpty.innerHTML = '';
                     if (predDivEmpty) predDivEmpty.innerHTML = '';
                     if (probBucketBodyEmpty) probBucketBodyEmpty.innerHTML = '';
-                    if (probBucketCollapseEmpty) probBucketCollapseEmpty.style.display = 'none';
                     if (symmetryLineBodyEmpty) symmetryLineBodyEmpty.innerHTML = '';
-                    if (symmetryLineCollapseEmpty) symmetryLineCollapseEmpty.style.display = 'none';
-                    if (graphStatsCollapseEmpty) graphStatsCollapseEmpty.style.display = 'none';
-                    var formulaCollapseEmpty = document.getElementById('formula-collapse');
-                    if (formulaCollapseEmpty) formulaCollapseEmpty.style.display = 'none';
+                    if (analysisTabsWrapEmpty) analysisTabsWrapEmpty.style.display = 'none';
                 }
                 } catch (renderErr) {
                     if (statusEl) statusEl.textContent = '표시 오류 - 새로고침 해 주세요';
@@ -5849,6 +5858,18 @@ RESULTS_HTML = '''
                 if (logPanel) logPanel.classList.toggle('active', t === 'log');
                 if (pauseGuidePanel) pauseGuidePanel.classList.toggle('active', t === 'pause-guide');
                 if (t === 'pause-guide' && typeof renderPauseGuideTable === 'function') renderPauseGuideTable();
+            });
+        });
+        document.querySelectorAll('#analysis-tabs-wrap .analysis-tab').forEach(function(tab) {
+            tab.addEventListener('click', function() {
+                var panelId = this.getAttribute('data-panel');
+                if (!panelId) return;
+                document.querySelectorAll('#analysis-tabs-wrap .analysis-tab').forEach(function(x) { x.classList.remove('active'); x.removeAttribute('aria-selected'); });
+                document.querySelectorAll('#analysis-tabs-wrap .analysis-panel').forEach(function(p) { p.classList.remove('active'); });
+                this.classList.add('active');
+                this.setAttribute('aria-selected', 'true');
+                var panel = document.getElementById('panel-' + panelId);
+                if (panel) panel.classList.add('active');
             });
         });
         document.getElementById('bet-log-clear-all')?.addEventListener('click', function() {
