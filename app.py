@@ -326,8 +326,9 @@ def save_game_result(game_data):
         return False
 
 
-def save_prediction_record(round_num, predicted, actual, probability=None, pick_color=None):
-    """시스템 예측 기록 1건 저장. 해당 회차 직전 이력으로 합산승률(blended_win_rate) 계산 후 저장."""
+def save_prediction_record(round_num, predicted, actual, probability=None, pick_color=None, results=None):
+    """시스템 예측 기록 1건 저장. 해당 회차 직전 이력으로 합산승률(blended_win_rate) 계산 후 저장.
+    results가 제공되면 shape_signature를 계산하여 prediction_details에 저장."""
     if not DB_AVAILABLE or not DATABASE_URL:
         return False
     conn = get_db_connection(statement_timeout_sec=5)
@@ -340,15 +341,38 @@ def save_prediction_record(round_num, predicted, actual, probability=None, pick_
         comp = _blended_win_rate_components(history_before)
         if comp:
             r15_val, r30_val, r100_val, blended_val = comp
+        
+        # shape_signature 계산 (results가 제공되고 충분한 길이일 때)
+        shape_sig = None
+        prediction_details = None
+        if results and len(results) >= 16:
+            # 현재 회차를 제외한 이전 결과들로 shape_signature 계산
+            sig = _get_shape_signature(results)
+            if sig:
+                shape_sig = sig
+                prediction_details = json.dumps({'shape_signature': shape_sig})
+        
         cur = conn.cursor()
-        cur.execute('''
-            INSERT INTO prediction_history (round_num, predicted, actual, probability, pick_color, blended_win_rate, rate_15, rate_30, rate_100)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (round_num) DO UPDATE SET predicted = EXCLUDED.predicted, actual = EXCLUDED.actual,
-                probability = EXCLUDED.probability, pick_color = EXCLUDED.pick_color,
-                blended_win_rate = EXCLUDED.blended_win_rate, rate_15 = EXCLUDED.rate_15, rate_30 = EXCLUDED.rate_30, rate_100 = EXCLUDED.rate_100, created_at = DEFAULT
-        ''', (int(round_num), str(predicted), str(actual), float(probability) if probability is not None else None, str(pick_color) if pick_color else None,
-             round(blended_val, 1) if blended_val is not None else None, round(r15_val, 1) if r15_val is not None else None, round(r30_val, 1) if r30_val is not None else None, round(r100_val, 1) if r100_val is not None else None))
+        if prediction_details:
+            cur.execute('''
+                INSERT INTO prediction_history (round_num, predicted, actual, probability, pick_color, blended_win_rate, rate_15, rate_30, rate_100, prediction_details)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                ON CONFLICT (round_num) DO UPDATE SET predicted = EXCLUDED.predicted, actual = EXCLUDED.actual,
+                    probability = EXCLUDED.probability, pick_color = EXCLUDED.pick_color,
+                    blended_win_rate = EXCLUDED.blended_win_rate, rate_15 = EXCLUDED.rate_15, rate_30 = EXCLUDED.rate_30, rate_100 = EXCLUDED.rate_100,
+                    prediction_details = EXCLUDED.prediction_details, created_at = DEFAULT
+            ''', (int(round_num), str(predicted), str(actual), float(probability) if probability is not None else None, str(pick_color) if pick_color else None,
+                 round(blended_val, 1) if blended_val is not None else None, round(r15_val, 1) if r15_val is not None else None, round(r30_val, 1) if r30_val is not None else None, round(r100_val, 1) if r100_val is not None else None,
+                 prediction_details))
+        else:
+            cur.execute('''
+                INSERT INTO prediction_history (round_num, predicted, actual, probability, pick_color, blended_win_rate, rate_15, rate_30, rate_100)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (round_num) DO UPDATE SET predicted = EXCLUDED.predicted, actual = EXCLUDED.actual,
+                    probability = EXCLUDED.probability, pick_color = EXCLUDED.pick_color,
+                    blended_win_rate = EXCLUDED.blended_win_rate, rate_15 = EXCLUDED.rate_15, rate_30 = EXCLUDED.rate_30, rate_100 = EXCLUDED.rate_100, created_at = DEFAULT
+            ''', (int(round_num), str(predicted), str(actual), float(probability) if probability is not None else None, str(pick_color) if pick_color else None,
+                 round(blended_val, 1) if blended_val is not None else None, round(r15_val, 1) if r15_val is not None else None, round(r30_val, 1) if r30_val is not None else None, round(r100_val, 1) if r100_val is not None else None))
         conn.commit()
         cur.close()
         conn.close()
@@ -736,9 +760,17 @@ def _apply_results_to_calcs(results):
                         pick_color_for_record = '빨강'
                     elif pending_predicted == '꺽':
                         pick_color_for_record = '검정'
+                # 예측 시점의 shape_signature를 계산하기 위해 pending_round를 제외한 이전 결과 사용
+                results_for_shape = None
+                if results and len(results) >= 16:
+                    # pending_round 이후의 결과들을 제외하고, pending_round 직전까지의 결과만 사용
+                    filtered_results = [r for r in results if int(str(r.get('gameID', '0')), 10) < pending_round]
+                    if len(filtered_results) >= 16:
+                        results_for_shape = filtered_results
                 save_prediction_record(
                     pending_round, pred_for_record, actual,
-                    probability=c.get('pending_prob'), pick_color=pick_color_for_record or c.get('pending_color')
+                    probability=c.get('pending_prob'), pick_color=pick_color_for_record or c.get('pending_color'),
+                    results=results_for_shape
                 )
                 # 계산기 히스토리·표시용: 배팅한 픽(반픽/승률반픽 적용)
                 pred_for_calc = pending_predicted
@@ -966,7 +998,14 @@ def _merge_round_predictions_into_history(round_actuals, results=None):
                 continue
             cur.close()
             conn.close()
-            save_prediction_record(rnd, pred_val, actual, probability=prob, pick_color=pick_color)
+            # 예측 시점의 shape_signature를 계산하기 위해 rnd를 제외한 이전 결과 사용
+            results_for_shape = None
+            if results and len(results) >= 16:
+                # rnd 이후의 결과들을 제외하고, rnd 직전까지의 결과만 사용
+                filtered_results = [r for r in results if int(str(r.get('gameID', '0')), 10) < rnd]
+                if len(filtered_results) >= 16:
+                    results_for_shape = filtered_results
+            save_prediction_record(rnd, pred_val, actual, probability=prob, pick_color=pick_color, results=results_for_shape)
             if results and len(results) >= 17 and str(results[0].get('gameID')) == str(rnd):
                 sig = _get_shape_signature(results[1:])
                 if sig:
@@ -1016,7 +1055,8 @@ def _backfill_latest_round_to_prediction_history(results):
             return
         save_prediction_record(
             latest_round, pred['value'], actual,
-            probability=pred.get('prob'), pick_color=pred.get('color')
+            probability=pred.get('prob'), pick_color=pred.get('color'),
+            results=results[1:] if results and len(results) > 1 else None
         )
         sig = _get_shape_signature(results[1:])
         if sig and DB_AVAILABLE and DATABASE_URL:
