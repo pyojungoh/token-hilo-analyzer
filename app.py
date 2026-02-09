@@ -4120,9 +4120,10 @@ RESULTS_HTML = '''
         async function loadCalcStateFromServer(restoreUi) {
             try {
                 if (restoreUi === undefined) restoreUi = true;
-                // session_id 있으면 서버가 DB에서 해당 세션 상태 조회 → 새로고침/재접속 시 저장한 회차·실행 상태 복원
-                const session_id = localStorage.getItem(CALC_SESSION_KEY);
-                const url = session_id ? '/api/calc-state?session_id=' + encodeURIComponent(session_id) : '/api/calc-state';
+                // 항상 공용 세션만 사용 → 모바일/다른 PC에서 열어도 같은 진행 중 계산기 표시
+                try { localStorage.setItem(CALC_SESSION_KEY, 'default'); } catch (e) {}
+                const session_id = 'default';
+                const url = '/api/calc-state?session_id=' + encodeURIComponent(session_id);
                 const res = await fetch(url, { cache: 'no-cache' });
                 const data = await res.json();
                 if (data.session_id) localStorage.setItem(CALC_SESSION_KEY, data.session_id);
@@ -4145,16 +4146,7 @@ RESULTS_HTML = '''
         }
         async function saveCalcStateToServer() {
             try {
-                let session_id = localStorage.getItem(CALC_SESSION_KEY);
-                if (!session_id) {
-                    const res = await fetch('/api/calc-state', { cache: 'no-cache' });
-                    const data = await res.json();
-                    if (data.session_id) {
-                        localStorage.setItem(CALC_SESSION_KEY, data.session_id);
-                        session_id = data.session_id;
-                    }
-                }
-                if (!session_id) return;
+                const session_id = 'default';
                 const payload = buildCalcPayload();
                 try {
                     localStorage.setItem(CALC_STATE_BACKUP_KEY, JSON.stringify(payload));
@@ -7265,12 +7257,14 @@ def api_calc_state():
     try:
         server_time = int(time.time())
         if request.method == 'GET':
-            # session_id 있으면 DB에서 조회 → 새로고침/모바일·PC 동일 세션에서 저장한 값 복원
+            # session_id 없으면 공용 세션 'default' 사용 → 모바일/PC/다른 기기에서 열어도 같은 진행 중 계산기 상태 표시
             session_id = request.args.get('session_id', '').strip() or None
             if not session_id:
-                session_id = uuid.uuid4().hex
-                save_calc_state(session_id, {})
+                session_id = 'default'
             state = get_calc_state(session_id)
+            if state is None and session_id == 'default':
+                save_calc_state(session_id, {})
+                state = {}
             if state is None:
                 state = {}
             # 계산기 1,2,3만 반환 (레거시 defense 제거 후 클라이언트 호환)
@@ -7293,7 +7287,7 @@ def api_calc_state():
         data = request.get_json(force=True, silent=True) or {}
         session_id = (data.get('session_id') or '').strip()
         if not session_id:
-            session_id = uuid.uuid4().hex
+            session_id = 'default'
         calcs = data.get('calcs') or {}
         # 순익계산기 안정화: 서버에 저장된 history가 더 길면 유지 (클라이언트 덮어쓰기로 누락 방지)
         current_state = get_calc_state(session_id) or {}
