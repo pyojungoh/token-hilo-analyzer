@@ -4391,9 +4391,12 @@ RESULTS_HTML = '''
                                     var isNoBetJ = !!(calcState[id].paused || rowJ.no_bet);
                                     rowJ.no_bet = isNoBetJ;
                                     rowJ.betAmount = isNoBetJ ? 0 : (rowJ.betAmount != null ? rowJ.betAmount : undefined);
+                                    if (!rowJ.originalPredicted && predForRecord && predForRecord.value) rowJ.originalPredicted = predForRecord.value;
+                                    if (rowJ.warningWinRate == null && typeof blended === 'number') rowJ.warningWinRate = blended;
                                 } else {
                                     var noBetJoker = !!(calcState[id].paused);
-                                    calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null, betAmount: noBetJoker ? 0 : undefined, no_bet: noBetJoker });
+                                    var originalPredJoker = (predForRecord && predForRecord.value) ? predForRecord.value : pred;
+                                    calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null, betAmount: noBetJoker ? 0 : undefined, no_bet: noBetJoker, originalPredicted: originalPredJoker, warningWinRate: typeof blended === 'number' ? blended : null });
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
@@ -4437,9 +4440,12 @@ RESULTS_HTML = '''
                                     var isNoBet = !!(calcState[id].paused || row.no_bet);
                                     row.no_bet = isNoBet;
                                     row.betAmount = isNoBet ? 0 : (row.betAmount != null ? row.betAmount : undefined);
+                                    if (!row.originalPredicted && predForRecord && predForRecord.value) row.originalPredicted = predForRecord.value;
+                                    if (row.warningWinRate == null && typeof blended === 'number') row.warningWinRate = blended;
                                 } else {
                                     var noBetPush = !!(calcState[id].paused);
-                                    calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null, betAmount: noBetPush ? 0 : undefined, no_bet: noBetPush });
+                                    var originalPredActual = (predForRecord && predForRecord.value) ? predForRecord.value : pred;
+                                    calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null, betAmount: noBetPush ? 0 : undefined, no_bet: noBetPush, originalPredicted: originalPredActual, warningWinRate: typeof blended === 'number' ? blended : null });
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + currentRoundFull + '_' + actual;
@@ -4502,9 +4508,12 @@ RESULTS_HTML = '''
                                     var isNoBetJ2 = !!(calcState[id].paused || rowJ2.no_bet);
                                     rowJ2.no_bet = isNoBetJ2;
                                     rowJ2.betAmount = isNoBetJ2 ? 0 : (rowJ2.betAmount != null ? rowJ2.betAmount : undefined);
+                                    if (!rowJ2.originalPredicted && predForRecord && predForRecord.value) rowJ2.originalPredicted = predForRecord.value;
+                                    if (rowJ2.warningWinRate == null && typeof blended === 'number') rowJ2.warningWinRate = blended;
                                 } else if (!calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) {
                                     var noBetJoker2 = !!(calcState[id].paused);
-                                    calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null, betAmount: noBetJoker2 ? 0 : undefined, no_bet: noBetJoker2 });
+                                    var originalPredJoker2 = (predForRecord && predForRecord.value) ? predForRecord.value : pred;
+                                    calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null, betAmount: noBetJoker2 ? 0 : undefined, no_bet: noBetJoker2, originalPredicted: originalPredJoker2, warningWinRate: typeof blended === 'number' ? blended : null });
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
@@ -4543,9 +4552,12 @@ RESULTS_HTML = '''
                                     var isNoBet3 = !!(calcState[id].paused || row3.no_bet);
                                     row3.no_bet = isNoBet3;
                                     row3.betAmount = isNoBet3 ? 0 : (row3.betAmount != null ? row3.betAmount : undefined);
+                                    if (!row3.originalPredicted && predForRecord && predForRecord.value) row3.originalPredicted = predForRecord.value;
+                                    if (row3.warningWinRate == null && typeof blended === 'number') row3.warningWinRate = blended;
                                 } else if (!calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) {
                                     var noBetPush3 = !!(calcState[id].paused);
-                                    calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null, betAmount: noBetPush3 ? 0 : undefined, no_bet: noBetPush3 });
+                                    var originalPredActual3 = (predForRecord && predForRecord.value) ? predForRecord.value : pred;
+                                    calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null, betAmount: noBetPush3 ? 0 : undefined, no_bet: noBetPush3, originalPredicted: originalPredActual3, warningWinRate: typeof blended === 'number' ? blended : null });
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + currentRoundFull + '_' + actual;
@@ -5638,7 +5650,8 @@ RESULTS_HTML = '''
                             if (!hasRound && (betForThisRound > 0 || calcState[id].paused)) {
                                 var isNoBet = pausedAtStart || !!calcState[id].paused;
                                 var amt = isNoBet ? 0 : betForThisRound;
-                                calcState[id].history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: amt, no_bet: isNoBet, actual: 'pending' });
+                                var originalPredPending = predictionText || bettingText;
+                                calcState[id].history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: amt, no_bet: isNoBet, actual: 'pending', originalPredicted: originalPredPending, warningWinRate: typeof blended === 'number' ? blended : null });
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 saveCalcStateToServer();
                                 updateCalcDetail(id);
@@ -5802,6 +5815,9 @@ RESULTS_HTML = '''
                 const roundStr = h.round != null ? String(h.round) : '-';
                 const pickVal = h.predicted === '정' ? '정' : '꺽';
                 const pickClass = (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : 'pick-kkuk')));
+                const originalPredVal = (h.originalPredicted === '정' || h.originalPredicted === '꺽') ? h.originalPredicted : (pickVal || '-');
+                const originalPredClass = (originalPredVal === '정' ? 'pick-jung' : (originalPredVal === '꺽' ? 'pick-kkuk' : ''));
+                const warningWinRateVal = (typeof h.warningWinRate === 'number' && !isNaN(h.warningWinRate)) ? h.warningWinRate.toFixed(1) + '%' : '-';
                 var betStr, profitStr, res, outcome, resultClass, outClass;
                 if (h.actual === 'pending') {
                     var amt = (h.no_bet === true || !h.betAmount) ? 0 : (h.betAmount > 0 ? h.betAmount : 0);
@@ -5821,20 +5837,20 @@ RESULTS_HTML = '''
                     resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
                     outClass = outcome === '승' ? 'win' : outcome === '패' ? 'lose' : outcome === '조' ? 'joker' : 'skip';
                 }
-                rows.push({ roundStr: roundStr, roundNum: !isNaN(rn) ? rn : null, pick: pickVal, pickClass: pickClass, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr, outClass: outClass });
+                rows.push({ roundStr: roundStr, roundNum: !isNaN(rn) ? rn : null, pick: pickVal, pickClass: pickClass, originalPredicted: originalPredVal, originalPredClass: originalPredClass, warningWinRate: warningWinRateVal, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr, outClass: outClass });
             }
             const displayRows = rows.slice(0, 50);
             if (tableWrap) {
                 if (displayRows.length === 0) {
                     tableWrap.innerHTML = '';
                 } else {
-                    let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽</th><th>배팅금액</th><th>수익</th><th>승패</th></tr></thead><tbody>';
+                    let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽</th><th>예측픽</th><th>경고승률</th><th>배팅금액</th><th>수익</th><th>승패</th></tr></thead><tbody>';
                     displayRows.forEach(function(row) {
                         const outClass = row.outClass || (row.outcome === '승' ? 'win' : row.outcome === '패' ? 'lose' : row.outcome === '조' ? 'joker' : 'skip');
                         const profitClass = (typeof row.profit === 'number' && row.profit > 0) || (typeof row.profit === 'string' && row.profit.indexOf('+') === 0) ? 'profit-plus' : (typeof row.profit === 'number' && row.profit < 0) || (typeof row.profit === 'string' && row.profit.indexOf('-') === 0 && row.profit !== '-') ? 'profit-minus' : '';
                         var roundTdClass = (row.roundNum != null) ? 'calc-td-round-' + getRoundIconType(row.roundNum) : '';
                         var roundCellHtml = (row.roundNum != null) ? (String(row.roundNum) + getRoundIconHtml(row.roundNum)) : row.roundStr;
-                        tbl += '<tr><td class="' + roundTdClass + '">' + roundCellHtml + '</td><td class="' + row.pickClass + '">' + row.pick + '</td><td class="calc-td-bet">' + row.betAmount + '</td><td class="calc-td-profit ' + profitClass + '">' + row.profit + '</td><td class="' + outClass + '">' + row.outcome + '</td></tr>';
+                        tbl += '<tr><td class="' + roundTdClass + '">' + roundCellHtml + '</td><td class="' + row.pickClass + '">' + row.pick + '</td><td class="' + (row.originalPredClass || '') + '">' + (row.originalPredicted || '-') + '</td><td class="calc-td-warning-rate">' + (row.warningWinRate || '-') + '</td><td class="calc-td-bet">' + row.betAmount + '</td><td class="calc-td-profit ' + profitClass + '">' + row.profit + '</td><td class="' + outClass + '">' + row.outcome + '</td></tr>';
                     });
                     tbl += '</tbody></table>';
                     tableWrap.innerHTML = tbl;
