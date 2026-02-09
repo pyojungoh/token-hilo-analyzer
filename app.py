@@ -3982,21 +3982,27 @@ RESULTS_HTML = '''
             const fullRestore = restoreUi === true;
             CALC_IDS.forEach(id => {
                 const c = calcs[String(id)] || {};
-                // 실행 중일 때는 서버 폴링이 로컬 history를 덮어쓰지 않도록 유지 (결과 행 나왔다 사라지는 현상 방지)
+                // 실행 중일 때: 일반 폴링에서는 로컬 유지(깜빡임 방지). 서버가 로컬보다 많을 때만 서버 적용(창 내렸다 올렸을 때 계산기표 복구)
                 const serverRunning = !!c.running;
                 const localRunning = !!(calcState[id] && calcState[id].running);
-                if (localRunning && serverRunning) {
-                    // 로컬·서버 모두 실행 중 → history는 로컬 유지, 나머지 필드만 서버로 갱신
-                } else if (Array.isArray(c.history)) {
+                if (Array.isArray(c.history)) {
                     var raw = c.history.slice(-50000);
                     raw.forEach(function(h) {
                         if (!h) return;
                         if (h.no_bet === true) h.betAmount = 0;
                         if (h.betAmount === 0) h.no_bet = true;
                     });
-                    calcState[id].history = dedupeCalcHistoryByRound(raw);
+                    var serverDeduped = dedupeCalcHistoryByRound(raw);
+                    var localLen = (calcState[id].history || []).length;
+                    if (localRunning && serverRunning) {
+                        if (serverDeduped.length > localLen) {
+                            calcState[id].history = serverDeduped;
+                        }
+                    } else {
+                        calcState[id].history = serverDeduped;
+                    }
                 } else {
-                    calcState[id].history = [];
+                    if (!(localRunning && serverRunning)) calcState[id].history = [];
                 }
                 calcState[id].running = !!c.running;
                 calcState[id].started_at = c.started_at || 0;
@@ -6698,6 +6704,22 @@ RESULTS_HTML = '''
                 // 백그라운드로 갈 때 느린 간격으로 재설정
                 setupIntervals();
             }
+        });
+        
+        // 창을 다시 올렸을 때(탭 전환 없이 최소화/다른 창 위로만 했을 때) 동기화 — visibilitychange는 탭 전환 시에만 발생
+        var lastFocusSyncAt = 0;
+        window.addEventListener('focus', function() {
+            if (document.hidden) return;
+            var now = Date.now();
+            if (now - lastFocusSyncAt < 2500) return;
+            lastFocusSyncAt = now;
+            lastResultsUpdate = 0;
+            setupIntervals();
+            loadResults().then(function() {
+                return loadCalcStateFromServer(false);
+            }).then(function() {
+                if (typeof updateAllCalcs === 'function') updateAllCalcs();
+            }).catch(function(e) { console.warn('focus 동기화:', e); });
         });
     </script>
 </body>
