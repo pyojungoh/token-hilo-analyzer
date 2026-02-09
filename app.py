@@ -4345,7 +4345,6 @@ RESULTS_HTML = '''
                         }
                     }
                     lastResultsUpdate = Date.now();  // 갱신 완료 시점에 폴링 간격 리셋
-                    try { CALC_IDS.forEach(function(id) { updateCalcStatus(id); }); } catch (e) {}
                 }
                 
                 // resultsUpdated가 false면 DOM 갱신 생략 (데이터 없을 때만)
@@ -4358,6 +4357,9 @@ RESULTS_HTML = '''
                 // 맨 왼쪽 = 최신 회차: 서버·클라이언트 모두 gameID 내림차순 정렬 완료. index 0이 최신.
                 const displayResults = allResults.slice(0, 15);
                 const results = allResults;  // 비교를 위해 전체 결과 사용
+                // 픽/보류 깜빡임 방지: lastIs15Joker를 먼저 갱신한 뒤 계산기 카드·POST 갱신 (이전 값으로 보류/픽 뒤바뀌는 것 방지)
+                lastIs15Joker = (displayResults.length >= 15 && !!displayResults[14].joker);
+                try { CALC_IDS.forEach(function(id) { updateCalcStatus(id); }); } catch (e) {}
                 
                 // 이전회차·상태를 맨 앞에서 먼저 적용 (아래 예측/그래프 블록에서 예외 나도 화면에 현재 회차 반영)
                 if (displayResults.length > 0) {
@@ -6767,11 +6769,11 @@ RESULTS_HTML = '''
             if (calcStatePollIntervalId) clearInterval(calcStatePollIntervalId);
             if (timerUpdateIntervalId) clearInterval(timerUpdateIntervalId);
             
-            // 탭 가시성에 따라 간격 조정
-            var resultsInterval = isTabVisible ? 250 : 1000;
-            var calcStatusInterval = isTabVisible ? 300 : 1000;
-            var calcStateInterval = isTabVisible ? 2000 : 3000;
-            var timerInterval = isTabVisible ? 200 : 1000;
+            // 탭 가시성에 따라 간격 조정 (과도한 폴링으로 픽 깜빡임·버벅임 방지)
+            var resultsInterval = isTabVisible ? 400 : 1000;
+            var calcStatusInterval = isTabVisible ? 600 : 1000;
+            var calcStateInterval = isTabVisible ? 2500 : 3000;
+            var timerInterval = isTabVisible ? 300 : 1000;
             
             // 결과 폴링: 분당 4게임(15초 사이클) 기준. 계산기 실행 중이면 250ms로 빠르게 해서 회차 놓침 방지
             // 백그라운드일 때는 브라우저 제한(최소 1초)을 고려해 간격 조정
@@ -6780,14 +6782,14 @@ RESULTS_HTML = '''
                 const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
                 const criticalPhase = r <= 3 || r >= 8;
                 // 백그라운드일 때는 최소 1초 간격, 보일 때는 기존 간격
-                const baseInterval = allResults.length === 0 ? 500 : (anyRunning ? 250 : (criticalPhase ? 400 : 500));
+                const baseInterval = allResults.length === 0 ? 500 : (anyRunning ? 400 : (criticalPhase ? 500 : 600));
                 const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
                 if (Date.now() - lastResultsUpdate > interval) {
                     loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
                 }
             }, resultsInterval);
             
-            // 계산기 실행 중: 0.3초마다 픽을 서버로 전송 → 매크로가 회차 놓치지 않도록 (분당 4게임 15초 사이클 대응)
+            // 계산기 실행 중: 픽 갱신은 loadResults 완료 시에도 하므로 0.6초 간격으로 완화 (깜빡임·부하 감소)
             // 백그라운드일 때는 1초 간격으로 조정 (브라우저 제한)
             calcStatusPollIntervalId = setInterval(() => {
                 const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);

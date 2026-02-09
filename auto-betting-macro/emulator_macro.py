@@ -275,7 +275,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("에뮬레이터 자동배팅 (LDPlayer)")
-        self.setMinimumSize(420, 700)
+        self.setMinimumSize(420, 860)
+        self.resize(440, 900)
 
         self._analyzer_url = ""
         self._calculator_id = 1
@@ -344,9 +345,19 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         # 설정
         g_set = QGroupBox("설정")
         fl = QFormLayout()
+        # 닉네임 선택 시 해당 분석기 주소 자동 설정 (API는 루트 주소 사용)
+        self._analyzer_nick_urls = {
+            "표마왕": "https://web-production-3f4f0.up.railway.app",
+            "규지니": "https://web-production-28c2.up.railway.app",
+        }
+        self.analyzer_nick_combo = QComboBox()
+        self.analyzer_nick_combo.addItem("표마왕")
+        self.analyzer_nick_combo.addItem("규지니")
+        self.analyzer_nick_combo.currentTextChanged.connect(self._on_analyzer_nick_changed)
+        fl.addRow("분석기(닉네임):", self.analyzer_nick_combo)
         self.analyzer_url_edit = QLineEdit()
-        self.analyzer_url_edit.setText("https://web-production-fa2dd.up.railway.app")
-        self.analyzer_url_edit.setPlaceholderText("Analyzer 결과 페이지 주소")
+        self.analyzer_url_edit.setText(self._analyzer_nick_urls.get("표마왕", ""))
+        self.analyzer_url_edit.setPlaceholderText("닉네임 선택 또는 직접 입력")
         fl.addRow("Analyzer URL:", self.analyzer_url_edit)
 
         self.calc_combo = QComboBox()
@@ -357,6 +368,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         connect_row = QHBoxLayout()
         connect_row.setContentsMargins(0, 4, 0, 4)
         self.connect_btn = QPushButton("Analyzer 연결")
+        self.connect_btn.setMinimumHeight(28)
         self.connect_btn.clicked.connect(self._on_connect_analyzer)
         self.connect_status_label = QLabel("")
         self.connect_status_label.setStyleSheet("color: #666; font-size: 11px;")
@@ -373,13 +385,17 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         fl.addRow("ADB 기기:", self.device_edit)
         adb_btn_row = QHBoxLayout()
         self.adb_test_btn = QPushButton("배팅금액 테스트 (5000원)")
+        self.adb_test_btn.setMinimumHeight(28)
         self.adb_test_btn.setToolTip("배팅금액 칸을 탭한 뒤 5000을 입력해, 금액이 제대로 들어가는지 확인합니다.")
         self.adb_test_btn.clicked.connect(self._on_adb_test_tap)
         self.adb_red_btn = QPushButton("레드 1회 탭")
+        self.adb_red_btn.setMinimumHeight(28)
         self.adb_red_btn.clicked.connect(lambda: self._on_adb_color_tap("red"))
         self.adb_black_btn = QPushButton("블랙 1회 탭")
+        self.adb_black_btn.setMinimumHeight(28)
         self.adb_black_btn.clicked.connect(lambda: self._on_adb_color_tap("black"))
         self.adb_devices_btn = QPushButton("ADB 연결 확인")
+        self.adb_devices_btn.setMinimumHeight(28)
         self.adb_devices_btn.clicked.connect(self._on_adb_devices)
         adb_btn_row.addWidget(self.adb_test_btn)
         adb_btn_row.addWidget(self.adb_red_btn)
@@ -428,12 +444,12 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         win_row.addWidget(self.window_left_edit)
         win_row.addWidget(self.window_top_edit)
         self.window_capture_btn = QPushButton("창 왼쪽 위 잡기")
-        self.window_capture_btn.setMinimumHeight(36)
+        self.window_capture_btn.setMinimumHeight(28)
         self.window_capture_btn.setToolTip("클릭 후 LDPlayer 창의 왼쪽 위 모서리를 한 번 클릭하면 X, Y가 자동 저장됩니다.")
         self.window_capture_btn.clicked.connect(lambda: self._start_coord_capture("window_topleft"))
         win_row.addWidget(self.window_capture_btn)
         self.window_save_btn = QPushButton("창 위치 저장")
-        self.window_save_btn.setMinimumHeight(36)
+        self.window_save_btn.setMinimumHeight(28)
         self.window_save_btn.clicked.connect(self._save_window_offset)
         win_row.addWidget(self.window_save_btn)
         win_row.addWidget(QLabel("(0,0이면 비움)"))
@@ -508,8 +524,10 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         # 시작 / 중지
         btn_row = QHBoxLayout()
         self.start_btn = QPushButton("시작 (다음 픽부터 배팅)")
+        self.start_btn.setMinimumHeight(32)
         self.start_btn.clicked.connect(self._on_start)
         self.stop_btn = QPushButton("중지")
+        self.stop_btn.setMinimumHeight(32)
         self.stop_btn.clicked.connect(self._on_stop)
         self.stop_btn.setEnabled(False)
         btn_row.addWidget(self.start_btn)
@@ -849,11 +867,16 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 self.test_tap_done.emit(btn, restore, msg)
         threading.Thread(target=run, daemon=True).start()
 
+    def _on_analyzer_nick_changed(self, nick):
+        """닉네임 선택 시 Analyzer URL 입력란에 해당 주소 설정 (API용 루트 주소)."""
+        if nick and nick in self._analyzer_nick_urls:
+            self.analyzer_url_edit.setText(self._analyzer_nick_urls[nick])
+
     def _on_connect_analyzer(self):
         """Analyzer URL/계산기로 1회 조회 후 픽·금액 표시 — 배팅 정보가 자연스럽게 들어오는지 확인용."""
-        url = self.analyzer_url_edit.text().strip()
+        url = normalize_analyzer_url(self.analyzer_url_edit.text().strip())
         if not url:
-            self._log("Analyzer URL을 입력한 뒤 연결하세요.")
+            self._log("분석기(닉네임)를 선택하거나 Analyzer URL을 입력한 뒤 연결하세요.")
             return
         calc_id = self.calc_combo.currentData()
         self.connect_btn.setEnabled(False)
@@ -915,8 +938,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._analyzer_url = url
         self._calculator_id = self.calc_combo.currentData()
         self._device_id = self.device_edit.text().strip() or "127.0.0.1:5555"
-        # 배팅 중: 0.1초 간격으로 픽 빠르게 가져와 배팅 시간 확보
-        self._poll_interval_sec = 0.1
+        # 배팅 중(마틴 등): 0.25초 간격으로 픽 조회
+        self._poll_interval_sec = 0.25
         self._coords = load_coords()
         if not self._coords.get("bet_amount") or not self._coords.get("red") or not self._coords.get("black"):
             self._log("좌표를 먼저 설정하세요. coord_picker.py로 배팅금액/정정/레드/블랙 좌표를 잡으세요.")
@@ -933,7 +956,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self.stop_btn.setEnabled(True)
         self._log("시작 — 계산기 픽 바뀌는 즉시 사이트로 전송합니다.")
         self._timer.start(int(self._poll_interval_sec * 1000))
-        QTimer.singleShot(100, self._poll)  # 시작 직후 0.1초 뒤 1회 즉시 폴링
+        QTimer.singleShot(200, self._poll)  # 시작 직후 0.2초 뒤 1회 즉시 폴링
 
     def _on_stop(self):
         self._running = False
