@@ -1,0 +1,41 @@
+========================================
+매크로 EXE 빌드 시 CMD에서 설치할 항목
+========================================
+
+1) Python 3.8 이상 설치 (미설치 시)
+   - https://www.python.org/downloads/ 에서 설치
+   - 설치 시 "Add Python to PATH" 체크 필수
+
+2) CMD 열기 (Win+R → cmd → Enter)
+
+3) 매크로 폴더로 이동
+   cd /d C:\hi\token-hilo-analyzer\auto-betting-macro
+   (실제 경로로 바꿔서 입력)
+
+4) 가상환경 생성 (선택, 권장)
+   python -m venv venv
+   venv\Scripts\activate
+
+5) 배포용 패키지 설치
+   pip install -r requirements.txt
+
+6) EXE 빌드 도구 설치
+   pip install pyinstaller
+
+7) EXE 빌드 실행
+   build_exe.bat
+
+8) 빌드 결과
+   - dist\TokenHiloEmulatorMacro.exe (에뮬레이터 ADB 매크로, 단일 EXE)
+   - 에뮬레이터 매크로는 emulator_coords.json 이 EXE와 같은 폴더에 생성됨
+
+========================================
+한 번에 복사해서 쓸 수 있는 순서 (가상환경 없이)
+========================================
+
+cd /d C:\hi\token-hilo-analyzer\auto-betting-macro
+pip install -r requirements.txt
+pip install pyinstaller
+build_exe.bat
+
+========================================

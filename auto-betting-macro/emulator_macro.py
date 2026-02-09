@@ -8,6 +8,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 from collections import deque
@@ -34,7 +35,13 @@ try:
 except ImportError:
     HAS_PYQT = False
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+def _emulator_script_dir():
+    """EXE 실행 시 exe 위치, 아니면 스크립트 위치 (emulator_coords.json 등)."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+SCRIPT_DIR = _emulator_script_dir()
 COORDS_PATH = os.path.join(SCRIPT_DIR, "emulator_coords.json")
 
 # 좌표 찾기용 키·라벨. COORD_BTN_SHORT = 버튼 글자 줄여서 잘리지 않게
@@ -284,6 +291,11 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._pick_data = {}
         self._results_data = {}
         self._lock = threading.Lock()
+        # 표시 깜빡임 방지: 같은 (회차, 픽)이 2회 연속 올 때만 카드/회차 문구 갱신
+        self._display_stable = None  # (round_num, pick_color) 표시용
+        self._display_candidate = None
+        self._display_confirm_count = 0
+        self._display_confirm_needed = 2
         # 좌표 찾기 (한곳에 통합)
         self._coord_listener = None
         self._coord_capture_key = None
@@ -903,8 +915,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._analyzer_url = url
         self._calculator_id = self.calc_combo.currentData()
         self._device_id = self.device_edit.text().strip() or "127.0.0.1:5555"
-        # 배팅 중: 0.2초 간격으로 계산기 픽 빠르게 가져와서 바뀌자마자 바로 사이트로 전송
-        self._poll_interval_sec = 0.2
+        # 배팅 중: 0.1초 간격으로 픽 빠르게 가져와 배팅 시간 확보
+        self._poll_interval_sec = 0.1
         self._coords = load_coords()
         if not self._coords.get("bet_amount") or not self._coords.get("red") or not self._coords.get("black"):
             self._log("좌표를 먼저 설정하세요. coord_picker.py로 배팅금액/정정/레드/블랙 좌표를 잡으세요.")
@@ -914,6 +926,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._last_bet_round = None
         self._pick_history.clear()  # 전회차 히스토리 초기화 → 2회 연속 일치 시에만 배팅
         self._pick_data = {}  # 이전 연결/폴링 잔여 픽 제거 — 계산기 정지 시 매크로만 시작해도 배팅 들어가는 것 방지
+        self._display_stable = None  # 표시 깜빡임 방지 상태 초기화 — 새 폴링으로 다시 안정화
+        self._display_candidate = None
+        self._display_confirm_count = 0
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self._log("시작 — 계산기 픽 바뀌는 즉시 사이트로 전송합니다.")
@@ -961,6 +976,23 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         with self._lock:
             self._pick_data = pick if isinstance(pick, dict) else {}
             self._results_data = results if isinstance(results, dict) else {}
+        # 표시 깜빡임 방지: 같은 (회차, 픽)이 2회 연속 올 때만 카드 문구 갱신
+        round_num = self._pick_data.get("round")
+        raw_color = self._pick_data.get("pick_color")
+        pick_color = _normalize_pick_color(raw_color)
+        key = (round_num, pick_color)
+        if self._display_stable is None:
+            self._display_stable = key
+            self._display_candidate = key
+            self._display_confirm_count = 1
+        elif key == self._display_candidate:
+            self._display_confirm_count += 1
+            if self._display_confirm_count >= self._display_confirm_needed:
+                self._display_stable = key
+        else:
+            self._display_candidate = key
+            self._display_confirm_count = 1
+            # _display_stable 유지 — 새 값이 2회 연속 올 때만 바꿈
         self._update_display()
 
         # 매크로는 오는 픽만 따라감. 목표금액/중지 판단은 분석기 계산기에서만 함 — running=False 수신해도 여기서 자동 중지하지 않음.
@@ -1105,9 +1137,15 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         with self._lock:
             pick = self._pick_data.copy()
             results = self._results_data.copy()
-        round_num = pick.get("round")
-        raw_color = pick.get("pick_color")
-        pick_color = _normalize_pick_color(raw_color)  # RED/BLACK 통일 (표시·배팅 동일 기준)
+        # 깜빡임 방지: 2회 연속 같은 값일 때만 바뀐 _display_stable 사용, 아니면 이전 표시 유지
+        if self._display_stable is not None:
+            stable_round, stable_color = self._display_stable
+            round_num = stable_round
+            pick_color = stable_color
+        else:
+            round_num = pick.get("round")
+            raw_color = pick.get("pick_color")
+            pick_color = _normalize_pick_color(raw_color)
         prob = pick.get("probability")
         icon_ch, _ = get_round_icon(round_num)
         round_str = f"{round_num}회 {icon_ch}" if round_num is not None else "-"

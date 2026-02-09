@@ -3865,6 +3865,14 @@ RESULTS_HTML = '''
         var ROUND_PREDICTION_BUFFER_MAX = 50;
         var savedBetPickByRound = {};     // 배팅중 카드 그릴 때 걸은 픽 저장 (표에 넣을 때 이 값 사용 → 예측픽/재계산과 충돌 방지)
         var SAVED_BET_PICK_MAX = 50;
+        var lastPostedCurrentPick = {};   // 계산기별 마지막으로 POST한 픽 — 같으면 재전송 안 함 (충돌·깜빡임 방지)
+        function postCurrentPickIfChanged(id, payload) {
+            var key = { round: payload.round ?? null, pickColor: payload.pickColor ?? null, suggested_amount: payload.suggested_amount ?? null, running: payload.running };
+            var last = lastPostedCurrentPick[id];
+            if (last && last.round === key.round && last.pickColor === key.pickColor && last.suggested_amount === key.suggested_amount && last.running === key.running) return;
+            lastPostedCurrentPick[id] = key;
+            try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: payload.pickColor ?? null, round: payload.round ?? null, probability: payload.probability ?? null, suggested_amount: payload.suggested_amount ?? null, running: payload.running }) }).catch(function() {}); } catch (e) {}
+        }
         function setRoundPrediction(round, pred) {
             if (round == null || !pred) return;
             roundPredictionBuffer[String(round)] = { value: pred.value, round: round, prob: pred.prob != null ? pred.prob : 0, color: pred.color || null };
@@ -4756,7 +4764,7 @@ RESULTS_HTML = '''
                                         updateCalcStatus(id);
                                         saveCalcStateToServer();
                                         // 목표 달성 즉시 current_pick 픽 비움 — 서버 저장 전에 매크로가 픽 받아 배팅하는 것 방지
-                                        try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: null, round: null, probability: null, suggested_amount: null }) }).catch(function() {}); } catch (e) {}
+                                        postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null });
                                     }
                                 }
                             });
@@ -5836,7 +5844,7 @@ RESULTS_HTML = '''
                     calcState[id].history = dedupeCalcHistoryByRound(hist);
                     saveCalcStateToServer();
                     updateCalcDetail(id);
-                    try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: null, round: null, probability: null, suggested_amount: null }) }).catch(function() {}); } catch (e) {}
+                    postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null });
                     return;
                 }
                 return;  // 마틴 사용 중인데 연패중승이 아니면 멈춤 검사 안 함
@@ -5852,7 +5860,7 @@ RESULTS_HTML = '''
                 calcState[id].history = dedupeCalcHistoryByRound(hist);
                 saveCalcStateToServer();
                 updateCalcDetail(id);
-                try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: null, round: null, probability: null, suggested_amount: null }) }).catch(function() {}); } catch (e) {}
+                postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null });
             }
         }
         function getPauseGuideList(source) {
@@ -5978,7 +5986,7 @@ RESULTS_HTML = '''
                             bettingCardEl.className = 'calc-current-card calc-card-betting';
                             bettingCardEl.title = '15번 카드 조커 · 배팅하지 마세요';
                             var betAmt = (lastPrediction && lastPrediction.round != null && typeof getBetForRound === 'function') ? getBetForRound(id, lastPrediction.round) : 0;
-                            try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: parseInt(id, 10) || 1, pickColor: null, round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: null, suggested_amount: betAmt > 0 ? betAmt : null }) }).catch(function() {}); } catch (e) {}
+                            postCurrentPickIfChanged(parseInt(id, 10) || 1, { pickColor: null, round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: null, suggested_amount: betAmt > 0 ? betAmt : null });
                         } else {
                         // 배팅중인 회차는 이미 정한 계산기 픽만 유지 — lastPrediction이 잠깐 예측기로 바뀌어도 저장된 픽으로 POST/표시해 예측기 픽으로 배팅 나가는 것 방지
                         var curRound = lastPrediction && lastPrediction.round != null ? Number(lastPrediction.round) : null;
@@ -6030,7 +6038,8 @@ RESULTS_HTML = '''
                         bettingCardEl.className = 'calc-current-card calc-card-betting card-' + (bettingIsRed ? 'jung' : 'kkuk');
                         bettingCardEl.title = '';
                         var betAmt = (lastPrediction && lastPrediction.round != null && typeof getBetForRound === 'function') ? getBetForRound(id, lastPrediction.round) : 0;
-                        try { var suggestedAmt = (calcState[id].paused ? null : (betAmt > 0 ? betAmt : null)); fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: parseInt(id, 10) || 1, pickColor: bettingIsRed ? 'RED' : 'BLACK', round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: typeof predProb === 'number' && !isNaN(predProb) ? predProb : null, suggested_amount: suggestedAmt }) }).catch(function() {}); } catch (e) {}
+                        var suggestedAmt = (calcState[id].paused ? null : (betAmt > 0 ? betAmt : null));
+                        postCurrentPickIfChanged(parseInt(id, 10) || 1, { pickColor: bettingIsRed ? 'RED' : 'BLACK', round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: typeof predProb === 'number' && !isNaN(predProb) ? predProb : null, suggested_amount: suggestedAmt });
                         if (lastPrediction && lastPrediction.round != null) {
                             savedBetPickByRound[Number(lastPrediction.round)] = { value: bettingText, isRed: bettingIsRed };
                             var sbKeys = Object.keys(savedBetPickByRound).map(Number).filter(function(k) { return !isNaN(k); }).sort(function(a,b) { return a - b; });
@@ -6439,7 +6448,7 @@ RESULTS_HTML = '''
                             saveCalcStateToServer();
                             updateCalcSummary(id);
                             updateCalcStatus(id);
-                            try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: null, round: null, probability: null, suggested_amount: null }) }).catch(function() {}); } catch (e) {}
+                            postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null });
                             const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
                             if (saveBtn) saveBtn.style.display = 'none';
                         }
@@ -6516,9 +6525,8 @@ RESULTS_HTML = '''
                 updateCalcSummary(id);
                 updateCalcDetail(id);
                 updateCalcStatus(id);
-                // 시작 시 current_pick의 배팅금액을 지금 기준(기본금)으로 덮어씀 — 예전 마틴금액이 매크로에 남아 다른 금액이 찍히는 것 방지
-                var baseVal = Math.max(0, parseInt(document.getElementById('calc-' + id + '-base')?.value, 10) || 10000);
-                try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: null, round: null, probability: null, suggested_amount: baseVal }) }).catch(function() {}); } catch (e) {}
+                // 시작 시 픽/금액은 배팅중 표시될 때 타이머가 전달. running=true로 DB 반영해 다음 픽 POST 시 매크로가 픽 수신
+                postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null, running: true });
                 document.querySelector('.calc-save[data-calc="' + id + '"]').style.display = 'none';
             });
         });
@@ -6542,8 +6550,8 @@ RESULTS_HTML = '''
                 updateCalcSummary(id);
                 updateCalcDetail(id);
                 updateCalcStatus(id);
-                // 정지 시 current_pick 배팅금액 비움 — 다음 시작 시 예전 마틴금이 남지 않도록
-                try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: null, round: null, probability: null, suggested_amount: null }) }).catch(function() {}); } catch (e) {}
+                // 정지 시 current_pick 비움 + running=false 저장 — 매크로가 정지 상태인데도 픽을 가져가지 않도록
+                postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null, running: false });
             });
         });
         document.querySelectorAll('.calc-reset').forEach(btn => {
@@ -7679,6 +7687,7 @@ def api_current_pick():
         round_num = data.get('round')
         probability = data.get('probability')
         suggested_amount = data.get('suggestedAmount') or data.get('suggested_amount')
+        running = data.get('running')  # True/False 또는 없음 — 정지 시 클라이언트가 running: false 보내면 DB에 반영해 GET 시 픽 미반환
         conn = get_db_connection(statement_timeout_sec=5)
         if not conn:
             return jsonify({'ok': False}), 200
@@ -7688,6 +7697,13 @@ def api_current_pick():
         if ok:
             conn.commit()
             _log_when_changed('current_pick', (calculator_id, pick_color, round_num), lambda v: f"[배팅연동] 계산기{v[0]} 픽 저장: {v[1]} round {v[2]}")
+        if running is not None:
+            if bet_int.set_calculator_running(conn, calculator_id, bool(running)):
+                conn.commit()
+        elif pick_color is not None:
+            # 픽 저장 시 자동으로 running=True — 실행 중인 계산기로 복원
+            if bet_int.set_calculator_running(conn, calculator_id, True):
+                conn.commit()
         conn.close()
         return jsonify({'ok': ok}), 200
     except Exception as e:
