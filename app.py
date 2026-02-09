@@ -3457,6 +3457,7 @@ RESULTS_HTML = '''
                 <span class="analysis-tab" role="tab" data-panel="graph-stats">승률관리</span>
                 <span class="analysis-tab" role="tab" data-panel="prob-bucket">확률 구간</span>
                 <span class="analysis-tab" role="tab" data-panel="losing-streaks">연패 구간</span>
+                <span class="analysis-tab" role="tab" data-panel="win-rate-direction">승률 방향</span>
                 <span class="analysis-tab" role="tab" data-panel="symmetry-line">대칭/줄</span>
                 <span class="analysis-tabs-collapse-btn" id="analysis-tabs-collapse-btn" title="접기/펼치기">▼</span>
             </div>
@@ -3527,6 +3528,21 @@ RESULTS_HTML = '''
                     <div id="losing-streaks-prob-table-wrap" style="margin-top:6px;"><table><thead><tr><th>예측확률 구간</th><th>연패 구간 내 회차 수</th></tr></thead><tbody id="losing-streaks-prob-tbody"><tr><td colspan="2" style="color:#888;">로딩 중...</td></tr></tbody></table></div>
                     <div style="font-weight:bold;color:#b0bec5;margin:12px 0 6px 0;">최근 연패 구간 목록</div>
                     <div id="losing-streaks-list-wrap" style="margin-top:6px;"><table><thead><tr><th>시작 회차</th><th>종료 회차</th><th>연패 수</th><th>평균 예측확률</th></tr></thead><tbody id="losing-streaks-list-tbody"><tr><td colspan="4" style="color:#888;">로딩 중...</td></tr></tbody></table></div>
+                </div>
+                </div>
+            </div>
+            <div id="panel-win-rate-direction" class="analysis-panel">
+                <div id="win-rate-direction-collapse-body" class="prob-bucket-collapse-body">
+                <div id="win-rate-direction-section" style="margin-top:8px;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
+                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">메인 예측기 <strong>최근 50회 승률</strong>의 고점·저점을 계속 기록하고, 현재 승률이 <strong>오르는지 내리는지</strong> 상태를 표시합니다. (추후 계산기 옵션 연동용 지표)</p>
+                    <div id="win-rate-direction-data" style="font-size:0.95em;color:#ccc;">
+                        <table class="symmetry-line-table" style="width:100%;max-width:480px;">
+                            <tbody id="win-rate-direction-tbody">
+                                <tr><td colspan="2" style="color:#888;">데이터 로딩 후 표시</td></tr>
+                            </tbody>
+                        </table>
+                        <p style="font-size:0.8em;color:#888;margin-top:8px 0 0 0;">※ 50회 미만이면 기록되지 않습니다. 조커 제외 승/패만으로 승률 계산.</p>
+                    </div>
                 </div>
                 </div>
             </div>
@@ -3868,6 +3884,8 @@ RESULTS_HTML = '''
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         var lastServerPrediction = null;  // 서버 예측 (있으면 표시·pending 동기화용)
         var lastIs15Joker = false;  // 15번 카드 조커 여부 (계산기 예측픽에 보류 반영용)
+        /** 승률 방향 메뉴: 최근 50회 메인 예측기 승률을 회차마다 기록. { round, rate50 } 최대 300개 */
+        var winRate50History = [];
         var roundPredictionBuffer = {};   // 회차별 예측 저장 (표 충돌 방지: 결과 반영 시 해당 회차만 조회)
         var ROUND_PREDICTION_BUFFER_MAX = 50;
         var savedBetPickByRound = {};     // 배팅중 카드 그릴 때 걸은 픽 저장 (표에 넣을 때 이 값 사용 → 예측픽/재계산과 충돌 방지)
@@ -5239,6 +5257,16 @@ RESULTS_HTML = '''
                     const count50 = hit50 + losses50;
                     const rate50 = count50 > 0 ? 100 * hit50 / count50 : 0;
                     const rate50Str = count50 > 0 ? rate50.toFixed(1) : '-';
+                    // 승률 방향: 50회 승률을 회차마다 기록 (고점/저점/오름·내림 지표용)
+                    if (count50 >= 50 && validHist.length > 0) {
+                        var _lastEntry = validHist[validHist.length - 1];
+                        var _lastRound = _lastEntry && _lastEntry.round;
+                        if (_lastRound != null && (winRate50History.length === 0 || winRate50History[winRate50History.length - 1].round !== _lastRound)) {
+                            winRate50History.push({ round: _lastRound, rate50: rate50 });
+                            if (winRate50History.length > 300) winRate50History.shift();
+                            if (document.getElementById('panel-win-rate-direction') && document.getElementById('panel-win-rate-direction').classList.contains('active') && typeof renderWinRateDirectionPanel === 'function') renderWinRateDirectionPanel();
+                        }
+                    }
                     // 확률 구간별 승률 (joker 제외, probability 있는 것만)
                     const nonJokerWithProb = validHist.filter(function(h) { return h && h.actual !== 'joker' && h.probability != null; });
                     const BUCKETS = [{ min: 50, max: 55 }, { min: 55, max: 60 }, { min: 60, max: 65 }, { min: 65, max: 70 }, { min: 70, max: 75 }, { min: 75, max: 80 }, { min: 80, max: 85 }, { min: 85, max: 90 }, { min: 90, max: 101 }];
@@ -5944,6 +5972,36 @@ RESULTS_HTML = '''
             tbl += '</tbody></table>';
             wrap.innerHTML = tbl;
         }
+        function renderWinRateDirectionPanel() {
+            var tbody = document.getElementById('win-rate-direction-tbody');
+            if (!tbody) return;
+            var hist = winRate50History || [];
+            if (hist.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="2" style="color:#888;">최근 50회 이상 데이터가 쌓이면 기록됩니다.</td></tr>';
+                return;
+            }
+            var rates = hist.map(function(x) { return x.rate50; });
+            var current = hist[hist.length - 1].rate50;
+            var high = Math.max.apply(null, rates);
+            var low = Math.min.apply(null, rates);
+            var mid = (high + low) / 2;
+            var direction = '정체';
+            var directionClass = '';
+            if (hist.length >= 4) {
+                var recent = hist[hist.length - 1].rate50;
+                var prev = hist[hist.length - 4].rate50;
+                if (recent > prev + 0.5) { direction = '오름'; directionClass = 'color:#81c784;'; }
+                else if (recent < prev - 0.5) { direction = '내림'; directionClass = 'color:#e57373;'; }
+            }
+            var lastRound = hist[hist.length - 1].round;
+            tbody.innerHTML =
+                '<tr><td style="color:#b0bec5;">현재 50회 승률</td><td><strong>' + current.toFixed(1) + '%</strong></td></tr>' +
+                '<tr><td style="color:#b0bec5;">기록 최고점</td><td style="color:#81c784;">' + high.toFixed(1) + '%</td></tr>' +
+                '<tr><td style="color:#b0bec5;">기록 최저점</td><td style="color:#e57373;">' + low.toFixed(1) + '%</td></tr>' +
+                '<tr><td style="color:#b0bec5;">중간 (고·저)</td><td>' + mid.toFixed(1) + '%</td></tr>' +
+                '<tr><td style="color:#b0bec5;">방향</td><td style="' + directionClass + ' font-weight:bold;">' + direction + '</td></tr>' +
+                '<tr><td style="color:#888;font-size:0.9em;">기준 회차</td><td style="color:#888;">' + (lastRound != null ? String(lastRound) : '-') + '</td></tr>';
+        }
         document.getElementById('pause-guide-calc')?.addEventListener('click', function() { renderPauseGuideTable(); });
         function updateCalcStatus(id) {
             try {
@@ -6412,6 +6470,7 @@ RESULTS_HTML = '''
             tab.setAttribute('aria-selected', 'true');
             var panel = document.getElementById('panel-' + panelId);
             if (panel) panel.classList.add('active');
+            if (panelId === 'win-rate-direction' && typeof renderWinRateDirectionPanel === 'function') renderWinRateDirectionPanel();
         });
         var collapseBtn = document.getElementById('analysis-tabs-collapse-btn');
         if (collapseBtn && !collapseBtn.getAttribute('data-bound')) {
