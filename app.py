@@ -156,7 +156,7 @@ def init_database():
         cur.execute('''
             CREATE INDEX IF NOT EXISTS idx_prediction_history_created ON prediction_history(created_at DESC)
         ''')
-        for col, typ in [('probability', 'REAL'), ('pick_color', 'VARCHAR(10)'), ('blended_win_rate', 'REAL'), ('rate_15', 'REAL'), ('rate_30', 'REAL'), ('rate_100', 'REAL')]:
+        for col, typ in [('probability', 'REAL'), ('pick_color', 'VARCHAR(10)'), ('blended_win_rate', 'REAL'), ('rate_15', 'REAL'), ('rate_30', 'REAL'), ('rate_100', 'REAL'), ('prediction_details', 'JSONB')]:
             cur.execute(
                 "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'prediction_history' AND column_name = %s",
                 (col,)
