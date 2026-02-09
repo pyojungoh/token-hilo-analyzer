@@ -5721,7 +5721,19 @@ RESULTS_HTML = '''
                         // 배팅중인 회차는 이미 정한 계산기 픽만 유지 — lastPrediction이 잠깐 예측기로 바뀌어도 저장된 픽으로 POST/표시해 예측기 픽으로 배팅 나가는 것 방지
                         var curRound = lastPrediction && lastPrediction.round != null ? Number(lastPrediction.round) : null;
                         var saved = (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === curRound) ? calcState[id].lastBetPickForRound : null;
+                        // 상단 예측픽: 현재 회차의 히스토리 항목에서 originalPredicted를 가져오거나, 없으면 getRoundPrediction으로 가져옴 (표의 첫 번째 행과 동일한 로직)
                         var predictionText = lastPrediction.value;
+                        if (curRound != null) {
+                            var histForRound = calcState[id].history && Array.isArray(calcState[id].history) ? calcState[id].history.find(function(h) { return h && Number(h.round) === curRound; }) : null;
+                            if (histForRound && (histForRound.originalPredicted === '정' || histForRound.originalPredicted === '꺽')) {
+                                predictionText = histForRound.originalPredicted;
+                            } else {
+                                var predForRoundTop = getRoundPrediction(curRound);
+                                if (predForRoundTop && predForRoundTop.value) {
+                                    predictionText = predForRoundTop.value;
+                                }
+                            }
+                        }
                         var predColorNorm = normalizePickColor(lastPrediction.color);
                         var predictionIsRed = (predColorNorm === '빨강' || predColorNorm === '검정') ? (predColorNorm === '빨강') : (predictionText === '정');
                         var bettingText, bettingIsRed;
