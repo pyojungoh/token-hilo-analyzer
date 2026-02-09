@@ -5510,7 +5510,26 @@ RESULTS_HTML = '''
         function getCalcRecent15WinRate(id) {
             var hist = calcState[id] && calcState[id].history;
             if (!Array.isArray(hist) || hist.length === 0) return 50;
-            var completed = hist.filter(function(h) { return h.actual && h.actual !== 'pending'; });
+            // 서버 prediction_history로 동기화 (15회 승률 계산 전에 강제 동기화)
+            if (Array.isArray(predictionHistory) && predictionHistory.length > 0) {
+                var byRound = {};
+                predictionHistory.forEach(function(p) {
+                    if (p && typeof p === 'object' && p.round != null && p.actual != null && p.actual !== '') {
+                        byRound[Number(p.round)] = { actual: p.actual };
+                    }
+                });
+                hist.forEach(function(h) {
+                    if (!h) return;
+                    if (h.actual === 'pending' || !h.actual || h.actual === '') {
+                        var r = Number(h.round);
+                        if (!isNaN(r)) {
+                            var fromServer = byRound[r];
+                            if (fromServer) h.actual = fromServer.actual;
+                        }
+                    }
+                });
+            }
+            var completed = hist.filter(function(h) { return h && h.actual && h.actual !== 'pending' && h.actual !== ''; });
             var last15 = completed.slice(-15);
             if (last15.length < 1) return 50;
             // 조커는 패로 간주: 승 = 실제 정/꺽이고 예측 적중한 경우만
@@ -5843,6 +5862,34 @@ RESULTS_HTML = '''
         }
         function updateCalcDetail(id) {
             try {
+            // 서버 prediction_history로 계산기 히스토리 동기화 (updateCalcDetail 실행 전에 강제 동기화)
+            (function syncCalcHistoryFromServerPredictionBeforeRender() {
+                if (!Array.isArray(predictionHistory) || predictionHistory.length === 0) return;
+                var byRound = {};
+                predictionHistory.forEach(function(p) {
+                    if (p && typeof p === 'object' && p.round != null && p.actual != null && p.actual !== '') {
+                        byRound[Number(p.round)] = { actual: p.actual };
+                    }
+                });
+                var changed = false;
+                var hist = calcState[id].history || [];
+                hist.forEach(function(h) {
+                    if (!h) return;
+                    // pending이거나 실제 결과가 없는 경우 서버에서 가져옴
+                    if (h.actual === 'pending' || !h.actual || h.actual === '') {
+                        var r = Number(h.round);
+                        if (isNaN(r)) return;
+                        var fromServer = byRound[r];
+                        if (!fromServer) return;
+                        h.actual = fromServer.actual;
+                        changed = true;
+                    }
+                });
+                if (changed) {
+                    calcState[id].history = dedupeCalcHistoryByRound(hist);
+                    try { saveCalcStateToServer(); } catch (e) {}
+                }
+            })();
             const streakId = 'calc-' + id + '-streak';
             const statsId = 'calc-' + id + '-stats';
             const tableWrapId = 'calc-' + id + '-round-table-wrap';
@@ -5861,7 +5908,8 @@ RESULTS_HTML = '''
             }
             const r = getCalcResult(id);
             const usedHist = dedupeCalcHistoryByRound(hist);
-            const completedHist = usedHist.filter(function(h) { return h && h.actual !== 'pending' && h.actual != null && typeof h.predicted !== 'undefined'; });
+            // completedHist: pending이 아니고 actual이 있는 것만 (서버 동기화 후에는 실제 결과가 있음)
+            const completedHist = usedHist.filter(function(h) { return h && h.actual !== 'pending' && h.actual != null && h.actual !== '' && typeof h.predicted !== 'undefined'; });
             const oddsIn = parseFloat(document.getElementById('calc-' + id + '-odds')?.value) || 1.97;
             var roundToBetProfit = {};
             const capIn = parseFloat(document.getElementById('calc-' + id + '-capital')?.value) || 1000000;
@@ -5909,7 +5957,14 @@ RESULTS_HTML = '''
                 const pickClass = (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : 'pick-kkuk')));
                 const warningWinRateVal = (typeof h.warningWinRate === 'number' && !isNaN(h.warningWinRate)) ? h.warningWinRate.toFixed(1) + '%' : '-';
                 var betStr, profitStr, res, outcome, resultClass, outClass;
-                if (h.actual === 'pending') {
+                // 서버에서 실제 결과 확인 (pending이어도 서버에 결과가 있을 수 있음)
+                var serverActual = null;
+                if (Array.isArray(predictionHistory) && predictionHistory.length > 0 && !isNaN(rn)) {
+                    var serverEntry = predictionHistory.find(function(p) { return p && Number(p.round) === rn && p.actual && p.actual !== ''; });
+                    if (serverEntry) serverActual = serverEntry.actual;
+                }
+                var effectiveActual = serverActual || h.actual;
+                if (effectiveActual === 'pending' || !effectiveActual || effectiveActual === '') {
                     var amt = (h.no_bet === true || !h.betAmount) ? 0 : (h.betAmount > 0 ? h.betAmount : 0);
                     betStr = amt > 0 ? Number(amt).toLocaleString() : '-';
                     profitStr = '-';
@@ -5922,17 +5977,18 @@ RESULTS_HTML = '''
                     betStr = (bp && bp.betAmount != null && bp.betAmount > 0) ? bp.betAmount.toLocaleString() : '-';
                     const profitVal = (bp && bp.profit != null) ? bp.profit : '-';
                     profitStr = profitVal === '-' ? '-' : (profitVal >= 0 ? '+' : '') + Number(profitVal).toLocaleString();
-                    res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
+                    // effectiveActual 사용 (서버 동기화된 값 우선)
+                    res = effectiveActual === 'joker' ? '조' : (effectiveActual === '정' ? '정' : '꺽');
                     // 멈춤 상태에서도 실제 결과가 나왔으면 승패 기록 (15회 승률 계산용)
                     if (h.no_bet === true || (h.betAmount != null && h.betAmount === 0)) {
                         // 멈춤 상태: 수익은 0이지만 승패는 기록
-                        if (h.actual === 'joker') {
+                        if (effectiveActual === 'joker') {
                             outcome = '조';
                         } else {
-                            outcome = h.predicted === h.actual ? '승' : '패';
+                            outcome = h.predicted === effectiveActual ? '승' : '패';
                         }
                     } else {
-                        outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
+                        outcome = effectiveActual === 'joker' ? '조' : (h.predicted === effectiveActual ? '승' : '패');
                     }
                     resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
                     outClass = outcome === '승' ? 'win' : outcome === '패' ? 'lose' : outcome === '조' ? 'joker' : 'skip';
@@ -5956,11 +6012,22 @@ RESULTS_HTML = '''
                     tableWrap.innerHTML = tbl;
                 }
             }
-            // 경기결과는 완료된 회차만, 최근 30회 표시
+            // 경기결과는 완료된 회차만, 최근 30회 표시 (서버 동기화된 actual 사용)
             let arr = [];
             for (const h of completedHist) {
-                if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined' || h.actual === 'pending') continue;
-                arr.push(h.actual === 'joker' ? 'j' : (h.predicted === h.actual ? 'w' : 'l'));
+                if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined' || h.actual === 'pending' || h.actual === '') continue;
+                // 서버에서 실제 결과 확인 (동기화 보정)
+                var serverActualForStreak = null;
+                if (Array.isArray(predictionHistory) && predictionHistory.length > 0 && h.round != null) {
+                    var rnForStreak = Number(h.round);
+                    if (!isNaN(rnForStreak)) {
+                        var serverEntryForStreak = predictionHistory.find(function(p) { return p && Number(p.round) === rnForStreak && p.actual && p.actual !== ''; });
+                        if (serverEntryForStreak) serverActualForStreak = serverEntryForStreak.actual;
+                    }
+                }
+                var effectiveActualForStreak = serverActualForStreak || h.actual;
+                if (effectiveActualForStreak === 'pending' || !effectiveActualForStreak || effectiveActualForStreak === '') continue;
+                arr.push(effectiveActualForStreak === 'joker' ? 'j' : (h.predicted === effectiveActualForStreak ? 'w' : 'l'));
             }
             const arrRev = arr.slice().reverse();
             const showMax = 30;
