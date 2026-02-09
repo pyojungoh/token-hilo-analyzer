@@ -5450,6 +5450,8 @@ RESULTS_HTML = '''
                 calcState[id].history = dedupeCalcHistoryByRound(hist);
                 saveCalcStateToServer();
                 updateCalcDetail(id);
+                // 멈춤 직후 즉시 서버에 suggested_amount null 전송 — 매크로가 폴링해 스킵 판단하기 전에 반영되도록(레이스 완화)
+                try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: null, round: null, probability: null, suggested_amount: null }) }).catch(function() {}); } catch (e) {}
             }
         }
         function getPauseGuideList(source) {

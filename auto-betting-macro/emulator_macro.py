@@ -975,6 +975,14 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         # 서버는 RED/BLACK 또는 빨강/검정 올 수 있음 → 항상 RED/BLACK으로 통일
         pick_color = _normalize_pick_color(raw_color)
         amount = self._pick_data.get("suggested_amount")
+        # 계산기 멈춤 연동: suggested_amount 없거나 0이면 이 회차 배팅 스킵 (macro.py와 동일)
+        try:
+            amt_val = int(amount) if amount is not None else 0
+        except (TypeError, ValueError):
+            amt_val = 0
+        if amount is None or amt_val <= 0:
+            self._log("[멈춤] 계산기 멈춤 구간 (금액=%s) — 회차 %s 배팅 스킵" % (amount, round_num))
+            return
         if round_num is None or pick_color is None:
             self._log("서버 픽 없음 (회차=%s, 픽=%s, 금액=%s) — 분석기에서 해당 계산기 실행·픽 확인" % (round_num, raw_color or "(없음)", amount))
             return
