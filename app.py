@@ -5261,7 +5261,7 @@ RESULTS_HTML = '''
                     if (count50 >= 50 && validHist.length > 0) {
                         var _lastEntry = validHist[validHist.length - 1];
                         var _lastRound = _lastEntry && _lastEntry.round;
-                        if (_lastRound != null && (winRate50History.length === 0 || winRate50History[winRate50History.length - 1].round !== _lastRound)) {
+                        if (_lastRound != null && (winRate50History.length === 0 || Number(winRate50History[winRate50History.length - 1].round) !== Number(_lastRound))) {
                             winRate50History.push({ round: _lastRound, rate50: rate50 });
                             if (winRate50History.length > 300) winRate50History.shift();
                             if (document.getElementById('panel-win-rate-direction') && document.getElementById('panel-win-rate-direction').classList.contains('active') && typeof renderWinRateDirectionPanel === 'function') renderWinRateDirectionPanel();
@@ -5974,33 +5974,66 @@ RESULTS_HTML = '''
         }
         function renderWinRateDirectionPanel() {
             var tbody = document.getElementById('win-rate-direction-tbody');
+            var wrap = document.getElementById('win-rate-direction-data');
             if (!tbody) return;
             var hist = winRate50History || [];
-            if (hist.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="2" style="color:#888;">최근 50회 이상 데이터가 쌓이면 기록됩니다.</td></tr>';
-                return;
+            var vh = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
+            var v50 = vh.slice(-50);
+            var hit50cur = v50.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+            var loss50cur = v50.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+            var count50cur = hit50cur + loss50cur;
+            var currentRate50 = count50cur > 0 ? 100 * hit50cur / count50cur : null;
+            var high, low, mid, direction, directionClass, lastRound;
+            if (hist.length > 0) {
+                var rates = hist.map(function(x) { return x.rate50; });
+                high = Math.max.apply(null, rates);
+                low = Math.min.apply(null, rates);
+                mid = (high + low) / 2;
+                direction = '정체';
+                directionClass = '';
+                if (hist.length >= 4) {
+                    var recent = hist[hist.length - 1].rate50;
+                    var prev = hist[hist.length - 4].rate50;
+                    if (recent > prev + 0.5) { direction = '오름'; directionClass = 'color:#81c784;'; }
+                    else if (recent < prev - 0.5) { direction = '내림'; directionClass = 'color:#e57373;'; }
+                }
+                lastRound = hist[hist.length - 1].round;
+            } else {
+                high = low = mid = null;
+                direction = '-';
+                directionClass = '';
+                lastRound = null;
             }
-            var rates = hist.map(function(x) { return x.rate50; });
-            var current = hist[hist.length - 1].rate50;
-            var high = Math.max.apply(null, rates);
-            var low = Math.min.apply(null, rates);
-            var mid = (high + low) / 2;
-            var direction = '정체';
-            var directionClass = '';
-            if (hist.length >= 4) {
-                var recent = hist[hist.length - 1].rate50;
-                var prev = hist[hist.length - 4].rate50;
-                if (recent > prev + 0.5) { direction = '오름'; directionClass = 'color:#81c784;'; }
-                else if (recent < prev - 0.5) { direction = '내림'; directionClass = 'color:#e57373;'; }
+            var current = (hist.length > 0 ? hist[hist.length - 1].rate50 : null) ?? currentRate50;
+            var lowVal = low != null ? low : 0;
+            var highVal = high != null ? high : 100;
+            var range = Math.max(highVal - lowVal, 1);
+            var pctCurrent = current != null ? Math.max(0, Math.min(100, (current - lowVal) / range * 100)) : 50;
+            var barHtml = '';
+            if (current != null) {
+                var segW = (current - lowVal) / range * 100;
+                barHtml = '<div style="margin:10px 0;padding:4px 0;">' +
+                    '<div style="font-size:0.8em;color:#888;margin-bottom:4px;">0% — 저점 ' + (lowVal.toFixed(0)) + '% — 현재 — 고점 ' + (highVal.toFixed(0)) + '% — 100%</div>' +
+                    '<div style="height:24px;background:#333;border-radius:4px;position:relative;overflow:hidden;">' +
+                    '<div style="position:absolute;left:0;top:0;bottom:0;width:' + (pctCurrent) + '%;background:linear-gradient(90deg,#37474f 0%,#546e7a 100%);border-radius:4px 0 0 4px;"></div>' +
+                    '<div style="position:absolute;left:' + (pctCurrent) + '%;top:0;bottom:0;width:4px;background:#fff;border-radius:2px;box-shadow:0 0 4px #000;"></div>' +
+                    '</div></div>';
             }
-            var lastRound = hist[hist.length - 1].round;
             tbody.innerHTML =
-                '<tr><td style="color:#b0bec5;">현재 50회 승률</td><td><strong>' + current.toFixed(1) + '%</strong></td></tr>' +
-                '<tr><td style="color:#b0bec5;">기록 최고점</td><td style="color:#81c784;">' + high.toFixed(1) + '%</td></tr>' +
-                '<tr><td style="color:#b0bec5;">기록 최저점</td><td style="color:#e57373;">' + low.toFixed(1) + '%</td></tr>' +
-                '<tr><td style="color:#b0bec5;">중간 (고·저)</td><td>' + mid.toFixed(1) + '%</td></tr>' +
+                '<tr><td style="color:#b0bec5;">현재 50회 승률</td><td><strong>' + (current != null ? current.toFixed(1) + '%' : '-') + '</strong>' + (hist.length === 0 && current != null ? ' <span style="color:#888;font-size:0.85em">(기록 쌓는 중)</span>' : '') + '</td></tr>' +
+                '<tr><td style="color:#b0bec5;">기록 최고점</td><td style="color:#81c784;">' + (high != null ? high.toFixed(1) + '%' : '-') + '</td></tr>' +
+                '<tr><td style="color:#b0bec5;">기록 최저점</td><td style="color:#e57373;">' + (low != null ? low.toFixed(1) + '%' : '-') + '</td></tr>' +
+                '<tr><td style="color:#b0bec5;">중간 (고·저)</td><td>' + (mid != null ? mid.toFixed(1) + '%' : '-') + '</td></tr>' +
                 '<tr><td style="color:#b0bec5;">방향</td><td style="' + directionClass + ' font-weight:bold;">' + direction + '</td></tr>' +
                 '<tr><td style="color:#888;font-size:0.9em;">기준 회차</td><td style="color:#888;">' + (lastRound != null ? String(lastRound) : '-') + '</td></tr>';
+            if (wrap && barHtml) {
+                var oldBar = wrap.querySelector('.win-rate-direction-bar');
+                if (oldBar) oldBar.remove();
+                var barEl = document.createElement('div');
+                barEl.className = 'win-rate-direction-bar';
+                barEl.innerHTML = barHtml;
+                wrap.appendChild(barEl);
+            }
         }
         document.getElementById('pause-guide-calc')?.addEventListener('click', function() { renderPauseGuideTable(); });
         function updateCalcStatus(id) {
