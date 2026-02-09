@@ -716,9 +716,133 @@ def _blended_win_rate_components(prediction_history):
     return (r15, r30, r100, blended)
 
 
+def _calculate_calc_profit_server(calc_state, history_entry):
+    """서버에서 계산기 수익, 마틴게일 단계, 연승/연패 계산. history_entry에 계산된 값 추가."""
+    MARTIN_PYO_RATIOS = [1, 1.5, 2.5, 4, 7, 12, 20, 40, 40]
+    
+    capital = float(calc_state.get('capital', 1000000))
+    base = float(calc_state.get('base', 10000))
+    odds = float(calc_state.get('odds', 1.97))
+    martingale = bool(calc_state.get('martingale', False))
+    martingale_type = calc_state.get('martingale_type', 'pyo')
+    
+    history = calc_state.get('history', [])
+    # 현재 회차 이전의 완료된 회차만 계산
+    completed_history = [h for h in history if h.get('round') != history_entry.get('round') and h.get('actual') and h.get('actual') != 'pending']
+    completed_history.sort(key=lambda x: x.get('round', 0))
+    
+    martingale_step = 0
+    cap = capital
+    current_bet = base
+    
+    # 마틴게일 테이블 생성
+    martin_table = [round(base * r) for r in MARTIN_PYO_RATIOS]
+    if martingale_type == 'pyo_half':
+        martin_table = [round(x / 2) for x in martin_table]
+    
+    # 이전 회차들로 자본금과 마틴게일 단계 계산
+    for h in completed_history:
+        if h.get('no_bet') or (h.get('betAmount') == 0):
+            continue
+        
+        if martingale and martingale_type in ('pyo', 'pyo_half'):
+            current_bet = martin_table[min(martingale_step, len(martin_table) - 1)]
+        else:
+            current_bet = min(current_bet, int(cap))
+        
+        bet = min(current_bet, int(cap))
+        if cap < bet or cap <= 0:
+            break
+        
+        actual = h.get('actual')
+        predicted = h.get('predicted')
+        is_joker = actual == 'joker'
+        is_win = not is_joker and predicted == actual
+        
+        if is_joker:
+            cap -= bet
+            if martingale and martingale_type in ('pyo', 'pyo_half'):
+                martingale_step = min(martingale_step + 1, len(martin_table) - 1)
+            else:
+                current_bet = min(current_bet * 2, int(cap))
+        elif is_win:
+            cap += bet * (odds - 1)
+            if martingale and martingale_type in ('pyo', 'pyo_half'):
+                martingale_step = 0
+            else:
+                current_bet = base
+        else:
+            cap -= bet
+            if martingale and martingale_type in ('pyo', 'pyo_half'):
+                martingale_step = min(martingale_step + 1, len(martin_table) - 1)
+            else:
+                current_bet = min(current_bet * 2, int(cap))
+        
+        if cap <= 0:
+            break
+    
+    # 현재 회차의 배팅금액 계산
+    if martingale and martingale_type in ('pyo', 'pyo_half'):
+        current_bet = martin_table[min(martingale_step, len(martin_table) - 1)]
+    else:
+        current_bet = min(current_bet, int(cap))
+    
+    bet_amount = min(current_bet, int(cap)) if not history_entry.get('no_bet') and history_entry.get('betAmount') != 0 else 0
+    
+    # 현재 회차의 수익 계산
+    actual = history_entry.get('actual')
+    predicted = history_entry.get('predicted')
+    is_joker = actual == 'joker'
+    is_win = not is_joker and predicted == actual
+    
+    if history_entry.get('no_bet') or bet_amount == 0:
+        profit = 0
+    elif is_joker:
+        profit = -bet_amount
+    elif is_win:
+        profit = int(bet_amount * (odds - 1))
+    else:
+        profit = -bet_amount
+    
+    # 연승/연패 계산
+    max_win_streak = 0
+    max_lose_streak = 0
+    cur_win = 0
+    cur_lose = 0
+    
+    all_completed = completed_history + [history_entry]
+    for h in all_completed:
+        if h.get('no_bet') or (h.get('betAmount') == 0):
+            continue
+        a = h.get('actual')
+        p = h.get('predicted')
+        if a == 'joker':
+            cur_win = 0
+            cur_lose = 0
+        elif p == a:
+            cur_win += 1
+            cur_lose = 0
+            max_win_streak = max(max_win_streak, cur_win)
+        else:
+            cur_lose += 1
+            cur_win = 0
+            max_lose_streak = max(max_lose_streak, cur_lose)
+    
+    # 계산된 값들을 history_entry에 추가
+    history_entry['betAmount'] = bet_amount
+    history_entry['profit'] = profit
+    history_entry['capital_after'] = max(0, int(cap + profit))
+    history_entry['martingale_step'] = martingale_step
+    history_entry['max_win_streak'] = max_win_streak
+    history_entry['max_lose_streak'] = max_lose_streak
+    
+    return history_entry
+
+
 def _apply_results_to_calcs(results):
     """결과 수집 후 실행 중인 계산기 회차 반영: pending_round 결과 있으면 history 반영 후 다음 예측으로 갱신.
-    안정화: pending_*는 저장된 예측(round_predictions)만 사용. 저장은 스케줄러 ensure_stored에서만."""
+    안정화: pending_*는 저장된 예측(round_predictions)만 사용. 저장은 스케줄러 ensure_stored에서만.
+    서버에서 계산기 수익, 마틴게일, 연승/연패 계산."""
     if not results or len(results) < 16:
         return
     try:
@@ -791,7 +915,22 @@ def _apply_results_to_calcs(results):
                 history_entry = {'round': pending_round, 'predicted': pred_for_calc, 'actual': actual}
                 if bet_color_for_history:
                     history_entry['pickColor'] = bet_color_for_history
+                # 경고 합산승률 저장
+                if blended is not None:
+                    history_entry['warningWinRate'] = blended
+                # 멈춤 상태 확인
+                paused = c.get('paused', False)
+                if paused:
+                    history_entry['no_bet'] = True
+                    history_entry['betAmount'] = 0
+                # 서버에서 계산기 수익, 마틴게일, 연승/연패 계산
+                history_entry = _calculate_calc_profit_server(c, history_entry)
                 c['history'] = (c.get('history') or []) + [history_entry]
+                # 최대 연승/연패 업데이트
+                max_win = history_entry.get('max_win_streak', 0)
+                max_lose = history_entry.get('max_lose_streak', 0)
+                c['max_win_streak_ever'] = max(c.get('max_win_streak_ever', 0), max_win)
+                c['max_lose_streak_ever'] = max(c.get('max_lose_streak_ever', 0), max_lose)
                 if stored_for_round and stored_for_round.get('predicted'):
                     c['pending_round'] = predicted_round
                     c['pending_predicted'] = stored_for_round['predicted']
@@ -5416,6 +5555,47 @@ RESULTS_HTML = '''
             const useMartingale = !!(martingaleEl && martingaleEl.checked);
             const martingaleType = (martingaleTypeEl && martingaleTypeEl.value) || 'pyo';
             const hist = dedupeCalcHistoryByRound(calcState[id].history || []);
+            
+            // 서버에서 계산된 값이 있으면 우선 사용
+            const completedHist = hist.filter(function(h) { return h && h.actual && h.actual !== 'pending'; });
+            if (completedHist.length > 0) {
+                const lastEntry = completedHist[completedHist.length - 1];
+                if (lastEntry.capital_after != null && lastEntry.profit != null) {
+                    // 서버에서 계산된 값 사용
+                    let cap = lastEntry.capital_after;
+                    let totalProfit = 0;
+                    let wins = 0, losses = 0;
+                    let maxWinStreak = 0, maxLoseStreak = 0;
+                    
+                    for (let i = 0; i < completedHist.length; i++) {
+                        const h = completedHist[i];
+                        if (h.no_bet === true || (h.betAmount != null && h.betAmount === 0)) continue;
+                        if (h.profit != null) totalProfit += h.profit;
+                        const isJoker = h.actual === 'joker';
+                        const isWin = !isJoker && h.predicted === h.actual;
+                        if (isWin) wins++;
+                        else if (!isJoker) losses++;
+                        if (h.max_win_streak != null) maxWinStreak = Math.max(maxWinStreak, h.max_win_streak);
+                        if (h.max_lose_streak != null) maxLoseStreak = Math.max(maxLoseStreak, h.max_lose_streak);
+                    }
+                    
+                    // 다음 배팅금액 계산 (마지막 회차의 마틴게일 단계 사용)
+                    let currentBet = baseIn;
+                    if (lastEntry.martingale_step != null && useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
+                        var martinTableFinal = getMartinTable(martingaleType, baseIn);
+                        currentBet = martinTableFinal[Math.min(lastEntry.martingale_step, martinTableFinal.length - 1)];
+                    }
+                    
+                    const total = wins + losses;
+                    const winRate = total > 0 ? (100 * wins / total).toFixed(1) : '-';
+                    const bust = cap <= 0;
+                    const displayMaxWin = (calcState[id] && calcState[id].maxWinStreakEver != null) ? calcState[id].maxWinStreakEver : maxWinStreak;
+                    const displayMaxLose = (calcState[id] && calcState[id].maxLoseStreakEver != null) ? calcState[id].maxLoseStreakEver : maxLoseStreak;
+                    return { cap: Math.max(0, Math.floor(cap)), profit: totalProfit, currentBet: bust ? 0 : currentBet, wins, losses, bust, maxWinStreak: displayMaxWin, maxLoseStreak: displayMaxLose, winRate, processedCount: completedHist.length };
+                }
+            }
+            
+            // 서버에서 계산된 값이 없으면 클라이언트에서 계산 (폴백)
             let cap = capIn, currentBet = baseIn, bust = false;
             let martingaleStep = 0;
             let wins = 0, losses = 0, maxWinStreak = 0, maxLoseStreak = 0, curWin = 0, curLose = 0;
@@ -5918,27 +6098,58 @@ RESULTS_HTML = '''
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 const useMartingale = !!(martingaleEl && martingaleEl.checked);
                 const martingaleType = (martingaleTypeEl && martingaleTypeEl.value) || 'pyo';
+                
+                // 서버에서 계산된 값이 있으면 우선 사용
+                for (let i = 0; i < completedHist.length; i++) {
+                    const h = completedHist[i];
+                    if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
+                    const rn = h.round != null ? Number(h.round) : NaN;
+                    if (isNaN(rn)) continue;
+                    
+                    var wasPaused = (h.no_bet === true || (h.betAmount != null && h.betAmount === 0));
+                    if (wasPaused) {
+                        // 멈춤 상태여도 실제 결과가 나왔으면 승패 기록 (15회 승률 계산용)
+                        const isJokerPaused = h.actual === 'joker';
+                        const isWinPaused = !isJokerPaused && h.predicted === h.actual;
+                        roundToBetProfit[rn] = { betAmount: 0, profit: 0, isWin: isWinPaused, isJoker: isJokerPaused };
+                        continue;
+                    }
+                    
+                    // 서버에서 계산된 값이 있으면 사용
+                    if (h.betAmount != null && h.profit != null) {
+                        const isJoker = h.actual === 'joker';
+                        const isWin = !isJoker && h.predicted === h.actual;
+                        roundToBetProfit[rn] = { betAmount: h.betAmount, profit: h.profit, isWin: isWin, isJoker: isJoker };
+                        continue;
+                    }
+                }
+                
+                // 서버에서 계산된 값이 없는 경우 클라이언트에서 계산 (폴백)
                 var martinTableDetail = getMartinTable(martingaleType, baseIn);
                 let cap = capIn, currentBet = baseIn, martingaleStep = 0;
                 for (let i = 0; i < completedHist.length; i++) {
                     const h = completedHist[i];
                     if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
-                const rn = h.round != null ? Number(h.round) : NaN;
-                var wasPaused = (h.no_bet === true || (h.betAmount != null && h.betAmount === 0));
-                if (wasPaused && !isNaN(rn)) {
-                    // 멈춤 상태여도 실제 결과가 나왔으면 승패 기록 (15회 승률 계산용)
-                    // 수익은 0이지만 승패는 기록해야 함
-                    const isJokerPaused = h.actual === 'joker';
-                    const isWinPaused = !isJokerPaused && h.predicted === h.actual;
-                    roundToBetProfit[rn] = { betAmount: 0, profit: 0, isWin: isWinPaused, isJoker: isJokerPaused };
-                    continue;
-                }
+                    const rn = h.round != null ? Number(h.round) : NaN;
+                    if (isNaN(rn)) continue;
+                    
+                    // 이미 서버에서 계산된 값이 있으면 스킵
+                    if (roundToBetProfit[rn]) continue;
+                    
+                    var wasPaused = (h.no_bet === true || (h.betAmount != null && h.betAmount === 0));
+                    if (wasPaused) {
+                        const isJokerPaused = h.actual === 'joker';
+                        const isWinPaused = !isJokerPaused && h.predicted === h.actual;
+                        roundToBetProfit[rn] = { betAmount: 0, profit: 0, isWin: isWinPaused, isJoker: isJokerPaused };
+                        continue;
+                    }
+                    
                     if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) currentBet = martinTableDetail[Math.min(martingaleStep, martinTableDetail.length - 1)];
                     const bet = Math.min(currentBet, Math.floor(cap));
                     if (cap < bet || cap <= 0) break;
                     const isJoker = h.actual === 'joker';
                     const isWin = !isJoker && h.predicted === h.actual;
-                    if (!isNaN(rn)) roundToBetProfit[rn] = { betAmount: bet, profit: isJoker ? -bet : (isWin ? Math.floor(bet * (oddsIn - 1)) : -bet) };
+                    roundToBetProfit[rn] = { betAmount: bet, profit: isJoker ? -bet : (isWin ? Math.floor(bet * (oddsIn - 1)) : -bet), isWin: isWin, isJoker: isJoker };
                     if (isJoker) { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
                     else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = 0; else currentBet = baseIn; }
                     else { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
