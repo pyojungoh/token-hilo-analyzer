@@ -4705,7 +4705,7 @@ RESULTS_HTML = '''
                                     rowJ.actual = 'joker';
                                     rowJ.predicted = pred;
                                     rowJ.pickColor = betColor || null;
-                                    var isNoBetJ = !!(effectivePausedForRound(id) || rowJ.no_bet);
+                                    var isNoBetJ = !!(effectivePausedForRound(id) || (rowJ.no_bet && !isMartingaleLossStreak(id)));
                                     rowJ.no_bet = isNoBetJ;
                                     rowJ.betAmount = isNoBetJ ? 0 : (rowJ.betAmount != null ? rowJ.betAmount : undefined);
                                     if (rowJ.warningWinRate == null && typeof blended === 'number') rowJ.warningWinRate = blended;
@@ -4757,7 +4757,7 @@ RESULTS_HTML = '''
                                     row.actual = actual;
                                     row.predicted = pred;
                                     row.pickColor = betColorActual || null;
-                                    var isNoBet = !!(effectivePausedForRound(id) || row.no_bet);
+                                    var isNoBet = !!(effectivePausedForRound(id) || (row.no_bet && !isMartingaleLossStreak(id)));
                                     row.no_bet = isNoBet;
                                     row.betAmount = isNoBet ? 0 : (row.betAmount != null ? row.betAmount : undefined);
                                     if (row.warningWinRate == null && typeof blended === 'number') row.warningWinRate = blended;
@@ -4828,7 +4828,7 @@ RESULTS_HTML = '''
                                     rowJ2.actual = 'joker';
                                     rowJ2.predicted = pred;
                                     rowJ2.pickColor = betColor || null;
-                                    var isNoBetJ2 = !!(effectivePausedForRound(id) || rowJ2.no_bet);
+                                    var isNoBetJ2 = !!(effectivePausedForRound(id) || (rowJ2.no_bet && !isMartingaleLossStreak(id)));
                                     rowJ2.no_bet = isNoBetJ2;
                                     rowJ2.betAmount = isNoBetJ2 ? 0 : (rowJ2.betAmount != null ? rowJ2.betAmount : undefined);
                                     if (rowJ2.warningWinRate == null && typeof blended === 'number') rowJ2.warningWinRate = blended;
@@ -4875,7 +4875,7 @@ RESULTS_HTML = '''
                                     row3.actual = actual;
                                     row3.predicted = pred;
                                     row3.pickColor = betColorActual || null;
-                                    var isNoBet3 = !!(effectivePausedForRound(id) || row3.no_bet);
+                                    var isNoBet3 = !!(effectivePausedForRound(id) || (row3.no_bet && !isMartingaleLossStreak(id)));
                                     row3.no_bet = isNoBet3;
                                     row3.betAmount = isNoBet3 ? 0 : (row3.betAmount != null ? row3.betAmount : undefined);
                                     if (row3.warningWinRate == null && typeof blended === 'number') row3.warningWinRate = blended;
@@ -5858,6 +5858,17 @@ RESULTS_HTML = '''
             var lastIsLoss = last.actual === 'joker' || last.predicted !== last.actual;
             if (lastIsLoss) return false;
             return !!calcState[id].paused;
+        }
+        /** 마틴 켜져 있고 직전 완료 회차가 패/조커면 true. pending 반영 시 예전 no_bet 덮어쓸지 판단용. */
+        function isMartingaleLossStreak(id) {
+            if (!calcState[id]) return false;
+            var martingaleEl = document.getElementById('calc-' + id + '-martingale');
+            if (!(martingaleEl && martingaleEl.checked)) return false;
+            var hist = calcState[id].history || [];
+            var completed = hist.filter(function(h) { return h.actual && h.actual !== 'pending'; });
+            if (completed.length === 0) return false;
+            var last = completed[completed.length - 1];
+            return last.actual === 'joker' || last.predicted !== last.actual;
         }
         function checkPauseAfterWin(id) {
             var pauseLowEl = document.getElementById('calc-' + id + '-pause-low-win-rate');
