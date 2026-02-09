@@ -5810,9 +5810,8 @@ RESULTS_HTML = '''
         function checkPauseAfterWin(id) {
             var pauseLowEl = document.getElementById('calc-' + id + '-pause-low-win-rate');
             var pauseThrEl = document.getElementById('calc-' + id + '-pause-win-rate-threshold');
-            if (!pauseLowEl || !pauseLowEl.checked) return;  // DOM 기준: 멈춤 옵션 켜져 있을 때만
             if (calcState[id]) {
-                calcState[id].pause_low_win_rate_enabled = true;
+                calcState[id].pause_low_win_rate_enabled = !!(pauseLowEl && pauseLowEl.checked);
                 var thrNum = (pauseThrEl && !isNaN(parseFloat(pauseThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(pauseThrEl.value))) : 45;
                 calcState[id].pause_win_rate_threshold = thrNum;
             }
@@ -5820,27 +5819,37 @@ RESULTS_HTML = '''
             var completed = hist.filter(function(h) { return h.actual && h.actual !== 'pending'; });
             var martingaleEl = document.getElementById('calc-' + id + '-martingale');
             var useMartingale = !!(martingaleEl && martingaleEl.checked);
-            // 마틴 사용 중: 연패 중 승(마틴 한 사이클 끝)일 때만 멈춤 검사. 그 외에는 마틴 끝날 때까지 배팅 유지.
+            // 마틴 사용 중: 연패 후 승(마틴 한 사이클 끝)이 나오면 15회 승률 무관하게 즉시 멈춤 — 다음 회차부터 배팅 안 함
             if (useMartingale) {
-                if (completed.length < 2) return;  // 직전 회차와 비교할 수 없으면 스킵
+                if (completed.length < 2) return;
                 var last = completed[completed.length - 1];
                 var prev = completed[completed.length - 2];
                 var lastIsWin = last.actual !== 'joker' && last.predicted === last.actual;
                 var prevWasLoss = prev.actual !== 'joker' && prev.predicted !== prev.actual;
-                if (!lastIsWin || !prevWasLoss) return;  // 연패중승이 아니면 멈춤 미적용
+                if (lastIsWin && prevWasLoss) {
+                    calcState[id].paused = true;
+                    for (var j = 0; j < hist.length; j++) {
+                        if (hist[j] && hist[j].actual === 'pending') { hist[j].betAmount = 0; hist[j].no_bet = true; }
+                    }
+                    calcState[id].history = dedupeCalcHistoryByRound(hist);
+                    saveCalcStateToServer();
+                    updateCalcDetail(id);
+                    try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: null, round: null, probability: null, suggested_amount: null }) }).catch(function() {}); } catch (e) {}
+                    return;
+                }
+                return;  // 마틴 사용 중인데 연패중승이 아니면 멈춤 검사 안 함
             }
+            if (!pauseLowEl || !pauseLowEl.checked) return;  // 마틴 미사용 시: DOM 기준 멈춤 옵션 켜져 있을 때만
             var rate15 = getCalcRecent15WinRate(id);
             var thr = (pauseThrEl && !isNaN(parseFloat(pauseThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(pauseThrEl.value))) : 45;
             if (rate15 <= thr) {
                 calcState[id].paused = true;
-                // 승 반영 전에 이미 추가된 pending 행은 배팅금액 0 + no_bet 플래그 (새로고침 후 복원용)
                 for (var j = 0; j < hist.length; j++) {
                     if (hist[j] && hist[j].actual === 'pending') { hist[j].betAmount = 0; hist[j].no_bet = true; }
                 }
                 calcState[id].history = dedupeCalcHistoryByRound(hist);
                 saveCalcStateToServer();
                 updateCalcDetail(id);
-                // 멈춤 직후 즉시 서버에 suggested_amount null 전송 — 매크로가 폴링해 스킵 판단하기 전에 반영되도록(레이스 완화)
                 try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: null, round: null, probability: null, suggested_amount: null }) }).catch(function() {}); } catch (e) {}
             }
         }

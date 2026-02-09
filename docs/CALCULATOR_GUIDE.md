@@ -39,7 +39,7 @@
 
 - **최근 15회 계산기 승률**을 기준으로, 설정한 **% 이하**로 떨어지면 배팅을 멈추고, 이때 계산기 배팅금액은 들어가지 않는다 (`-` 표시).
 - 이때 **반드시 승패는 기록**되어야 한다.
-- **마틴 적용 중**이라면, 해당 마틴이 **승**으로 끝난 후에만 멈춤 기능을 실시한다. (연패 중 승일 때만 멈춤 검사)
+- **마틴 적용 중**이라면, **연패 후 승**(마틴 한 사이클이 승으로 끝남)이 나오는 순간 **15회 승률과 무관하게 즉시 멈춤**한다. 다음 회차부터 배팅하지 않음.
 
 ### 시간
 
@@ -69,7 +69,7 @@
 - 서버 회차 반영: `_apply_results_to_calcs`, `ensure_stored_prediction_for_current_round`
 - 계산기 상태 저장/조회: `save_calc_state`, `get_calc_state`, `calc_sessions`
 - 수익·마틴 계산: `_calculate_calc_profit_server`
-- 클라이언트 멈춤: `getCalcRecent15WinRate`(계산기 15회 승률), `checkPauseAfterWin`(마틴 시 연패 중 승 후에만 멈춤 검사)
+- 클라이언트 멈춤: `getCalcRecent15WinRate`(계산기 15회 승률), `checkPauseAfterWin`(마틴 시 연패 후 승이면 즉시 멈춤, 비마틴 시 15회 승률 이하일 때 멈춤)
 - 계산기 표 렌더: `updateCalcDetail`, `calcState[id].history`
 
 수정 시 이 가이드와 규칙 파일(`.cursor/rules/calculator-guide.mdc`)을 함께 확인할 것.
