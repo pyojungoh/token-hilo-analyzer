@@ -362,10 +362,20 @@ def save_prediction_record(round_num, predicted, actual, probability=None, pick_
         return False
 
 
+def _shape_run_bucket(n):
+    """run 길이를 구간으로: 1~2=S, 3~5=M, 6+=L (같은 모양이 더 자주 매칭되도록)."""
+    if n <= 2:
+        return 'S'
+    if n <= 5:
+        return 'M'
+    return 'L'
+
+
 def _get_shape_signature(results):
     """
     결과 리스트(최신순)로부터 '그래프 모양' 시그니처 문자열 생성.
-    줄/퐁당 run 길이를 최대 5개까지 L/P 접두어와 함께 붙임. 예: L6,P1,L2,P1,L2
+    굵은 시그니처: 최근 30개에서 줄/퐁당 run을 앞에서부터 3개만 쓰고, 길이는 S(1~2)/M(3~5)/L(6+)로 구간화.
+    예: L6,P1,L2 → L,S,S. 같은 모양 클래스가 자주 쌓여서 모양별 다음 결과 통계가 반영되기 쉽게 함.
     """
     if not results or len(results) < 16:
         return ""
@@ -381,20 +391,20 @@ def _get_shape_signature(results):
         first_is_line = (use[0] == use[1])
     parts = []
     li, pi = 0, 0
-    for i in range(5):
+    for _ in range(3):
         if first_is_line:
-            if i % 2 == 0 and li < len(line_runs):
-                parts.append("L%d" % line_runs[li])
+            if li < len(line_runs):
+                parts.append(_shape_run_bucket(line_runs[li]))
                 li += 1
-            elif i % 2 == 1 and pi < len(pong_runs):
-                parts.append("P%d" % pong_runs[pi])
+            elif pi < len(pong_runs):
+                parts.append(_shape_run_bucket(pong_runs[pi]))
                 pi += 1
         else:
-            if i % 2 == 0 and pi < len(pong_runs):
-                parts.append("P%d" % pong_runs[pi])
+            if pi < len(pong_runs):
+                parts.append(_shape_run_bucket(pong_runs[pi]))
                 pi += 1
-            elif i % 2 == 1 and li < len(line_runs):
-                parts.append("L%d" % line_runs[li])
+            elif li < len(line_runs):
+                parts.append(_shape_run_bucket(line_runs[li]))
                 li += 1
     return ",".join(parts) if parts else ""
 
@@ -1708,20 +1718,27 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     elif balance_phase == 'transition_to_high':
         line_w += 0.06
         pong_w = max(0.0, pong_w - 0.03)
-    # 저장된 모양 가중치: 자주 나온 모양일 때, 그 모양 다음에 정이 많았으면 줄 쪽, 꺽이 많았으면 퐁당 쪽 소폭 가산 (예측값 무관)
+    # 저장된 모양 가중치: 그 모양 다음에 정이 많았으면 줄 쪽, 꺽이 많았으면 퐁당 쪽 가산 (예측값 무관).
+    # 문턱 10회 이상, 샘플 수에 따라 가중치 단계 적용 (10~19: 0.04, 20~49: 0.07, 50+: 0.10).
     if shape_win_stats:
         jc = shape_win_stats.get('jung_count') or 0
         kc = shape_win_stats.get('kkeok_count') or 0
         total = jc + kc
-        if total >= 20:
+        if total >= 10:
             jr = jc / total if total else 0
             kr = kc / total if total else 0
+            if total >= 50:
+                w = 0.10
+            elif total >= 20:
+                w = 0.07
+            else:
+                w = 0.04
             if jr >= 0.55:
-                line_w += 0.05
-                pong_w = max(0.0, pong_w - 0.025)
+                line_w += w
+                pong_w = max(0.0, pong_w - w * 0.5)
             elif kr >= 0.55:
-                pong_w += 0.05
-                line_w = max(0.0, line_w - 0.025)
+                pong_w += w
+                line_w = max(0.0, line_w - w * 0.5)
     total_w = line_w + pong_w
     if total_w > 0:
         line_w /= total_w
@@ -1748,7 +1765,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         pong_chunk_debug['symmetry_windows_used'] = symmetry_windows_used
         pong_chunk_debug['u_shape'] = u35_detected  # U자 구간(연패 많음): 유지 가중치 보정·멈춤 권장
         pong_chunk_debug['balance_phase'] = balance_phase  # 밸런스 구간 전환(transition_to_low/high)
-        pong_chunk_debug['shape_signature'] = _get_shape_signature(results)  # 저장·대조용 모양 코드 (L6,P1,L2…)
+        pong_chunk_debug['shape_signature'] = _get_shape_signature(results)  # 저장·대조용 모양 코드 (S/M/L 구간, 예: L,S,M)
         if shape_win_stats:
             pong_chunk_debug['shape_jung_count'] = shape_win_stats.get('jung_count')
             pong_chunk_debug['shape_kkeok_count'] = shape_win_stats.get('kkeok_count')
@@ -3182,7 +3199,7 @@ RESULTS_HTML = '''
             <div id="panel-pong-chunk" class="analysis-panel active">
                 <div id="pong-chunk-collapse-body" class="prob-bucket-collapse-body">
                 <div id="pong-chunk-section" style="margin-top:0;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
-                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">최근 그래프에서 <strong>줄(유지)</strong>·<strong>퐁당(바뀜)</strong>·<strong>덩어리(블록 반복)</strong>·<strong>U자 구간</strong>을 판별해 가중치에 반영합니다. U자 구간은 연패가 많아 유지 쪽 보정·멈춤 권장. <strong>감지된 모양</strong>은 저장·대조용 코드(L=줄 run 길이, P=퐁당 run 길이, 왼쪽이 최신).</p>
+                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">최근 그래프에서 <strong>줄(유지)</strong>·<strong>퐁당(바뀜)</strong>·<strong>덩어리(블록 반복)</strong>·<strong>U자 구간</strong>을 판별해 가중치에 반영합니다. U자 구간은 연패가 많아 유지 쪽 보정·멈춤 권장. <strong>감지된 모양</strong>은 저장·대조용 코드(앞 3 run을 S/M/L 구간으로 표시, 예: L,S,M).</p>
                     <div id="pong-chunk-data" style="font-size:0.9em;color:#ccc;"><table class="symmetry-line-table" style="width:100%;max-width:420px;"><tbody id="pong-chunk-tbody"><tr><td colspan="2" style="color:#888;">데이터 로딩 후 표시</td></tr></tbody></table></div>
                 </div>
                 </div>
