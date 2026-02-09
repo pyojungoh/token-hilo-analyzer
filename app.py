@@ -6408,46 +6408,85 @@ RESULTS_HTML = '''
         
         initialLoad();
         
-        // 결과 폴링: 분당 4게임(15초 사이클) 기준. 계산기 실행 중이면 250ms로 빠르게 해서 회차 놓침 방지
-        setInterval(() => {
-            const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
-            const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
-            const criticalPhase = r <= 3 || r >= 8;
-            const interval = allResults.length === 0 ? 500 : (anyRunning ? 250 : (criticalPhase ? 400 : 500));
-            if (Date.now() - lastResultsUpdate > interval) {
-                loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
-            }
-        }, 250);
-        
-        // 계산기 실행 중: 0.3초마다 픽을 서버로 전송 → 매크로가 회차 놓치지 않도록 (분당 4게임 15초 사이클 대응)
-        setInterval(() => {
-            const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
-            if (anyRunning) CALC_IDS.forEach(id => { updateCalcStatus(id); });
-        }, 300);
-        
+        // 탭 가시성 추적: 백그라운드일 때 폴링 간격 조정
+        var isTabVisible = !document.hidden;
+        var resultsPollIntervalId = null;
+        var calcStatusPollIntervalId = null;
+        var calcStatePollIntervalId = null;
+        var timerUpdateIntervalId = null;
         // 리셋/실행 직후에는 서버 폴링 스킵 (저장 반영 전에 예전 상태로 덮어쓰는 것 방지)
         var lastResetOrRunAt = 0;
-        // 계산기 실행 중일 때 서버 상태 주기적으로 가져와 UI 실시간 반영 (멈춰 보이는 현상 방지)
-        setInterval(() => {
-            if (Date.now() - lastResetOrRunAt < 3500) return;
-            const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
-            if (anyRunning) {
-                loadCalcStateFromServer(false).then(function() { updateAllCalcs(); }).catch(function(e) { console.warn('계산기 상태 폴링:', e); });
-            }
-        }, 2000);
         
-        // 0.2초마다 타이머 업데이트 (UI만 업데이트, 서버 요청은 1초마다)
-        setInterval(updateTimer, 200);
-
-        // 탭이 다시 보일 때(모바일에서 창 내렸다 올림 등): 최신 결과·계산기 상태 동기화 → 멈춤/승률 정확히 반영
+        function setupIntervals() {
+            // 기존 interval 정리
+            if (resultsPollIntervalId) clearInterval(resultsPollIntervalId);
+            if (calcStatusPollIntervalId) clearInterval(calcStatusPollIntervalId);
+            if (calcStatePollIntervalId) clearInterval(calcStatePollIntervalId);
+            if (timerUpdateIntervalId) clearInterval(timerUpdateIntervalId);
+            
+            // 탭 가시성에 따라 간격 조정
+            var resultsInterval = isTabVisible ? 250 : 1000;
+            var calcStatusInterval = isTabVisible ? 300 : 1000;
+            var calcStateInterval = isTabVisible ? 2000 : 3000;
+            var timerInterval = isTabVisible ? 200 : 1000;
+            
+            // 결과 폴링: 분당 4게임(15초 사이클) 기준. 계산기 실행 중이면 250ms로 빠르게 해서 회차 놓침 방지
+            // 백그라운드일 때는 브라우저 제한(최소 1초)을 고려해 간격 조정
+            resultsPollIntervalId = setInterval(() => {
+                const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
+                const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
+                const criticalPhase = r <= 3 || r >= 8;
+                // 백그라운드일 때는 최소 1초 간격, 보일 때는 기존 간격
+                const baseInterval = allResults.length === 0 ? 500 : (anyRunning ? 250 : (criticalPhase ? 400 : 500));
+                const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
+                if (Date.now() - lastResultsUpdate > interval) {
+                    loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
+                }
+            }, resultsInterval);
+            
+            // 계산기 실행 중: 0.3초마다 픽을 서버로 전송 → 매크로가 회차 놓치지 않도록 (분당 4게임 15초 사이클 대응)
+            // 백그라운드일 때는 1초 간격으로 조정 (브라우저 제한)
+            calcStatusPollIntervalId = setInterval(() => {
+                const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
+                if (anyRunning) CALC_IDS.forEach(id => { updateCalcStatus(id); });
+            }, calcStatusInterval);
+            
+            // 계산기 실행 중일 때 서버 상태 주기적으로 가져와 UI 실시간 반영 (멈춰 보이는 현상 방지)
+            // 백그라운드일 때는 간격을 늘림 (브라우저 제한 고려)
+            calcStatePollIntervalId = setInterval(() => {
+                if (Date.now() - lastResetOrRunAt < 3500) return;
+                const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
+                if (anyRunning) {
+                    loadCalcStateFromServer(false).then(function() { updateAllCalcs(); }).catch(function(e) { console.warn('계산기 상태 폴링:', e); });
+                }
+            }, calcStateInterval);
+            
+            // 0.2초마다 타이머 업데이트 (UI만 업데이트, 서버 요청은 1초마다)
+            // 백그라운드일 때는 1초 간격으로 조정 (브라우저 제한)
+            timerUpdateIntervalId = setInterval(updateTimer, timerInterval);
+        }
+        
+        // 초기 설정
+        setupIntervals();
+        
+        // 탭 가시성 변경 시 interval 재설정
         document.addEventListener('visibilitychange', function() {
-            if (document.visibilityState !== 'visible') return;
-            lastResultsUpdate = 0;
-            loadResults().then(function() {
-                return loadCalcStateFromServer(false);
-            }).then(function() {
-                if (typeof updateAllCalcs === 'function') updateAllCalcs();
-            }).catch(function(e) { console.warn('visibilitychange 동기화:', e); });
+            var wasVisible = isTabVisible;
+            isTabVisible = !document.hidden;
+            
+            if (isTabVisible && !wasVisible) {
+                // 탭이 다시 보일 때 즉시 동기화 및 interval 재설정
+                lastResultsUpdate = 0;
+                setupIntervals();  // 빠른 간격으로 재설정
+                loadResults().then(function() {
+                    return loadCalcStateFromServer(false);
+                }).then(function() {
+                    if (typeof updateAllCalcs === 'function') updateAllCalcs();
+                }).catch(function(e) { console.warn('visibilitychange 동기화:', e); });
+            } else if (!isTabVisible && wasVisible) {
+                // 백그라운드로 갈 때 느린 간격으로 재설정
+                setupIntervals();
+            }
         });
     </script>
 </body>
