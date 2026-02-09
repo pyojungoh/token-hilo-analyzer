@@ -4031,7 +4031,8 @@ RESULTS_HTML = '''
                     var serverDeduped = dedupeCalcHistoryByRound(raw);
                     var localLen = (calcState[id].history || []).length;
                     if (localRunning && serverRunning) {
-                        if (serverDeduped.length > localLen) {
+                        // 폴링(비복원) 시에는 서버 히스토리로 덮어쓰지 않음 — 서버의 예전 paused로 쌓인 no_bet 행이 마틴 중인 표를 덮지 않도록
+                        if (fullRestore && serverDeduped.length > localLen) {
                             calcState[id].history = serverDeduped;
                         }
                     } else {
@@ -4056,7 +4057,8 @@ RESULTS_HTML = '''
                 var pauseThrRestore = (typeof c.pause_win_rate_threshold === 'number' && c.pause_win_rate_threshold >= 0 && c.pause_win_rate_threshold <= 100) ? c.pause_win_rate_threshold : 45;
                 calcState[id].pause_low_win_rate_enabled = !!c.pause_low_win_rate_enabled;
                 calcState[id].pause_win_rate_threshold = pauseThrRestore;
-                calcState[id].paused = !!c.paused;
+                // 폴링 시 실행 중이면 paused는 클라이언트 유지(서버의 예전 paused=true가 마틴 중 다시 멈춤 걸리지 않도록)
+                if (fullRestore || !localRunning) calcState[id].paused = !!c.paused;
                 calcState[id].lose_streak_reverse = !!c.lose_streak_reverse;
                 var loseStreakThrRestore = (typeof c.lose_streak_reverse_threshold === 'number' && c.lose_streak_reverse_threshold >= 0 && c.lose_streak_reverse_threshold <= 100) ? c.lose_streak_reverse_threshold : 46;
                 calcState[id].lose_streak_reverse_threshold = loseStreakThrRestore;

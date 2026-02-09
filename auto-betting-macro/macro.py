@@ -1082,7 +1082,6 @@ class MacroWindow(QMainWindow):
         self._set_settings_locked(True)
         self.last_clicked_round = None
         self.last_pick = None
-        self._start_round = None  # 이 회차는 스킵, 다음 회차부터 배팅
         try:
             self._base_bet = max(0, int(self.base_bet_edit.text().strip() or 0)) or 1000
         except ValueError:
@@ -1141,45 +1140,62 @@ class MacroWindow(QMainWindow):
                     if blended is None and ph:
                         blended = _blended_win_rate_from_ph(ph)
                     round_actuals = data.get("round_actuals") or {}
-                    self.update_queue.put(("pick", sp))
-                    self.update_queue.put(("history", ph, blended, round_actuals))
-
-                    pick_color = None
-                    if sp.get("color") in ("빨강", "RED"):
-                        pick_color = "RED"
-                    elif sp.get("color") in ("검정", "BLACK"):
-                        pick_color = "BLACK"
-                    round_num = sp.get("round")
-                    if round_num is not None:
-                        round_num = int(round_num)
-                    if pick_color not in ("RED", "BLACK") or round_num is None:
-                        if not getattr(self, "_wait_log_count", 0) % 10:
-                            self.update_queue.put(("log", "[대기] 픽 없음 - Analyzer 결과 페이지 열어두고 픽 나오는지 확인"))
-                        self._wait_log_count = getattr(self, "_wait_log_count", 0) + 1
-                        time.sleep(min(interval, 0.2))  # 픽 대기 시 0.2초마다 폴링
-                        continue
-                    if self.last_clicked_round == round_num:
-                        time.sleep(interval)
-                        continue
-                    # 시작 시 현재 회차는 스킵, 다음 회차부터 배팅
-                    if self._start_round is None:
-                        self._start_round = round_num
-                        time.sleep(interval)
-                        continue
-                    if round_num <= self._start_round:
-                        time.sleep(interval)
-                        continue
-                    round_actuals = data.get("round_actuals") or {}
-                    # 계산기 멈춤 연동: current-pick의 suggested_amount가 없으면 이 회차는 배팅 스킵(계산기 표와 동일)
+                    # 계산기 선택 시(1,2,3): 픽/회차/금액은 current_pick에서 가져옴(분석기 계산기와 동일). 비어있으면 server_prediction 폴백
+                    calc_id = getattr(self, "_calculator_id", 1)
+                    cp = None
                     try:
-                        cp = fetch_current_pick(analyzer_url, calculator_id=getattr(self, "_calculator_id", 1), timeout=3)
-                        if cp.get("suggested_amount") is None or cp.get("suggested_amount") == 0:
+                        cp = fetch_current_pick(analyzer_url, calculator_id=calc_id, timeout=3)
+                    except Exception:
+                        pass
+                    use_current_pick = False
+                    pick_color = None
+                    round_num = None
+                    amount_from_calc = None
+                    if cp and cp.get("running") is not False:
+                        raw = (cp.get("pick_color") or "").strip().upper()
+                        if raw in ("RED", "BLACK"):
+                            r = cp.get("round")
+                            if r is not None:
+                                try:
+                                    rn = int(r)
+                                except (TypeError, ValueError):
+                                    rn = None
+                                if rn is not None:
+                                    pick_color = raw
+                                    round_num = rn
+                                    use_current_pick = True
+                                    am = cp.get("suggested_amount")
+                                    if am is not None:
+                                        try:
+                                            amount_from_calc = int(am)
+                                        except (TypeError, ValueError):
+                                            pass
+                    if not use_current_pick:
+                        if sp.get("color") in ("빨강", "RED"):
+                            pick_color = "RED"
+                        elif sp.get("color") in ("검정", "BLACK"):
+                            pick_color = "BLACK"
+                        r = sp.get("round")
+                        round_num = int(r) if r is not None else None
+                        self.update_queue.put(("pick", sp))
+                    else:
+                        self.update_queue.put(("pick", {"color": pick_color, "round": round_num, "probability": cp.get("probability"), "from_calculator": True}))
+                        if amount_from_calc is None or amount_from_calc <= 0:
                             self.update_queue.put(("log", "[멈춤] 계산기 멈춤 구간 - 회차 %s 배팅 스킵" % round_num))
                             self.last_clicked_round = round_num
                             time.sleep(interval)
                             continue
-                    except Exception:
-                        pass
+                    self.update_queue.put(("history", ph, blended, round_actuals))
+
+                    if pick_color not in ("RED", "BLACK") or round_num is None:
+                        if not getattr(self, "_wait_log_count", 0) % 10:
+                            self.update_queue.put(("log", "[대기] 픽 없음 - Analyzer 결과 페이지 열어두고 픽 나오는지 확인"))
+                        self._wait_log_count = getattr(self, "_wait_log_count", 0) + 1
+                        time.sleep(min(interval, 0.2))
+                        continue
+                    if self.last_clicked_round == round_num:
+                        time.sleep(interval)
+                        continue
                     # 결과 대기: 직전 배팅(last_clicked_round) 결과가 round_actuals 또는 ph에 있어야 마틴/승률반픽 정상 동작
                     if self.last_clicked_round is not None:
                         rid = str(int(self.last_clicked_round))
@@ -1200,8 +1216,10 @@ class MacroWindow(QMainWindow):
                     # 반픽: 픽과 반대 색으로 클릭
                     if self._reverse:
                         pick_color = "BLACK" if pick_color == "RED" else "RED"
-                    # results_from_ph: ph(API)에서 실제 결과 추출 (마틴·승률반픽 모두 이 값 사용)
+                    # 계산기 픽 사용 시: 분석기에서 전달한 suggested_amount 사용(마틴 등 동기화). 아니면 매크로 자체 기준금+마틴
                     amount = self._base_bet
+                    if use_current_pick and amount_from_calc is not None and amount_from_calc > 0:
+                        amount = amount_from_calc
                     consecutive_losses = 0
                     results_from_ph = []
                     if self.bet_log:
@@ -1242,12 +1260,13 @@ class MacroWindow(QMainWindow):
                                     results_from_ph.append(our_pick == ac_n if ac_n else b.get("result"))
                             else:
                                 results_from_ph.append(b.get("result"))
-                    # 승률반픽: 합산승률(API 또는 ph 폴백)이 기준 % 이하일 때 반대로 배팅
-                    if self._win_rate_reverse and blended is not None and blended <= self._win_rate_threshold:
+                    # 승률반픽: 합산승률(API 또는 ph 폴백)이 기준 % 이하일 때 반대로 배팅 (계산기 픽 사용 시에는 계산기에서 이미 반영됨, 매크로 반픽은 server_prediction 모드에서만)
+                    if not use_current_pick and self._win_rate_reverse and blended is not None and blended <= self._win_rate_threshold:
                         orig = pick_color
                         pick_color = "BLACK" if pick_color == "RED" else "RED"
                         self.update_queue.put(("log", "[승률반픽] 합산 %.1f%% ≤ %s%% → %s 대신 %s 배팅" % (blended, self._win_rate_threshold, orig, pick_color)))
-                    if self._martingale:
+                    # 계산기 픽 사용 시 금액은 이미 suggested_amount로 설정됨. 매크로 자체 마틴은 server_prediction 모드에서만
+                    if not use_current_pick and self._martingale:
                         for res in reversed(results_from_ph):
                             if res is None:
                                 break
@@ -1392,7 +1411,6 @@ class MacroWindow(QMainWindow):
         self.bet_log = []
         self.last_clicked_round = None
         self.last_pick = None
-        self._start_round = None
         self._refresh_bet_table()
         self.set_status("중지됨")
         self.log("[중지] 매크로 중지. 배팅 기록 초기화됨.")
