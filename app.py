@@ -5721,9 +5721,22 @@ RESULTS_HTML = '''
                         // 배팅중인 회차는 이미 정한 계산기 픽만 유지 — lastPrediction이 잠깐 예측기로 바뀌어도 저장된 픽으로 POST/표시해 예측기 픽으로 배팅 나가는 것 방지
                         var curRound = lastPrediction && lastPrediction.round != null ? Number(lastPrediction.round) : null;
                         var saved = (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === curRound) ? calcState[id].lastBetPickForRound : null;
-                        // 상단 예측픽: 현재 회차의 히스토리 항목에서 originalPredicted를 가져오거나, 없으면 getRoundPrediction으로 가져옴 (표의 첫 번째 행과 동일한 로직)
+                        // 상단 예측픽: 표의 첫 번째 행과 동일한 회차를 기준으로 표시 (표의 첫 번째 행 = usedHist의 마지막 항목)
                         var predictionText = lastPrediction.value;
-                        if (curRound != null) {
+                        var usedHistForTop = dedupeCalcHistoryByRound(calcState[id].history || []);
+                        var firstRowHist = usedHistForTop.length > 0 ? usedHistForTop[usedHistForTop.length - 1] : null;
+                        var firstRowRound = firstRowHist && firstRowHist.round != null ? Number(firstRowHist.round) : null;
+                        // 표의 첫 번째 행이 있으면 그 회차의 originalPredicted를 우선 사용 (표의 첫 번째 행과 동일하게 표시)
+                        if (firstRowHist && (firstRowHist.originalPredicted === '정' || firstRowHist.originalPredicted === '꺽')) {
+                            predictionText = firstRowHist.originalPredicted;
+                        } else if (firstRowRound != null) {
+                            // 표의 첫 번째 행에 originalPredicted가 없으면 표의 첫 번째 행 회차 기준으로 getRoundPrediction 사용
+                            var predForFirstRow = getRoundPrediction(firstRowRound);
+                            if (predForFirstRow && predForFirstRow.value) {
+                                predictionText = predForFirstRow.value;
+                            }
+                        } else if (curRound != null) {
+                            // 표의 첫 번째 행이 없으면 현재 회차 기준으로 찾기
                             var histForRound = calcState[id].history && Array.isArray(calcState[id].history) ? calcState[id].history.find(function(h) { return h && Number(h.round) === curRound; }) : null;
                             if (histForRound && (histForRound.originalPredicted === '정' || histForRound.originalPredicted === '꺽')) {
                                 predictionText = histForRound.originalPredicted;
