@@ -446,6 +446,53 @@ def _get_shape_stats_for_results(results):
             pass
 
 
+def _get_latest_next_pick_for_shape(results):
+    """현재 results에 해당하는 그래프 모양과 같은 shape_signature를 가진 가장 최근 항목의 다음 픽을 찾음."""
+    if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
+        return None
+    sig = _get_shape_signature(results)
+    if not sig:
+        return None
+    conn = get_db_connection(statement_timeout_sec=3)
+    if not conn:
+        return None
+    try:
+        cur = conn.cursor()
+        # 같은 shape_signature를 가진 가장 최근 항목 찾기
+        cur.execute('''
+            SELECT round_num, prediction_details->>'shape_signature' as shape_sig
+            FROM prediction_history
+            WHERE prediction_details->>'shape_signature' = %s
+            ORDER BY round_num DESC
+            LIMIT 1
+        ''', (sig,))
+        row = cur.fetchone()
+        if not row:
+            cur.close()
+            return None
+        latest_round = row[0]
+        # 그 다음 회차의 actual 값 찾기
+        cur.execute('''
+            SELECT actual
+            FROM prediction_history
+            WHERE round_num = %s
+            LIMIT 1
+        ''', (latest_round + 1,))
+        next_row = cur.fetchone()
+        cur.close()
+        if not next_row or not next_row[0]:
+            return None
+        return next_row[0]
+    except Exception as e:
+        print(f"[경고] 가장 최근 다음 픽 조회 실패: {str(e)[:150]}")
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def update_shape_win_stats(conn, signature, actual):
     """예측 기록 저장 시 호출: 해당 회차 예측 시점의 모양 다음에 실제로 나온 결과(정/꺽)만 누적. 예측값은 사용 안 함."""
     if not conn or not signature:
@@ -2737,10 +2784,13 @@ RESULTS_HTML = '''
         .prob-bucket-collapse:not(.collapsed) .prob-bucket-collapse-body { display: block; }
         /* 모양 판별 등 통합 탭 (가로 탭, 클릭 시 해당 패널만 표시) */
         .analysis-tabs-wrap { margin-top: 12px; border: 1px solid #444; border-radius: 8px; background: rgba(255,255,255,0.03); overflow: hidden; }
-        .analysis-tabs { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid #444; background: #252525; }
+        .analysis-tabs { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid #444; background: #252525; position: relative; }
         .analysis-tab { padding: 10px 14px; cursor: pointer; font-size: 0.95em; color: #aaa; user-select: none; white-space: nowrap; }
         .analysis-tab:hover { background: rgba(255,255,255,0.06); color: #fff; }
         .analysis-tab.active { background: #444; color: #fff; font-weight: 600; }
+        .analysis-tabs-collapse-btn { position: absolute; right: 0; top: 0; padding: 10px 14px; cursor: pointer; font-size: 0.95em; color: #aaa; user-select: none; background: #252525; border-left: 1px solid #444; }
+        .analysis-tabs-collapse-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
+        .analysis-tabs-wrap.collapsed .analysis-panel { display: none !important; }
         .analysis-panel { display: none; padding: 14px 18px; border-top: none; }
         .analysis-panel.active { display: block; }
         .analysis-panel .prob-bucket-collapse-body { display: block !important; }
@@ -3195,6 +3245,7 @@ RESULTS_HTML = '''
                 <span class="analysis-tab" role="tab" data-panel="prob-bucket">확률 구간</span>
                 <span class="analysis-tab" role="tab" data-panel="losing-streaks">연패 구간</span>
                 <span class="analysis-tab" role="tab" data-panel="symmetry-line">대칭/줄</span>
+                <span class="analysis-tabs-collapse-btn" id="analysis-tabs-collapse-btn" title="접기/펼치기">▼</span>
             </div>
             <div id="panel-pong-chunk" class="analysis-panel active">
                 <div id="pong-chunk-collapse-body" class="prob-bucket-collapse-body">
@@ -5106,12 +5157,17 @@ RESULTS_HTML = '''
                                 var j = Number(d.shape_jung_count) || 0, k = Number(d.shape_kkeok_count) || 0;
                                 shapeStatsLabel = '다음 정 ' + j + '회, 꺽 ' + k + '회 (저장된 통계)';
                             }
+                            var latestNextPickLabel = '—';
+                            if (d.latest_next_pick && (d.latest_next_pick === '정' || d.latest_next_pick === '꺽')) {
+                                latestNextPickLabel = d.latest_next_pick;
+                            }
                             var rows = '<tr><td>판별 구간</td><td>' + phaseLabel + '</td></tr>' +
                                 '<tr><td>구간 유형</td><td>' + segmentLabel + '</td></tr>' +
                                 '<tr><td>덩어리 모양</td><td>' + chunkShapeLabel + '</td></tr>' +
                                 '<tr><td>U자 구간</td><td>' + uShapeLabel + '</td></tr>' +
                                 '<tr><td><strong>감지된 모양(시그니처)</strong></td><td><code style="font-size:0.9em">' + shapeSig + '</code></td></tr>' +
                                 '<tr><td>모양별 다음 결과 통계</td><td>' + shapeStatsLabel + '</td></tr>' +
+                                '<tr><td>가장 최근 다음 픽</td><td>' + latestNextPickLabel + '</td></tr>' +
                                 '<tr><td>맨 앞 run 타입</td><td>' + (d.first_run_type || '—') + '</td></tr>' +
                                 '<tr><td>맨 앞 run 길이</td><td>' + (d.first_run_len != null ? d.first_run_len : '—') + '</td></tr>' +
                                 '<tr><td>최근 15개 퐁당%</td><td>' + (d.pong_pct_short != null ? d.pong_pct_short.toFixed(1) + '%' : '—') + '</td></tr>' +
@@ -5906,6 +5962,17 @@ RESULTS_HTML = '''
             var panel = document.getElementById('panel-' + panelId);
             if (panel) panel.classList.add('active');
         });
+        var collapseBtn = document.getElementById('analysis-tabs-collapse-btn');
+        if (collapseBtn && !collapseBtn.getAttribute('data-bound')) {
+            collapseBtn.setAttribute('data-bound', '1');
+            collapseBtn.addEventListener('click', function() {
+                var wrap = document.getElementById('analysis-tabs-wrap');
+                if (wrap) {
+                    wrap.classList.toggle('collapsed');
+                    this.textContent = wrap.classList.contains('collapsed') ? '▶' : '▼';
+                }
+            });
+        }
         document.getElementById('bet-log-clear-all')?.addEventListener('click', function() {
             if (betCalcLog.length === 0) return;
             if (typeof confirm !== 'undefined' && !confirm('로그를 모두 삭제할까요?')) return;
@@ -6317,6 +6384,10 @@ def _build_results_payload_db_only(hours=24):
                             if computed:
                                 server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                 server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
+                                # 가장 최근 다음 픽 추가
+                                latest_next_pick = _get_latest_next_pick_for_shape(results)
+                                if latest_next_pick:
+                                    server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
                         except Exception:
                             pass
             except Exception as e:
@@ -6487,6 +6558,10 @@ def _build_results_payload():
                                 if computed:
                                     server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                     server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
+                                    # 가장 최근 다음 픽 추가
+                                    latest_next_pick = _get_latest_next_pick_for_shape(results)
+                                    if latest_next_pick:
+                                        server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
                             except Exception:
                                 pass
                 except Exception as e:
@@ -6560,6 +6635,10 @@ def _build_results_payload():
                                 if computed:
                                     server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                     server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
+                                    # 가장 최근 다음 픽 추가
+                                    latest_next_pick = _get_latest_next_pick_for_shape(results)
+                                    if latest_next_pick:
+                                        server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
                             except Exception:
                                 pass
                 except Exception as e:
