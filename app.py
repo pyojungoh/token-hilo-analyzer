@@ -3588,7 +3588,7 @@ RESULTS_HTML = '''
             <div id="panel-win-rate-direction" class="analysis-panel">
                 <div id="win-rate-direction-collapse-body" class="prob-bucket-collapse-body">
                 <div id="win-rate-direction-section" style="margin-top:8px;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
-                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">메인 예측기 <strong>최근 50회 승률</strong>의 고점·저점을 계속 기록하고, 현재 승률이 <strong>오르는지 내리는지</strong> 상태를 표시합니다. (추후 계산기 옵션 연동용 지표)</p>
+                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">메인 예측기 밑 <strong>결과 표</strong> 데이터로 롤링 50회 승률을 계산해, <strong>기록 최고점·최저점·중간·방향</strong>을 바로 표시합니다. (결과 50회 이상이면 즉시 표시)</p>
                     <div id="win-rate-direction-data" style="font-size:0.95em;color:#ccc;">
                         <table class="symmetry-line-table" style="width:100%;max-width:480px;">
                             <tbody id="win-rate-direction-tbody">
@@ -6052,35 +6052,43 @@ RESULTS_HTML = '''
             var tbody = document.getElementById('win-rate-direction-tbody');
             var wrap = document.getElementById('win-rate-direction-data');
             if (!tbody) return;
-            var hist = winRate50History || [];
-            var vh = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
-            var v50 = vh.slice(-50);
-            var hit50cur = v50.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
-            var loss50cur = v50.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-            var count50cur = hit50cur + loss50cur;
-            var currentRate50 = count50cur > 0 ? 100 * hit50cur / count50cur : null;
-            var high, low, mid, direction, directionClass, lastRound;
-            if (hist.length > 0) {
-                var rates = hist.map(function(x) { return x.rate50; });
+            // 메인 예측기 밑 결과 표와 동일한 데이터(predictionHistory)에서 롤링 50회 승률 계산 → 고점/저점/중간/방향 즉시 표시
+            var vh = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && typeof h === 'object' && h.actual != null && h.actual !== ''; }) : [];
+            var derivedSeries = [];
+            for (var i = 49; i < vh.length; i++) {
+                var w = vh.slice(i - 49, i + 1);
+                var wins = w.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                var losses = w.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                var c = wins + losses;
+                if (c > 0) derivedSeries.push({ round: vh[i].round, rate50: 100 * wins / c });
+            }
+            var high, low, mid, direction, directionClass, lastRound, current;
+            if (derivedSeries.length > 0) {
+                var rates = derivedSeries.map(function(x) { return x.rate50; });
                 high = Math.max.apply(null, rates);
                 low = Math.min.apply(null, rates);
                 mid = (high + low) / 2;
                 direction = '정체';
                 directionClass = '';
-                if (hist.length >= 4) {
-                    var recent = hist[hist.length - 1].rate50;
-                    var prev = hist[hist.length - 4].rate50;
+                if (derivedSeries.length >= 4) {
+                    var recent = derivedSeries[derivedSeries.length - 1].rate50;
+                    var prev = derivedSeries[derivedSeries.length - 4].rate50;
                     if (recent > prev + 0.5) { direction = '오름'; directionClass = 'color:#81c784;'; }
                     else if (recent < prev - 0.5) { direction = '내림'; directionClass = 'color:#e57373;'; }
                 }
-                lastRound = hist[hist.length - 1].round;
+                lastRound = derivedSeries[derivedSeries.length - 1].round;
+                current = derivedSeries[derivedSeries.length - 1].rate50;
             } else {
+                var v50 = vh.slice(-50);
+                var hit50cur = v50.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                var loss50cur = v50.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                var count50cur = hit50cur + loss50cur;
+                current = count50cur > 0 ? 100 * hit50cur / count50cur : null;
                 high = low = mid = null;
                 direction = '-';
                 directionClass = '';
                 lastRound = null;
             }
-            var current = (hist.length > 0 ? hist[hist.length - 1].rate50 : null) ?? currentRate50;
             var lowVal = low != null ? low : 0;
             var highVal = high != null ? high : 100;
             var range = Math.max(highVal - lowVal, 1);
@@ -6096,7 +6104,7 @@ RESULTS_HTML = '''
                     '</div></div>';
             }
             tbody.innerHTML =
-                '<tr><td style="color:#b0bec5;">현재 50회 승률</td><td><strong>' + (current != null ? current.toFixed(1) + '%' : '-') + '</strong>' + (hist.length === 0 && current != null ? ' <span style="color:#888;font-size:0.85em">(기록 쌓는 중)</span>' : '') + '</td></tr>' +
+                '<tr><td style="color:#b0bec5;">현재 50회 승률</td><td><strong>' + (current != null ? current.toFixed(1) + '%' : '-') + '</strong>' + (derivedSeries.length === 0 && current != null ? ' <span style="color:#888;font-size:0.85em">(50회 미만)</span>' : '') + '</td></tr>' +
                 '<tr><td style="color:#b0bec5;">기록 최고점</td><td style="color:#81c784;">' + (high != null ? high.toFixed(1) + '%' : '-') + '</td></tr>' +
                 '<tr><td style="color:#b0bec5;">기록 최저점</td><td style="color:#e57373;">' + (low != null ? low.toFixed(1) + '%' : '-') + '</td></tr>' +
                 '<tr><td style="color:#b0bec5;">중간 (고·저)</td><td>' + (mid != null ? mid.toFixed(1) + '%' : '-') + '</td></tr>' +
