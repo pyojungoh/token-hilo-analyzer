@@ -4073,6 +4073,7 @@ RESULTS_HTML = '''
         var lastIs15Joker = false;  // 15번 카드 조커 여부 (계산기 예측픽에 보류 반영용)
         /** 승률 방향 메뉴: 최근 100회 기준 고점/저점/방향. { round, rate50 } 최대 300개 */
         var winRate50History = [];
+        var lastWinRateDirectionRef = null;  // 정체 시 '기존 전략 유지 (오름/반대)' 표시용
         var roundPredictionBuffer = {};   // 회차별 예측 저장 (표 충돌 방지: 결과 반영 시 해당 회차만 조회)
         var ROUND_PREDICTION_BUFFER_MAX = 50;
         var savedBetPickByRound = {};     // 배팅중 카드 그릴 때 걸은 픽 저장 (표에 넣을 때 이 값 사용 → 예측픽/재계산과 충돌 방지)
@@ -6323,21 +6324,25 @@ RESULTS_HTML = '''
                         trendZoneLabel = '오름·상위 구간';
                         refPickText = '정픽 참고';
                         refPickClass = 'color:#81c784;';
+                        lastWinRateDirectionRef = '오름';
                     } else if (direction === '내림' && ratio <= 0.5) {
                         trendZoneLabel = '내림·하위 구간';
                         refPickText = '반대픽 참고';
                         refPickClass = 'color:#e57373;';
+                        lastWinRateDirectionRef = '내림';
                     } else if (delta5 < -d5 && ratio >= 0.5) {
                         trendZoneLabel = '고점 하락 구간';
                         refPickText = '반대픽 참고';
                         refPickClass = 'color:#e57373;';
+                        lastWinRateDirectionRef = '내림';
                     } else if (delta5 > d5 && ratio <= 0.5) {
                         trendZoneLabel = '저점 상승 구간';
                         refPickText = '정픽 참고';
                         refPickClass = 'color:#81c784;';
+                        lastWinRateDirectionRef = '오름';
                     } else {
                         trendZoneLabel = '중간·횡보';
-                        refPickText = '기존 전략 유지';
+                        refPickText = '기존 전략 유지' + (lastWinRateDirectionRef === '오름' ? ' (오름)' : lastWinRateDirectionRef === '내림' ? ' (반대)' : '');
                         refPickClass = 'color:#b0bec5;';
                     }
                 }
