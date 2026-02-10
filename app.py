@@ -4003,7 +4003,7 @@ RESULTS_HTML = '''
             const saved = localStorage.getItem(PREDICTION_HISTORY_KEY);
             if (saved) {
                 const parsed = JSON.parse(saved);
-                if (Array.isArray(parsed)) predictionHistory = parsed.slice(-100).filter(function(h) { return h && typeof h === 'object'; });
+                if (Array.isArray(parsed)) predictionHistory = parsed.slice(-300).filter(function(h) { return h && typeof h === 'object'; });
             }
         } catch (e) { /* 복원 실패 시 빈 배열 유지 */ }
         function savePredictionHistory() {
@@ -4475,7 +4475,7 @@ RESULTS_HTML = '''
                 }
                 // 서버에 저장된 시스템 예측 기록 복원 (어디서 접속해도 동일). 무효 항목 제거해 ReferenceError 방지
                 if (Object.prototype.hasOwnProperty.call(data, 'prediction_history') && Array.isArray(data.prediction_history)) {
-                    predictionHistory = data.prediction_history.slice(-100).filter(function(h) { return h && typeof h === 'object'; });
+                    predictionHistory = data.prediction_history.slice(-300).filter(function(h) { return h && typeof h === 'object'; });
                     savePredictionHistory();
                     if (typeof renderWinRateDirectionPanel === 'function') renderWinRateDirectionPanel();
                     // 서버 prediction_history로 계산기 히스토리 '대기' 보정 — actual(결과)만 서버 값으로 채움. 픽(predicted/pickColor)은 배팅중 픽 유지(덮어쓰지 않음)
@@ -5011,7 +5011,7 @@ RESULTS_HTML = '''
                             saveCalcStateToServer();
                             if (predForRecord) { savePredictionHistoryToServer(currentRoundFull, predForRecord.value, actual, predForRecord.prob, predForRecord.color || null); }
                         }
-                        predictionHistory = predictionHistory.slice(-100);
+                        predictionHistory = predictionHistory.slice(-300);
                         savePredictionHistory();  // localStorage 백업
                     } else if (alreadyRecordedRound && predForRound) {
                         // 서버가 이미 prediction_history에 머지한 회차 → calc에만 반영 (한 회차 건너뛰기 방지). 기록 회차는 화면 기준 currentRoundFull로 통일
@@ -7360,7 +7360,8 @@ def _build_results_payload_db_only(hours=24):
             results = results[:RESULTS_PAYLOAD_LIMIT]
         round_actuals = _build_round_actuals(results)
         _merge_round_predictions_into_history(round_actuals, results=results)
-        ph = get_prediction_history(100)
+        # 100회 승률방향용: 클라이언트에 수백 회 내려줘야 함 (DB는 수백 회 저장됨)
+        ph = get_prediction_history(300)
         # 안정화: 서버에 저장된 예측만 불러옴. 계산/저장은 스케줄러에서만(ensure_stored_prediction_for_current_round).
         server_pred = None
         if len(results) >= 16:
@@ -7535,7 +7536,7 @@ def _build_results_payload():
             results = _sort_results_newest_first(results)
             round_actuals = _build_round_actuals(results)
             _merge_round_predictions_into_history(round_actuals, results=results)
-            ph = get_prediction_history(100)
+            ph = get_prediction_history(300)
             # 안정화: 서버에 저장된 예측만 불러옴. 계산/저장은 스케줄러에서만.
             server_pred = None
             if len(results) >= 16:
@@ -7583,6 +7584,7 @@ def _build_results_payload():
             results = latest_results if latest_results else []
             results = _sort_results_newest_first(results)
             print(f"[API] DB 없음, 최신 데이터만 사용: {len(results)}개")
+            ph = get_prediction_history(300)
             
             # DB가 없어도 정/꺽 결과 계산 (클라이언트 측 계산을 위해)
             if len(results) >= 16:
@@ -7612,7 +7614,7 @@ def _build_results_payload():
                         else:
                             results[i]['colorMatch'] = None
             
-            ph = get_prediction_history(100)
+            # ph는 위에서 get_prediction_history(300) 이미 설정됨
             # 한 출처: 해당 회차에 저장된 예측이 있으면 그대로 사용 (DB 없을 때는 매번 계산)
             server_pred = None
             if len(results) >= 16 and DB_AVAILABLE and DATABASE_URL:
@@ -8368,8 +8370,8 @@ def refresh_data():
         if payload is not None:
             results_cache = payload
         else:
-            # 폴백: 최소 구조 + blended_win_rate + round_actuals
-            ph = get_prediction_history(100)
+            # 폴백: 최소 구조 + blended_win_rate + round_actuals (100회 승률방향용 300건)
+            ph = get_prediction_history(300)
             blended = _blended_win_rate(ph)
             round_actuals = _build_round_actuals(results_data) if results_data else {}
             results_cache = {
