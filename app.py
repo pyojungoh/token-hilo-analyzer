@@ -8173,6 +8173,24 @@ def api_current_pick():
         probability = data.get('probability')
         suggested_amount = data.get('suggestedAmount') or data.get('suggested_amount')
         running = data.get('running')  # True/False 또는 없음 — 정지 시 클라이언트가 running: false 보내면 DB에 반영해 GET 시 픽 미반환
+        # 멈춤·마틴 일치: 서버 calc 상태를 기준으로 금액 보정 — 클라이언트가 멈춤인데 금액 보내거나, 마틴 단계가 어긋나 12만/20만 꼬이는 것 방지
+        try:
+            state = get_calc_state('default') or {}
+            c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
+            if c is not None:
+                if c.get('paused'):
+                    suggested_amount = 0  # 서버가 멈춤이면 무조건 0 — 에뮬레이터 배팅 스킵
+                elif round_num is not None and c.get('pending_round') is not None:
+                    try:
+                        pr = int(c.get('pending_round'))
+                        rn = int(round_num) if not isinstance(round_num, int) else round_num
+                        if pr == rn:
+                            _, server_amt = _server_calc_effective_pick_and_amount(c)
+                            suggested_amount = server_amt
+                    except (TypeError, ValueError):
+                        pass
+        except Exception:
+            pass
         conn = get_db_connection(statement_timeout_sec=5)
         if not conn:
             return jsonify({'ok': False}), 200
