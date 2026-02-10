@@ -297,7 +297,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._poll_interval_sec = 2.0
         self._running = False
         self._connected = False  # 연결 버튼으로 연결됨 → 계속 폴링해 픽/회차 갱신
-        self._last_round_when_started = None  # 시작 시점의 회차 (이 회차는 배팅 안 함)
+        self._last_round_when_started = None  # 미사용 (바로 시작 시 현재 회차부터 배팅)
         self._last_bet_round = None  # 이미 배팅한 회차 (중복 방지)
         self._pending_bet_rounds = {}  # round_num -> { pick_color, amount } (결과 대기 → 승/패/조커 로그)
         self._pick_history = deque(maxlen=5)  # 최근 5회 (round_num, pick_color) — 회차·픽 안정 시에만 배팅
@@ -522,7 +522,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self.stats_label.setWordWrap(True)
         disp_layout.addWidget(self.stats_label)
 
-        self.status_display_label = QLabel("대기 중 (시작 시 다음 픽부터 배팅)")
+        self.status_display_label = QLabel("대기 중 (시작 누르면 바로 배팅)")
         self.status_display_label.setStyleSheet("color: #81c784; font-weight: bold;")
         disp_layout.addWidget(self.status_display_label)
         self.pick_history_label = QLabel("최근 회차·픽: -")
@@ -535,7 +535,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
 
         # 시작 / 중지
         btn_row = QHBoxLayout()
-        self.start_btn = QPushButton("시작 (다음 픽부터 배팅)")
+        self.start_btn = QPushButton("시작 (바로 배팅)")
         self.start_btn.setMinimumHeight(32)
         self.start_btn.clicked.connect(self._on_start)
         self.stop_btn = QPushButton("중지")
@@ -1057,16 +1057,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             round_num = int(round_num)
         except (TypeError, ValueError):
             return
-        # 픽 수신 즉시 배팅 (속도 우선)
-        # 전회차·현재회차 구분용 히스토리 (표시만, 배팅은 즉시)
+        # 픽 수신 즉시 배팅 (시작 누르면 담회차 말고 바로 현재 회차부터)
         self._pick_history.append((round_num, pick_color))
-        # 실행 누르면 "다음 회차부터" 배팅: 현재 화면 회차는 건너뛰기
-        if self._last_round_when_started is None:
-            self._last_round_when_started = round_num
-            self._log("다음 회차(%s)부터 배팅합니다. 현재 %s회는 건너뜁니다." % (round_num + 1, round_num))
-            return
-        if round_num <= self._last_round_when_started:
-            return  # 아직 시작 시점 회차거나 그 이전이면 스킵
         # 이미 이 회차로 배팅했으면 스킵 (중복 배팅 방지). 오래된 회차는 목록에서 제거
         with self._lock:
             for old_r in list(self._pending_bet_rounds.keys()):
@@ -1228,12 +1220,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             self.pick_history_label.setText("최근 회차·픽: -")
 
         if self._running:
-            if self._last_round_when_started is None:
-                self.status_display_label.setText("다음 픽부터 배팅 예정…")
-            else:
-                self.status_display_label.setText("배팅 중 (다음 픽마다 자동)")
+            self.status_display_label.setText("배팅 중 (픽마다 자동)")
         else:
-            self.status_display_label.setText("대기 중 (시작 시 다음 픽부터 배팅)")
+            self.status_display_label.setText("대기 중 (시작 누르면 바로 배팅)")
 
 
 def main():

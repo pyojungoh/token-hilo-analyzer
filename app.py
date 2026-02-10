@@ -979,6 +979,7 @@ def _apply_results_to_calcs(results):
                         c['pending_prob'] = stored_for_round.get('probability')
                         c['pending_color'] = stored_for_round.get('pick_color')
                         updated = True
+                        _push_current_pick_from_calc(int(cid), c)  # 매크로가 곧바로 픽 수신
                     continue
                 actual = _get_actual_for_round(results, pending_round)
                 if actual is None:
@@ -1076,6 +1077,7 @@ def _apply_results_to_calcs(results):
                     c['pending_prob'] = stored_for_round.get('probability')
                     c['pending_color'] = stored_for_round.get('pick_color')
                     updated = True
+                    _push_current_pick_from_calc(int(cid), c)  # 매크로가 곧바로 픽 수신
             if updated:
                 save_calc_state(session_id, state)
     except Exception as e:
@@ -1231,6 +1233,77 @@ def _flip_pick_color(color):
     if color == '검정':
         return '빨강'
     return color
+
+
+def _server_calc_effective_pick_and_amount(c):
+    """계산기 c의 pending_round 기준으로 배팅 픽(RED/BLACK)과 금액 계산. 매크로 current_pick 반영용."""
+    if not c or not c.get('running'):
+        return None, 0
+    pr = c.get('pending_round')
+    pred = c.get('pending_predicted')
+    if pr is None or pred is None:
+        return None, 0
+    color = _normalize_pick_color_value(c.get('pending_color'))
+    if color is None:
+        color = '빨강' if pred == '정' else '검정'
+    # 반픽/승률반픽/연패반픽/승률방향 반픽 적용 (클라이언트와 동일)
+    if c.get('reverse'):
+        pred = '꺽' if pred == '정' else '정'
+        color = _flip_pick_color(color)
+    blended = _blended_win_rate(get_prediction_history(100))
+    thr = c.get('win_rate_threshold', 46)
+    if c.get('win_rate_reverse') and blended is not None and blended <= thr:
+        pred = '꺽' if pred == '정' else '정'
+        color = _flip_pick_color(color)
+    lose_streak = _get_lose_streak_from_history(c.get('history') or [])
+    lose_streak_thr = max(0, min(100, int(c.get('lose_streak_reverse_threshold') or 46)))
+    lose_streak_min = max(2, min(15, int(c.get('lose_streak_reverse_min_streak') or 4)))
+    if c.get('lose_streak_reverse') and lose_streak >= lose_streak_min and blended is not None and blended <= lose_streak_thr:
+        pred = '꺽' if pred == '정' else '정'
+        color = _flip_pick_color(color)
+    if c.get('win_rate_direction_reverse'):
+        ph = get_prediction_history(100)
+        zone = _server_win_rate_direction_zone(ph)
+        if zone == 'high_falling':
+            pred = '꺽' if pred == '정' else '정'
+            color = _flip_pick_color(color)
+        elif zone == 'mid_flat' and c.get('last_trend_direction') == 'down':
+            pred = '꺽' if pred == '정' else '정'
+            color = _flip_pick_color(color)
+    pick_color = 'RED' if color == '빨강' else ('BLACK' if color == '검정' else None)
+    if pick_color is None:
+        return None, 0
+    if c.get('paused'):
+        return pick_color, 0
+    dummy = {'round': pr, 'actual': 'pending'}
+    _calculate_calc_profit_server(c, dummy)
+    amt = int(dummy.get('betAmount') or 0)
+    return pick_color, amt
+
+
+def _push_current_pick_from_calc(calculator_id, c):
+    """서버에서 계산기 픽을 current_pick에 즉시 반영 — 매크로가 클라이언트를 기다리지 않고 픽 수신."""
+    if not bet_int or not DB_AVAILABLE or not DATABASE_URL:
+        return
+    pick_color, suggested_amount = _server_calc_effective_pick_and_amount(c)
+    if pick_color is None:
+        return
+    conn = get_db_connection(statement_timeout_sec=3)
+    if not conn:
+        return
+    try:
+        calc_id = int(calculator_id) if calculator_id in (1, 2, 3) else 1
+        ok = bet_int.set_current_pick(conn, pick_color=pick_color, round_num=c.get('pending_round'),
+                                       suggested_amount=suggested_amount, calculator_id=calc_id)
+        if ok:
+            conn.commit()
+    except Exception:
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 # 머지 캐시: 이미 머지한 회차 집합. 새 결과 회차가 생길 때만 머지해서 폴링 시 속도 향상
