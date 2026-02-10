@@ -6063,6 +6063,12 @@ RESULTS_HTML = '''
                 if (c > 0) derivedSeries.push({ round: vh[i].round, rate50: 100 * wins / c });
             }
             var high, low, mid, direction, directionClass, lastRound, current;
+            var trendZoneLabel = '-';
+            var delta5Text = '-';
+            var vsHighText = '-';
+            var vsLowText = '-';
+            var refPickText = '기존 전략 유지';
+            var refPickClass = 'color:#b0bec5;';
             if (derivedSeries.length > 0) {
                 var rates = derivedSeries.map(function(x) { return x.rate50; });
                 high = Math.max.apply(null, rates);
@@ -6078,6 +6084,38 @@ RESULTS_HTML = '''
                 }
                 lastRound = derivedSeries[derivedSeries.length - 1].round;
                 current = derivedSeries[derivedSeries.length - 1].rate50;
+                // 5구간 전 대비 변화(%p)
+                if (derivedSeries.length >= 6) {
+                    var rate5Ago = derivedSeries[derivedSeries.length - 6].rate50;
+                    var delta5 = current - rate5Ago;
+                    delta5Text = (delta5 >= 0 ? '+' : '') + delta5.toFixed(1) + '%p';
+                }
+                // 고점/저점 대비 현재 위치
+                if (high != null && low != null && high > low) {
+                    var vsHigh = current - high;
+                    var vsLow = current - low;
+                    vsHighText = (vsHigh <= 0 ? '' : '+') + vsHigh.toFixed(1) + '%p';
+                    vsLowText = (vsLow >= 0 ? '+' : '') + vsLow.toFixed(1) + '%p';
+                }
+                // 추세 구간: 고점 하락 / 저점 상승 / 중간·횡보 → 참고 픽
+                if (derivedSeries.length >= 6 && high != null && low != null && high > low) {
+                    var rate5Ago = derivedSeries[derivedSeries.length - 6].rate50;
+                    var delta5 = current - rate5Ago;
+                    var ratio = (current - low) / (high - low);
+                    if (delta5 < -0.5 && ratio >= 0.5) {
+                        trendZoneLabel = '고점 하락 구간';
+                        refPickText = '반대픽 참고';
+                        refPickClass = 'color:#e57373;';
+                    } else if (delta5 > 0.5 && ratio <= 0.5) {
+                        trendZoneLabel = '저점 상승 구간';
+                        refPickText = '정픽 참고';
+                        refPickClass = 'color:#81c784;';
+                    } else {
+                        trendZoneLabel = '중간·횡보';
+                        refPickText = '기존 전략 유지';
+                        refPickClass = 'color:#b0bec5;';
+                    }
+                }
             } else {
                 var v50 = vh.slice(-50);
                 var hit50cur = v50.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
@@ -6109,6 +6147,11 @@ RESULTS_HTML = '''
                 '<tr><td style="color:#b0bec5;">기록 최저점</td><td style="color:#e57373;">' + (low != null ? low.toFixed(1) + '%' : '-') + '</td></tr>' +
                 '<tr><td style="color:#b0bec5;">중간 (고·저)</td><td>' + (mid != null ? mid.toFixed(1) + '%' : '-') + '</td></tr>' +
                 '<tr><td style="color:#b0bec5;">방향</td><td style="' + directionClass + ' font-weight:bold;">' + direction + '</td></tr>' +
+                '<tr><td style="color:#b0bec5;">추세 구간</td><td style="font-weight:bold;">' + trendZoneLabel + '</td></tr>' +
+                '<tr><td style="color:#b0bec5;">5구간 전 대비</td><td>' + delta5Text + '</td></tr>' +
+                '<tr><td style="color:#b0bec5;">고점 대비</td><td>' + vsHighText + '</td></tr>' +
+                '<tr><td style="color:#b0bec5;">저점 대비</td><td>' + vsLowText + '</td></tr>' +
+                '<tr><td style="color:#b0bec5;">참고 픽</td><td style="' + refPickClass + ' font-weight:bold;">' + refPickText + '</td></tr>' +
                 '<tr><td style="color:#888;font-size:0.9em;">기준 회차</td><td style="color:#888;">' + (lastRound != null ? String(lastRound) : '-') + '</td></tr>';
             if (wrap && barHtml) {
                 var oldBar = wrap.querySelector('.win-rate-direction-bar');
