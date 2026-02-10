@@ -785,46 +785,42 @@ def _server_win_rate_direction_zone(ph):
 
 
 def _update_calc_paused_after_round(c):
-    """회차 반영 후 서버에서 paused 갱신. 멈춤은 경고 표와 동일한 합산승률(blended) 기준. 연패후승 시 True. 클라이언트 없이 멈춤 정확 동작."""
+    """회차 반영 후 서버에서 paused 갱신. 멈춤은 '승률≤N% 이하·연패 시 배팅멈춤' 옵션(경고 표와 동일한 합산승률)에만 따름. 클라이언트 없이 멈춤 정확 동작."""
     history = c.get('history') or []
     completed = [h for h in history if h.get('actual') and h.get('actual') != 'pending']
     pause_enabled = c.get('pause_low_win_rate_enabled', False)
     thr = max(0, min(100, int(c.get('pause_win_rate_threshold') or 45)))
-    martingale = c.get('martingale', False)
 
     # 완료 회차가 없으면 멈춤 해제(이전 세션의 paused=true가 초반에 띄엄띄엄 적용되는 것 방지)
     if len(completed) < 1:
         c['paused'] = False
         return
 
-    # 마틴은 멈춤과 독립: 마틴 사용 중에는 15회 승률 멈춤 적용 안 함. 연패 후 승(사이클 끝)일 때만 멈춤 → 표에 배팅 정확히 기록
-    if martingale:
-        if len(completed) >= 2:
-            last_h, prev_h = completed[-1], completed[-2]
-            last_win = last_h.get('actual') != 'joker' and last_h.get('predicted') == last_h.get('actual')
-            prev_loss = prev_h.get('actual') == 'joker' or prev_h.get('predicted') != prev_h.get('actual')
-            if last_win and prev_loss:
-                c['paused'] = True
-        return  # 마틴 중에는 pause_enabled(15회 승률) 로직 건너뜀
-
-    # 멈춤 옵션: 경고 표와 동일한 합산승률(blended) 사용. 50% 설정이면 표에 51.7%일 때 배팅되도록
+    # 멈춤은 '승률≤N% 이하·연패 시 배팅멈춤' 옵션에만 해당. 마틴만 켜진 경우는 멈춤과 무관.
+    # 멈춤 옵션 켜진 경우: 승률 기준 만족 시, 이미 마틴 중(직전 완료가 패/조커)이면 마틴 끝낸 뒤(승 한 번 나온 뒤) 멈춤 → 연패 중에는 paused 세우지 않음
     if pause_enabled:
-        ph = get_prediction_history(100)
-        blended = _blended_win_rate(ph) if ph else None
-        PAUSE_RESUME_HYSTERESIS = 3
-        resume_thr = min(100, thr + PAUSE_RESUME_HYSTERESIS)
-        if blended is not None:
-            if c.get('paused', False):
-                c['paused'] = blended <= resume_thr  # 멈춤 중: 재개는 합산승률 > resume_thr 일 때만
+        martingale = c.get('martingale', False)
+        last_is_loss = False
+        if martingale and len(completed) >= 1:
+            last_h = completed[-1]
+            last_is_loss = last_h.get('actual') == 'joker' or last_h.get('predicted') != last_h.get('actual')
+        if not last_is_loss:  # 마틴 없음 또는 직전이 승 → 승률 기준만 보면 됨
+            ph = get_prediction_history(100)
+            blended = _blended_win_rate(ph) if ph else None
+            PAUSE_RESUME_HYSTERESIS = 3
+            resume_thr = min(100, thr + PAUSE_RESUME_HYSTERESIS)
+            if blended is not None:
+                if c.get('paused', False):
+                    c['paused'] = blended <= resume_thr  # 멈춤 중: 재개는 합산승률 > resume_thr 일 때만
+                else:
+                    c['paused'] = blended <= thr  # 배팅 중: 합산승률 기준 이하이면 멈춤
             else:
-                c['paused'] = blended <= thr  # 배팅 중: 합산승률 기준 이하이면 멈춤
-        else:
-            # 합산승률 없을 때 폴백: 계산기 15회 승률
-            rate15 = _server_recent_15_win_rate(completed)
-            if c.get('paused', False):
-                c['paused'] = rate15 <= resume_thr
-            else:
-                c['paused'] = rate15 <= thr
+                rate15 = _server_recent_15_win_rate(completed)
+                if c.get('paused', False):
+                    c['paused'] = rate15 <= resume_thr
+                else:
+                    c['paused'] = rate15 <= thr
+        # last_is_loss이면 이번에는 paused 갱신 안 함(마틴 끝날 때까지 배팅 계속)
     # 옵션 꺼져 있으면 기존 paused 유지(서버가 강제로 False로 바꾸지 않음)
 
 
@@ -6050,29 +6046,16 @@ RESULTS_HTML = '''
             }
             var hist = calcState[id].history || [];
             var completed = hist.filter(function(h) { return h.actual && h.actual !== 'pending'; });
+            // 멈춤은 '승률≤N% 이하·연패 시 배팅멈춤' 옵션에만 해당. 마틴만 체크한 경우는 멈춤과 무관(연패 시 마틴대로 계속 진행)
+            if (!pauseLowEl || !pauseLowEl.checked) return;
             var martingaleEl = document.getElementById('calc-' + id + '-martingale');
             var useMartingale = !!(martingaleEl && martingaleEl.checked);
-            // 마틴 사용 중: 연패 후 승(마틴 한 사이클 끝)이 나오면 15회 승률 무관하게 즉시 멈춤 — 다음 회차부터 배팅 안 함
-            if (useMartingale) {
-                if (completed.length < 2) return;
+            // 멈춤 옵션 체크 시: 이미 마틴 중(직전 완료가 패/조커)이면 마틴을 끝낸 뒤(승 한 번 나온 뒤) 멈춤 → 지금은 paused 세우지 않음
+            if (useMartingale && completed.length >= 1) {
                 var last = completed[completed.length - 1];
-                var prev = completed[completed.length - 2];
-                var lastIsWin = last.actual !== 'joker' && last.predicted === last.actual;
-                var prevWasLoss = prev.actual !== 'joker' && prev.predicted !== prev.actual;
-                if (lastIsWin && prevWasLoss) {
-                    calcState[id].paused = true;
-                    for (var j = 0; j < hist.length; j++) {
-                        if (hist[j] && hist[j].actual === 'pending') { hist[j].betAmount = 0; hist[j].no_bet = true; }
-                    }
-                    calcState[id].history = dedupeCalcHistoryByRound(hist);
-                    saveCalcStateToServer();
-                    updateCalcDetail(id);
-                    postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null });
-                    return;
-                }
-                return;  // 마틴 사용 중인데 연패중승이 아니면 멈춤 검사 안 함
+                var lastIsLoss = last.actual === 'joker' || last.predicted !== last.actual;
+                if (lastIsLoss) return;  // 연패 중이면 아직 멈추지 않음
             }
-            if (!pauseLowEl || !pauseLowEl.checked) return;  // 마틴 미사용 시: DOM 기준 멈춤 옵션 켜져 있을 때만
             var blended = getBlendedWinRate();  // 경고 표와 동일한 합산승률 사용 (50% 설정이면 표 51.7%일 때 배팅되도록)
             if (blended == null) blended = getCalcRecent15WinRate(id);
             var thr = (pauseThrEl && !isNaN(parseFloat(pauseThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(pauseThrEl.value))) : 45;

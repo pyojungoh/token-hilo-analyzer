@@ -42,7 +42,8 @@
 - 이때 계산기 배팅금액은 들어가지 않는다 (`-` 표시).
 - **이력(히스테리시스)**: 멈춤 해제는 **기준+3% 초과**일 때만 한다(예: 50% 이하→멈춤, **53% 초과**→재개). 기준 근처에서 전환 빈도를 줄인다.
 - 이때 **반드시 승패는 기록**되어야 한다.
-- **마틴 적용 중**이라면, **연패 후 승**(마틴 한 사이클이 승으로 끝남)이 나오는 순간 **15회 승률과 무관하게 즉시 멈춤**한다. 다음 회차부터 배팅하지 않음.
+- **마틴만 체크**한 경우: 멈춤과 관계없이 연패 시 해당 마틴 테이블대로 계속 진행한다. (멈춤 기능과 별개.)
+- **멈춤 옵션을 체크**한 경우: 설정한 승률에 도달하면 그때부터 배팅을 멈춘다. 단, **이미 마틴 중**(연패 구간)이면 마틴을 끝낸 뒤(승을 한 번 하고) 그다음 회차부터 멈춘다. (마틴과 멈춤은 별개 사안.)
 
 ### 시간
 
@@ -73,8 +74,8 @@
 - 서버 회차 반영: `_apply_results_to_calcs`, `ensure_stored_prediction_for_current_round`
 - 계산기 상태 저장/조회: `save_calc_state`, `get_calc_state`, `calc_sessions`
 - 수익·마틴 계산: `_calculate_calc_profit_server`
-- **멈춤 (서버)**: 회차 반영 후 `_update_calc_paused_after_round`로 15회 승률·연패후승을 계산해 **paused** 갱신. `_server_recent_15_win_rate`로 클라이언트와 동일 기준. 클라이언트 꺼져 있어도 멈춤 정확 동작.
-- 클라이언트 멈춤: `getCalcRecent15WinRate`(계산기 15회 승률), `checkPauseAfterWin`(마틴 시 연패 후 승이면 즉시 멈춤, 비마틴 시 15회 승률 이하일 때 멈춤)
+- **멈춤 (서버)**: 회차 반영 후 `_update_calc_paused_after_round`로 **paused** 갱신. 멈춤 옵션 켜져 있을 때만 적용하며, 마틴 중(직전 완료가 패/조커)이면 마틴 끝날 때까지 paused 갱신 안 함. 클라이언트 꺼져 있어도 멈춤 정확 동작.
+- 클라이언트 멈춤: `checkPauseAfterWin`(멈춤 옵션 켜져 있을 때만; 마틴 중이면 연패 끝난 뒤(승 한 번 나온 뒤) 멈춤), `effectivePausedForRound`(마틴 중 연패 구간이면 배팅 계속)
 - 계산기 표 렌더: `updateCalcDetail`, `calcState[id].history`
 
 수정 시 이 가이드와 규칙 파일(`.cursor/rules/calculator-guide.mdc`)을 함께 확인할 것.
