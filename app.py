@@ -767,10 +767,15 @@ def _update_calc_paused_after_round(c):
             c['paused'] = True
         return
 
-    # 멈춤 옵션 켜져 있을 때: 최근 15회 승률로 paused 설정/해제
+    # 멈춤 옵션 켜져 있을 때: 최근 15회 승률로 paused 설정/해제. 이력(히스테리시스) 적용해 43% 근처에서 띄엄띄엄 전환 방지
     if pause_enabled:
         rate15 = _server_recent_15_win_rate(completed)
-        c['paused'] = rate15 <= thr
+        PAUSE_RESUME_HYSTERESIS = 3  # 멈춤 해제는 (기준+3)% 초과일 때만 (예: 43% 이하→멈춤, 46% 초과→재개)
+        resume_thr = min(100, thr + PAUSE_RESUME_HYSTERESIS)
+        if c.get('paused', False):
+            c['paused'] = rate15 <= resume_thr  # 멈춤 중: 재개는 rate15 > resume_thr 일 때만
+        else:
+            c['paused'] = rate15 <= thr  # 배팅 중: 기준 이하이면 멈춤
     # 옵션 꺼져 있으면 기존 paused 유지(서버가 강제로 False로 바꾸지 않음)
 
 
@@ -6101,7 +6106,8 @@ RESULTS_HTML = '''
             if (calcState[id]) { calcState[id].pause_low_win_rate_enabled = pauseEnabled; calcState[id].pause_win_rate_threshold = thrPause; }
             if (state.paused && pauseEnabled) {
                 var rate15 = getCalcRecent15WinRate(id);
-                if (rate15 > thrPause) state.paused = false;
+                var resumeThr = Math.min(100, thrPause + 3);  // 이력: 멈춤 해제는 기준+3% 초과일 때만 (띄엄띄엄 방지)
+                if (rate15 > resumeThr) state.paused = false;
             }
             el.className = 'calc-status';
             if (state.running) {
