@@ -773,12 +773,15 @@ def _server_win_rate_direction_zone(ph):
         return 'high_falling'
     if delta5 > 0.5 and ratio <= 0.5:
         return 'low_rising'
-    # 패널 "방향: 내림"과 동일: 4구간 전 대비 하락이면 내림 구간으로 보고 반대픽 적용
+    # 중간값(mid): 저점→중간 넘어 오르면 강한 오름세(정픽), 고점→중간 지나 내려가면 강한 하락세(반대픽). 4구간 방향과 함께 사용.
     if len(derived) >= 4:
         recent = rates[-1]
         prev4 = rates[-4]
+        mid = (high + low) / 2.0
         if recent < prev4 - 0.5:
-            return 'high_falling'
+            return 'high_falling'  # 내림 (고점→중간 지나 내려가면 강한 하락세)
+        if recent > prev4 + 0.5:
+            return 'low_rising'  # 오름 (저점→중간 넘어 오르면 강한 오름세)
     return 'mid_flat'
 
 
@@ -6170,11 +6173,13 @@ RESULTS_HTML = '''
             var ratio = (current - low) / (high - low);
             if (delta5 < -0.5 && ratio >= 0.5) return 'high_falling';
             if (delta5 > 0.5 && ratio <= 0.5) return 'low_rising';
-            // 패널 "방향: 내림"과 동일: 4구간 전 대비 하락이면 내림 구간으로 보고 반대픽 적용
+            // 중간값(mid): 저점→중간 넘어 오르면 강한 오름세(정픽), 고점→중간 지나 내려가면 강한 하락세(반대픽). 4구간 방향과 함께 사용해 오름/내림 판단 명확히.
             if (derivedSeries.length >= 4) {
                 var recent = derivedSeries[derivedSeries.length - 1].rate50;
                 var prev4 = derivedSeries[derivedSeries.length - 4].rate50;
-                if (recent < prev4 - 0.5) return 'high_falling';
+                var mid = (high + low) / 2;
+                if (recent < prev4 - 0.5) return 'high_falling';  // 내림 (고점→중간 지나 내려가면 강한 하락세)
+                if (recent > prev4 + 0.5) return 'low_rising';     // 오름 (저점→중간 넘어 오르면 강한 오름세)
             }
             return 'mid_flat';
         }
