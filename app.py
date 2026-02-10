@@ -753,15 +753,15 @@ def _server_recent_15_win_rate(completed_list):
 
 
 def _server_win_rate_direction_zone(ph):
-    """예측 이력(과거→현재)으로 롤링 50회 승률 구간 계산. 'high_falling'|'low_rising'|'mid_flat'|None. 클라이언트 승률방향 패널과 동일 공식."""
-    if not ph or len(ph) < 50:
+    """예측 이력(과거→현재)으로 롤링 100회 승률 구간 계산. 'high_falling'|'low_rising'|'mid_flat'|None. 클라이언트 승률방향 패널과 동일 공식."""
+    if not ph or len(ph) < 100:
         return None
     vh = [h for h in ph if h and h.get('actual') is not None and str(h.get('actual', '')).strip() and str(h.get('actual')) != 'pending']
-    if len(vh) < 50:
+    if len(vh) < 100:
         return None
     derived = []
-    for i in range(49, len(vh)):
-        w = vh[i - 49:i + 1]
+    for i in range(99, len(vh)):
+        w = vh[i - 99:i + 1]
         wins = sum(1 for h in w if h.get('actual') != 'joker' and h.get('predicted') == h.get('actual'))
         loss = sum(1 for h in w if h.get('actual') != 'joker' and h.get('predicted') != h.get('actual'))
         c = wins + loss
@@ -1030,7 +1030,7 @@ def _apply_results_to_calcs(results):
                     bet_color_for_history = _flip_pick_color(bet_color_for_history)
                 # 승률방향 옵션: 저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조
                 if c.get('win_rate_direction_reverse'):
-                    ph = get_prediction_history(100)
+                    ph = get_prediction_history(150)
                     zone = _server_win_rate_direction_zone(ph)
                     if zone == 'high_falling':
                         pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
@@ -1264,7 +1264,7 @@ def _server_calc_effective_pick_and_amount(c):
         pred = '꺽' if pred == '정' else '정'
         color = _flip_pick_color(color)
     if c.get('win_rate_direction_reverse'):
-        ph = get_prediction_history(100)
+        ph = get_prediction_history(150)
         zone = _server_win_rate_direction_zone(ph)
         if zone == 'high_falling':
             pred = '꺽' if pred == '정' else '정'
@@ -3715,14 +3715,14 @@ RESULTS_HTML = '''
             <div id="panel-win-rate-direction" class="analysis-panel">
                 <div id="win-rate-direction-collapse-body" class="prob-bucket-collapse-body">
                 <div id="win-rate-direction-section" style="margin-top:8px;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
-                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">메인 예측기 밑 <strong>결과 표</strong> 데이터로 롤링 50회 승률을 계산해, <strong>기록 최고점·최저점·중간·방향</strong>을 바로 표시합니다. (결과 50회 이상이면 즉시 표시)</p>
+                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">메인 예측기 밑 <strong>결과 표</strong> 데이터로 롤링 100회 승률을 계산해, <strong>기록 최고점·최저점·중간·방향</strong>을 바로 표시합니다. (결과 100회 이상이면 즉시 표시)</p>
                     <div id="win-rate-direction-data" style="font-size:0.95em;color:#ccc;">
                         <table class="symmetry-line-table" style="width:100%;max-width:480px;">
                             <tbody id="win-rate-direction-tbody">
                                 <tr><td colspan="2" style="color:#888;">데이터 로딩 후 표시</td></tr>
                             </tbody>
                         </table>
-                        <p style="font-size:0.8em;color:#888;margin-top:8px 0 0 0;">※ 50회 미만이면 기록되지 않습니다. 조커 제외 승/패만으로 승률 계산.</p>
+                        <p style="font-size:0.8em;color:#888;margin-top:8px 0 0 0;">※ 100회 미만이면 기록되지 않습니다. 조커 제외 승/패만으로 승률 계산.</p>
                     </div>
                 </div>
                 </div>
@@ -4071,7 +4071,7 @@ RESULTS_HTML = '''
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         var lastServerPrediction = null;  // 서버 예측 (있으면 표시·pending 동기화용)
         var lastIs15Joker = false;  // 15번 카드 조커 여부 (계산기 예측픽에 보류 반영용)
-        /** 승률 방향 메뉴: 최근 50회 메인 예측기 승률을 회차마다 기록. { round, rate50 } 최대 300개 */
+        /** 승률 방향 메뉴: 최근 100회 기준 고점/저점/방향. { round, rate50 } 최대 300개 */
         var winRate50History = [];
         var roundPredictionBuffer = {};   // 회차별 예측 저장 (표 충돌 방지: 결과 반영 시 해당 회차만 조회)
         var ROUND_PREDICTION_BUFFER_MAX = 50;
@@ -5502,12 +5502,12 @@ RESULTS_HTML = '''
                     const count50 = hit50 + losses50;
                     const rate50 = count50 > 0 ? 100 * hit50 / count50 : 0;
                     const rate50Str = count50 > 0 ? rate50.toFixed(1) : '-';
-                    // 승률 방향: 50회 승률을 회차마다 기록 (고점/저점/오름·내림 지표용)
-                    if (count50 >= 50 && validHist.length > 0) {
+                    // 승률 방향: 100회 승률 기준 (고점/저점/오름·내림 지표용) — 위에서 이미 validHist100/count100/rate100 계산됨
+                    if (count100 >= 100 && validHist.length > 0) {
                         var _lastEntry = validHist[validHist.length - 1];
                         var _lastRound = _lastEntry && _lastEntry.round;
                         if (_lastRound != null && (winRate50History.length === 0 || Number(winRate50History[winRate50History.length - 1].round) !== Number(_lastRound))) {
-                            winRate50History.push({ round: _lastRound, rate50: rate50 });
+                            winRate50History.push({ round: _lastRound, rate50: rate100 });
                             if (winRate50History.length > 300) winRate50History.shift();
                             if (document.getElementById('panel-win-rate-direction') && document.getElementById('panel-win-rate-direction').classList.contains('active') && typeof renderWinRateDirectionPanel === 'function') renderWinRateDirectionPanel();
                         }
@@ -6227,12 +6227,14 @@ RESULTS_HTML = '''
             tbl += '</tbody></table>';
             wrap.innerHTML = tbl;
         }
+        var WIN_RATE_DIRECTION_WINDOW = 100;
         function getWinRateDirectionZone(ph) {
-            if (!Array.isArray(ph) || ph.length < 50) return null;
+            if (!Array.isArray(ph) || ph.length < WIN_RATE_DIRECTION_WINDOW) return null;
             var vh = ph.filter(function(h) { return h && typeof h === 'object' && h.actual != null && h.actual !== ''; });
+            if (vh.length > 600) vh = vh.slice(-600);
             var derivedSeries = [];
-            for (var i = 49; i < vh.length; i++) {
-                var w = vh.slice(i - 49, i + 1);
+            for (var i = WIN_RATE_DIRECTION_WINDOW - 1; i < vh.length; i++) {
+                var w = vh.slice(i - (WIN_RATE_DIRECTION_WINDOW - 1), i + 1);
                 var wins = w.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
                 var losses = w.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
                 var c = wins + losses;
@@ -6240,8 +6242,8 @@ RESULTS_HTML = '''
             }
             if (derivedSeries.length < 6) return null;
             var rates = derivedSeries.map(function(x) { return x.rate50; });
-            var high = Math.max.apply(null, rates);
-            var low = Math.min.apply(null, rates);
+            var high = rates.reduce(function(a, b) { return a > b ? a : b; }, -Infinity);
+            var low = rates.reduce(function(a, b) { return a < b ? a : b; }, Infinity);
             if (high <= low) return null;
             var current = derivedSeries[derivedSeries.length - 1].rate50;
             var rate5Ago = derivedSeries[derivedSeries.length - 6].rate50;
@@ -6263,11 +6265,13 @@ RESULTS_HTML = '''
             var tbody = document.getElementById('win-rate-direction-tbody');
             var wrap = document.getElementById('win-rate-direction-data');
             if (!tbody) return;
-            // 메인 예측기 밑 결과 표와 동일한 데이터(predictionHistory)에서 롤링 50회 승률 계산 → 고점/저점/중간/방향 즉시 표시
+            var winRateDirWindow = (typeof WIN_RATE_DIRECTION_WINDOW !== 'undefined') ? WIN_RATE_DIRECTION_WINDOW : 100;
+            // 메인 예측기 밑 결과 표와 동일한 데이터(predictionHistory)에서 롤링 100회 승률 계산 → 고점/저점/중간/방향 즉시 표시
             var vh = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && typeof h === 'object' && h.actual != null && h.actual !== ''; }) : [];
+            if (vh.length > 600) vh = vh.slice(-600);
             var derivedSeries = [];
-            for (var i = 49; i < vh.length; i++) {
-                var w = vh.slice(i - 49, i + 1);
+            for (var i = winRateDirWindow - 1; i < vh.length; i++) {
+                var w = vh.slice(i - (winRateDirWindow - 1), i + 1);
                 var wins = w.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
                 var losses = w.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
                 var c = wins + losses;
@@ -6282,8 +6286,8 @@ RESULTS_HTML = '''
             var refPickClass = 'color:#b0bec5;';
             if (derivedSeries.length > 0) {
                 var rates = derivedSeries.map(function(x) { return x.rate50; });
-                high = Math.max.apply(null, rates);
-                low = Math.min.apply(null, rates);
+                high = rates.reduce(function(a, b) { return a > b ? a : b; }, -Infinity);
+                low = rates.reduce(function(a, b) { return a < b ? a : b; }, Infinity);
                 mid = (high + low) / 2;
                 direction = '정체';
                 directionClass = '';
@@ -6338,11 +6342,11 @@ RESULTS_HTML = '''
                     }
                 }
             } else {
-                var v50 = vh.slice(-50);
-                var hit50cur = v50.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
-                var loss50cur = v50.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-                var count50cur = hit50cur + loss50cur;
-                current = count50cur > 0 ? 100 * hit50cur / count50cur : null;
+                var v100cur = vh.slice(-winRateDirWindow);
+                var hit100cur = v100cur.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                var loss100cur = v100cur.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                var count100cur = hit100cur + loss100cur;
+                current = count100cur > 0 ? 100 * hit100cur / count100cur : null;
                 high = low = mid = null;
                 direction = '-';
                 directionClass = '';
@@ -6363,7 +6367,7 @@ RESULTS_HTML = '''
                     '</div></div>';
             }
             tbody.innerHTML =
-                '<tr><td style="color:#b0bec5;">현재 50회 승률</td><td><strong>' + (current != null ? current.toFixed(1) + '%' : '-') + '</strong>' + (derivedSeries.length === 0 && current != null ? ' <span style="color:#888;font-size:0.85em">(50회 미만)</span>' : '') + '</td></tr>' +
+                '<tr><td style="color:#b0bec5;">현재 100회 승률</td><td><strong>' + (current != null ? current.toFixed(1) + '%' : '-') + '</strong>' + (derivedSeries.length === 0 && current != null ? ' <span style="color:#888;font-size:0.85em">(100회 미만)</span>' : '') + '</td></tr>' +
                 '<tr><td style="color:#b0bec5;">기록 최고점</td><td style="color:#81c784;">' + (high != null ? high.toFixed(1) + '%' : '-') + '</td></tr>' +
                 '<tr><td style="color:#b0bec5;">기록 최저점</td><td style="color:#e57373;">' + (low != null ? low.toFixed(1) + '%' : '-') + '</td></tr>' +
                 '<tr><td style="color:#b0bec5;">중간 (고·저)</td><td>' + (mid != null ? mid.toFixed(1) + '%' : '-') + '</td></tr>' +
