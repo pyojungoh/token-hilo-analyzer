@@ -22,12 +22,15 @@
 6) EXE 빌드 도구 설치
    pip install pyinstaller
 
-7) EXE 빌드 실행
-   build_exe.bat
+7) EXE 빌드 실행 (3~8분 소요)
+   run_build.cmd   (더블클릭 후 완료될 때까지 대기)
+   또는 PowerShell: .\build_exe.ps1
 
 8) 빌드 결과
-   - dist\TokenHiloEmulatorMacro.exe (에뮬레이터 ADB 매크로, 단일 EXE)
-   - 에뮬레이터 매크로는 emulator_coords.json 이 EXE와 같은 폴더에 생성됨
+   - dist_exe\TokenHiloEmulatorMacro.exe (에뮬레이터 ADB 매크로, 단일 EXE)
+   - 에뮬레이터 매크로는 emulator_coords.json 을 EXE와 같은 폴더에 두면 됨
+
+   ※ PermissionError 나면: 매크로 폴더를 연 탐색기/터미널을 모두 닫은 뒤 run_build.cmd 다시 실행
 
 ========================================
 한 번에 복사해서 쓸 수 있는 순서 (가상환경 없이)
@@ -36,6 +39,6 @@
 cd /d C:\hi\token-hilo-analyzer\auto-betting-macro
 pip install -r requirements.txt
 pip install pyinstaller
-build_exe.bat
+run_build.cmd
 
 ========================================

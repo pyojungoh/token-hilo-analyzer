@@ -604,20 +604,27 @@ def save_calc_state(session_id, state_dict):
 
 
 def _merge_calc_histories(client_hist, server_hist):
-    """회차별로 병합. 같은 회차는 클라이언트 행 우선(no_bet/betAmount 정확히 유지). 새로고침 후에도 멈춤·배팅 구간이 맞게 복원되도록."""
+    """회차별로 병합. 같은 회차는 클라이언트 행 우선. 단, 서버가 멈춤(no_bet)으로 저장한 회차는 서버 no_bet/betAmount 우선 — 클라이언트가 잘못 보낸 금액으로 덮어쓰지 않음."""
     by_round = {}
+    server_no_bet_rounds = set()
     for h in (server_hist or []):
         if not isinstance(h, dict):
             continue
         rn = h.get('round')
         if rn is not None:
             by_round[rn] = dict(h)
+            if h.get('no_bet') or (h.get('betAmount') is not None and h.get('betAmount') == 0):
+                server_no_bet_rounds.add(rn)
     for h in (client_hist or []):
         if not isinstance(h, dict):
             continue
         rn = h.get('round')
         if rn is not None:
-            by_round[rn] = dict(h)
+            merged = dict(h)
+            if rn in server_no_bet_rounds:
+                merged['no_bet'] = True
+                merged['betAmount'] = 0
+            by_round[rn] = merged
     try:
         rounds = sorted(by_round.keys(), key=lambda x: (x if isinstance(x, (int, float)) else 0))
     except (TypeError, ValueError):
@@ -6738,7 +6745,16 @@ RESULTS_HTML = '''
                 const pickVal = h.predicted === '정' ? '정' : '꺽';
                 const pickClass = (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : 'pick-kkuk')));
                 const warningWinRateVal = (typeof h.warningWinRate === 'number' && !isNaN(h.warningWinRate)) ? h.warningWinRate.toFixed(1) + '%' : '-';
-                const rate15Val = (typeof h.rate15 === 'number' && !isNaN(h.rate15)) ? h.rate15.toFixed(1) + '%' : '-';
+                // 15회 승률: 저장값 없으면 pending/대기 행에는 현재 15회 승률 표시 (1열에 정보 들어가게)
+                var rate15Val;
+                if (typeof h.rate15 === 'number' && !isNaN(h.rate15)) {
+                    rate15Val = h.rate15.toFixed(1) + '%';
+                } else if ((h.actual === 'pending' || !h.actual || h.actual === '') && typeof getCalcRecent15WinRate === 'function') {
+                    var r15 = getCalcRecent15WinRate(id);
+                    rate15Val = (typeof r15 === 'number' && !isNaN(r15)) ? r15.toFixed(1) + '%' : '-';
+                } else {
+                    rate15Val = '-';
+                }
                 var betStr, profitStr, res, outcome, resultClass, outClass;
                 // 서버에서 실제 결과 확인 (pending이어도 서버에 결과가 있을 수 있음)
                 var serverActual = null;

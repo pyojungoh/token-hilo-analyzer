@@ -37,6 +37,22 @@ Analyzer 서버의 예측 픽(`/api/current-pick`)을 폴링해서, RED/BLACK �
 - **계산기 1/2/3 선택 시**: 픽·회차·금액을 **`GET /api/current-pick?calculator=N`** 에서 가져옵니다. 분석기 웹의 해당 계산기(반픽/승률반픽/마틴/멈춤)와 동일한 픽·금액으로 배팅합니다.
 - **current_pick 비어 있을 때**: 픽이 갱신될 때까지 대기합니다.
 
+## EXE 빌드 (배포용 단일 실행 파일)
+
+Python 없이 실행하려면 PyInstaller로 EXE를 만듭니다.
+
+1. 의존성 설치: `pip install -r requirements.txt` 및 `pip install pyinstaller`
+2. **PowerShell**에서 매크로 폴더로 이동 후:
+   ```powershell
+   cd auto-betting-macro
+   .\build_exe.ps1
+   ```
+   (또는 `powershell -ExecutionPolicy Bypass -File build_exe.ps1`)
+3. 빌드는 **3~8분** 걸릴 수 있습니다. 완료 후 `dist\TokenHiloEmulatorMacro.exe`가 생성됩니다.
+4. EXE 실행 시 `emulator_coords.json`은 EXE와 **같은 폴더**에 두거나, 첫 실행 후 좌표 찾기로 생성하면 됩니다.
+
+- `PermissionError`(파일 사용 중)가 나면: 다른 터미널/탐색기에서 `build` 폴더를 연 상태가 아닌지 확인하고, `build`·`dist` 폴더를 삭제한 뒤 `build_exe.ps1`을 다시 실행하세요.
+
 ## 사용 시 참고
 
 - Analyzer 쪽에서 **결과 페이지를 열고 예측/계산기가 동작 중**이어야 `/api/current-pick`에 픽이 저장됩니다. 결과 페이지를 한 번이라도 열어 두고 매크로를 쓰는 것이 좋습니다.
