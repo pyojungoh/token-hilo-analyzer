@@ -4392,6 +4392,7 @@ RESULTS_HTML = '''
                 if (Object.prototype.hasOwnProperty.call(data, 'prediction_history') && Array.isArray(data.prediction_history)) {
                     predictionHistory = data.prediction_history.slice(-100).filter(function(h) { return h && typeof h === 'object'; });
                     savePredictionHistory();
+                    if (typeof renderWinRateDirectionPanel === 'function') renderWinRateDirectionPanel();
                     // 서버 prediction_history로 계산기 히스토리 '대기' 보정 — actual(결과)만 서버 값으로 채움. 픽(predicted/pickColor)은 배팅중 픽 유지(덮어쓰지 않음)
                     (function syncCalcHistoryFromServerPrediction() {
                         if (!Array.isArray(predictionHistory) || predictionHistory.length === 0) return;
@@ -4470,6 +4471,7 @@ RESULTS_HTML = '''
                             lastPrediction = { value: lastServerPrediction.value, round: lastServerPrediction.round, prob: lastServerPrediction.prob != null ? lastServerPrediction.prob : 0, color: normColor };
                             setRoundPrediction(lastServerPrediction.round, lastPrediction);
                             fetch('/api/round-prediction', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ round: lastServerPrediction.round, predicted: lastServerPrediction.value, pickColor: normColor || lastServerPrediction.color, probability: lastServerPrediction.prob }) }).catch(function() {});
+                            if (typeof renderWinRateDirectionPanel === 'function') renderWinRateDirectionPanel();
                         }
                     }
                     lastResultsUpdate = Date.now();  // 갱신 완료 시점에 폴링 간격 리셋
