@@ -773,15 +773,14 @@ def _server_win_rate_direction_zone(ph):
         return 'high_falling'
     if delta5 > 0.5 and ratio <= 0.5:
         return 'low_rising'
-    # 중간값(mid): 저점→중간 넘어 오르면 강한 오름세(정픽), 고점→중간 지나 내려가면 강한 하락세(반대픽). 4구간 방향과 함께 사용.
+    # 고점 유지 중 잠깐 내림·저점 유지 중 잠깐 오름은 무시: 방향 + 비율(중간) 둘 다 만족할 때만 반대픽/정픽
     if len(derived) >= 4:
         recent = rates[-1]
         prev4 = rates[-4]
-        mid = (high + low) / 2.0
-        if recent < prev4 - 0.3:
-            return 'high_falling'  # 내림 (0.3%p 하락이면 3~4회 만에 꺾여서 반대픽)
-        if recent > prev4 + 0.3:
-            return 'low_rising'  # 오름 (0.3%p 상승이면 정픽, 방향 메뉴와 동일)
+        if recent < prev4 - 0.4 and ratio <= 0.5:
+            return 'high_falling'  # 내림 + 이미 중간 아래 → 반대픽 (고점에서 잠깐 내려온 건 제외)
+        if recent > prev4 + 0.4 and ratio >= 0.5:
+            return 'low_rising'  # 오름 + 이미 중간 위 → 정픽 (저점에서 잠깐 올라온 건 제외)
     return 'mid_flat'
 
 
@@ -6176,13 +6175,12 @@ RESULTS_HTML = '''
             var ratio = (current - low) / (high - low);
             if (delta5 < -0.5 && ratio >= 0.5) return 'high_falling';
             if (delta5 > 0.5 && ratio <= 0.5) return 'low_rising';
-            // 중간값(mid): 저점→중간 넘어 오르면 강한 오름세(정픽), 고점→중간 지나 내려가면 강한 하락세(반대픽). 4구간 방향과 함께 사용해 오름/내림 판단 명확히.
+            // 고점 유지 중 잠깐 내림·저점 유지 중 잠깐 오름은 무시: 방향 + 비율(중간) 둘 다 만족할 때만 반대픽/정픽
             if (derivedSeries.length >= 4) {
                 var recent = derivedSeries[derivedSeries.length - 1].rate50;
                 var prev4 = derivedSeries[derivedSeries.length - 4].rate50;
-                var mid = (high + low) / 2;
-                if (recent < prev4 - 0.3) return 'high_falling';  // 내림 (0.3%p 하락이면 3~4회 만에 꺾여서 반대픽)
-                if (recent > prev4 + 0.3) return 'low_rising';     // 오름 (0.3%p 상승이면 정픽, 방향 메뉴와 동일)
+                if (recent < prev4 - 0.4 && ratio <= 0.5) return 'high_falling';  // 내림 + 이미 중간 아래 → 반대픽 (고점에서 잠깐 내려온 건 제외)
+                if (recent > prev4 + 0.4 && ratio >= 0.5) return 'low_rising';     // 오름 + 이미 중간 위 → 정픽 (저점에서 잠깐 올라온 건 제외)
             }
             return 'mid_flat';
         }
@@ -6217,8 +6215,8 @@ RESULTS_HTML = '''
                 if (derivedSeries.length >= 4) {
                     var recent = derivedSeries[derivedSeries.length - 1].rate50;
                     var prev = derivedSeries[derivedSeries.length - 4].rate50;
-                    if (recent > prev + 0.3) { direction = '오름'; directionClass = 'color:#81c784;'; }
-                    else if (recent < prev - 0.3) { direction = '내림'; directionClass = 'color:#e57373;'; }
+                    if (recent > prev + 0.4) { direction = '오름'; directionClass = 'color:#81c784;'; }
+                    else if (recent < prev - 0.4) { direction = '내림'; directionClass = 'color:#e57373;'; }
                 }
                 lastRound = derivedSeries[derivedSeries.length - 1].round;
                 current = derivedSeries[derivedSeries.length - 1].rate50;

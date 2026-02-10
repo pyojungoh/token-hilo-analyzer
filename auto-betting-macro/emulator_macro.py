@@ -48,6 +48,18 @@ COORDS_PATH = os.path.join(SCRIPT_DIR, "emulator_coords.json")
 COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
+# 배팅 동작 간 지연(초). 사이트 반영이 느리면 이 값을 늘리세요.
+BET_DELAY_AFTER_AMOUNT_TAP = 0.55
+BET_DELAY_AFTER_INPUT = 0.45
+BET_DELAY_AFTER_BACK = 0.55
+BET_DELAY_AFTER_COLOR_TAP = 0.55
+BET_DELAY_BETWEEN_CONFIRM_TAPS = 0.3
+BET_DELAY_AFTER_CONFIRM = 0.5
+BET_CONFIRM_TAP_COUNT = 3  # 정정 버튼 탭 횟수 (2→3으로 늘려 확정 반영률 개선)
+BET_RETRY_ATTEMPTS = 2  # 실패 시 재시도 횟수
+BET_RETRY_DELAY = 0.8   # 재시도 전 대기(초)
+KEYCODE_DEL = 67  # Android KEYCODE_DEL (한 글자 삭제)
+
 
 def _normalize_pick_color(raw):
     """서버 픽 값(RED/BLACK, 빨강/검정 등)을 항상 'RED' 또는 'BLACK'으로 통일. 모르면 None."""
@@ -1123,38 +1135,50 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             tx, ty = _apply_window_offset(coords, ax, ay, key=coord_key)
             adb_swipe(device, tx, ty, 100)
 
-        try:
-            # 1) 배팅금액 칸 탭 → 포커스 대기 → 금액 입력 → 키보드 닫기
-            tap_swipe(bet_xy[0], bet_xy[1], "bet_amount")
-            time.sleep(0.45)
-            adb_input_text(device, bet_amount)
-            time.sleep(0.35)
-            adb_keyevent(device, 4)  # BACK
-            time.sleep(0.45)
-            # 2) 픽 RED=레드 / BLACK=블랙 (한 번만 탭 — 두 번 탭 시 금액이 두 번 들어감)
-            tap_red_button = pick_color == "RED"
-            color_xy = red_xy if tap_red_button else black_xy
-            color_key = "red" if tap_red_button else "black"
-            button_name = "레드" if tap_red_button else "블랙"
-            cx, cy = _apply_window_offset(coords, color_xy[0], color_xy[1], key=color_key)
-            self._log("ADB: 픽 %s → %s 버튼 탭 (%s,%s)" % (pick_color, button_name, cx, cy))
-            tap_swipe(color_xy[0], color_xy[1], color_key)
-            time.sleep(0.45)
-            # 3) 정정 버튼(배팅 확정) — 두 번 탭해서 확정 반영되도록
-            if confirm_xy and len(confirm_xy) >= 2:
-                tap_swipe(confirm_xy[0], confirm_xy[1], "confirm")
-                time.sleep(0.2)
-                tap_swipe(confirm_xy[0], confirm_xy[1], "confirm")
-                time.sleep(0.35)
+        last_error = None
+        for attempt in range(BET_RETRY_ATTEMPTS):
+            try:
+                # 1) 배팅금액 칸 탭 → 포커스 대기 → 기존 값 삭제(DEL) → 금액 입력 → 키보드 닫기
+                tap_swipe(bet_xy[0], bet_xy[1], "bet_amount")
+                time.sleep(BET_DELAY_AFTER_AMOUNT_TAP)
+                for _ in range(15):
+                    adb_keyevent(device, KEYCODE_DEL)
+                    time.sleep(0.02)
+                time.sleep(0.15)
+                adb_input_text(device, bet_amount)
+                time.sleep(BET_DELAY_AFTER_INPUT)
+                adb_keyevent(device, 4)  # BACK
+                time.sleep(BET_DELAY_AFTER_BACK)
+                # 2) 픽 RED=레드 / BLACK=블랙 (한 번만 탭)
+                tap_red_button = pick_color == "RED"
+                color_xy = red_xy if tap_red_button else black_xy
+                color_key = "red" if tap_red_button else "black"
+                button_name = "레드" if tap_red_button else "블랙"
+                cx, cy = _apply_window_offset(coords, color_xy[0], color_xy[1], key=color_key)
+                self._log("ADB: 픽 %s → %s 버튼 탭 (%s,%s)" % (pick_color, button_name, cx, cy))
+                tap_swipe(color_xy[0], color_xy[1], color_key)
+                time.sleep(BET_DELAY_AFTER_COLOR_TAP)
+                # 3) 정정 버튼(배팅 확정) — 여러 번 탭 + 마지막 대기 길게 해서 사이트 반영률 개선
+                if confirm_xy and len(confirm_xy) >= 2:
+                    for i in range(BET_CONFIRM_TAP_COUNT):
+                        tap_swipe(confirm_xy[0], confirm_xy[1], "confirm")
+                        time.sleep(BET_DELAY_BETWEEN_CONFIRM_TAPS)
+                    time.sleep(BET_DELAY_AFTER_CONFIRM)
 
-            pred_text = "정" if pick_color == "RED" else "꺽"
-            self._log(f"{round_num}회차 {pred_text} {pick_color} {bet_amount}원 (ADB 완료 — 사이트 반영은 화면에서 확인)")
-            return True
-        except Exception as e:
-            self._log("배팅 실행 중 오류: %s — 같은 회차 다음 폴링에 재시도됩니다." % str(e)[:80])
-            with self._lock:
-                self._pending_bet_rounds.pop(round_num, None)
-            return False
+                pred_text = "정" if pick_color == "RED" else "꺽"
+                self._log(f"{round_num}회차 {pred_text} {pick_color} {bet_amount}원 (ADB 완료 — 사이트 반영은 화면에서 확인)")
+                return True
+            except Exception as e:
+                last_error = e
+                if attempt < BET_RETRY_ATTEMPTS - 1:
+                    self._log("배팅 시도 실패 → %s초 후 재시도 (%s)" % (BET_RETRY_DELAY, str(e)[:60]))
+                    time.sleep(BET_RETRY_DELAY)
+                else:
+                    break
+        self._log("배팅 실행 중 오류: %s — 같은 회차 다음 폴링에 재시도됩니다." % (str(last_error)[:80] if last_error else "unknown"))
+        with self._lock:
+            self._pending_bet_rounds.pop(round_num, None)
+        return False
 
     def _update_display(self):
         with self._lock:
