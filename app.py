@@ -773,6 +773,12 @@ def _server_win_rate_direction_zone(ph):
         return 'high_falling'
     if delta5 > 0.5 and ratio <= 0.5:
         return 'low_rising'
+    # 패널 "방향: 내림"과 동일: 4구간 전 대비 하락이면 내림 구간으로 보고 반대픽 적용
+    if len(derived) >= 4:
+        recent = rates[-1]
+        prev4 = rates[-4]
+        if recent < prev4 - 0.5:
+            return 'high_falling'
     return 'mid_flat'
 
 
@@ -4809,7 +4815,8 @@ RESULTS_HTML = '''
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (useLoseStreakRev && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThr) betColor = betColor === '빨강' ? '검정' : '빨강';
-                                    var useWinRateDirRev = !!(calcState[id] && calcState[id].win_rate_direction_reverse);
+                                    var winRateDirRevEl = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
+                                    var useWinRateDirRev = !!(winRateDirRevEl && winRateDirRevEl.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
                                     if (useWinRateDirRev && typeof getWinRateDirectionZone === 'function') {
                                         var phForZone = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
                                         var zone = getWinRateDirectionZone(phForZone);
@@ -4869,7 +4876,8 @@ RESULTS_HTML = '''
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (useLoseStreakRevActual && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
-                                    var useWinRateDirRevActual = !!(calcState[id] && calcState[id].win_rate_direction_reverse);
+                                    var winRateDirRevElA = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
+                                    var useWinRateDirRevActual = !!(winRateDirRevElA && winRateDirRevElA.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
                                     if (useWinRateDirRevActual && typeof getWinRateDirectionZone === 'function') {
                                         var phForZoneA = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
                                         var zoneA = getWinRateDirectionZone(phForZoneA);
@@ -4949,7 +4957,8 @@ RESULTS_HTML = '''
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (useLoseStreakRev2 && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThr2) betColor = betColor === '빨강' ? '검정' : '빨강';
-                                    var useWinRateDirRev2 = !!(calcState[id] && calcState[id].win_rate_direction_reverse);
+                                    var winRateDirRevEl2 = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
+                                    var useWinRateDirRev2 = !!(winRateDirRevEl2 && winRateDirRevEl2.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
                                     if (useWinRateDirRev2 && typeof getWinRateDirectionZone === 'function') {
                                         var phForZone2 = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
                                         var zone2 = getWinRateDirectionZone(phForZone2);
@@ -5004,7 +5013,8 @@ RESULTS_HTML = '''
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (useLoseStreakRev3 && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThr3) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
-                                    var useWinRateDirRev3 = !!(calcState[id] && calcState[id].win_rate_direction_reverse);
+                                    var winRateDirRevEl3 = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
+                                    var useWinRateDirRev3 = !!(winRateDirRevEl3 && winRateDirRevEl3.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
                                     if (useWinRateDirRev3 && typeof getWinRateDirectionZone === 'function') {
                                         var phForZone3 = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
                                         var zone3 = getWinRateDirectionZone(phForZone3);
@@ -6160,6 +6170,12 @@ RESULTS_HTML = '''
             var ratio = (current - low) / (high - low);
             if (delta5 < -0.5 && ratio >= 0.5) return 'high_falling';
             if (delta5 > 0.5 && ratio <= 0.5) return 'low_rising';
+            // 패널 "방향: 내림"과 동일: 4구간 전 대비 하락이면 내림 구간으로 보고 반대픽 적용
+            if (derivedSeries.length >= 4) {
+                var recent = derivedSeries[derivedSeries.length - 1].rate50;
+                var prev4 = derivedSeries[derivedSeries.length - 4].rate50;
+                if (recent < prev4 - 0.5) return 'high_falling';
+            }
             return 'mid_flat';
         }
         function renderWinRateDirectionPanel() {
@@ -6376,7 +6392,8 @@ RESULTS_HTML = '''
                             var loseStreakThrCardEl = document.getElementById('calc-' + id + '-lose-streak-reverse-threshold');
                             var loseStreakThrCard = (loseStreakThrCardEl && !isNaN(parseFloat(loseStreakThrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(loseStreakThrCardEl.value))) : (calcState[id] != null && typeof calcState[id].lose_streak_reverse_threshold === 'number' ? calcState[id].lose_streak_reverse_threshold : 46);
                             if (useLoseStreakRevCard && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThrCard) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
-                            var useWinRateDirRevCard = !!(calcState[id] && calcState[id].win_rate_direction_reverse);
+                            var winRateDirRevCardEl = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
+                            var useWinRateDirRevCard = !!(winRateDirRevCardEl && winRateDirRevCardEl.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
                             if (useWinRateDirRevCard && typeof getWinRateDirectionZone === 'function') {
                                 var phCard = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
                                 var zoneCard = getWinRateDirectionZone(phCard);
