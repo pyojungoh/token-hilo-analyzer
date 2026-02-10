@@ -745,6 +745,37 @@ def _server_recent_15_win_rate(completed_list):
     return (wins / len(last15)) * 100.0 if last15 else 50.0
 
 
+def _server_win_rate_direction_zone(ph):
+    """예측 이력(과거→현재)으로 롤링 50회 승률 구간 계산. 'high_falling'|'low_rising'|'mid_flat'|None. 클라이언트 승률방향 패널과 동일 공식."""
+    if not ph or len(ph) < 50:
+        return None
+    vh = [h for h in ph if h and h.get('actual') is not None and str(h.get('actual', '')).strip() and str(h.get('actual')) != 'pending']
+    if len(vh) < 50:
+        return None
+    derived = []
+    for i in range(49, len(vh)):
+        w = vh[i - 49:i + 1]
+        wins = sum(1 for h in w if h.get('actual') != 'joker' and h.get('predicted') == h.get('actual'))
+        loss = sum(1 for h in w if h.get('actual') != 'joker' and h.get('predicted') != h.get('actual'))
+        c = wins + loss
+        if c > 0:
+            derived.append({'round': w[-1].get('round'), 'rate50': 100.0 * wins / c})
+    if len(derived) < 6:
+        return None
+    rates = [x['rate50'] for x in derived]
+    high = max(rates)
+    low = min(rates)
+    current = rates[-1]
+    rate5ago = rates[-6]
+    delta5 = current - rate5ago
+    ratio = (current - low) / (high - low) if high > low else 0.5
+    if delta5 < -0.5 and ratio >= 0.5:
+        return 'high_falling'
+    if delta5 > 0.5 and ratio <= 0.5:
+        return 'low_rising'
+    return 'mid_flat'
+
+
 def _update_calc_paused_after_round(c):
     """회차 반영 후 서버에서 paused 갱신. 멈춤은 경고 표와 동일한 합산승률(blended) 기준. 연패후승 시 True. 클라이언트 없이 멈춤 정확 동작."""
     history = c.get('history') or []
@@ -990,6 +1021,20 @@ def _apply_results_to_calcs(results):
                 if c.get('lose_streak_reverse') and lose_streak >= lose_streak_min and blended is not None and blended <= lose_streak_thr:
                     pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
                     bet_color_for_history = _flip_pick_color(bet_color_for_history)
+                # 승률방향 옵션: 저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조
+                if c.get('win_rate_direction_reverse'):
+                    ph = get_prediction_history(100)
+                    zone = _server_win_rate_direction_zone(ph)
+                    if zone == 'high_falling':
+                        pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
+                        bet_color_for_history = _flip_pick_color(bet_color_for_history)
+                        c['last_trend_direction'] = 'down'
+                    elif zone == 'low_rising':
+                        c['last_trend_direction'] = 'up'
+                    elif zone == 'mid_flat':
+                        if c.get('last_trend_direction') == 'down':
+                            pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
+                            bet_color_for_history = _flip_pick_color(bet_color_for_history)
                 history_entry = {'round': pending_round, 'predicted': pred_for_calc, 'actual': actual}
                 if bet_color_for_history:
                     history_entry['pickColor'] = bet_color_for_history
@@ -3630,6 +3675,7 @@ RESULTS_HTML = '''
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-1-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label></td></tr>
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-1-lose-streak-reverse"> 연패≥<input type="number" id="calc-1-lose-streak-reverse-min" min="2" max="15" value="4" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-1-lose-streak-reverse-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
+                                    <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label></td></tr>
                                     <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-1-pause-low-win-rate"> 승률≤<input type="number" id="calc-1-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="최근 15회 승률이 이 값 이하·연패 시 배팅멈춤(픽만 유지, 금액 미전송). 승 나온 뒤에만 멈춤">% 이하·연패 시 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
@@ -3667,6 +3713,7 @@ RESULTS_HTML = '''
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-2-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label></td></tr>
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-2-lose-streak-reverse"> 연패≥<input type="number" id="calc-2-lose-streak-reverse-min" min="2" max="15" value="4" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-2-lose-streak-reverse-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
+                                    <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label></td></tr>
                                     <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-2-pause-low-win-rate"> 승률≤<input type="number" id="calc-2-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="최근 15회 승률이 이 값 이하·연패 시 배팅멈춤(픽만 유지, 금액 미전송). 승 나온 뒤에만 멈춤">% 이하·연패 시 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
@@ -3704,6 +3751,7 @@ RESULTS_HTML = '''
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-3-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label></td></tr>
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-3-lose-streak-reverse"> 연패≥<input type="number" id="calc-3-lose-streak-reverse-min" min="2" max="15" value="4" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-3-lose-streak-reverse-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
+                                    <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label></td></tr>
                                     <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-3-pause-low-win-rate"> 승률≤<input type="number" id="calc-3-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="최근 15회 승률이 이 값 이하·연패 시 배팅멈춤(픽만 유지, 금액 미전송). 승 나온 뒤에만 멈춤">% 이하·연패 시 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
@@ -3995,6 +4043,8 @@ RESULTS_HTML = '''
                 lose_streak_reverse: false,
                 lose_streak_reverse_threshold: 46,
                 lose_streak_reverse_min_streak: 4,
+                win_rate_direction_reverse: false,
+                last_trend_direction: null,
                 martingale: false,
                 martingale_type: 'pyo',
                 target_enabled: false,
@@ -4057,6 +4107,8 @@ RESULTS_HTML = '''
                     lose_streak_reverse: !!(document.getElementById('calc-' + id + '-lose-streak-reverse') && document.getElementById('calc-' + id + '-lose-streak-reverse').checked),
                     lose_streak_reverse_threshold: (function() { var el = document.getElementById('calc-' + id + '-lose-streak-reverse-threshold'); var v = el && !isNaN(parseFloat(el.value)) ? Math.max(0, Math.min(100, parseFloat(el.value))) : 46; return typeof v === 'number' && !isNaN(v) ? v : 46; })(),
                     lose_streak_reverse_min_streak: (function() { var el = document.getElementById('calc-' + id + '-lose-streak-reverse-min'); var v = el && !isNaN(parseInt(el.value, 10)) ? Math.max(2, Math.min(15, parseInt(el.value, 10))) : 4; return typeof v === 'number' && !isNaN(v) ? v : 4; })(),
+                    win_rate_direction_reverse: !!(document.getElementById('calc-' + id + '-win-rate-direction-reverse') && document.getElementById('calc-' + id + '-win-rate-direction-reverse').checked),
+                    last_trend_direction: (calcState[id].last_trend_direction === 'up' || calcState[id].last_trend_direction === 'down') ? calcState[id].last_trend_direction : null,
                     martingale: !!(martingaleEl && martingaleEl.checked),
                     martingale_type: (martingaleTypeEl && martingaleTypeEl.value) || 'pyo',
                     target_enabled: !!(document.getElementById('calc-' + id + '-target-enabled') && document.getElementById('calc-' + id + '-target-enabled').checked),
@@ -4151,6 +4203,8 @@ RESULTS_HTML = '''
                 calcState[id].lose_streak_reverse_threshold = loseStreakThrRestore;
                 var minStreakRestore = (typeof c.lose_streak_reverse_min_streak === 'number' && c.lose_streak_reverse_min_streak >= 2 && c.lose_streak_reverse_min_streak <= 15) ? c.lose_streak_reverse_min_streak : 4;
                 calcState[id].lose_streak_reverse_min_streak = minStreakRestore;
+                calcState[id].win_rate_direction_reverse = !!c.win_rate_direction_reverse;
+                calcState[id].last_trend_direction = (c.last_trend_direction === 'up' || c.last_trend_direction === 'down') ? c.last_trend_direction : null;
                 if (!fullRestore) return;
                 calcState[id].reverse = !!c.reverse;
                 calcState[id].win_rate_reverse = !!c.win_rate_reverse;
@@ -4176,6 +4230,8 @@ RESULTS_HTML = '''
                 if (loseStreakRevEl) loseStreakRevEl.checked = !!calcState[id].lose_streak_reverse;
                 if (loseStreakThrEl) loseStreakThrEl.value = String(Math.round(calcState[id].lose_streak_reverse_threshold || 46));
                 if (loseStreakMinEl) loseStreakMinEl.value = String(Math.max(2, Math.min(15, calcState[id].lose_streak_reverse_min_streak || 4)));
+                const winRateDirRevEl = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
+                if (winRateDirRevEl) winRateDirRevEl.checked = !!calcState[id].win_rate_direction_reverse;
                 const martingaleEl = document.getElementById('calc-' + id + '-martingale');
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 if (martingaleEl) martingaleEl.checked = !!calcState[id].martingale;
@@ -4751,6 +4807,14 @@ RESULTS_HTML = '''
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (useLoseStreakRev && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThr) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                    var useWinRateDirRev = !!(calcState[id] && calcState[id].win_rate_direction_reverse);
+                                    if (useWinRateDirRev && typeof getWinRateDirectionZone === 'function') {
+                                        var phForZone = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
+                                        var zone = getWinRateDirectionZone(phForZone);
+                                        if (zone === 'high_falling') { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; calcState[id].last_trend_direction = 'down'; }
+                                        else if (zone === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
+                                        else if (zone === 'mid_flat' && calcState[id].last_trend_direction === 'down') { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
+                                    }
                                 }
                                 if (betPredForServer == null) { betPredForServer = pred; betColorForServer = betColor || null; }
                                 var pendingIdx = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
@@ -4803,6 +4867,14 @@ RESULTS_HTML = '''
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (useLoseStreakRevActual && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                    var useWinRateDirRevActual = !!(calcState[id] && calcState[id].win_rate_direction_reverse);
+                                    if (useWinRateDirRevActual && typeof getWinRateDirectionZone === 'function') {
+                                        var phForZoneA = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
+                                        var zoneA = getWinRateDirectionZone(phForZoneA);
+                                        if (zoneA === 'high_falling') { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; calcState[id].last_trend_direction = 'down'; }
+                                        else if (zoneA === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
+                                        else if (zoneA === 'mid_flat' && calcState[id].last_trend_direction === 'down') { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; }
+                                    }
                                 }
                                 if (betPredForServerActual == null) { betPredForServerActual = pred; betColorForServerActual = betColorActual || null; }
                                 var pendingIdxActual = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
@@ -4875,6 +4947,14 @@ RESULTS_HTML = '''
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (useLoseStreakRev2 && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThr2) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                    var useWinRateDirRev2 = !!(calcState[id] && calcState[id].win_rate_direction_reverse);
+                                    if (useWinRateDirRev2 && typeof getWinRateDirectionZone === 'function') {
+                                        var phForZone2 = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
+                                        var zone2 = getWinRateDirectionZone(phForZone2);
+                                        if (zone2 === 'high_falling') { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; calcState[id].last_trend_direction = 'down'; }
+                                        else if (zone2 === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
+                                        else if (zone2 === 'mid_flat' && calcState[id].last_trend_direction === 'down') { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
+                                    }
                                 }
                                 var pendingIdx2 = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
                                 if (pendingIdx2 >= 0) {
@@ -4922,6 +5002,14 @@ RESULTS_HTML = '''
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (useLoseStreakRev3 && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThr3) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                    var useWinRateDirRev3 = !!(calcState[id] && calcState[id].win_rate_direction_reverse);
+                                    if (useWinRateDirRev3 && typeof getWinRateDirectionZone === 'function') {
+                                        var phForZone3 = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
+                                        var zone3 = getWinRateDirectionZone(phForZone3);
+                                        if (zone3 === 'high_falling') { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; calcState[id].last_trend_direction = 'down'; }
+                                        else if (zone3 === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
+                                        else if (zone3 === 'mid_flat' && calcState[id].last_trend_direction === 'down') { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; }
+                                    }
                                 }
                                 var pendingIdx3 = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
                                 if (pendingIdx3 >= 0) {
@@ -6048,6 +6136,30 @@ RESULTS_HTML = '''
             tbl += '</tbody></table>';
             wrap.innerHTML = tbl;
         }
+        function getWinRateDirectionZone(ph) {
+            if (!Array.isArray(ph) || ph.length < 50) return null;
+            var vh = ph.filter(function(h) { return h && typeof h === 'object' && h.actual != null && h.actual !== ''; });
+            var derivedSeries = [];
+            for (var i = 49; i < vh.length; i++) {
+                var w = vh.slice(i - 49, i + 1);
+                var wins = w.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                var losses = w.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                var c = wins + losses;
+                if (c > 0) derivedSeries.push({ round: vh[i].round, rate50: 100 * wins / c });
+            }
+            if (derivedSeries.length < 6) return null;
+            var rates = derivedSeries.map(function(x) { return x.rate50; });
+            var high = Math.max.apply(null, rates);
+            var low = Math.min.apply(null, rates);
+            if (high <= low) return null;
+            var current = derivedSeries[derivedSeries.length - 1].rate50;
+            var rate5Ago = derivedSeries[derivedSeries.length - 6].rate50;
+            var delta5 = current - rate5Ago;
+            var ratio = (current - low) / (high - low);
+            if (delta5 < -0.5 && ratio >= 0.5) return 'high_falling';
+            if (delta5 > 0.5 && ratio <= 0.5) return 'low_rising';
+            return 'mid_flat';
+        }
         function renderWinRateDirectionPanel() {
             var tbody = document.getElementById('win-rate-direction-tbody');
             var wrap = document.getElementById('win-rate-direction-data');
@@ -6262,6 +6374,14 @@ RESULTS_HTML = '''
                             var loseStreakThrCardEl = document.getElementById('calc-' + id + '-lose-streak-reverse-threshold');
                             var loseStreakThrCard = (loseStreakThrCardEl && !isNaN(parseFloat(loseStreakThrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(loseStreakThrCardEl.value))) : (calcState[id] != null && typeof calcState[id].lose_streak_reverse_threshold === 'number' ? calcState[id].lose_streak_reverse_threshold : 46);
                             if (useLoseStreakRevCard && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThrCard) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                            var useWinRateDirRevCard = !!(calcState[id] && calcState[id].win_rate_direction_reverse);
+                            if (useWinRateDirRevCard && typeof getWinRateDirectionZone === 'function') {
+                                var phCard = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
+                                var zoneCard = getWinRateDirectionZone(phCard);
+                                if (zoneCard === 'high_falling') { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; calcState[id].last_trend_direction = 'down'; }
+                                else if (zoneCard === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
+                                else if (zoneCard === 'mid_flat' && calcState[id].last_trend_direction === 'down') { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                            }
                             if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
                         }
                         predictionCardEl.textContent = predictionText;
@@ -6722,6 +6842,9 @@ RESULTS_HTML = '''
                 calcState[id].lose_streak_reverse_threshold = (loseStreakThrRunEl && !isNaN(parseFloat(loseStreakThrRunEl.value))) ? Math.max(0, Math.min(100, parseFloat(loseStreakThrRunEl.value))) : 46;
                 const loseStreakMinRunEl = document.getElementById('calc-' + id + '-lose-streak-reverse-min');
                 calcState[id].lose_streak_reverse_min_streak = (loseStreakMinRunEl && !isNaN(parseInt(loseStreakMinRunEl.value, 10))) ? Math.max(2, Math.min(15, parseInt(loseStreakMinRunEl.value, 10))) : 4;
+                const winRateDirRevRun = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
+                calcState[id].win_rate_direction_reverse = !!(winRateDirRevRun && winRateDirRevRun.checked);
+                calcState[id].last_trend_direction = null;
                 const pauseLowRun = document.getElementById('calc-' + id + '-pause-low-win-rate');
                 const pauseThrRunEl = document.getElementById('calc-' + id + '-pause-win-rate-threshold');
                 calcState[id].pause_low_win_rate_enabled = !!(pauseLowRun && pauseLowRun.checked);
@@ -7510,7 +7633,7 @@ def api_calc_state():
             if state is None:
                 state = {}
             # 계산기 1,2,3만 반환 (레거시 defense 제거 후 클라이언트 호환)
-            _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 46, 'lose_streak_reverse_min_streak': 4, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
+            _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 46, 'lose_streak_reverse_min_streak': 4, 'win_rate_direction_reverse': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
             calcs = {}
             for cid in ('1', '2', '3'):
                 calcs[cid] = state[cid] if (cid in state and isinstance(state.get(cid), dict)) else dict(_default)
@@ -7589,6 +7712,8 @@ def api_calc_state():
                     'lose_streak_reverse': bool(c.get('lose_streak_reverse')),
                     'lose_streak_reverse_threshold': max(0, min(100, int(c.get('lose_streak_reverse_threshold') or 46))),
                     'lose_streak_reverse_min_streak': max(2, min(15, int(c.get('lose_streak_reverse_min_streak') or 4))),
+                    'win_rate_direction_reverse': bool(c.get('win_rate_direction_reverse')),
+                    'last_trend_direction': c.get('last_trend_direction') if c.get('last_trend_direction') in ('up', 'down') else None,
                     'martingale': bool(c.get('martingale')),
                     'martingale_type': str(c.get('martingale_type') or 'pyo'),
                     'target_enabled': bool(c.get('target_enabled')),
@@ -7605,7 +7730,7 @@ def api_calc_state():
                     'pending_color': c.get('pending_color'),
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 46, 'lose_streak_reverse_min_streak': 4, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 46, 'lose_streak_reverse_min_streak': 4, 'win_rate_direction_reverse': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
         save_calc_state(session_id, out)
         # 계산기 running 상태를 current_pick에 반영 → 에뮬레이터 매크로가 목표 달성 시 자동 중지
         if bet_int:
