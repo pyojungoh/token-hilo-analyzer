@@ -746,7 +746,7 @@ def _server_recent_15_win_rate(completed_list):
 
 
 def _update_calc_paused_after_round(c):
-    """회차 반영 후 서버에서 paused 갱신. 15회 승률 이하/연패후승 시 True, 그 외 조건에서 해제. 클라이언트 없이 멈춤 정확 동작."""
+    """회차 반영 후 서버에서 paused 갱신. 멈춤은 경고 표와 동일한 합산승률(blended) 기준. 연패후승 시 True. 클라이언트 없이 멈춤 정확 동작."""
     history = c.get('history') or []
     completed = [h for h in history if h.get('actual') and h.get('actual') != 'pending']
     pause_enabled = c.get('pause_low_win_rate_enabled', False)
@@ -758,7 +758,7 @@ def _update_calc_paused_after_round(c):
         c['paused'] = False
         return
 
-    # 마틴 사용 시: 연패 후 승(마틴 한 사이클 끝)이면 즉시 멈춤. 아니면 15회 승률 검사 안 함(클라이언트와 동일)
+    # 마틴 사용 시: 연패 후 승(마틴 한 사이클 끝)이면 즉시 멈춤. 아니면 승률 검사 안 함(클라이언트와 동일)
     if martingale and len(completed) >= 2:
         last_h, prev_h = completed[-1], completed[-2]
         last_win = last_h.get('actual') != 'joker' and last_h.get('predicted') == last_h.get('actual')
@@ -767,15 +767,24 @@ def _update_calc_paused_after_round(c):
             c['paused'] = True
         return
 
-    # 멈춤 옵션 켜져 있을 때: 최근 15회 승률로 paused 설정/해제. 이력(히스테리시스) 적용해 43% 근처에서 띄엄띄엄 전환 방지
+    # 멈춤 옵션: 경고 표와 동일한 합산승률(blended) 사용. 50% 설정이면 표에 51.7%일 때 배팅되도록
     if pause_enabled:
-        rate15 = _server_recent_15_win_rate(completed)
-        PAUSE_RESUME_HYSTERESIS = 3  # 멈춤 해제는 (기준+3)% 초과일 때만 (예: 43% 이하→멈춤, 46% 초과→재개)
+        ph = get_prediction_history(100)
+        blended = _blended_win_rate(ph) if ph else None
+        PAUSE_RESUME_HYSTERESIS = 3
         resume_thr = min(100, thr + PAUSE_RESUME_HYSTERESIS)
-        if c.get('paused', False):
-            c['paused'] = rate15 <= resume_thr  # 멈춤 중: 재개는 rate15 > resume_thr 일 때만
+        if blended is not None:
+            if c.get('paused', False):
+                c['paused'] = blended <= resume_thr  # 멈춤 중: 재개는 합산승률 > resume_thr 일 때만
+            else:
+                c['paused'] = blended <= thr  # 배팅 중: 합산승률 기준 이하이면 멈춤
         else:
-            c['paused'] = rate15 <= thr  # 배팅 중: 기준 이하이면 멈춤
+            # 합산승률 없을 때 폴백: 계산기 15회 승률
+            rate15 = _server_recent_15_win_rate(completed)
+            if c.get('paused', False):
+                c['paused'] = rate15 <= resume_thr
+            else:
+                c['paused'] = rate15 <= thr
     # 옵션 꺼져 있으면 기존 paused 유지(서버가 강제로 False로 바꾸지 않음)
 
 
@@ -5873,6 +5882,16 @@ RESULTS_HTML = '''
             var wins = last15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; });
             return (wins.length / last15.length) * 100;
         }
+        /** 경고 표와 동일한 합산승률(blended). 멈춤 옵션은 이 값을 사용해 표에 보이는 수치와 일치. */
+        function getBlendedWinRate() {
+            var vh = Array.isArray(predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object' && h.actual !== 'joker'; }) : [];
+            if (vh.length < 1) return null;
+            var v15 = vh.slice(-15), v30 = vh.slice(-30), v100 = vh.slice(-100);
+            var r15 = v15.length > 0 ? 100 * v15.filter(function(h) { return h.predicted === h.actual; }).length / v15.length : 50;
+            var r30 = v30.length > 0 ? 100 * v30.filter(function(h) { return h.predicted === h.actual; }).length / v30.length : 50;
+            var r100 = v100.length > 0 ? 100 * v100.filter(function(h) { return h.predicted === h.actual; }).length / v100.length : 50;
+            return 0.65 * r15 + 0.25 * r30 + 0.10 * r100;
+        }
         function getLoseStreak(id) {
             var hist = calcState[id] && calcState[id].history;
             if (!Array.isArray(hist)) return 0;
@@ -5948,9 +5967,10 @@ RESULTS_HTML = '''
                 return;  // 마틴 사용 중인데 연패중승이 아니면 멈춤 검사 안 함
             }
             if (!pauseLowEl || !pauseLowEl.checked) return;  // 마틴 미사용 시: DOM 기준 멈춤 옵션 켜져 있을 때만
-            var rate15 = getCalcRecent15WinRate(id);
+            var blended = getBlendedWinRate();  // 경고 표와 동일한 합산승률 사용 (50% 설정이면 표 51.7%일 때 배팅되도록)
+            if (blended == null) blended = getCalcRecent15WinRate(id);
             var thr = (pauseThrEl && !isNaN(parseFloat(pauseThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(pauseThrEl.value))) : 45;
-            if (rate15 <= thr) {
+            if (blended <= thr) {
                 calcState[id].paused = true;
                 for (var j = 0; j < hist.length; j++) {
                     if (hist[j] && hist[j].actual === 'pending') { hist[j].betAmount = 0; hist[j].no_bet = true; }
@@ -6105,9 +6125,10 @@ RESULTS_HTML = '''
             var thrPause = (pauseThrEl && !isNaN(parseFloat(pauseThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(pauseThrEl.value))) : 45;
             if (calcState[id]) { calcState[id].pause_low_win_rate_enabled = pauseEnabled; calcState[id].pause_win_rate_threshold = thrPause; }
             if (state.paused && pauseEnabled) {
-                var rate15 = getCalcRecent15WinRate(id);
-                var resumeThr = Math.min(100, thrPause + 3);  // 이력: 멈춤 해제는 기준+3% 초과일 때만 (띄엄띄엄 방지)
-                if (rate15 > resumeThr) state.paused = false;
+                var blended = getBlendedWinRate();  // 경고 표 합산승률과 동일
+                if (blended == null) blended = getCalcRecent15WinRate(id);
+                var resumeThr = Math.min(100, thrPause + 3);  // 이력: 멈춤 해제는 기준+3% 초과일 때만
+                if (blended > resumeThr) state.paused = false;
             }
             el.className = 'calc-status';
             if (state.running) {
@@ -6488,7 +6509,7 @@ RESULTS_HTML = '''
                 if (displayRows.length === 0) {
                     tableWrap.innerHTML = '';
                 } else {
-                    let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽</th><th>경고승률</th><th>배팅금액</th><th>수익</th><th>승패</th></tr></thead><tbody>';
+                    let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽</th><th>경고 승률</th><th>배팅금액</th><th>수익</th><th>승패</th></tr></thead><tbody>';
                     displayRows.forEach(function(row) {
                         const outClass = row.outClass || (row.outcome === '승' ? 'win' : row.outcome === '패' ? 'lose' : row.outcome === '조' ? 'joker' : 'skip');
                         const profitClass = (typeof row.profit === 'number' && row.profit > 0) || (typeof row.profit === 'string' && row.profit.indexOf('+') === 0) ? 'profit-plus' : (typeof row.profit === 'number' && row.profit < 0) || (typeof row.profit === 'string' && row.profit.indexOf('-') === 0 && row.profit !== '-') ? 'profit-minus' : '';
