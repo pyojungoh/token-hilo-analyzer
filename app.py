@@ -787,7 +787,7 @@ def _server_win_rate_direction_zone(ph):
 
 
 def _update_calc_paused_after_round(c):
-    """회차 반영 후 서버에서 paused 갱신. 멈춤은 '승률≤N% 이하·연패 시 배팅멈춤' 옵션(경고 표와 동일한 합산승률)에만 따름. 클라이언트 없이 멈춤 정확 동작."""
+    """회차 반영 후 서버에서 paused 갱신. 멈춤 기준 = 계산기 표 15회 승률(해당 계산기 배팅 상황과 맞춤). 클라이언트 없이 멈춤 정확 동작."""
     history = c.get('history') or []
     completed = [h for h in history if h.get('actual') and h.get('actual') != 'pending']
     pause_enabled = c.get('pause_low_win_rate_enabled', False)
@@ -798,30 +798,22 @@ def _update_calc_paused_after_round(c):
         c['paused'] = False
         return
 
-    # 멈춤은 '승률≤N% 이하·연패 시 배팅멈춤' 옵션에만 해당. 마틴만 켜진 경우는 멈춤과 무관.
-    # 멈춤 옵션 켜진 경우: 승률 기준 만족 시, 이미 마틴 중(직전 완료가 패/조커)이면 마틴 끝낸 뒤(승 한 번 나온 뒤) 멈춤 → 연패 중에는 paused 세우지 않음
+    # 멈춤은 '계산기 표 15회 승률 ≤ N%' 옵션에만 해당. 마틴만 켜진 경우는 멈춤과 무관.
+    # 계산기 15회 승률 = 해당 계산기가 실제 배팅한 최근 15회 승률 → 현재 배팅 상황과 맞춤
     if pause_enabled:
         martingale = c.get('martingale', False)
         last_is_loss = False
         if martingale and len(completed) >= 1:
             last_h = completed[-1]
             last_is_loss = last_h.get('actual') == 'joker' or last_h.get('predicted') != last_h.get('actual')
-        if not last_is_loss:  # 마틴 없음 또는 직전이 승 → 승률 기준만 보면 됨
-            ph = get_prediction_history(100)
-            blended = _blended_win_rate(ph) if ph else None
+        if not last_is_loss:
+            rate15 = _server_recent_15_win_rate(completed)  # 계산기 완료 회차 최근 15회 승률
             PAUSE_RESUME_HYSTERESIS = 3
             resume_thr = min(100, thr + PAUSE_RESUME_HYSTERESIS)
-            if blended is not None:
-                if c.get('paused', False):
-                    c['paused'] = blended <= resume_thr  # 멈춤 중: 재개는 합산승률 > resume_thr 일 때만
-                else:
-                    c['paused'] = blended <= thr  # 배팅 중: 합산승률 기준 이하이면 멈춤
+            if c.get('paused', False):
+                c['paused'] = rate15 <= resume_thr  # 멈춤 중: 재개는 15회 승률 > resume_thr 일 때만
             else:
-                rate15 = _server_recent_15_win_rate(completed)
-                if c.get('paused', False):
-                    c['paused'] = rate15 <= resume_thr
-                else:
-                    c['paused'] = rate15 <= thr
+                c['paused'] = rate15 <= thr  # 배팅 중: 15회 승률 기준 이하이면 멈춤
         # last_is_loss이면 이번에는 paused 갱신 안 함(마틴 끝날 때까지 배팅 계속)
     # 옵션 꺼져 있으면 기존 paused 유지(서버가 강제로 False로 바꾸지 않음)
 
@@ -1064,6 +1056,9 @@ def _apply_results_to_calcs(results):
                 # 서버에서 계산기 수익, 마틴게일, 연승/연패 계산
                 history_entry = _calculate_calc_profit_server(c, history_entry)
                 c['history'] = (c.get('history') or []) + [history_entry]
+                # 해당 회차 완료 시점의 계산기 15회 승률 저장 (표 15회승률 열용)
+                completed_new = [x for x in c['history'] if x.get('actual') and x.get('actual') != 'pending']
+                history_entry['rate15'] = round(_server_recent_15_win_rate(completed_new), 1)
                 # 최대 연승/연패 업데이트
                 max_win = history_entry.get('max_win_streak', 0)
                 max_lose = history_entry.get('max_lose_streak', 0)
@@ -3756,7 +3751,7 @@ RESULTS_HTML = '''
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-1-lose-streak-reverse"> 연패≥<input type="number" id="calc-1-lose-streak-reverse-min" min="2" max="15" value="4" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-1-lose-streak-reverse-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                     <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label></td></tr>
-                                    <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-1-pause-low-win-rate"> 승률≤<input type="number" id="calc-1-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="최근 15회 승률이 이 값 이하·연패 시 배팅멈춤(픽만 유지, 금액 미전송). 승 나온 뒤에만 멈춤">% 이하·연패 시 배팅멈춤</label></td></tr>
+                                    <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-1-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-1-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-1-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-1-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-1-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
@@ -3795,7 +3790,7 @@ RESULTS_HTML = '''
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-2-lose-streak-reverse"> 연패≥<input type="number" id="calc-2-lose-streak-reverse-min" min="2" max="15" value="4" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-2-lose-streak-reverse-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                     <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label></td></tr>
-                                    <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-2-pause-low-win-rate"> 승률≤<input type="number" id="calc-2-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="최근 15회 승률이 이 값 이하·연패 시 배팅멈춤(픽만 유지, 금액 미전송). 승 나온 뒤에만 멈춤">% 이하·연패 시 배팅멈춤</label></td></tr>
+                                    <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-2-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-2-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-2-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-2-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-2-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
@@ -3834,7 +3829,7 @@ RESULTS_HTML = '''
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-3-lose-streak-reverse"> 연패≥<input type="number" id="calc-3-lose-streak-reverse-min" min="2" max="15" value="4" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-3-lose-streak-reverse-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                     <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label></td></tr>
-                                    <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-3-pause-low-win-rate"> 승률≤<input type="number" id="calc-3-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="최근 15회 승률이 이 값 이하·연패 시 배팅멈춤(픽만 유지, 금액 미전송). 승 나온 뒤에만 멈춤">% 이하·연패 시 배팅멈춤</label></td></tr>
+                                    <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-3-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-3-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
                                     <tr><td>목표</td><td><label><input type="checkbox" id="calc-3-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-3-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-3-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
@@ -4913,11 +4908,14 @@ RESULTS_HTML = '''
                                     rowJ.no_bet = isNoBetJ;
                                     rowJ.betAmount = isNoBetJ ? 0 : (rowJ.betAmount != null ? rowJ.betAmount : undefined);
                                     if (rowJ.warningWinRate == null && typeof blended === 'number') rowJ.warningWinRate = blended;
+                                    if (typeof getCalcRecent15WinRate === 'function') rowJ.rate15 = getCalcRecent15WinRate(id);
                                 } else {
                                     var noBetJoker = !!effectivePausedForRound(id);
                                     calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null, betAmount: noBetJoker ? 0 : undefined, no_bet: noBetJoker, warningWinRate: typeof blended === 'number' ? blended : null });
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
+                                var entryJ = calcState[id].history.find(function(h) { return h && Number(h.round) === currentRoundNum; });
+                                if (entryJ && entryJ.actual && entryJ.actual !== 'pending' && typeof getCalcRecent15WinRate === 'function') entryJ.rate15 = getCalcRecent15WinRate(id);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
                             });
                             saveCalcStateToServer();
@@ -4974,11 +4972,14 @@ RESULTS_HTML = '''
                                     row.no_bet = isNoBet;
                                     row.betAmount = isNoBet ? 0 : (row.betAmount != null ? row.betAmount : undefined);
                                     if (row.warningWinRate == null && typeof blended === 'number') row.warningWinRate = blended;
+                                    if (typeof getCalcRecent15WinRate === 'function') row.rate15 = getCalcRecent15WinRate(id);
                                 } else {
                                     var noBetPush = !!effectivePausedForRound(id);
                                     calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null, betAmount: noBetPush ? 0 : undefined, no_bet: noBetPush, warningWinRate: typeof blended === 'number' ? blended : null });
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
+                                var entryA = calcState[id].history.find(function(h) { return h && Number(h.round) === currentRoundNum; });
+                                if (entryA && entryA.actual && entryA.actual !== 'pending' && typeof getCalcRecent15WinRate === 'function') entryA.rate15 = getCalcRecent15WinRate(id);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + currentRoundFull + '_' + actual;
                                 if (pred === actual) checkPauseAfterWin(id);
                                 updateCalcSummary(id);
@@ -5054,11 +5055,14 @@ RESULTS_HTML = '''
                                     rowJ2.no_bet = isNoBetJ2;
                                     rowJ2.betAmount = isNoBetJ2 ? 0 : (rowJ2.betAmount != null ? rowJ2.betAmount : undefined);
                                     if (rowJ2.warningWinRate == null && typeof blended === 'number') rowJ2.warningWinRate = blended;
+                                    if (typeof getCalcRecent15WinRate === 'function') rowJ2.rate15 = getCalcRecent15WinRate(id);
                                 } else if (!calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) {
                                     var noBetJoker2 = !!effectivePausedForRound(id);
                                     calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null, betAmount: noBetJoker2 ? 0 : undefined, no_bet: noBetJoker2, warningWinRate: typeof blended === 'number' ? blended : null });
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
+                                var entryJ2 = calcState[id].history.find(function(h) { return h && Number(h.round) === currentRoundNum; });
+                                if (entryJ2 && entryJ2.actual && entryJ2.actual !== 'pending' && typeof getCalcRecent15WinRate === 'function') entryJ2.rate15 = getCalcRecent15WinRate(id);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
                                 updateCalcSummary(id);
                                 updateCalcDetail(id);
@@ -5110,11 +5114,14 @@ RESULTS_HTML = '''
                                     row3.no_bet = isNoBet3;
                                     row3.betAmount = isNoBet3 ? 0 : (row3.betAmount != null ? row3.betAmount : undefined);
                                     if (row3.warningWinRate == null && typeof blended === 'number') row3.warningWinRate = blended;
+                                    if (typeof getCalcRecent15WinRate === 'function') row3.rate15 = getCalcRecent15WinRate(id);
                                 } else if (!calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) {
                                     var noBetPush3 = !!effectivePausedForRound(id);
                                     calcState[id].history.push({ predicted: pred, actual: actual, round: currentRoundFull, pickColor: betColorActual || null, betAmount: noBetPush3 ? 0 : undefined, no_bet: noBetPush3, warningWinRate: typeof blended === 'number' ? blended : null });
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
+                                var entryA3 = calcState[id].history.find(function(h) { return h && Number(h.round) === currentRoundNum; });
+                                if (entryA3 && entryA3.actual && entryA3.actual !== 'pending' && typeof getCalcRecent15WinRate === 'function') entryA3.rate15 = getCalcRecent15WinRate(id);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + currentRoundFull + '_' + actual;
                                 if (pred === actual) checkPauseAfterWin(id);
                                 updateCalcSummary(id);
@@ -6059,7 +6066,7 @@ RESULTS_HTML = '''
             var wins = last15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; });
             return (wins.length / last15.length) * 100;
         }
-        /** 경고 표와 동일한 합산승률(blended). 멈춤 옵션은 이 값을 사용해 표에 보이는 수치와 일치. */
+        /** 경고 표와 동일한 합산승률(blended). 멈춤은 계산기 표 15회 승률 기준으로 변경됨. */
         function getBlendedWinRate() {
             var vh = Array.isArray(predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object' && h.actual !== 'joker'; }) : [];
             if (vh.length < 1) return null;
@@ -6131,10 +6138,11 @@ RESULTS_HTML = '''
                 var lastIsLoss = last.actual === 'joker' || last.predicted !== last.actual;
                 if (lastIsLoss) return;  // 연패 중이면 아직 멈추지 않음
             }
-            var blended = getBlendedWinRate();  // 경고 표와 동일한 합산승률 사용 (50% 설정이면 표 51.7%일 때 배팅되도록)
-            if (blended == null) blended = getCalcRecent15WinRate(id);
+            // 멈춤 기준 = 계산기 표의 15회 승률 (해당 계산기 배팅 상황과 맞춤). 데이터 없으면 합산승률 폴백
+            var rate15 = getCalcRecent15WinRate(id);
+            var rateForPause = (completed.length >= 1) ? rate15 : (getBlendedWinRate() != null ? getBlendedWinRate() : rate15);
             var thr = (pauseThrEl && !isNaN(parseFloat(pauseThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(pauseThrEl.value))) : 45;
-            if (blended <= thr) {
+            if (rateForPause <= thr) {
                 calcState[id].paused = true;
                 for (var j = 0; j < hist.length; j++) {
                     if (hist[j] && hist[j].actual === 'pending') { hist[j].betAmount = 0; hist[j].no_bet = true; }
@@ -6382,10 +6390,9 @@ RESULTS_HTML = '''
             var thrPause = (pauseThrEl && !isNaN(parseFloat(pauseThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(pauseThrEl.value))) : 45;
             if (calcState[id]) { calcState[id].pause_low_win_rate_enabled = pauseEnabled; calcState[id].pause_win_rate_threshold = thrPause; }
             if (state.paused && pauseEnabled) {
-                var blended = getBlendedWinRate();  // 경고 표 합산승률과 동일
-                if (blended == null) blended = getCalcRecent15WinRate(id);
+                var rate15 = getCalcRecent15WinRate(id);
                 var resumeThr = Math.min(100, thrPause + 3);  // 이력: 멈춤 해제는 기준+3% 초과일 때만
-                if (blended > resumeThr) state.paused = false;
+                if (rate15 > resumeThr) state.paused = false;
             }
             el.className = 'calc-status';
             if (state.running) {
@@ -6731,6 +6738,7 @@ RESULTS_HTML = '''
                 const pickVal = h.predicted === '정' ? '정' : '꺽';
                 const pickClass = (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : 'pick-kkuk')));
                 const warningWinRateVal = (typeof h.warningWinRate === 'number' && !isNaN(h.warningWinRate)) ? h.warningWinRate.toFixed(1) + '%' : '-';
+                const rate15Val = (typeof h.rate15 === 'number' && !isNaN(h.rate15)) ? h.rate15.toFixed(1) + '%' : '-';
                 var betStr, profitStr, res, outcome, resultClass, outClass;
                 // 서버에서 실제 결과 확인 (pending이어도 서버에 결과가 있을 수 있음)
                 var serverActual = null;
@@ -6768,7 +6776,7 @@ RESULTS_HTML = '''
                     resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
                     outClass = outcome === '승' ? 'win' : outcome === '패' ? 'lose' : outcome === '조' ? 'joker' : 'skip';
                 }
-                rows.push({ roundStr: roundStr, roundNum: !isNaN(rn) ? rn : null, pick: pickVal, pickClass: pickClass, warningWinRate: warningWinRateVal, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr, outClass: outClass });
+                rows.push({ roundStr: roundStr, roundNum: !isNaN(rn) ? rn : null, pick: pickVal, pickClass: pickClass, warningWinRate: warningWinRateVal, rate15: rate15Val, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr, outClass: outClass });
             }
             try { window.__calcDetailRows = window.__calcDetailRows || {}; window.__calcDetailRows[id] = rows; } catch (e) {}
             const CALC_TABLE_DISPLAY_MAX = 3000;
@@ -6777,13 +6785,13 @@ RESULTS_HTML = '''
                 if (displayRows.length === 0) {
                     tableWrap.innerHTML = '';
                 } else {
-                    let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽</th><th>경고 승률</th><th>배팅금액</th><th>수익</th><th>승패</th></tr></thead><tbody>';
+                    let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽</th><th>경고 승률</th><th>15회승률</th><th>배팅금액</th><th>수익</th><th>승패</th></tr></thead><tbody>';
                     displayRows.forEach(function(row) {
                         const outClass = row.outClass || (row.outcome === '승' ? 'win' : row.outcome === '패' ? 'lose' : row.outcome === '조' ? 'joker' : 'skip');
                         const profitClass = (typeof row.profit === 'number' && row.profit > 0) || (typeof row.profit === 'string' && row.profit.indexOf('+') === 0) ? 'profit-plus' : (typeof row.profit === 'number' && row.profit < 0) || (typeof row.profit === 'string' && row.profit.indexOf('-') === 0 && row.profit !== '-') ? 'profit-minus' : '';
                         var roundTdClass = (row.roundNum != null) ? 'calc-td-round-' + getRoundIconType(row.roundNum) : '';
                         var roundCellHtml = (row.roundNum != null) ? (String(row.roundNum) + getRoundIconHtml(row.roundNum)) : row.roundStr;
-                        tbl += '<tr><td class="' + roundTdClass + '">' + roundCellHtml + '</td><td class="' + row.pickClass + '">' + row.pick + '</td><td class="calc-td-warning-rate">' + (row.warningWinRate || '-') + '</td><td class="calc-td-bet">' + row.betAmount + '</td><td class="calc-td-profit ' + profitClass + '">' + row.profit + '</td><td class="' + outClass + '">' + row.outcome + '</td></tr>';
+                        tbl += '<tr><td class="' + roundTdClass + '">' + roundCellHtml + '</td><td class="' + row.pickClass + '">' + row.pick + '</td><td class="calc-td-warning-rate">' + (row.warningWinRate || '-') + '</td><td class="calc-td-rate15">' + (row.rate15 || '-') + '</td><td class="calc-td-bet">' + row.betAmount + '</td><td class="calc-td-profit ' + profitClass + '">' + row.profit + '</td><td class="' + outClass + '">' + row.outcome + '</td></tr>';
                     });
                     tbl += '</tbody></table>';
                     tableWrap.innerHTML = tbl;
@@ -7044,8 +7052,8 @@ RESULTS_HTML = '''
                 var rows = (window.__calcDetailRows && window.__calcDetailRows[id]) ? window.__calcDetailRows[id] : [];
                 if (!rows || rows.length === 0) { alert('내보낼 내역이 없습니다. 표를 한 번 갱신한 뒤 시도해 주세요.'); return; }
                 var esc = function(s) { var t = String(s == null ? '' : s); if (t.indexOf(',') >= 0 || t.indexOf('"') >= 0 || t.indexOf('\\n') >= 0) return '"' + t.replace(/"/g, '""') + '"'; return t; };
-                var header = '회차,픽,경고승률,배팅금액,수익,승패';
-                var lines = [header].concat(rows.map(function(r) { return esc(r.roundStr) + ',' + esc(r.pick) + ',' + esc(r.warningWinRate) + ',' + esc(r.betAmount) + ',' + esc(r.profit) + ',' + esc(r.outcome); }));
+                var header = '회차,픽,경고승률,15회승률,배팅금액,수익,승패';
+                var lines = [header].concat(rows.map(function(r) { return esc(r.roundStr) + ',' + esc(r.pick) + ',' + esc(r.warningWinRate) + ',' + esc(r.rate15 || '-') + ',' + esc(r.betAmount) + ',' + esc(r.profit) + ',' + esc(r.outcome); }));
                 var csv = lines.join('\\n');
                 var blob = new Blob(['\\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
                 var url = URL.createObjectURL(blob);
