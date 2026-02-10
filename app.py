@@ -769,18 +769,18 @@ def _server_win_rate_direction_zone(ph):
     rate5ago = rates[-6]
     delta5 = current - rate5ago
     ratio = (current - low) / (high - low) if high > low else 0.5
+    # 오름+승률 상위 구간이면 정픽 우선. 4구간을 먼저 검사
+    if len(derived) >= 4:
+        recent = rates[-1]
+        prev4 = rates[-4]
+        if recent > prev4 + 0.4 and ratio >= 0.5:
+            return 'low_rising'  # 오름 + 중간 위 → 정픽 (승률 높고 오름이면 정픽)
+        if recent < prev4 - 0.4 and ratio <= 0.5:
+            return 'high_falling'  # 내림 + 중간 아래 → 반대픽
     if delta5 < -0.5 and ratio >= 0.5:
         return 'high_falling'
     if delta5 > 0.5 and ratio <= 0.5:
         return 'low_rising'
-    # 고점 유지 중 잠깐 내림·저점 유지 중 잠깐 오름은 무시: 방향 + 비율(중간) 둘 다 만족할 때만 반대픽/정픽
-    if len(derived) >= 4:
-        recent = rates[-1]
-        prev4 = rates[-4]
-        if recent < prev4 - 0.4 and ratio <= 0.5:
-            return 'high_falling'  # 내림 + 이미 중간 아래 → 반대픽 (고점에서 잠깐 내려온 건 제외)
-        if recent > prev4 + 0.4 and ratio >= 0.5:
-            return 'low_rising'  # 오름 + 이미 중간 위 → 정픽 (저점에서 잠깐 올라온 건 제외)
     return 'mid_flat'
 
 
@@ -797,14 +797,15 @@ def _update_calc_paused_after_round(c):
         c['paused'] = False
         return
 
-    # 마틴 사용 시: 연패 후 승(마틴 한 사이클 끝)이면 즉시 멈춤. 아니면 승률 검사 안 함(클라이언트와 동일)
-    if martingale and len(completed) >= 2:
-        last_h, prev_h = completed[-1], completed[-2]
-        last_win = last_h.get('actual') != 'joker' and last_h.get('predicted') == last_h.get('actual')
-        prev_loss = prev_h.get('actual') == 'joker' or prev_h.get('predicted') != prev_h.get('actual')
-        if last_win and prev_loss:
-            c['paused'] = True
-        return
+    # 마틴은 멈춤과 독립: 마틴 사용 중에는 15회 승률 멈춤 적용 안 함. 연패 후 승(사이클 끝)일 때만 멈춤 → 표에 배팅 정확히 기록
+    if martingale:
+        if len(completed) >= 2:
+            last_h, prev_h = completed[-1], completed[-2]
+            last_win = last_h.get('actual') != 'joker' and last_h.get('predicted') == last_h.get('actual')
+            prev_loss = prev_h.get('actual') == 'joker' or prev_h.get('predicted') != prev_h.get('actual')
+            if last_win and prev_loss:
+                c['paused'] = True
+        return  # 마틴 중에는 pause_enabled(15회 승률) 로직 건너뜀
 
     # 멈춤 옵션: 경고 표와 동일한 합산승률(blended) 사용. 50% 설정이면 표에 51.7%일 때 배팅되도록
     if pause_enabled:
@@ -6173,15 +6174,15 @@ RESULTS_HTML = '''
             var rate5Ago = derivedSeries[derivedSeries.length - 6].rate50;
             var delta5 = current - rate5Ago;
             var ratio = (current - low) / (high - low);
-            if (delta5 < -0.5 && ratio >= 0.5) return 'high_falling';
-            if (delta5 > 0.5 && ratio <= 0.5) return 'low_rising';
-            // 고점 유지 중 잠깐 내림·저점 유지 중 잠깐 오름은 무시: 방향 + 비율(중간) 둘 다 만족할 때만 반대픽/정픽
+            // 오름+승률 상위 구간이면 정픽 우선(엄격한 고점하락보다 방향을 믿음). 4구간을 먼저 검사
             if (derivedSeries.length >= 4) {
                 var recent = derivedSeries[derivedSeries.length - 1].rate50;
                 var prev4 = derivedSeries[derivedSeries.length - 4].rate50;
-                if (recent < prev4 - 0.4 && ratio <= 0.5) return 'high_falling';  // 내림 + 이미 중간 아래 → 반대픽 (고점에서 잠깐 내려온 건 제외)
-                if (recent > prev4 + 0.4 && ratio >= 0.5) return 'low_rising';     // 오름 + 이미 중간 위 → 정픽 (저점에서 잠깐 올라온 건 제외)
+                if (recent > prev4 + 0.4 && ratio >= 0.5) return 'low_rising';     // 오름 + 중간 위 → 정픽 (승률 높고 오름이면 정픽)
+                if (recent < prev4 - 0.4 && ratio <= 0.5) return 'high_falling';  // 내림 + 중간 아래 → 반대픽
             }
+            if (delta5 < -0.5 && ratio >= 0.5) return 'high_falling';
+            if (delta5 > 0.5 && ratio <= 0.5) return 'low_rising';
             return 'mid_flat';
         }
         function renderWinRateDirectionPanel() {
@@ -6233,12 +6234,20 @@ RESULTS_HTML = '''
                     vsHighText = (vsHigh <= 0 ? '' : '+') + vsHigh.toFixed(1) + '%p';
                     vsLowText = (vsLow >= 0 ? '+' : '') + vsLow.toFixed(1) + '%p';
                 }
-                // 추세 구간: 고점 하락 / 저점 상승 / 중간·횡보 → 참고 픽
+                // 추세 구간: 방향(오름/내림)과 비율 일치 시 그에 맞게 표시. 오름+상위면 정픽 참고(고점하락 무시)
                 if (derivedSeries.length >= 6 && high != null && low != null && high > low) {
                     var rate5Ago = derivedSeries[derivedSeries.length - 6].rate50;
                     var delta5 = current - rate5Ago;
                     var ratio = (current - low) / (high - low);
-                    if (delta5 < -0.5 && ratio >= 0.5) {
+                    if (direction === '오름' && ratio >= 0.5) {
+                        trendZoneLabel = '오름·상위 구간';
+                        refPickText = '정픽 참고';
+                        refPickClass = 'color:#81c784;';
+                    } else if (direction === '내림' && ratio <= 0.5) {
+                        trendZoneLabel = '내림·하위 구간';
+                        refPickText = '반대픽 참고';
+                        refPickClass = 'color:#e57373;';
+                    } else if (delta5 < -0.5 && ratio >= 0.5) {
                         trendZoneLabel = '고점 하락 구간';
                         refPickText = '반대픽 참고';
                         refPickClass = 'color:#e57373;';
