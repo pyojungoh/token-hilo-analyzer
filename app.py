@@ -778,10 +778,10 @@ def _server_win_rate_direction_zone(ph):
         recent = rates[-1]
         prev4 = rates[-4]
         mid = (high + low) / 2.0
-        if recent < prev4 - 0.5:
-            return 'high_falling'  # 내림 (고점→중간 지나 내려가면 강한 하락세)
-        if recent > prev4 + 0.5:
-            return 'low_rising'  # 오름 (저점→중간 넘어 오르면 강한 오름세)
+        if recent < prev4 - 0.3:
+            return 'high_falling'  # 내림 (0.3%p 하락이면 3~4회 만에 꺾여서 반대픽)
+        if recent > prev4 + 0.3:
+            return 'low_rising'  # 오름 (0.3%p 상승이면 정픽, 방향 메뉴와 동일)
     return 'mid_flat'
 
 
@@ -3700,6 +3700,7 @@ RESULTS_HTML = '''
                             </div>
                             <div class="calc-detail" id="calc-1-detail">
                                 <div class="calc-round-table-wrap" id="calc-1-round-table-wrap"></div>
+                                <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="1">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 3,000회차까지 표시</span></div>
                                 <div class="calc-streak" id="calc-1-streak">경기결과 (최근 30회): -</div>
                                 <div class="calc-stats" id="calc-1-stats">최대연승: - | 최대연패: - | 승률: - | 15회승률: -</div>
                             </div>
@@ -3738,6 +3739,7 @@ RESULTS_HTML = '''
                             </div>
                             <div class="calc-detail" id="calc-2-detail">
                                 <div class="calc-round-table-wrap" id="calc-2-round-table-wrap"></div>
+                                <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="2">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 3,000회차까지 표시</span></div>
                                 <div class="calc-streak" id="calc-2-streak">경기결과 (최근 30회): -</div>
                                 <div class="calc-stats" id="calc-2-stats">최대연승: - | 최대연패: - | 승률: - | 15회승률: -</div>
                             </div>
@@ -3776,6 +3778,7 @@ RESULTS_HTML = '''
                             </div>
                             <div class="calc-detail" id="calc-3-detail">
                                 <div class="calc-round-table-wrap" id="calc-3-round-table-wrap"></div>
+                                <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="3">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 3,000회차까지 표시</span></div>
                                 <div class="calc-streak" id="calc-3-streak">경기결과 (최근 30회): -</div>
                                 <div class="calc-stats" id="calc-3-stats">최대연승: - | 최대연패: - | 승률: - | 15회승률: -</div>
                             </div>
@@ -6178,8 +6181,8 @@ RESULTS_HTML = '''
                 var recent = derivedSeries[derivedSeries.length - 1].rate50;
                 var prev4 = derivedSeries[derivedSeries.length - 4].rate50;
                 var mid = (high + low) / 2;
-                if (recent < prev4 - 0.5) return 'high_falling';  // 내림 (고점→중간 지나 내려가면 강한 하락세)
-                if (recent > prev4 + 0.5) return 'low_rising';     // 오름 (저점→중간 넘어 오르면 강한 오름세)
+                if (recent < prev4 - 0.3) return 'high_falling';  // 내림 (0.3%p 하락이면 3~4회 만에 꺾여서 반대픽)
+                if (recent > prev4 + 0.3) return 'low_rising';     // 오름 (0.3%p 상승이면 정픽, 방향 메뉴와 동일)
             }
             return 'mid_flat';
         }
@@ -6214,8 +6217,8 @@ RESULTS_HTML = '''
                 if (derivedSeries.length >= 4) {
                     var recent = derivedSeries[derivedSeries.length - 1].rate50;
                     var prev = derivedSeries[derivedSeries.length - 4].rate50;
-                    if (recent > prev + 0.5) { direction = '오름'; directionClass = 'color:#81c784;'; }
-                    else if (recent < prev - 0.5) { direction = '내림'; directionClass = 'color:#e57373;'; }
+                    if (recent > prev + 0.3) { direction = '오름'; directionClass = 'color:#81c784;'; }
+                    else if (recent < prev - 0.3) { direction = '내림'; directionClass = 'color:#e57373;'; }
                 }
                 lastRound = derivedSeries[derivedSeries.length - 1].round;
                 current = derivedSeries[derivedSeries.length - 1].rate50;
@@ -6699,7 +6702,9 @@ RESULTS_HTML = '''
                 }
                 rows.push({ roundStr: roundStr, roundNum: !isNaN(rn) ? rn : null, pick: pickVal, pickClass: pickClass, warningWinRate: warningWinRateVal, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr, outClass: outClass });
             }
-            const displayRows = rows.slice(0, 50);
+            try { window.__calcDetailRows = window.__calcDetailRows || {}; window.__calcDetailRows[id] = rows; } catch (e) {}
+            const CALC_TABLE_DISPLAY_MAX = 3000;
+            const displayRows = rows.slice(0, CALC_TABLE_DISPLAY_MAX);
             if (tableWrap) {
                 if (displayRows.length === 0) {
                     tableWrap.innerHTML = '';
@@ -6965,6 +6970,26 @@ RESULTS_HTML = '''
                 const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
                 if (saveBtn) saveBtn.style.display = 'none';
             });
+        });
+        function exportCalcHistoryToCsv(id) {
+            try {
+                var rows = (window.__calcDetailRows && window.__calcDetailRows[id]) ? window.__calcDetailRows[id] : [];
+                if (!rows || rows.length === 0) { alert('내보낼 내역이 없습니다. 표를 한 번 갱신한 뒤 시도해 주세요.'); return; }
+                var esc = function(s) { var t = String(s == null ? '' : s); if (t.indexOf(',') >= 0 || t.indexOf('"') >= 0 || t.indexOf('\\n') >= 0) return '"' + t.replace(/"/g, '""') + '"'; return t; };
+                var header = '회차,픽,경고승률,배팅금액,수익,승패';
+                var lines = [header].concat(rows.map(function(r) { return esc(r.roundStr) + ',' + esc(r.pick) + ',' + esc(r.warningWinRate) + ',' + esc(r.betAmount) + ',' + esc(r.profit) + ',' + esc(r.outcome); }));
+                var csv = lines.join('\\n');
+                var blob = new Blob(['\\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = 'calc-' + id + '-history-' + (new Date().toISOString().slice(0, 10)) + '.csv';
+                a.click();
+                URL.revokeObjectURL(url);
+            } catch (err) { console.warn('exportCalcHistoryToCsv', err); alert('내보내기 실패'); }
+        }
+        document.querySelectorAll('.calc-export-csv').forEach(btn => {
+            btn.addEventListener('click', function() { var id = parseInt(this.getAttribute('data-calc'), 10); if (CALC_IDS.includes(id)) exportCalcHistoryToCsv(id); });
         });
         document.querySelectorAll('.calc-save').forEach(btn => {
             btn.addEventListener('click', function() {
