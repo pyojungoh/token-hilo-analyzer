@@ -70,6 +70,7 @@
 - 서버 회차 반영: `_apply_results_to_calcs`, `ensure_stored_prediction_for_current_round`
 - 계산기 상태 저장/조회: `save_calc_state`, `get_calc_state`, `calc_sessions`
 - 수익·마틴 계산: `_calculate_calc_profit_server`
+- **멈춤 (서버)**: 회차 반영 후 `_update_calc_paused_after_round`로 15회 승률·연패후승을 계산해 **paused** 갱신. `_server_recent_15_win_rate`로 클라이언트와 동일 기준. 클라이언트 꺼져 있어도 멈춤 정확 동작.
 - 클라이언트 멈춤: `getCalcRecent15WinRate`(계산기 15회 승률), `checkPauseAfterWin`(마틴 시 연패 후 승이면 즉시 멈춤, 비마틴 시 15회 승률 이하일 때 멈춤)
 - 계산기 표 렌더: `updateCalcDetail`, `calcState[id].history`
 

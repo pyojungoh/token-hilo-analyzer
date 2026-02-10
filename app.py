@@ -736,6 +736,44 @@ def _get_lose_streak_from_history(history):
     return n
 
 
+def _server_recent_15_win_rate(completed_list):
+    """완료된 회차 리스트에서 최근 15회 승률(%). 조커=패. 클라이언트 getCalcRecent15WinRate와 동일 로직."""
+    if not completed_list:
+        return 50.0
+    last15 = completed_list[-15:] if len(completed_list) >= 15 else completed_list
+    wins = sum(1 for h in last15 if h.get('actual') != 'joker' and h.get('predicted') == h.get('actual'))
+    return (wins / len(last15)) * 100.0 if last15 else 50.0
+
+
+def _update_calc_paused_after_round(c):
+    """회차 반영 후 서버에서 paused 갱신. 15회 승률 이하/연패후승 시 True, 그 외 조건에서 해제. 클라이언트 없이 멈춤 정확 동작."""
+    history = c.get('history') or []
+    completed = [h for h in history if h.get('actual') and h.get('actual') != 'pending']
+    pause_enabled = c.get('pause_low_win_rate_enabled', False)
+    thr = max(0, min(100, int(c.get('pause_win_rate_threshold') or 45)))
+    martingale = c.get('martingale', False)
+
+    # 완료 회차가 없으면 멈춤 해제(이전 세션의 paused=true가 초반에 띄엄띄엄 적용되는 것 방지)
+    if len(completed) < 1:
+        c['paused'] = False
+        return
+
+    # 마틴 사용 시: 연패 후 승(마틴 한 사이클 끝)이면 즉시 멈춤. 아니면 15회 승률 검사 안 함(클라이언트와 동일)
+    if martingale and len(completed) >= 2:
+        last_h, prev_h = completed[-1], completed[-2]
+        last_win = last_h.get('actual') != 'joker' and last_h.get('predicted') == last_h.get('actual')
+        prev_loss = prev_h.get('actual') == 'joker' or prev_h.get('predicted') != prev_h.get('actual')
+        if last_win and prev_loss:
+            c['paused'] = True
+        return
+
+    # 멈춤 옵션 켜져 있을 때: 최근 15회 승률로 paused 설정/해제
+    if pause_enabled:
+        rate15 = _server_recent_15_win_rate(completed)
+        c['paused'] = rate15 <= thr
+    # 옵션 꺼져 있으면 기존 paused 유지(서버가 강제로 False로 바꾸지 않음)
+
+
 def _calculate_calc_profit_server(calc_state, history_entry):
     """서버에서 계산기 수익, 마틴게일 단계, 연승/연패 계산. history_entry에 계산된 값 추가."""
     MARTIN_PYO_RATIOS = [1, 1.5, 2.5, 4, 7, 12, 20, 40, 40]
@@ -964,6 +1002,8 @@ def _apply_results_to_calcs(results):
                 max_lose = history_entry.get('max_lose_streak', 0)
                 c['max_win_streak_ever'] = max(c.get('max_win_streak_ever', 0), max_win)
                 c['max_lose_streak_ever'] = max(c.get('max_lose_streak_ever', 0), max_lose)
+                # 서버에서 멈춤 상태 갱신(15회 승률·연패후승). 클라이언트 꺼져 있어도 멈춤 정확 동작
+                _update_calc_paused_after_round(c)
                 if stored_for_round and stored_for_round.get('predicted'):
                     c['pending_round'] = predicted_round
                     c['pending_predicted'] = stored_for_round['predicted']
