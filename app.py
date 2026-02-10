@@ -7159,7 +7159,7 @@ RESULTS_HTML = '''
             
             // 탭 가시성에 따라 간격 조정 (과도한 폴링으로 픽 깜빡임·버벅임 방지)
             var resultsInterval = isTabVisible ? 400 : 1000;
-            var calcStatusInterval = isTabVisible ? 600 : 1000;
+            var calcStatusInterval = isTabVisible ? 150 : 800;  // 픽을 서버로 빠르게 전달(매크로 속도용). 150ms
             var calcStateInterval = isTabVisible ? 2500 : 3000;
             var timerInterval = isTabVisible ? 300 : 1000;
             
@@ -7177,8 +7177,7 @@ RESULTS_HTML = '''
                 }
             }, resultsInterval);
             
-            // 계산기 실행 중: 픽 갱신은 loadResults 완료 시에도 하므로 0.6초 간격으로 완화 (깜빡임·부하 감소)
-            // 백그라운드일 때는 1초 간격으로 조정 (브라우저 제한)
+            // 계산기 실행 중: 픽을 서버로 빠르게 전달해 매크로가 곧바로 받도록 150ms 간격 (배팅 연동 속도)
             calcStatusPollIntervalId = setInterval(() => {
                 const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
                 if (anyRunning) CALC_IDS.forEach(id => { updateCalcStatus(id); });

@@ -48,14 +48,14 @@ COORDS_PATH = os.path.join(SCRIPT_DIR, "emulator_coords.json")
 COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
-# 배팅 동작 간 지연(초). 픽 나오면 빠르게 배팅하도록 짧게 둠. 사이트 반영이 안 되면 이 값을 늘리세요.
-BET_DELAY_AFTER_AMOUNT_TAP = 0.30
-BET_DELAY_AFTER_INPUT = 0.28
-BET_DELAY_AFTER_BACK = 0.32
-BET_DELAY_AFTER_COLOR_TAP = 0.30
-BET_DELAY_BETWEEN_CONFIRM_TAPS = 0.15
-BET_DELAY_AFTER_CONFIRM = 0.25
-BET_CONFIRM_TAP_COUNT = 1  # 정정 버튼 1번만 (여러 번 누르면 버벅거림·이상 동작)
+# 배팅 동작 간 지연(초). 픽 나오면 최대한 빠르게 쏘도록 짧게 둠. 입력/확정이 안 먹으면 값을 늘리세요.
+BET_DELAY_AFTER_AMOUNT_TAP = 0.16
+BET_DELAY_AFTER_INPUT = 0.14
+BET_DELAY_AFTER_BACK = 0.16
+BET_DELAY_AFTER_COLOR_TAP = 0.14
+BET_DELAY_BETWEEN_CONFIRM_TAPS = 0.1
+BET_DELAY_AFTER_CONFIRM = 0.12
+BET_CONFIRM_TAP_COUNT = 1  # 정정 버튼 1번만
 BET_RETRY_ATTEMPTS = 2  # 실패 시 재시도 횟수
 BET_RETRY_DELAY = 0.8   # 재시도 전 대기(초)
 KEYCODE_DEL = 67  # Android KEYCODE_DEL (한 글자 삭제)
@@ -950,8 +950,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._analyzer_url = url
         self._calculator_id = self.calc_combo.currentData()
         self._device_id = self.device_edit.text().strip() or "127.0.0.1:5555"
-        # 배팅 중(마틴 등): 0.25초 간격으로 픽 조회
-        self._poll_interval_sec = 0.25
+        # 배팅 중: 0.15초 간격으로 픽 조회 (빠르게 픽 잡아서 쏘기)
+        self._poll_interval_sec = 0.15
         self._coords = load_coords()
         if not self._coords.get("bet_amount") or not self._coords.get("red") or not self._coords.get("black"):
             self._log("좌표를 먼저 설정하세요. coord_picker.py로 배팅금액/정정/레드/블랙 좌표를 잡으세요.")
@@ -968,7 +968,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self.stop_btn.setEnabled(True)
         self._log("시작 — 계산기 픽 바뀌는 즉시 사이트로 전송합니다.")
         self._timer.start(int(self._poll_interval_sec * 1000))
-        QTimer.singleShot(200, self._poll)  # 시작 직후 0.2초 뒤 1회 즉시 폴링
+        QTimer.singleShot(80, self._poll)   # 시작 직후 곧바로 1회 폴링
 
     def _on_stop(self):
         self._running = False
@@ -1143,8 +1143,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 time.sleep(BET_DELAY_AFTER_AMOUNT_TAP)
                 for _ in range(15):
                     adb_keyevent(device, KEYCODE_DEL)
-                    time.sleep(0.01)
-                time.sleep(0.08)
+                    time.sleep(0.005)
+                time.sleep(0.04)
                 adb_input_text(device, bet_amount)
                 time.sleep(BET_DELAY_AFTER_INPUT)
                 adb_keyevent(device, 4)  # BACK
