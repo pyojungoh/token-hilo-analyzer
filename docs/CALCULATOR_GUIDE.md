@@ -8,7 +8,7 @@
 
 계산기는 **컴퓨터가 꺼지거나 브라우저가 꺼져도 서버에서 항상 돌아가서**, 언제든 켜서 봤을 때 정확한 계산이 되어 있어야 한다.
 
-- 서버: `calc_sessions` 테이블에 계산기 상태(history 포함) 저장, 스케줄러가 주기적으로 회차 반영·저장.
+- 서버: `calc_sessions` 테이블에 계산기 상태(history 포함) 저장, 스케줄러가 **1초마다** 회차 반영·저장.
 - 클라이언트: 새로고침/재접속 시 서버 상태를 불러와 계산기표·설정을 복원.
 
 ---
@@ -66,6 +66,7 @@
 
 ## 구현 참고 (코드 위치)
 
+- 결과 수집 스케줄러: **1초마다** `_scheduler_fetch_results()` (앱 기동 25초 후 자동 시작, 클라이언트 무관).
 - 서버 회차 반영: `_apply_results_to_calcs`, `ensure_stored_prediction_for_current_round`
 - 계산기 상태 저장/조회: `save_calc_state`, `get_calc_state`, `calc_sessions`
 - 수익·마틴 계산: `_calculate_calc_profit_server`

@@ -2330,7 +2330,7 @@ game_data_cache = None
 streaks_cache = None
 results_cache = None
 last_update_time = 0
-CACHE_TTL = 1000  # 결과 캐시 유효 시간 (ms). 1초 동안 동일 캐시 반환, 스케줄러가 2초마다 선제 갱신
+CACHE_TTL = 1000  # 결과 캐시 유효 시간 (ms). 1초 동안 동일 캐시 반환, 스케줄러가 1초마다 선제 갱신
 
 # 게임 상태 (Socket.IO 제거 후 기본값만 사용)
 current_status_data = {
@@ -2577,11 +2577,11 @@ def _scheduler_fetch_results():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=2, id='fetch_results', max_instances=1)
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=1, id='fetch_results', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (2초마다, 예측픽 선제적 갱신)")
+        print("[✅] 결과 수집 스케줄러 시작 (1초마다, 예측픽 선제적 갱신)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:

@@ -28,7 +28,7 @@
 3. **조회**: `get_recent_results(hours=24 또는 72)` → DB에서 **game_id 숫자 기준 DESC** 정렬.
 4. **API**: `GET /api/results` → `_build_results_payload_db_only(24)` 우선, 없으면 72h, 없으면 캐시. **응답 직전** `_sort_results_newest_first(payload['results'])` **강제**.
 5. **백그라운드**: `_refresh_results_background()` 스레드에서 `_build_results_payload()` 호출 → 캐시 갱신.
-6. **스케줄러**: 2초마다 `_scheduler_fetch_results()` → 캐시 갱신, DB 저장, 계산기 회차 반영, **prediction_history 보정**.
+6. **스케줄러**: 1초마다 `_scheduler_fetch_results()` → 캐시 갱신, DB 저장, 계산기 회차 반영, **prediction_history 보정**.
 
 ### 2.2 예측·히스토리
 
