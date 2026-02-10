@@ -48,14 +48,14 @@ COORDS_PATH = os.path.join(SCRIPT_DIR, "emulator_coords.json")
 COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
-# 배팅 동작 간 지연(초). 사이트 반영이 느리면 이 값을 늘리세요.
-BET_DELAY_AFTER_AMOUNT_TAP = 0.55
-BET_DELAY_AFTER_INPUT = 0.45
-BET_DELAY_AFTER_BACK = 0.55
-BET_DELAY_AFTER_COLOR_TAP = 0.55
-BET_DELAY_BETWEEN_CONFIRM_TAPS = 0.3
-BET_DELAY_AFTER_CONFIRM = 0.5
-BET_CONFIRM_TAP_COUNT = 3  # 정정 버튼 탭 횟수 (2→3으로 늘려 확정 반영률 개선)
+# 배팅 동작 간 지연(초). 픽 나오면 빠르게 배팅하도록 짧게 둠. 사이트 반영이 안 되면 이 값을 늘리세요.
+BET_DELAY_AFTER_AMOUNT_TAP = 0.30
+BET_DELAY_AFTER_INPUT = 0.28
+BET_DELAY_AFTER_BACK = 0.32
+BET_DELAY_AFTER_COLOR_TAP = 0.30
+BET_DELAY_BETWEEN_CONFIRM_TAPS = 0.15
+BET_DELAY_AFTER_CONFIRM = 0.25
+BET_CONFIRM_TAP_COUNT = 1  # 정정 버튼 1번만 (여러 번 누르면 버벅거림·이상 동작)
 BET_RETRY_ATTEMPTS = 2  # 실패 시 재시도 횟수
 BET_RETRY_DELAY = 0.8   # 재시도 전 대기(초)
 KEYCODE_DEL = 67  # Android KEYCODE_DEL (한 글자 삭제)
@@ -1143,8 +1143,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 time.sleep(BET_DELAY_AFTER_AMOUNT_TAP)
                 for _ in range(15):
                     adb_keyevent(device, KEYCODE_DEL)
-                    time.sleep(0.02)
-                time.sleep(0.15)
+                    time.sleep(0.01)
+                time.sleep(0.08)
                 adb_input_text(device, bet_amount)
                 time.sleep(BET_DELAY_AFTER_INPUT)
                 adb_keyevent(device, 4)  # BACK
@@ -1158,11 +1158,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 self._log("ADB: 픽 %s → %s 버튼 탭 (%s,%s)" % (pick_color, button_name, cx, cy))
                 tap_swipe(color_xy[0], color_xy[1], color_key)
                 time.sleep(BET_DELAY_AFTER_COLOR_TAP)
-                # 3) 정정 버튼(배팅 확정) — 여러 번 탭 + 마지막 대기 길게 해서 사이트 반영률 개선
+                # 3) 정정 버튼(배팅 확정) — 1번만 탭 (여러 번 누르면 버벅거림)
                 if confirm_xy and len(confirm_xy) >= 2:
-                    for i in range(BET_CONFIRM_TAP_COUNT):
-                        tap_swipe(confirm_xy[0], confirm_xy[1], "confirm")
-                        time.sleep(BET_DELAY_BETWEEN_CONFIRM_TAPS)
+                    tap_swipe(confirm_xy[0], confirm_xy[1], "confirm")
                     time.sleep(BET_DELAY_AFTER_CONFIRM)
 
                 pred_text = "정" if pick_color == "RED" else "꺽"

@@ -769,17 +769,19 @@ def _server_win_rate_direction_zone(ph):
     rate5ago = rates[-6]
     delta5 = current - rate5ago
     ratio = (current - low) / (high - low) if high > low else 0.5
-    # 오름+승률 상위 구간이면 정픽 우선. 4구간을 먼저 검사
+    # 승률방향 민감도: DELTA4/DELTA5 낮을수록 더 일찍 방향 전환 (0.4/0.5→둔감, 0.3 이하→과반응 주의)
+    DELTA4_THR = 0.30   # 4구간 차이(recent-prev4) 이 값 넘으면 오름/내림 판정
+    DELTA5_THR = 0.38  # 5구간 차이(delta5) 이 값 넘으면 고점하락/저점상승 판정
     if len(derived) >= 4:
         recent = rates[-1]
         prev4 = rates[-4]
-        if recent > prev4 + 0.4 and ratio >= 0.5:
-            return 'low_rising'  # 오름 + 중간 위 → 정픽 (승률 높고 오름이면 정픽)
-        if recent < prev4 - 0.4 and ratio <= 0.5:
+        if recent > prev4 + DELTA4_THR and ratio >= 0.5:
+            return 'low_rising'  # 오름 + 중간 위 → 정픽
+        if recent < prev4 - DELTA4_THR and ratio <= 0.5:
             return 'high_falling'  # 내림 + 중간 아래 → 반대픽
-    if delta5 < -0.5 and ratio >= 0.5:
+    if delta5 < -DELTA5_THR and ratio >= 0.5:
         return 'high_falling'
-    if delta5 > 0.5 and ratio <= 0.5:
+    if delta5 > DELTA5_THR and ratio <= 0.5:
         return 'low_rising'
     return 'mid_flat'
 
@@ -6157,15 +6159,16 @@ RESULTS_HTML = '''
             var rate5Ago = derivedSeries[derivedSeries.length - 6].rate50;
             var delta5 = current - rate5Ago;
             var ratio = (current - low) / (high - low);
-            // 오름+승률 상위 구간이면 정픽 우선(엄격한 고점하락보다 방향을 믿음). 4구간을 먼저 검사
+            // 서버와 동일: DELTA4_THR/DELTA5_THR 낮을수록 더 일찍 방향 전환
+            var DELTA4_THR = 0.30, DELTA5_THR = 0.38;
             if (derivedSeries.length >= 4) {
                 var recent = derivedSeries[derivedSeries.length - 1].rate50;
                 var prev4 = derivedSeries[derivedSeries.length - 4].rate50;
-                if (recent > prev4 + 0.4 && ratio >= 0.5) return 'low_rising';     // 오름 + 중간 위 → 정픽 (승률 높고 오름이면 정픽)
-                if (recent < prev4 - 0.4 && ratio <= 0.5) return 'high_falling';  // 내림 + 중간 아래 → 반대픽
+                if (recent > prev4 + DELTA4_THR && ratio >= 0.5) return 'low_rising';
+                if (recent < prev4 - DELTA4_THR && ratio <= 0.5) return 'high_falling';
             }
-            if (delta5 < -0.5 && ratio >= 0.5) return 'high_falling';
-            if (delta5 > 0.5 && ratio <= 0.5) return 'low_rising';
+            if (delta5 < -DELTA5_THR && ratio >= 0.5) return 'high_falling';
+            if (delta5 > DELTA5_THR && ratio <= 0.5) return 'low_rising';
             return 'mid_flat';
         }
         function renderWinRateDirectionPanel() {
@@ -6199,8 +6202,9 @@ RESULTS_HTML = '''
                 if (derivedSeries.length >= 4) {
                     var recent = derivedSeries[derivedSeries.length - 1].rate50;
                     var prev = derivedSeries[derivedSeries.length - 4].rate50;
-                    if (recent > prev + 0.4) { direction = '오름'; directionClass = 'color:#81c784;'; }
-                    else if (recent < prev - 0.4) { direction = '내림'; directionClass = 'color:#e57373;'; }
+                    var d4 = 0.30;
+                    if (recent > prev + d4) { direction = '오름'; directionClass = 'color:#81c784;'; }
+                    else if (recent < prev - d4) { direction = '내림'; directionClass = 'color:#e57373;'; }
                 }
                 lastRound = derivedSeries[derivedSeries.length - 1].round;
                 current = derivedSeries[derivedSeries.length - 1].rate50;
@@ -6222,6 +6226,7 @@ RESULTS_HTML = '''
                     var rate5Ago = derivedSeries[derivedSeries.length - 6].rate50;
                     var delta5 = current - rate5Ago;
                     var ratio = (current - low) / (high - low);
+                    var d5 = 0.38;
                     if (direction === '오름' && ratio >= 0.5) {
                         trendZoneLabel = '오름·상위 구간';
                         refPickText = '정픽 참고';
@@ -6230,11 +6235,11 @@ RESULTS_HTML = '''
                         trendZoneLabel = '내림·하위 구간';
                         refPickText = '반대픽 참고';
                         refPickClass = 'color:#e57373;';
-                    } else if (delta5 < -0.5 && ratio >= 0.5) {
+                    } else if (delta5 < -d5 && ratio >= 0.5) {
                         trendZoneLabel = '고점 하락 구간';
                         refPickText = '반대픽 참고';
                         refPickClass = 'color:#e57373;';
-                    } else if (delta5 > 0.5 && ratio <= 0.5) {
+                    } else if (delta5 > d5 && ratio <= 0.5) {
                         trendZoneLabel = '저점 상승 구간';
                         refPickText = '정픽 참고';
                         refPickClass = 'color:#81c784;';
