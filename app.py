@@ -6804,7 +6804,7 @@ RESULTS_HTML = '''
                 rows.push({ roundStr: roundStr, roundNum: !isNaN(rn) ? rn : null, pick: pickVal, pickClass: pickClass, warningWinRate: warningWinRateVal, rate15: rate15Val, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr, outClass: outClass });
             }
             try { window.__calcDetailRows = window.__calcDetailRows || {}; window.__calcDetailRows[id] = rows; } catch (e) {}
-            const CALC_TABLE_DISPLAY_MAX = 3000;
+            const CALC_TABLE_DISPLAY_MAX = 1500;
             const displayRows = rows.slice(0, CALC_TABLE_DISPLAY_MAX);
             if (tableWrap) {
                 if (displayRows.length === 0) {
