@@ -2758,11 +2758,11 @@ def _scheduler_fetch_results():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=1, id='fetch_results', max_instances=1)
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.5, id='fetch_results', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (1초마다, 예측픽 선제적 갱신)")
+        print("[✅] 결과 수집 스케줄러 시작 (0.5초마다, 예측픽 선제적 갱신)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:
@@ -7155,7 +7155,7 @@ RESULTS_HTML = '''
                 remainingSecForPoll = remaining;
                 // 라운드 종료 직전/직후에는 더 자주 폴링 (다음 픽을 빨리 보여주기)
                 const nearEnd = remaining < 3;
-                const fetchInterval = nearEnd ? 300 : 500;
+                const fetchInterval = nearEnd ? 200 : 400;
                 if (now - timerData.lastFetch > fetchInterval) {
                     try {
                     // 10초 경기 룰: 8초 타임아웃
@@ -7264,19 +7264,19 @@ RESULTS_HTML = '''
             if (timerUpdateIntervalId) clearInterval(timerUpdateIntervalId);
             
             // 탭 가시성에 따라 간격 조정 (과도한 폴링으로 픽 깜빡임·버벅임 방지)
-            var resultsInterval = isTabVisible ? 400 : 1000;
+            var resultsInterval = isTabVisible ? 250 : 1000;
             var calcStatusInterval = isTabVisible ? 150 : 800;  // 픽을 서버로 빠르게 전달(매크로 속도용). 150ms
             var calcStateInterval = isTabVisible ? 2500 : 3000;
             var timerInterval = isTabVisible ? 300 : 1000;
             
-            // 결과 폴링: 분당 4게임(15초 사이클) 기준. 계산기 실행 중이면 250ms로 빠르게 해서 회차 놓침 방지
+            // 결과 폴링: 분당 4게임(15초 사이클) 기준. 계산기 실행 중이면 빠르게 해서 회차 놓침 방지
             // 백그라운드일 때는 브라우저 제한(최소 1초)을 고려해 간격 조정
             resultsPollIntervalId = setInterval(() => {
                 const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
                 const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
                 const criticalPhase = r <= 3 || r >= 8;
-                // 백그라운드일 때는 최소 1초 간격, 보일 때는 기존 간격
-                const baseInterval = allResults.length === 0 ? 500 : (anyRunning ? 400 : (criticalPhase ? 500 : 600));
+                // 백그라운드일 때는 최소 1초 간격, 보일 때는 더 빠른 간격
+                const baseInterval = allResults.length === 0 ? 300 : (anyRunning ? 250 : (criticalPhase ? 300 : 400));
                 const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
                 if (Date.now() - lastResultsUpdate > interval) {
                     loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
@@ -7359,8 +7359,8 @@ def _build_results_payload_db_only(hours=24):
             return None
         results = get_recent_results(hours=hours)
         results = _sort_results_newest_first(results)
-        # 응답 크기·처리 시간 제한 (760+건 → 300건, 먹통·pending 방지)
-        RESULTS_PAYLOAD_LIMIT = 300
+        # 응답 크기·처리 시간 제한 (성능 최적화: 150건으로 축소)
+        RESULTS_PAYLOAD_LIMIT = 150
         if len(results) > RESULTS_PAYLOAD_LIMIT:
             results = results[:RESULTS_PAYLOAD_LIMIT]
         round_actuals = _build_round_actuals(results)
@@ -7423,8 +7423,8 @@ def _build_results_payload():
             latest_results = []
         _log_when_changed('api_latest', len(latest_results), lambda v: f"[API] 최신 데이터 로드: {v}개")
         if DB_AVAILABLE and DATABASE_URL:
-            # 데이터베이스에서 최근 24시간 데이터 조회 (규칙: 최신 회차 누락 방지)
-            db_results = get_recent_results(hours=24)
+            # 데이터베이스에서 최근 6시간 데이터 조회 (성능 최적화: 최신 회차만 필요)
+            db_results = get_recent_results(hours=6)
             _log_when_changed('api_db', len(db_results), lambda v: f"[API] DB 데이터 조회: {v}개")
             
             # 최신 데이터 저장 (백그라운드)
@@ -7450,6 +7450,9 @@ def _build_results_payload():
                 # 최신 데이터 + DB 데이터 (최신순) → gameID 기준 정렬로 순서 고정 (그래프 일관성)
                 results = latest_results + db_results_filtered
                 results = _sort_results_newest_first(results)
+                # 성능 최적화: 응답 크기 제한
+                if len(results) > 150:
+                    results = results[:150]
                 _log_when_changed('api_merge', (len(latest_results), len(db_results_filtered), len(results)), lambda v: f"[API] 병합 결과: 최신 {v[0]}개 + DB {v[1]}개 = 총 {v[2]}개")
                 
                 # 병합된 전체 결과에 대해 정/꺽 결과 계산 및 추가
@@ -7699,13 +7702,13 @@ def get_results():
         global results_cache, last_update_time
         result_source = request.args.get('result_source', '').strip()
 
-        # 매 요청마다 DB에서 응답 생성. 24h 사용해 최신 회차 누락 방지 (타임존·커밋 타이밍 이슈 시 5h만 쓰면 과거만 옴)
-        payload = _build_results_payload_db_only(hours=24)
+        # 매 요청마다 DB에서 응답 생성. 6h 사용해 성능 최적화 (최신 회차만 필요)
+        payload = _build_results_payload_db_only(hours=6)
         if payload and payload.get('results'):
             results_cache = payload
             last_update_time = time.time() * 1000
         if not payload or not payload.get('results'):
-            payload = _build_results_payload_db_only(hours=72) or payload
+            payload = _build_results_payload_db_only(hours=24) or payload
             if payload and payload.get('results'):
                 results_cache = payload
                 last_update_time = time.time() * 1000
