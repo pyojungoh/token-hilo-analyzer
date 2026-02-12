@@ -4370,6 +4370,8 @@ RESULTS_HTML = '''
             });
         }
         async function loadCalcStateFromServer(restoreUi) {
+            if (window.__calcStateLoadInProgress) return;
+            window.__calcStateLoadInProgress = true;
             try {
                 if (restoreUi === undefined) restoreUi = true;
                 // 항상 공용 세션만 사용 → 모바일/다른 PC에서 열어도 같은 진행 중 계산기 표시
@@ -4395,6 +4397,7 @@ RESULTS_HTML = '''
                 }
                 applyCalcsToState(calcs, lastServerTimeSec, restoreUi);
             } catch (e) { console.warn('계산기 상태 로드 실패:', e); }
+            finally { window.__calcStateLoadInProgress = false; }
         }
         async function saveCalcStateToServer() {
             try {
@@ -7330,10 +7333,10 @@ RESULTS_HTML = '''
             if (calcStatePollIntervalId) clearInterval(calcStatePollIntervalId);
             if (timerUpdateIntervalId) clearInterval(timerUpdateIntervalId);
             
-            // 탭 가시성에 따라 간격 조정 (과도한 폴링으로 픽 깜빡임·버벅임 방지)
-            var resultsInterval = isTabVisible ? 150 : 1000;
-            var calcStatusInterval = isTabVisible ? 100 : 800;  // 픽을 서버로 빠르게 전달(매크로 속도용). 100ms
-            var calcStateInterval = isTabVisible ? 800 : 1500;  // 10초 게임: 2.5초→0.8초 (매크로 금액 동기화·멈춤 반영 속도)
+            // 탭 가시성에 따라 간격 조정. 과도한 폴링 시 ERR_INSUFFICIENT_RESOURCES 방지를 위해 완만한 간격 사용
+            var resultsInterval = isTabVisible ? 450 : 1200;
+            var calcStatusInterval = isTabVisible ? 350 : 1200;  // 픽 서버 전달(매크로용). 350ms로 요청 수 완화
+            var calcStateInterval = isTabVisible ? 2200 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
             var timerInterval = isTabVisible ? 200 : 1000;
             
             // 결과 폴링: 분당 4게임(15초 사이클) 기준. 계산기 실행 중이면 빠르게 해서 회차 놓침 방지
