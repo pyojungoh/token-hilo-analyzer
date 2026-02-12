@@ -7266,7 +7266,7 @@ RESULTS_HTML = '''
             // 탭 가시성에 따라 간격 조정 (과도한 폴링으로 픽 깜빡임·버벅임 방지)
             var resultsInterval = isTabVisible ? 150 : 1000;
             var calcStatusInterval = isTabVisible ? 100 : 800;  // 픽을 서버로 빠르게 전달(매크로 속도용). 100ms
-            var calcStateInterval = isTabVisible ? 2500 : 3000;
+            var calcStateInterval = isTabVisible ? 800 : 1500;  // 10초 게임: 2.5초→0.8초 (매크로 금액 동기화·멈춤 반영 속도)
             var timerInterval = isTabVisible ? 200 : 1000;
             
             // 결과 폴링: 분당 4게임(15초 사이클) 기준. 계산기 실행 중이면 빠르게 해서 회차 놓침 방지
