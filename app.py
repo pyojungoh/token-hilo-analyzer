@@ -6831,13 +6831,8 @@ RESULTS_HTML = '''
                     rate15Val = '-';
                 }
                 var betStr, profitStr, res, outcome, resultClass, outClass;
-                // 서버에서 실제 결과 확인 (pending이어도 서버에 결과가 있을 수 있음)
-                var serverActual = null;
-                if (Array.isArray(predictionHistory) && predictionHistory.length > 0 && !isNaN(rn)) {
-                    var serverEntry = predictionHistory.find(function(p) { return p && Number(p.round) === rn && p.actual && p.actual !== ''; });
-                    if (serverEntry) serverActual = serverEntry.actual;
-                }
-                var effectiveActual = serverActual || h.actual;
+                // 계산기 표는 한 행 기준 통일: 픽·배팅금액·수익·승패 모두 이 행(h)의 predicted/actual만 사용 (예측기표 actual 혼합 시 행 내 불일치 방지)
+                var effectiveActual = h.actual;
                 if (effectiveActual === 'pending' || !effectiveActual || effectiveActual === '') {
                     var amt = (h.no_bet === true || !h.betAmount) ? 0 : (h.betAmount > 0 ? h.betAmount : 0);
                     betStr = amt > 0 ? Number(amt).toLocaleString() : '-';
@@ -6892,16 +6887,8 @@ RESULTS_HTML = '''
             let arr = [];
             for (const h of completedHist) {
                 if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined' || h.actual === 'pending' || h.actual === '') continue;
-                // 서버에서 실제 결과 확인 (동기화 보정)
-                var serverActualForStreak = null;
-                if (Array.isArray(predictionHistory) && predictionHistory.length > 0 && h.round != null) {
-                    var rnForStreak = Number(h.round);
-                    if (!isNaN(rnForStreak)) {
-                        var serverEntryForStreak = predictionHistory.find(function(p) { return p && Number(p.round) === rnForStreak && p.actual && p.actual !== ''; });
-                        if (serverEntryForStreak) serverActualForStreak = serverEntryForStreak.actual;
-                    }
-                }
-                var effectiveActualForStreak = serverActualForStreak || h.actual;
+                // 계산기 표와 동일 출처: 이 행의 actual만 사용 (행 내 픽·승패 일치)
+                var effectiveActualForStreak = h.actual;
                 if (effectiveActualForStreak === 'pending' || !effectiveActualForStreak || effectiveActualForStreak === '') continue;
                 arr.push(effectiveActualForStreak === 'joker' ? 'j' : (h.predicted === effectiveActualForStreak ? 'w' : 'l'));
             }
