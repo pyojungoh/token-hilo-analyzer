@@ -7221,7 +7221,8 @@ RESULTS_HTML = '''
                 updateCalcStatus(id);
                 // 시작 시 픽/금액은 배팅중 표시될 때 타이머가 전달. running=true로 DB 반영해 다음 픽 POST 시 매크로가 픽 수신
                 postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null, running: true });
-                document.querySelector('.calc-save[data-calc="' + id + '"]').style.display = 'none';
+                var saveBtnEl = document.querySelector('.calc-save[data-calc="' + id + '"]');
+                if (saveBtnEl) saveBtnEl.style.display = 'none';
             });
         });
         document.querySelectorAll('.calc-stop').forEach(btn => {
