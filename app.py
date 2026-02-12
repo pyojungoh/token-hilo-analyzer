@@ -7157,10 +7157,11 @@ RESULTS_HTML = '''
                 const id = parseInt(rawId, 10);
                 if (!CALC_IDS.includes(id)) return;
                 const state = calcState[id];
-                if (!state || state.running) return;
+                if (!state) return;
                 if (!localStorage.getItem(CALC_SESSION_KEY)) {
                     await loadCalcStateFromServer();
                 }
+                if (state.timerId) { clearInterval(state.timerId); state.timerId = null; }
                 const durEl = document.getElementById('calc-' + id + '-duration');
                 const checkEl = document.getElementById('calc-' + id + '-duration-check');
                 const durationMin = (durEl && parseInt(durEl.value, 10)) || 0;
@@ -7204,17 +7205,21 @@ RESULTS_HTML = '''
                     payload[String(id)].running = true;
                     payload[String(id)].history = [];
                     payload[String(id)].first_bet_round = calcState[id].first_bet_round;
-                    const session_id = localStorage.getItem(CALC_SESSION_KEY);
+                    const session_id = localStorage.getItem(CALC_SESSION_KEY) || 'default';
                     const res = await fetch('/api/calc-state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: session_id, calcs: payload }) });
-                    const data = await res.json();
+                    const data = await res.json().catch(function() { return {}; });
                     if (data.session_id) localStorage.setItem(CALC_SESSION_KEY, data.session_id);
                     if (data.calcs && data.calcs[String(id)]) {
                         calcState[id].started_at = data.calcs[String(id)].started_at || 0;
                         lastServerTimeSec = data.server_time || lastServerTimeSec;
+                    } else if (calcState[id].running && !calcState[id].started_at) {
+                        // 서버가 calcs를 비워서 보냈을 때도 로컬에서 실행 유지 (started_at 클라이언트 기준)
+                        calcState[id].started_at = Math.floor(Date.now() / 1000);
+                        if (data.error) console.warn('계산기 실행 저장 경고:', data.error);
                     }
                     // 가이드 §6: 새로고침 후 실행 상태 복원 — 실행 직후 백업 저장 (서버 상태 유실 시 백업으로 복원)
                     try { localStorage.setItem(CALC_STATE_BACKUP_KEY, JSON.stringify(buildCalcPayload())); } catch (e2) { /* ignore */ }
-                } catch (e) { console.warn('계산기 실행 저장 실패:', e); }
+                } catch (e) { console.warn('계산기 실행 저장 실패:', e); if (calcState[id].running && !calcState[id].started_at) calcState[id].started_at = Math.floor(Date.now() / 1000); }
                 lastResetOrRunAt = Date.now();
                 updateCalcSummary(id);
                 updateCalcDetail(id);
@@ -8165,7 +8170,31 @@ def api_calc_state():
                     conn.close()
         return jsonify({'session_id': session_id, 'server_time': server_time, 'calcs': out}), 200
     except Exception as e:
-        return jsonify({'error': str(e)[:200], 'session_id': None, 'server_time': int(time.time()), 'calcs': {}}), 200
+        # 계산기 실행이 서버 오류로 실패해도 클라이언트가 실행 상태 유지할 수 있도록 요청 body 기준으로 fallback 응답 반환
+        server_time = int(time.time())
+        session_id = ((request.get_json(force=True, silent=True) or {}).get('session_id') or '').strip() or 'default'
+        calcs = (request.get_json(force=True, silent=True) or {}).get('calcs') or {}
+        out_fallback = {}
+        _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 46, 'lose_streak_reverse_min_streak': 4, 'win_rate_direction_reverse': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None}
+        for cid in ('1', '2', '3'):
+            c = calcs.get(cid) or {}
+            if isinstance(c, dict):
+                running = c.get('running', False)
+                started_at = c.get('started_at') or 0
+                if running and not started_at:
+                    started_at = server_time
+                out_fallback[cid] = dict(_default)
+                out_fallback[cid].update({k: v for k, v in c.items() if v is not None})
+                out_fallback[cid]['running'] = running
+                out_fallback[cid]['started_at'] = started_at
+            else:
+                out_fallback[cid] = dict(_default)
+        try:
+            save_calc_state(session_id, out_fallback)
+        except Exception:
+            pass
+        print(f"[❌ 오류] 계산기 상태 POST 예외: {str(e)[:200]}")
+        return jsonify({'error': str(e)[:200], 'session_id': session_id, 'server_time': server_time, 'calcs': out_fallback}), 200
 
 
 def _backfill_blended_win_rate(conn):
