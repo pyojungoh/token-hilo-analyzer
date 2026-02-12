@@ -791,18 +791,36 @@ def _server_win_rate_direction_zone(ph):
     # 승률방향 민감도: DELTA4/DELTA5 낮을수록 더 일찍 방향 전환 (0.4/0.5→둔감, 0.3 이하→과반응 주의)
     DELTA4_THR = 0.30   # 4구간 차이(recent-prev4) 이 값 넘으면 오름/내림 판정
     DELTA5_THR = 0.38  # 5구간 차이(delta5) 이 값 넘으면 고점하락/저점상승 판정
+    # 히스테리시스: high_falling→low_rising 전환 시 ratio 0.6 이상 요구 (연속 전환·깊게 파이기 방지)
+    RATIO_LOW_RISING = 0.6   # 정픽으로 돌아가려면 더 높은 기준
+    RATIO_HIGH_FALLING = 0.5  # 반대픽 진입은 기존 0.5 유지
     if len(derived) >= 4:
         recent = rates[-1]
         prev4 = rates[-4]
-        if recent > prev4 + DELTA4_THR and ratio >= 0.5:
-            return 'low_rising'  # 오름 + 중간 위 → 정픽
-        if recent < prev4 - DELTA4_THR and ratio <= 0.5:
-            return 'high_falling'  # 내림 + 중간 아래 → 반대픽
-    if delta5 < -DELTA5_THR and ratio >= 0.5:
+        if recent > prev4 + DELTA4_THR and ratio >= RATIO_LOW_RISING:
+            return 'low_rising'  # 오름 + 상위 구간 → 정픽 (히스테리시스)
+        if recent < prev4 - DELTA4_THR and ratio <= RATIO_HIGH_FALLING:
+            return 'high_falling'  # 내림 + 하위 구간 → 반대픽
+    if delta5 < -DELTA5_THR and ratio >= RATIO_HIGH_FALLING:
         return 'high_falling'
-    if delta5 > DELTA5_THR and ratio <= 0.5:
+    if delta5 > DELTA5_THR and ratio >= RATIO_LOW_RISING:
         return 'low_rising'
     return 'mid_flat'
+
+
+def _effective_win_rate_direction_zone(ph, c, current_round):
+    """히스테리시스 적용된 zone + 쿨다운(4경기). c에 last_win_rate_zone, last_win_rate_zone_change_round 저장."""
+    raw_zone = _server_win_rate_direction_zone(ph)
+    last_zone = c.get('last_win_rate_zone')
+    last_change = c.get('last_win_rate_zone_change_round')
+    WIN_RATE_ZONE_COOLDOWN = 4
+    if current_round is not None and last_zone and last_change is not None:
+        if current_round - last_change < WIN_RATE_ZONE_COOLDOWN:
+            return last_zone
+    if raw_zone and raw_zone != last_zone:
+        c['last_win_rate_zone'] = raw_zone
+        c['last_win_rate_zone_change_round'] = current_round
+    return raw_zone if raw_zone else last_zone
 
 
 def _update_calc_paused_after_round(c):
@@ -1042,10 +1060,10 @@ def _apply_results_to_calcs(results):
                 if c.get('lose_streak_reverse') and lose_streak >= lose_streak_min and blended is not None and blended <= lose_streak_thr:
                     pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
                     bet_color_for_history = _flip_pick_color(bet_color_for_history)
-                # 승률방향 옵션: 저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조
+                # 승률방향 옵션: 저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조 (쿨다운 4경기)
                 if c.get('win_rate_direction_reverse'):
                     ph = get_prediction_history(150)
-                    zone = _server_win_rate_direction_zone(ph)
+                    zone = _effective_win_rate_direction_zone(ph, c, pending_round)
                     if zone == 'high_falling':
                         pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
                         bet_color_for_history = _flip_pick_color(bet_color_for_history)
@@ -1299,7 +1317,8 @@ def _server_calc_effective_pick_and_amount(c):
         color = _flip_pick_color(color)
     if c.get('win_rate_direction_reverse'):
         ph = get_prediction_history(150)
-        zone = _server_win_rate_direction_zone(ph)
+        current_round = ph[-1]['round'] if ph else None
+        zone = _effective_win_rate_direction_zone(ph, c, current_round)
         if zone == 'high_falling':
             pred = '꺽' if pred == '정' else '정'
             color = _flip_pick_color(color)
@@ -4176,7 +4195,9 @@ RESULTS_HTML = '''
                 first_bet_round: 0,
                 pause_low_win_rate_enabled: false,
                 pause_win_rate_threshold: 45,
-                paused: false
+                paused: false,
+                last_win_rate_zone: null,
+                last_win_rate_zone_change_round: null
             };
         });
         let lastServerTimeSec = 0;  // /api/current-status 등에서 갱신
@@ -4244,7 +4265,9 @@ RESULTS_HTML = '''
                     pending_predicted: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.value) || calcState[id].pending_predicted) : null,
                     pending_prob: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.prob != null) ? lastServerPrediction.prob : calcState[id].pending_prob) : null,
                     pending_color: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.color) || calcState[id].pending_color) : null,
-                    pending_bet_amount: (calcState[id].pending_bet_amount != null && calcState[id].pending_bet_amount > 0) ? calcState[id].pending_bet_amount : null
+                    pending_bet_amount: (calcState[id].pending_bet_amount != null && calcState[id].pending_bet_amount > 0) ? calcState[id].pending_bet_amount : null,
+                    last_win_rate_zone: (calcState[id].last_win_rate_zone === 'high_falling' || calcState[id].last_win_rate_zone === 'low_rising' || calcState[id].last_win_rate_zone === 'mid_flat') ? calcState[id].last_win_rate_zone : null,
+                    last_win_rate_zone_change_round: (calcState[id].last_win_rate_zone_change_round != null && !isNaN(Number(calcState[id].last_win_rate_zone_change_round))) ? Number(calcState[id].last_win_rate_zone_change_round) : null
                 };
             });
             return payload;
@@ -4354,6 +4377,8 @@ RESULTS_HTML = '''
                 calcState[id].lose_streak_reverse_min_streak = minStreakRestore;
                 calcState[id].win_rate_direction_reverse = !!c.win_rate_direction_reverse;
                 calcState[id].last_trend_direction = (c.last_trend_direction === 'up' || c.last_trend_direction === 'down') ? c.last_trend_direction : null;
+                calcState[id].last_win_rate_zone = (c.last_win_rate_zone === 'high_falling' || c.last_win_rate_zone === 'low_rising' || c.last_win_rate_zone === 'mid_flat') ? c.last_win_rate_zone : null;
+                calcState[id].last_win_rate_zone_change_round = (c.last_win_rate_zone_change_round != null && !isNaN(Number(c.last_win_rate_zone_change_round))) ? Number(c.last_win_rate_zone_change_round) : null;
                 if (!fullRestore) return;
                 calcState[id].reverse = !!c.reverse;
                 calcState[id].win_rate_reverse = !!c.win_rate_reverse;
@@ -4975,9 +5000,9 @@ RESULTS_HTML = '''
                                     if (useLoseStreakRev && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThr) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     var winRateDirRevEl = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
                                     var useWinRateDirRev = !!(winRateDirRevEl && winRateDirRevEl.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
-                                    if (useWinRateDirRev && typeof getWinRateDirectionZone === 'function') {
+                                    if (useWinRateDirRev && typeof getEffectiveWinRateDirectionZone === 'function') {
                                         var phForZone = ((typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : []).filter(function(p) { return p && Number(p.round) !== currentRoundNum; });
-                                        var zone = getWinRateDirectionZone(phForZone);
+                                        var zone = getEffectiveWinRateDirectionZone(phForZone, id, currentRoundNum);
                                         if (zone === 'high_falling') { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; calcState[id].last_trend_direction = 'down'; }
                                         else if (zone === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
                                         else if (zone === 'mid_flat' && calcState[id].last_trend_direction === 'down') { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
@@ -5039,9 +5064,9 @@ RESULTS_HTML = '''
                                     if (useLoseStreakRevActual && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThrActual) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     var winRateDirRevElA = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
                                     var useWinRateDirRevActual = !!(winRateDirRevElA && winRateDirRevElA.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
-                                    if (useWinRateDirRevActual && typeof getWinRateDirectionZone === 'function') {
+                                    if (useWinRateDirRevActual && typeof getEffectiveWinRateDirectionZone === 'function') {
                                         var phForZoneA = ((typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : []).filter(function(p) { return p && Number(p.round) !== currentRoundNum; });
-                                        var zoneA = getWinRateDirectionZone(phForZoneA);
+                                        var zoneA = getEffectiveWinRateDirectionZone(phForZoneA, id, currentRoundNum);
                                         if (zoneA === 'high_falling') { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; calcState[id].last_trend_direction = 'down'; }
                                         else if (zoneA === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
                                         else if (zoneA === 'mid_flat' && calcState[id].last_trend_direction === 'down') { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; }
@@ -5129,9 +5154,9 @@ RESULTS_HTML = '''
                                     if (useLoseStreakRev2 && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThr2) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     var winRateDirRevEl2 = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
                                     var useWinRateDirRev2 = !!(winRateDirRevEl2 && winRateDirRevEl2.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
-                                    if (useWinRateDirRev2 && typeof getWinRateDirectionZone === 'function') {
+                                    if (useWinRateDirRev2 && typeof getEffectiveWinRateDirectionZone === 'function') {
                                         var phForZone2 = ((typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : []).filter(function(p) { return p && Number(p.round) !== currentRoundNum; });
-                                        var zone2 = getWinRateDirectionZone(phForZone2);
+                                        var zone2 = getEffectiveWinRateDirectionZone(phForZone2, id, currentRoundNum);
                                         if (zone2 === 'high_falling') { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; calcState[id].last_trend_direction = 'down'; }
                                         else if (zone2 === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
                                         else if (zone2 === 'mid_flat' && calcState[id].last_trend_direction === 'down') { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
@@ -5188,9 +5213,9 @@ RESULTS_HTML = '''
                                     if (useLoseStreakRev3 && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThr3) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     var winRateDirRevEl3 = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
                                     var useWinRateDirRev3 = !!(winRateDirRevEl3 && winRateDirRevEl3.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
-                                    if (useWinRateDirRev3 && typeof getWinRateDirectionZone === 'function') {
+                                    if (useWinRateDirRev3 && typeof getEffectiveWinRateDirectionZone === 'function') {
                                         var phForZone3 = ((typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : []).filter(function(p) { return p && Number(p.round) !== currentRoundNum; });
-                                        var zone3 = getWinRateDirectionZone(phForZone3);
+                                        var zone3 = getEffectiveWinRateDirectionZone(phForZone3, id, currentRoundNum);
                                         if (zone3 === 'high_falling') { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; calcState[id].last_trend_direction = 'down'; }
                                         else if (zone3 === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
                                         else if (zone3 === 'mid_flat' && calcState[id].last_trend_direction === 'down') { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; }
@@ -6311,17 +6336,30 @@ RESULTS_HTML = '''
             var rate5Ago = derivedSeries[derivedSeries.length - 6].rate50;
             var delta5 = current - rate5Ago;
             var ratio = (current - low) / (high - low);
-            // 서버와 동일: DELTA4_THR/DELTA5_THR 낮을수록 더 일찍 방향 전환
+            // 서버와 동일: 히스테리시스(정픽 복귀 시 ratio 0.6), 쿨다운은 별도 적용
             var DELTA4_THR = 0.30, DELTA5_THR = 0.38;
+            var RATIO_LOW_RISING = 0.6, RATIO_HIGH_FALLING = 0.5;
             if (derivedSeries.length >= 4) {
                 var recent = derivedSeries[derivedSeries.length - 1].rate50;
                 var prev4 = derivedSeries[derivedSeries.length - 4].rate50;
-                if (recent > prev4 + DELTA4_THR && ratio >= 0.5) return 'low_rising';
-                if (recent < prev4 - DELTA4_THR && ratio <= 0.5) return 'high_falling';
+                if (recent > prev4 + DELTA4_THR && ratio >= RATIO_LOW_RISING) return 'low_rising';
+                if (recent < prev4 - DELTA4_THR && ratio <= RATIO_HIGH_FALLING) return 'high_falling';
             }
-            if (delta5 < -DELTA5_THR && ratio >= 0.5) return 'high_falling';
-            if (delta5 > DELTA5_THR && ratio <= 0.5) return 'low_rising';
+            if (delta5 < -DELTA5_THR && ratio >= RATIO_HIGH_FALLING) return 'high_falling';
+            if (delta5 > DELTA5_THR && ratio >= RATIO_LOW_RISING) return 'low_rising';
             return 'mid_flat';
+        }
+        function getEffectiveWinRateDirectionZone(ph, id, currentRound) {
+            var rawZone = getWinRateDirectionZone(ph);
+            var lastZone = calcState[id] && calcState[id].last_win_rate_zone;
+            var lastChange = calcState[id] && calcState[id].last_win_rate_zone_change_round;
+            var COOLDOWN = 4;
+            if (currentRound != null && lastZone && lastChange != null && (currentRound - lastChange) < COOLDOWN) return lastZone;
+            if (rawZone && rawZone !== lastZone) {
+                calcState[id].last_win_rate_zone = rawZone;
+                calcState[id].last_win_rate_zone_change_round = currentRound;
+            }
+            return rawZone || lastZone;
         }
         function renderWinRateDirectionPanel() {
             var tbody = document.getElementById('win-rate-direction-tbody');
@@ -6375,13 +6413,14 @@ RESULTS_HTML = '''
                     vsHighText = (vsHigh <= 0 ? '' : '+') + vsHigh.toFixed(1) + '%p';
                     vsLowText = (vsLow >= 0 ? '+' : '') + vsLow.toFixed(1) + '%p';
                 }
-                // 추세 구간: 방향(오름/내림)과 비율 일치 시 그에 맞게 표시. 오름+상위면 정픽 참고(고점하락 무시)
+                // 추세 구간: 방향(오름/내림)과 비율 일치 시 그에 맞게 표시. 오름+상위면 정픽 참고(히스테리시스 ratio 0.6)
                 if (derivedSeries.length >= 6 && high != null && low != null && high > low) {
                     var rate5Ago = derivedSeries[derivedSeries.length - 6].rate50;
                     var delta5 = current - rate5Ago;
                     var ratio = (current - low) / (high - low);
                     var d5 = 0.38;
-                    if (direction === '오름' && ratio >= 0.5) {
+                    var RATIO_LOW_RISING = 0.6;
+                    if (direction === '오름' && ratio >= RATIO_LOW_RISING) {
                         trendZoneLabel = '오름·상위 구간';
                         refPickText = '정픽 참고';
                         refPickClass = 'color:#81c784;';
@@ -6554,9 +6593,9 @@ RESULTS_HTML = '''
                             if (useLoseStreakRevCard && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThrCard) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                             var winRateDirRevCardEl = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
                             var useWinRateDirRevCard = !!(winRateDirRevCardEl && winRateDirRevCardEl.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
-                            if (useWinRateDirRevCard && typeof getWinRateDirectionZone === 'function') {
+                            if (useWinRateDirRevCard && typeof getEffectiveWinRateDirectionZone === 'function') {
                                 var phCard = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
-                                var zoneCard = getWinRateDirectionZone(phCard);
+                                var zoneCard = getEffectiveWinRateDirectionZone(phCard, id, curRound);
                                 if (zoneCard === 'high_falling') { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; calcState[id].last_trend_direction = 'down'; }
                                 else if (zoneCard === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
                                 else if (zoneCard === 'mid_flat' && calcState[id].last_trend_direction === 'down') { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
@@ -7992,9 +8031,11 @@ def api_calc_state():
                     'pending_prob': c.get('pending_prob'),
                     'pending_color': c.get('pending_color'),
                     'pending_bet_amount': current_c.get('pending_bet_amount') if current_c.get('pending_bet_amount') is not None else c.get('pending_bet_amount'),
+                    'last_win_rate_zone': c.get('last_win_rate_zone') or current_c.get('last_win_rate_zone'),
+                    'last_win_rate_zone_change_round': c.get('last_win_rate_zone_change_round') if c.get('last_win_rate_zone_change_round') is not None else current_c.get('last_win_rate_zone_change_round'),
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 46, 'lose_streak_reverse_min_streak': 4, 'win_rate_direction_reverse': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 46, 'lose_streak_reverse_min_streak': 4, 'win_rate_direction_reverse': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None}
         save_calc_state(session_id, out)
         # 계산기 running 상태를 current_pick에 반영 → 에뮬레이터 매크로가 목표 달성 시 자동 중지
         if bet_int:
