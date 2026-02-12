@@ -6842,6 +6842,9 @@ RESULTS_HTML = '''
                     else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = 0; else currentBet = baseIn; }
                     else { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
                 }
+            // 1열(대기) 배팅금액: 위 시뮬레이션 직후 currentBet 사용 → 2열(완료)과 동일 기준, getBetForRound 타이밍 꼬임 방지
+            var lastCompletedRound = completedHist.length ? Math.max.apply(null, completedHist.map(function(he) { return Number(he.round) || 0; })) : null;
+            var nextRoundBet = (lastCompletedRound != null && cap > 0) ? Math.min(currentBet, Math.floor(cap)) : 0;
             // 회차별 픽/결과/승패/배팅금액/수익 행 목록 (pending=대기, completed=결과·수익)
             let rows = [];
             var seenRoundNums = {};
@@ -6869,7 +6872,9 @@ RESULTS_HTML = '''
                 // 계산기 표는 한 행 기준 통일: 픽·배팅금액·수익·승패 모두 이 행(h)의 predicted/actual만 사용 (예측기표 actual 혼합 시 행 내 불일치 방지)
                 var effectiveActual = h.actual;
                 if (effectiveActual === 'pending' || !effectiveActual || effectiveActual === '') {
-                    var amt = (h.no_bet === true || (typeof effectivePausedForRound === 'function' && effectivePausedForRound(id))) ? 0 : (typeof getBetForRound === 'function' ? getBetForRound(id, rn) : (h.betAmount > 0 ? h.betAmount : 0));
+                    // 1열(대기)은 완료 행과 같은 시뮬레이션 직후 금액 사용 → 8만 차례에 1.6만 표기되는 버그 방지
+                    var isNextRoundAfterCompleted = (lastCompletedRound != null && !isNaN(rn) && Number(rn) === lastCompletedRound + 1);
+                    var amt = (h.no_bet === true || (typeof effectivePausedForRound === 'function' && effectivePausedForRound(id))) ? 0 : (isNextRoundAfterCompleted ? nextRoundBet : (typeof getBetForRound === 'function' ? getBetForRound(id, rn) : (h.betAmount > 0 ? h.betAmount : 0)));
                     if (h && typeof amt === 'number') h.betAmount = amt;
                     betStr = amt > 0 ? Number(amt).toLocaleString() : '-';
                     profitStr = '-';
