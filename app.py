@@ -604,47 +604,26 @@ def save_calc_state(session_id, state_dict):
 
 
 def _merge_calc_histories(client_hist, server_hist):
-    """회차별로 병합. 같은 회차는 클라이언트 행 우선. 단, 서버가 멈춤(no_bet)이면 서버 no_bet/betAmount 우선.
-    서버가 해당 회차에 배팅금액을 계산해 둔 경우(no_bet 아님)에도 서버 betAmount·profit 우선 — 클라이언트 마틴 단계 어긋남/지연으로 금액 충돌 방지."""
+    """회차별 병합: 서버에 있는 회차는 서버 행 전체 사용(경기결과·픽·금액 오염 방지). 서버에 없는 회차만 클라이언트 행 사용."""
     by_round = {}
-    server_by_round = {}
-    server_no_bet_rounds = set()
     for h in (server_hist or []):
         if not isinstance(h, dict):
             continue
         rn = h.get('round')
         if rn is not None:
-            server_by_round[rn] = dict(h)
-            if h.get('no_bet') or (h.get('betAmount') is not None and h.get('betAmount') == 0):
-                server_no_bet_rounds.add(rn)
+            by_round[rn] = dict(h)
+            if (by_round[rn].get('no_bet') or (by_round[rn].get('betAmount') is not None and by_round[rn].get('betAmount') == 0)):
+                by_round[rn]['no_bet'] = True
+                by_round[rn]['betAmount'] = 0
     for h in (client_hist or []):
         if not isinstance(h, dict):
             continue
         rn = h.get('round')
-        if rn is not None:
-            merged = dict(h)
-            if rn in server_no_bet_rounds:
-                merged['no_bet'] = True
-                merged['betAmount'] = 0
-            elif rn in server_by_round:
-                # 서버에 같은 회차가 있고, 서버가 배팅금액을 계산해 둔 경우 → 서버 금액/수익/결과/픽 사용 (충돌·픽 잘못 표기 방지)
-                s = server_by_round[rn]
-                if s.get('betAmount') is not None and not (s.get('no_bet') or s.get('betAmount') == 0):
-                    merged['betAmount'] = s.get('betAmount')
-                    merged['no_bet'] = False
-                if s.get('profit') is not None:
-                    merged['profit'] = s.get('profit')
-                if s.get('actual') and s.get('actual') != 'pending':
-                    merged['actual'] = s.get('actual')
-                if s.get('predicted') is not None:
-                    merged['predicted'] = s.get('predicted')
-                if s.get('pickColor') is not None or s.get('pick_color') is not None:
-                    merged['pickColor'] = s.get('pickColor') or s.get('pick_color')
-            by_round[rn] = merged
-    # 서버에만 있는 회차(클라이언트가 아직 못 받은 회차) 추가
-    for rn, s in server_by_round.items():
-        if rn not in by_round:
-            by_round[rn] = dict(s)
+        if rn is not None and rn not in by_round:
+            by_round[rn] = dict(h)
+            if by_round[rn].get('no_bet') or (by_round[rn].get('betAmount') is not None and by_round[rn].get('betAmount') == 0):
+                by_round[rn]['no_bet'] = True
+                by_round[rn]['betAmount'] = 0
     try:
         rounds = sorted(by_round.keys(), key=lambda x: (x if isinstance(x, (int, float)) else 0))
     except (TypeError, ValueError):
