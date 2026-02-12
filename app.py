@@ -6768,8 +6768,8 @@ RESULTS_HTML = '''
                         continue;
                     }
                     
-                    // 서버에서 계산된 값이 있으면 사용 (betAmount만 있어도 사용, profit 없으면 계산)
-                    if (h.betAmount != null && h.betAmount > 0) {
+                    // 서버에서 계산된 값이 있으면 사용. 단 chronologically 첫 회차(i===0)인데 저장 금액이 base보다 크면 이전 회차 누락으로 잘못 들어온 값일 수 있으므로 폴백에서 base부터 재계산
+                    if (h.betAmount != null && h.betAmount > 0 && !(i === 0 && h.betAmount > baseIn)) {
                         const isJoker = h.actual === 'joker';
                         const isWin = !isJoker && h.predicted === h.actual;
                         var profitVal = h.profit;
