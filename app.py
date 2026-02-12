@@ -4424,11 +4424,21 @@ RESULTS_HTML = '''
                 try {
                     localStorage.setItem(CALC_STATE_BACKUP_KEY, JSON.stringify(payload));
                 } catch (e) { /* ignore */ }
-                await fetch('/api/calc-state', {
+                const res = await fetch('/api/calc-state', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ session_id: session_id, calcs: payload })
                 });
+                const data = await res.json().catch(function() { return {}; });
+                // 저장 후 서버가 반환한 병합 state 적용 → 2행부터 배팅금액/픽이 결과값으로 바뀌는 현상 방지
+                if (data.calcs && typeof data.calcs === 'object') {
+                    applyCalcsToState(data.calcs, data.server_time || lastServerTimeSec, false);
+                    CALC_IDS.forEach(function(id) {
+                        if (typeof updateCalcDetail === 'function') updateCalcDetail(id);
+                        if (typeof updateCalcSummary === 'function') updateCalcSummary(id);
+                        if (typeof updateCalcStatus === 'function') updateCalcStatus(id);
+                    });
+                }
             } catch (e) { console.warn('계산기 상태 저장 실패:', e); }
         }
         const BET_LOG_KEY = 'tokenHiloBetCalcLog';
@@ -4962,8 +4972,8 @@ RESULTS_HTML = '''
                                 if (pendingIdx >= 0) {
                                     var rowJ = calcState[id].history[pendingIdx];
                                     rowJ.actual = 'joker';
-                                    rowJ.predicted = pred;
-                                    rowJ.pickColor = betColor || null;
+                                    if (saved && (saved.value === '정' || saved.value === '꺽')) { rowJ.predicted = saved.value; rowJ.pickColor = saved.isRed ? '빨강' : '검정'; }
+                                    else if ((rowJ.predicted !== '정' && rowJ.predicted !== '꺽') || rowJ.pickColor == null || rowJ.pickColor === '') { rowJ.predicted = pred; rowJ.pickColor = betColor || null; }
                                     var isNoBetJ = !!(effectivePausedForRound(id) || (rowJ.no_bet && !isMartingaleLossStreak(id)));
                                     rowJ.no_bet = isNoBetJ;
                                     rowJ.betAmount = isNoBetJ ? 0 : (rowJ.betAmount != null ? rowJ.betAmount : undefined);
@@ -5026,8 +5036,14 @@ RESULTS_HTML = '''
                                 if (pendingIdxActual >= 0) {
                                     var row = calcState[id].history[pendingIdxActual];
                                     row.actual = actual;
-                                    row.predicted = pred;
-                                    row.pickColor = betColorActual || null;
+                                    // 배팅중 때 넣은 픽/색 유지(결과 시점 재계산이 반대색으로 바뀌어 승패·금액 꼬이는 것 방지)
+                                    if (saved && (saved.value === '정' || saved.value === '꺽')) {
+                                        row.predicted = saved.value;
+                                        row.pickColor = saved.isRed ? '빨강' : '검정';
+                                    } else if ((row.predicted !== '정' && row.predicted !== '꺽') || row.pickColor == null || row.pickColor === '') {
+                                        row.predicted = pred;
+                                        row.pickColor = betColorActual || null;
+                                    }
                                     var isNoBet = !!(effectivePausedForRound(id) || (row.no_bet && !isMartingaleLossStreak(id)));
                                     row.no_bet = isNoBet;
                                     row.betAmount = isNoBet ? 0 : (row.betAmount != null ? row.betAmount : undefined);
@@ -5168,8 +5184,8 @@ RESULTS_HTML = '''
                                 if (pendingIdx3 >= 0) {
                                     var row3 = calcState[id].history[pendingIdx3];
                                     row3.actual = actual;
-                                    row3.predicted = pred;
-                                    row3.pickColor = betColorActual || null;
+                                    if (saved && (saved.value === '정' || saved.value === '꺽')) { row3.predicted = saved.value; row3.pickColor = saved.isRed ? '빨강' : '검정'; }
+                                    else if ((row3.predicted !== '정' && row3.predicted !== '꺽') || row3.pickColor == null || row3.pickColor === '') { row3.predicted = pred; row3.pickColor = betColorActual || null; }
                                     var isNoBet3 = !!(effectivePausedForRound(id) || (row3.no_bet && !isMartingaleLossStreak(id)));
                                     row3.no_bet = isNoBet3;
                                     row3.betAmount = isNoBet3 ? 0 : (row3.betAmount != null ? row3.betAmount : undefined);
