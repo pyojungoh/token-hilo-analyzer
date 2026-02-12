@@ -3773,7 +3773,7 @@ RESULTS_HTML = '''
                             </div>
                             <div class="calc-detail" id="calc-1-detail">
                                 <div class="calc-round-table-wrap" id="calc-1-round-table-wrap"></div>
-                                <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="1">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 3,000회차까지 표시</span></div>
+                                <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="1">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 800회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-1-streak">경기결과 (최근 30회): -</div>
                                 <div class="calc-stats" id="calc-1-stats">최대연승: - | 최대연패: - | 승률: - | 15회승률: -</div>
                             </div>
@@ -3812,7 +3812,7 @@ RESULTS_HTML = '''
                             </div>
                             <div class="calc-detail" id="calc-2-detail">
                                 <div class="calc-round-table-wrap" id="calc-2-round-table-wrap"></div>
-                                <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="2">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 3,000회차까지 표시</span></div>
+                                <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="2">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 800회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-2-streak">경기결과 (최근 30회): -</div>
                                 <div class="calc-stats" id="calc-2-stats">최대연승: - | 최대연패: - | 승률: - | 15회승률: -</div>
                             </div>
@@ -3851,7 +3851,7 @@ RESULTS_HTML = '''
                             </div>
                             <div class="calc-detail" id="calc-3-detail">
                                 <div class="calc-round-table-wrap" id="calc-3-round-table-wrap"></div>
-                                <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="3">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 3,000회차까지 표시</span></div>
+                                <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="3">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 800회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-3-streak">경기결과 (최근 30회): -</div>
                                 <div class="calc-stats" id="calc-3-stats">최대연승: - | 최대연패: - | 승률: - | 15회승률: -</div>
                             </div>
@@ -6804,7 +6804,7 @@ RESULTS_HTML = '''
                 rows.push({ roundStr: roundStr, roundNum: !isNaN(rn) ? rn : null, pick: pickVal, pickClass: pickClass, warningWinRate: warningWinRateVal, rate15: rate15Val, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr, outClass: outClass });
             }
             try { window.__calcDetailRows = window.__calcDetailRows || {}; window.__calcDetailRows[id] = rows; } catch (e) {}
-            const CALC_TABLE_DISPLAY_MAX = 1500;
+            const CALC_TABLE_DISPLAY_MAX = 800;
             const displayRows = rows.slice(0, CALC_TABLE_DISPLAY_MAX);
             if (tableWrap) {
                 if (displayRows.length === 0) {
