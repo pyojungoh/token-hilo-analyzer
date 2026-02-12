@@ -4403,8 +4403,14 @@ RESULTS_HTML = '''
                 } else {
                     if (!(localRunning && serverRunning)) calcState[id].history = [];
                 }
-                calcState[id].running = !!c.running;
-                calcState[id].started_at = c.started_at || 0;
+                // 폴링 시: 로컬이 실행 중인데 서버가 아직 저장 전(running false, started_at 0)이면 덮어쓰지 않음 → 깜빡임 방지
+                var serverStartedAt = c.started_at || 0;
+                var localStartedAt = (calcState[id].started_at || 0);
+                var staleServerAfterRun = !fullRestore && localRunning && !serverRunning && !serverStartedAt && (localStartedAt > 0);
+                if (!staleServerAfterRun) {
+                    calcState[id].running = !!c.running;
+                    calcState[id].started_at = serverStartedAt || localStartedAt;
+                }
                 calcState[id].duration_limit = parseInt(c.duration_limit, 10) || 0;
                 calcState[id].use_duration_limit = !!c.use_duration_limit;
                 calcState[id].timer_completed = !!c.timer_completed;
