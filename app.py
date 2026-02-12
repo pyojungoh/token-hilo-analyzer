@@ -842,28 +842,21 @@ def _server_win_rate_direction_zone(ph):
 
 
 def _effective_win_rate_direction_zone(ph, c, current_round):
-    """히스테리시스 적용된 zone + 쿨다운(4경기). c에 last_win_rate_zone, last_win_rate_zone_change_round 저장.
-    쿨다운은 반대픽(high_falling) 진입 시에만 적용 — 정픽(low_rising) 복귀는 즉시 적용해 패널 표시와 배팅 일치."""
+    """히스테리시스 적용된 zone. c에 last_win_rate_zone, last_win_rate_zone_change_round 저장.
+    쿨다운 제거 — 내림 감지 시 반대픽 즉시 전환."""
     raw_zone = _server_win_rate_direction_zone(ph)
     last_zone = c.get('last_win_rate_zone')
-    last_change = c.get('last_win_rate_zone_change_round')
-    WIN_RATE_ZONE_COOLDOWN = 4
-    # low_rising(정픽) 복귀 시 쿨다운 미적용 — 패널에 정픽참고 뜨면 즉시 정픽으로 배팅
+    # low_rising(정픽) / high_falling(반대픽) / mid_flat 모두 raw 즉시 반영
     if raw_zone == 'low_rising':
         if raw_zone != last_zone:
             c['last_win_rate_zone'] = raw_zone
             c['last_win_rate_zone_change_round'] = current_round
         return raw_zone
-    # high_falling(반대픽) 진입 시 쿨다운 미적용 — 패널에 반대픽참고 뜨면 즉시 반대픽으로 배팅
     if raw_zone == 'high_falling':
         if raw_zone != last_zone:
             c['last_win_rate_zone'] = raw_zone
             c['last_win_rate_zone_change_round'] = current_round
         return raw_zone
-    # mid_flat 또는 high_falling 유지: 쿨다운은 last_zone이 high_falling일 때만 (반대픽 진입 후 4경기 유지)
-    if last_zone == 'high_falling' and current_round is not None and last_change is not None:
-        if current_round - last_change < WIN_RATE_ZONE_COOLDOWN:
-            return last_zone
     if raw_zone and raw_zone != last_zone:
         c['last_win_rate_zone'] = raw_zone
         c['last_win_rate_zone_change_round'] = current_round
@@ -1108,7 +1101,7 @@ def _apply_results_to_calcs(results):
                 if c.get('lose_streak_reverse') and lose_streak >= lose_streak_min and blended is not None and blended <= lose_streak_thr:
                     pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
                     bet_color_for_history = _flip_pick_color(bet_color_for_history)
-                # 승률방향 옵션: 저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조 (쿨다운 4경기)
+                # 승률방향 옵션: 저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조
                 if c.get('win_rate_direction_reverse'):
                     ph = get_prediction_history(150)
                     zone = _effective_win_rate_direction_zone(ph, c, pending_round)
@@ -6437,9 +6430,7 @@ RESULTS_HTML = '''
         function getEffectiveWinRateDirectionZone(ph, id, currentRound) {
             var rawZone = getWinRateDirectionZone(ph);
             var lastZone = calcState[id] && calcState[id].last_win_rate_zone;
-            var lastChange = calcState[id] && calcState[id].last_win_rate_zone_change_round;
-            var COOLDOWN = 4;
-            // low_rising(정픽) 복귀 시 쿨다운 미적용 — 패널에 정픽참고 뜨면 즉시 정픽으로 배팅
+            // 쿨다운 제거 — 내림 감지 시 반대픽 즉시 전환
             if (rawZone === 'low_rising') {
                 if (rawZone !== lastZone) {
                     calcState[id].last_win_rate_zone = rawZone;
@@ -6447,7 +6438,6 @@ RESULTS_HTML = '''
                 }
                 return rawZone;
             }
-            // high_falling(반대픽) 진입 시 쿨다운 미적용 — 패널에 반대픽참고 뜨면 즉시 반대픽으로 배팅
             if (rawZone === 'high_falling') {
                 if (rawZone !== lastZone) {
                     calcState[id].last_win_rate_zone = rawZone;
@@ -6455,8 +6445,6 @@ RESULTS_HTML = '''
                 }
                 return rawZone;
             }
-            // mid_flat: high_falling 유지용 쿨다운만 (lastZone이 high_falling일 때만 4경기 유지)
-            if (lastZone === 'high_falling' && currentRound != null && lastChange != null && (currentRound - lastChange) < COOLDOWN) return lastZone;
             if (rawZone && rawZone !== lastZone) {
                 calcState[id].last_win_rate_zone = rawZone;
                 calcState[id].last_win_rate_zone_change_round = currentRound;
