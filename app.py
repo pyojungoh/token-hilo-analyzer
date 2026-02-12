@@ -604,7 +604,7 @@ def save_calc_state(session_id, state_dict):
 
 
 def _merge_calc_histories(client_hist, server_hist):
-    """회차별 병합: 서버에 있는 회차는 서버 행 전체 사용(경기결과·픽·금액 오염 방지). 서버에 없는 회차만 클라이언트 행 사용."""
+    """회차별 병합: 서버 행 기준. 단 클라이언트가 해당 회차 픽(정/꺽)을 보냈으면 1열 저장값으로 간주해 픽만 클라이언트 유지 → 승패만 actual 기준."""
     by_round = {}
     for h in (server_hist or []):
         if not isinstance(h, dict):
@@ -615,6 +615,14 @@ def _merge_calc_histories(client_hist, server_hist):
             if (by_round[rn].get('no_bet') or (by_round[rn].get('betAmount') is not None and by_round[rn].get('betAmount') == 0)):
                 by_round[rn]['no_bet'] = True
                 by_round[rn]['betAmount'] = 0
+    client_pick_by_round = {}
+    for h in (client_hist or []):
+        if not isinstance(h, dict) or h.get('round') is None:
+            continue
+        pred = h.get('predicted')
+        if pred in ('정', '꺽'):
+            rn = h.get('round')
+            client_pick_by_round[rn] = {'predicted': pred, 'pickColor': h.get('pickColor') or h.get('pick_color')}
     for h in (client_hist or []):
         if not isinstance(h, dict):
             continue
@@ -624,6 +632,11 @@ def _merge_calc_histories(client_hist, server_hist):
             if by_round[rn].get('no_bet') or (by_round[rn].get('betAmount') is not None and by_round[rn].get('betAmount') == 0):
                 by_round[rn]['no_bet'] = True
                 by_round[rn]['betAmount'] = 0
+    for rn, pick in client_pick_by_round.items():
+        if rn in by_round and pick.get('predicted') in ('정', '꺽'):
+            by_round[rn]['predicted'] = pick['predicted']
+            if pick.get('pickColor') is not None:
+                by_round[rn]['pickColor'] = pick['pickColor']
     try:
         rounds = sorted(by_round.keys(), key=lambda x: (x if isinstance(x, (int, float)) else 0))
     except (TypeError, ValueError):
@@ -4277,6 +4290,15 @@ RESULTS_HTML = '''
                     });
                     var serverDeduped = dedupeCalcHistoryByRound(raw);
                     var localHist = (calcState[id].history || []);
+                    // 로컬에 이미 저장된 픽(1열 배팅중 때 넣은 값) — 서버로 덮어쓰지 않고 유지
+                    var localPickByRound = {};
+                    localHist.forEach(function(h) {
+                        if (!h || h.round == null) return;
+                        if (h.predicted === '정' || h.predicted === '꺽') {
+                            var rn = Number(h.round);
+                            localPickByRound[rn] = { predicted: h.predicted, pickColor: h.pickColor || h.pick_color };
+                        }
+                    });
                     if (localRunning && serverRunning) {
                         var byRound = {};
                         serverDeduped.forEach(function(s) {
@@ -4293,6 +4315,14 @@ RESULTS_HTML = '''
                     } else {
                         calcState[id].history = serverDeduped;
                     }
+                    // 1열에 저장된 픽 그대로 유지: 서버 응답으로 predicted/pickColor 덮어쓰지 않음 → 승패만 actual 기준으로 일치
+                    calcState[id].history.forEach(function(row) {
+                        var rn = row.round != null ? Number(row.round) : NaN;
+                        if (!isNaN(rn) && localPickByRound[rn]) {
+                            row.predicted = localPickByRound[rn].predicted;
+                            if (localPickByRound[rn].pickColor != null) row.pickColor = localPickByRound[rn].pickColor;
+                        }
+                    });
                 } else {
                     if (!(localRunning && serverRunning)) calcState[id].history = [];
                 }
