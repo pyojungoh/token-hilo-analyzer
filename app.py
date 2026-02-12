@@ -7170,8 +7170,9 @@ RESULTS_HTML = '''
                 if (!CALC_IDS.includes(id)) return;
                 const state = calcState[id];
                 if (!state) return;
+                try {
                 if (!localStorage.getItem(CALC_SESSION_KEY)) {
-                    await loadCalcStateFromServer();
+                    try { await loadCalcStateFromServer(); } catch (e) { try { localStorage.setItem(CALC_SESSION_KEY, 'default'); } catch (e2) {} }
                 }
                 if (state.timerId) { clearInterval(state.timerId); state.timerId = null; }
                 const durEl = document.getElementById('calc-' + id + '-duration');
@@ -7240,6 +7241,17 @@ RESULTS_HTML = '''
                 postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null, running: true });
                 var saveBtnEl = document.querySelector('.calc-save[data-calc="' + id + '"]');
                 if (saveBtnEl) saveBtnEl.style.display = 'none';
+                } catch (err) {
+                    console.warn('계산기 실행 중 오류:', id, err);
+                    if (calcState[id]) {
+                        calcState[id].running = true;
+                        if (!calcState[id].started_at) calcState[id].started_at = Math.floor(Date.now() / 1000);
+                    }
+                    lastResetOrRunAt = Date.now();
+                    updateCalcSummary(id);
+                    updateCalcDetail(id);
+                    updateCalcStatus(id);
+                }
             });
         });
         document.querySelectorAll('.calc-stop').forEach(btn => {
