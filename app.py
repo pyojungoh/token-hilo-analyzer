@@ -5994,64 +5994,22 @@ RESULTS_HTML = '''
             const martingaleType = (martingaleTypeEl && martingaleTypeEl.value) || 'pyo';
             const hist = dedupeCalcHistoryByRound(calcState[id].history || []);
             
-            // 서버에서 계산된 값이 있으면 우선 사용
-            const completedHist = hist.filter(function(h) { return h && h.actual && h.actual !== 'pending'; });
-            if (completedHist.length > 0) {
-                const lastEntry = completedHist[completedHist.length - 1];
-                if (lastEntry.capital_after != null && lastEntry.profit != null) {
-                    // 서버에서 계산된 값 사용
-                    let cap = lastEntry.capital_after;
-                    let totalProfit = 0;
-                    let wins = 0, losses = 0;
-                    let maxWinStreak = 0, maxLoseStreak = 0;
-                    
-                    for (let i = 0; i < completedHist.length; i++) {
-                        const h = completedHist[i];
-                        if (h.no_bet === true || (h.betAmount != null && h.betAmount === 0)) continue;
-                        const isJoker = h.actual === 'joker';
-                        const isWin = !isJoker && h.predicted === h.actual;
-                        var rowProfit = h.profit;
-                        if (rowProfit == null && h.betAmount != null && h.betAmount > 0) {
-                            rowProfit = isJoker ? -h.betAmount : (isWin ? Math.floor(h.betAmount * (oddsIn - 1)) : -h.betAmount);
-                        }
-                        if (rowProfit != null) totalProfit += rowProfit;
-                        if (isWin) wins++;
-                        else if (!isJoker) losses++;
-                        if (h.max_win_streak != null) maxWinStreak = Math.max(maxWinStreak, h.max_win_streak);
-                        if (h.max_lose_streak != null) maxLoseStreak = Math.max(maxLoseStreak, h.max_lose_streak);
-                    }
-                    
-                    // 다음 배팅금액 계산 (마지막 회차의 마틴게일 단계 사용)
-                    let currentBet = baseIn;
-                    if (lastEntry.martingale_step != null && useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
-                        var martinTableFinal = getMartinTable(martingaleType, baseIn);
-                        currentBet = martinTableFinal[Math.min(lastEntry.martingale_step, martinTableFinal.length - 1)];
-                    }
-                    
-                    const total = wins + losses;
-                    const winRate = total > 0 ? (100 * wins / total).toFixed(1) : '-';
-                    const bust = cap <= 0;
-                    const displayMaxWin = (calcState[id] && calcState[id].maxWinStreakEver != null) ? calcState[id].maxWinStreakEver : maxWinStreak;
-                    const displayMaxLose = (calcState[id] && calcState[id].maxLoseStreakEver != null) ? calcState[id].maxLoseStreakEver : maxLoseStreak;
-                    return { cap: Math.max(0, Math.floor(cap)), profit: totalProfit, currentBet: bust ? 0 : currentBet, wins, losses, bust, maxWinStreak: displayMaxWin, maxLoseStreak: displayMaxLose, winRate, processedCount: completedHist.length };
-                }
-            }
-            
-            // 서버에서 계산된 값이 없으면 클라이언트에서 계산 (폴백)
+            // [변경 금지] 순익·보유자산은 CALCULATOR_GUIDE에 따라 마틴게일 시뮬레이션으로만 계산.
+            // 서버 h.profit/h.betAmount는 DB 병합 타이밍으로 어긋날 수 있으므로 사용하지 않음. 표와 동일 출처 보장.
             let cap = capIn, currentBet = baseIn, bust = false;
             let martingaleStep = 0;
             let wins = 0, losses = 0, maxWinStreak = 0, maxLoseStreak = 0, curWin = 0, curLose = 0;
             let processedCount = 0;
+            var martinTable = getMartinTable(martingaleType, baseIn);
             for (let i = 0; i < hist.length; i++) {
                 const h = hist[i];
                 if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
                 if (h.actual === 'pending') continue;  // 미결 회차는 배팅금·수익 계산에서 제외
                 if (h.no_bet === true || (h.betAmount != null && h.betAmount === 0)) continue;  // 멈춤 회차(배팅 안 함)는 순익/자본 계산에서 제외
-                var martinTable = getMartinTable(martingaleType, baseIn);
                 if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
                     currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
                 }
-                var bet = (h.betAmount != null && h.betAmount > 0) ? Math.min(h.betAmount, Math.floor(cap)) : Math.min(currentBet, Math.floor(cap));
+                var bet = Math.min(currentBet, Math.floor(cap));  // 완료 행은 시뮬레이션 기준 배팅금만 사용 (h.betAmount 미사용)
                 if (cap < bet || cap <= 0) { bust = true; processedCount = i; break; }
                 const isJoker = h.actual === 'joker';
                 const isWin = !isJoker && h.predicted === h.actual;
