@@ -8508,24 +8508,27 @@ def api_current_pick():
         probability = data.get('probability')
         suggested_amount = data.get('suggestedAmount') or data.get('suggested_amount')
         running = data.get('running')  # True/False 또는 없음 — 정지 시 클라이언트가 running: false 보내면 DB에 반영해 GET 시 픽 미반환
-        # 멈춤·마틴 일치: 서버 calc 상태를 기준으로 금액 보정 — 클라이언트가 멈춤인데 금액 보내거나, 마틴 단계가 어긋나 12만/20만 꼬이는 것 방지
+        # 멈춤·마틴 일치: 서버 calc 상태를 기준으로 금액 보정 — 클라이언트가 멈춤인데 금액 보내거나, 마틴 단계가 어긋나 꼬이는 것 방지
+        # 서버 pending_round가 있으면 항상 서버 금액·픽·회차로 덮어씀(매크로는 서버 기준). pr!=rn이면 클라이언트 구식이라 서버 쪽 사용.
         try:
             state = get_calc_state('default') or {}
             c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
             if c is not None:
                 if c.get('paused'):
                     suggested_amount = 0  # 서버가 멈춤이면 무조건 0 — 에뮬레이터 배팅 스킵
-                elif round_num is not None and c.get('pending_round') is not None:
+                elif c.get('pending_round') is not None:
                     try:
+                        srv_pick, server_amt = _server_calc_effective_pick_and_amount(c)
                         pr = int(c.get('pending_round'))
-                        rn = int(round_num) if not isinstance(round_num, int) else round_num
-                        if pr == rn:
-                            client_amt = suggested_amount
-                            _, server_amt = _server_calc_effective_pick_and_amount(c)
-                            suggested_amount = server_amt
+                        rn = int(round_num) if round_num is not None else None
+                        if srv_pick is not None:
+                            pick_color = srv_pick
+                            round_num = pr
+                        suggested_amount = server_amt if server_amt is not None else suggested_amount
+                        if rn is not None and pr == rn:
                             try:
-                                if client_amt is not None and int(client_amt) != int(server_amt):
-                                    print(f"[배팅연동] calc {calculator_id} 보정: client={client_amt} server={server_amt} (round={rn})")
+                                if suggested_amount is not None and server_amt is not None and int(suggested_amount) != int(server_amt):
+                                    print(f"[배팅연동] calc {calculator_id} 보정: client={suggested_amount} server={server_amt} (round={pr})")
                             except (TypeError, ValueError):
                                 pass
                     except (TypeError, ValueError):
