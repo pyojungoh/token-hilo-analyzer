@@ -627,7 +627,7 @@ def _merge_calc_histories(client_hist, server_hist):
                 merged['no_bet'] = True
                 merged['betAmount'] = 0
             elif rn in server_by_round:
-                # 서버에 같은 회차가 있고, 서버가 배팅금액을 계산해 둔 경우 → 서버 금액/수익/결과 사용 (충돌 방지)
+                # 서버에 같은 회차가 있고, 서버가 배팅금액을 계산해 둔 경우 → 서버 금액/수익/결과/픽 사용 (충돌·픽 잘못 표기 방지)
                 s = server_by_round[rn]
                 if s.get('betAmount') is not None and not (s.get('no_bet') or s.get('betAmount') == 0):
                     merged['betAmount'] = s.get('betAmount')
@@ -636,6 +636,10 @@ def _merge_calc_histories(client_hist, server_hist):
                     merged['profit'] = s.get('profit')
                 if s.get('actual') and s.get('actual') != 'pending':
                     merged['actual'] = s.get('actual')
+                if s.get('predicted') is not None:
+                    merged['predicted'] = s.get('predicted')
+                if s.get('pickColor') is not None or s.get('pick_color') is not None:
+                    merged['pickColor'] = s.get('pickColor') or s.get('pick_color')
             by_round[rn] = merged
     # 서버에만 있는 회차(클라이언트가 아직 못 받은 회차) 추가
     for rn, s in server_by_round.items():
@@ -6765,11 +6769,15 @@ RESULTS_HTML = '''
                         continue;
                     }
                     
-                    // 서버에서 계산된 값이 있으면 사용
-                    if (h.betAmount != null && h.profit != null) {
+                    // 서버에서 계산된 값이 있으면 사용 (betAmount만 있어도 사용, profit 없으면 계산)
+                    if (h.betAmount != null && h.betAmount > 0) {
                         const isJoker = h.actual === 'joker';
                         const isWin = !isJoker && h.predicted === h.actual;
-                        roundToBetProfit[rn] = { betAmount: h.betAmount, profit: h.profit, isWin: isWin, isJoker: isJoker };
+                        var profitVal = h.profit;
+                        if (profitVal == null || profitVal === undefined) {
+                            profitVal = isJoker ? -h.betAmount : (isWin ? Math.floor(h.betAmount * (oddsIn - 1)) : -h.betAmount);
+                        }
+                        roundToBetProfit[rn] = { betAmount: h.betAmount, profit: profitVal, isWin: isWin, isJoker: isJoker };
                         continue;
                     }
                 }
