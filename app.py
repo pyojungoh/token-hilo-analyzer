@@ -7083,7 +7083,7 @@ RESULTS_HTML = '''
             });
         });
         document.querySelectorAll('.calc-stop').forEach(btn => {
-            btn.addEventListener('click', function() {
+            btn.addEventListener('click', async function() {
                 const rawId = this.getAttribute('data-calc');
                 const id = parseInt(rawId, 10);
                 if (!CALC_IDS.includes(id)) return;
@@ -7099,7 +7099,7 @@ RESULTS_HTML = '''
                 state.pending_color = null;
                 state.pending_bet_amount = null;
                 lastResetOrRunAt = Date.now();
-                saveCalcStateToServer();
+                await saveCalcStateToServer();
                 updateCalcSummary(id);
                 updateCalcDetail(id);
                 updateCalcStatus(id);
