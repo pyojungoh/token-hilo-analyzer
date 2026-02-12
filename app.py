@@ -1365,6 +1365,9 @@ def _server_calc_effective_pick_and_amount(c):
         if zone == 'high_falling':
             pred = '꺽' if pred == '정' else '정'
             color = _flip_pick_color(color)
+            c['last_trend_direction'] = 'down'
+        elif zone == 'low_rising':
+            c['last_trend_direction'] = 'up'
         elif zone == 'mid_flat' and c.get('last_trend_direction') == 'down':
             pred = '꺽' if pred == '정' else '정'
             color = _flip_pick_color(color)
@@ -8533,6 +8536,8 @@ def api_current_pick():
                                 pass
                     except (TypeError, ValueError):
                         pass
+            if c is not None and c.get('pending_round') is not None:
+                save_calc_state('default', state)
         except Exception:
             pass
         conn = get_db_connection(statement_timeout_sec=5)
