@@ -788,22 +788,22 @@ def _server_win_rate_direction_zone(ph):
     rate5ago = rates[-6]
     delta5 = current - rate5ago
     ratio = (current - low) / (high - low) if high > low else 0.5
-    # 승률방향 민감도: DELTA4/DELTA5 낮을수록 더 일찍 방향 전환 (0.4/0.5→둔감, 0.3 이하→과반응 주의)
-    DELTA4_THR = 0.30   # 4구간 차이(recent-prev4) 이 값 넘으면 오름/내림 판정
-    DELTA5_THR = 0.38  # 5구간 차이(delta5) 이 값 넘으면 고점하락/저점상승 판정
-    # 히스테리시스: high_falling→low_rising 전환 시 ratio 0.6 이상 요구 (연속 전환·깊게 파이기 방지)
-    RATIO_LOW_RISING = 0.6   # 정픽으로 돌아가려면 더 높은 기준
-    RATIO_HIGH_FALLING = 0.5  # 반대픽 진입은 기존 0.5 유지
+    # [승률방향] 포인트값만 수정해서 오름/내림 판단. 민감도 조정 시 아래 4개만 변경.
+    # DELTA↑=보수적(방향 덜 바뀜), RATIO_LOW_RISING↓=오름→정픽 더 쉽게(오름인데 반대 방지)
+    WIN_RATE_DIR_DELTA4 = 0.35   # 4구간 차이 %p — 이 값 넘으면 오름/내림 (0.3→과반응, 0.4→둔감)
+    WIN_RATE_DIR_DELTA5 = 0.42   # 5구간 차이 %p — 고점하락/저점상승 판정
+    WIN_RATE_DIR_RATIO_LOW = 0.52  # 정픽(low_rising) — ratio 이 값 이상이면 오름 시 정픽 (0.6→오름인데 반대 자주 발생)
+    WIN_RATE_DIR_RATIO_HIGH = 0.5  # 반대픽(high_falling) — ratio 이 이하면 내림 시 반대픽
     if len(derived) >= 4:
         recent = rates[-1]
         prev4 = rates[-4]
-        if recent > prev4 + DELTA4_THR and ratio >= RATIO_LOW_RISING:
-            return 'low_rising'  # 오름 + 상위 구간 → 정픽 (히스테리시스)
-        if recent < prev4 - DELTA4_THR and ratio <= RATIO_HIGH_FALLING:
+        if recent > prev4 + WIN_RATE_DIR_DELTA4 and ratio >= WIN_RATE_DIR_RATIO_LOW:
+            return 'low_rising'  # 오름 + 상위 구간 → 정픽
+        if recent < prev4 - WIN_RATE_DIR_DELTA4 and ratio <= WIN_RATE_DIR_RATIO_HIGH:
             return 'high_falling'  # 내림 + 하위 구간 → 반대픽
-    if delta5 < -DELTA5_THR and ratio >= RATIO_HIGH_FALLING:
+    if delta5 < -WIN_RATE_DIR_DELTA5 and ratio >= WIN_RATE_DIR_RATIO_HIGH:
         return 'high_falling'
-    if delta5 > DELTA5_THR and ratio >= RATIO_LOW_RISING:
+    if delta5 > WIN_RATE_DIR_DELTA5 and ratio >= WIN_RATE_DIR_RATIO_LOW:
         return 'low_rising'
     return 'mid_flat'
 
@@ -6343,17 +6343,16 @@ RESULTS_HTML = '''
             var rate5Ago = derivedSeries[derivedSeries.length - 6].rate50;
             var delta5 = current - rate5Ago;
             var ratio = (current - low) / (high - low);
-            // 서버와 동일: 히스테리시스(정픽 복귀 시 ratio 0.6), 쿨다운은 별도 적용
-            var DELTA4_THR = 0.30, DELTA5_THR = 0.38;
-            var RATIO_LOW_RISING = 0.6, RATIO_HIGH_FALLING = 0.5;
+            // [승률방향] 서버와 동일 포인트값 — WIN_RATE_DIR_* 상수 사용 (민감도 조정 시 여기만)
+            var D4 = 0.35, D5 = 0.42, R_LOW = 0.52, R_HIGH = 0.5;
             if (derivedSeries.length >= 4) {
                 var recent = derivedSeries[derivedSeries.length - 1].rate50;
                 var prev4 = derivedSeries[derivedSeries.length - 4].rate50;
-                if (recent > prev4 + DELTA4_THR && ratio >= RATIO_LOW_RISING) return 'low_rising';
-                if (recent < prev4 - DELTA4_THR && ratio <= RATIO_HIGH_FALLING) return 'high_falling';
+                if (recent > prev4 + D4 && ratio >= R_LOW) return 'low_rising';
+                if (recent < prev4 - D4 && ratio <= R_HIGH) return 'high_falling';
             }
-            if (delta5 < -DELTA5_THR && ratio >= RATIO_HIGH_FALLING) return 'high_falling';
-            if (delta5 > DELTA5_THR && ratio >= RATIO_LOW_RISING) return 'low_rising';
+            if (delta5 < -D5 && ratio >= R_HIGH) return 'high_falling';
+            if (delta5 > D5 && ratio >= R_LOW) return 'low_rising';
             return 'mid_flat';
         }
         function getEffectiveWinRateDirectionZone(ph, id, currentRound) {
@@ -6418,7 +6417,7 @@ RESULTS_HTML = '''
                 if (derivedSeries.length >= 4) {
                     var recent = derivedSeries[derivedSeries.length - 1].rate50;
                     var prev = derivedSeries[derivedSeries.length - 4].rate50;
-                    var d4 = 0.30;
+                    var d4 = 0.35;  // WIN_RATE_DIR_DELTA4와 동일 — 포인트값만 조정
                     if (recent > prev + d4) { direction = '오름'; directionClass = 'color:#81c784;'; }
                     else if (recent < prev - d4) { direction = '내림'; directionClass = 'color:#e57373;'; }
                 }
@@ -6437,14 +6436,14 @@ RESULTS_HTML = '''
                     vsHighText = (vsHigh <= 0 ? '' : '+') + vsHigh.toFixed(1) + '%p';
                     vsLowText = (vsLow >= 0 ? '+' : '') + vsLow.toFixed(1) + '%p';
                 }
-                // 추세 구간: 방향(오름/내림)과 비율 일치 시 그에 맞게 표시. 오름+상위면 정픽 참고(히스테리시스 ratio 0.6)
+                // 추세 구간: 방향(오름/내림)과 비율 일치 시 그에 맞게 표시. WIN_RATE_DIR_* 포인트값과 동일
                 if (derivedSeries.length >= 6 && high != null && low != null && high > low) {
                     var rate5Ago = derivedSeries[derivedSeries.length - 6].rate50;
                     var delta5 = current - rate5Ago;
                     var ratio = (current - low) / (high - low);
-                    var d5 = 0.38;
-                    var RATIO_LOW_RISING = 0.6;
-                    if (direction === '오름' && ratio >= RATIO_LOW_RISING) {
+                    var d5 = 0.42;
+                    var R_LOW = 0.52;
+                    if (direction === '오름' && ratio >= R_LOW) {
                         trendZoneLabel = '오름·상위 구간';
                         refPickText = '정픽 참고';
                         refPickClass = 'color:#81c784;';
