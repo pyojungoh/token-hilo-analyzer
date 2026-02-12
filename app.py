@@ -5748,7 +5748,8 @@ RESULTS_HTML = '''
                             }).join('');
                             const rowOutcome = rev.map(function(h) {
                                 var actualForDisplay = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
-                                const out = actualForDisplay === 'joker' ? '조커' : (h.predicted === actualForDisplay ? '승' : '패');
+                                var isJoker = (actualForDisplay === 'joker' || actualForDisplay === '조커');
+                                const out = isJoker ? '조커' : (h.predicted === actualForDisplay ? '승' : '패');
                                 const c = out === '승' ? 'streak-win' : out === '패' ? 'streak-lose' : 'streak-joker';
                                 return '<td class="' + c + '">' + out + '</td>';
                             }).join('');
