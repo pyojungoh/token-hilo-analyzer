@@ -6879,7 +6879,8 @@ RESULTS_HTML = '''
                 // 계산기 표는 한 행 기준 통일: 픽·배팅금액·수익·승패 모두 이 행(h)의 predicted/actual만 사용 (예측기표 actual 혼합 시 행 내 불일치 방지)
                 var effectiveActual = h.actual;
                 if (effectiveActual === 'pending' || !effectiveActual || effectiveActual === '') {
-                    var amt = (h.no_bet === true || !h.betAmount) ? 0 : (h.betAmount > 0 ? h.betAmount : 0);
+                    var amt = (h.no_bet === true || (typeof effectivePausedForRound === 'function' && effectivePausedForRound(id))) ? 0 : (typeof getBetForRound === 'function' ? getBetForRound(id, rn) : (h.betAmount > 0 ? h.betAmount : 0));
+                    if (h && typeof amt === 'number') h.betAmount = amt;
                     betStr = amt > 0 ? Number(amt).toLocaleString() : '-';
                     profitStr = '-';
                     res = '-';
