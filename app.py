@@ -821,8 +821,14 @@ def _effective_win_rate_direction_zone(ph, c, current_round):
             c['last_win_rate_zone'] = raw_zone
             c['last_win_rate_zone_change_round'] = current_round
         return raw_zone
-    # high_falling(반대픽) 또는 mid_flat: 쿨다운 적용 (반대픽 진입 후 4경기 유지)
-    if current_round is not None and last_zone and last_change is not None:
+    # high_falling(반대픽) 진입 시 쿨다운 미적용 — 패널에 반대픽참고 뜨면 즉시 반대픽으로 배팅
+    if raw_zone == 'high_falling':
+        if raw_zone != last_zone:
+            c['last_win_rate_zone'] = raw_zone
+            c['last_win_rate_zone_change_round'] = current_round
+        return raw_zone
+    # mid_flat 또는 high_falling 유지: 쿨다운은 last_zone이 high_falling일 때만 (반대픽 진입 후 4경기 유지)
+    if last_zone == 'high_falling' and current_round is not None and last_change is not None:
         if current_round - last_change < WIN_RATE_ZONE_COOLDOWN:
             return last_zone
     if raw_zone and raw_zone != last_zone:
@@ -6363,8 +6369,16 @@ RESULTS_HTML = '''
                 }
                 return rawZone;
             }
-            // high_falling(반대픽) 또는 mid_flat: 쿨다운 적용
-            if (currentRound != null && lastZone && lastChange != null && (currentRound - lastChange) < COOLDOWN) return lastZone;
+            // high_falling(반대픽) 진입 시 쿨다운 미적용 — 패널에 반대픽참고 뜨면 즉시 반대픽으로 배팅
+            if (rawZone === 'high_falling') {
+                if (rawZone !== lastZone) {
+                    calcState[id].last_win_rate_zone = rawZone;
+                    calcState[id].last_win_rate_zone_change_round = currentRound;
+                }
+                return rawZone;
+            }
+            // mid_flat: high_falling 유지용 쿨다운만 (lastZone이 high_falling일 때만 4경기 유지)
+            if (lastZone === 'high_falling' && currentRound != null && lastChange != null && (currentRound - lastChange) < COOLDOWN) return lastZone;
             if (rawZone && rawZone !== lastZone) {
                 calcState[id].last_win_rate_zone = rawZone;
                 calcState[id].last_win_rate_zone_change_round = currentRound;
@@ -6452,7 +6466,9 @@ RESULTS_HTML = '''
                         lastWinRateDirectionRef = '오름';
                     } else {
                         trendZoneLabel = '중간·횡보';
-                        refPickText = '기존 전략 유지' + (lastWinRateDirectionRef === '오름' ? ' (오름)' : lastWinRateDirectionRef === '내림' ? ' (반대)' : '');
+                        // 방향별 일치: 내림→(내림 참고), 오름→(오름 참고), 정체→전회차 방향(오름/내림) 참고
+                        var suffix = direction === '내림' ? ' (내림 참고)' : direction === '오름' ? ' (오름 참고)' : (lastWinRateDirectionRef === '오름' ? ' (오름 참고)' : lastWinRateDirectionRef === '내림' ? ' (내림 참고)' : '');
+                        refPickText = '기존 전략 유지' + suffix;
                         refPickClass = 'color:#b0bec5;';
                     }
                 }
