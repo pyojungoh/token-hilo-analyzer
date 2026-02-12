@@ -4254,12 +4254,20 @@ RESULTS_HTML = '''
                         if (h.betAmount === 0) h.no_bet = true;
                     });
                     var serverDeduped = dedupeCalcHistoryByRound(raw);
-                    var localLen = (calcState[id].history || []).length;
+                    var localHist = (calcState[id].history || []);
                     if (localRunning && serverRunning) {
-                        // 폴링(비복원) 시에는 서버 히스토리로 덮어쓰지 않음 — 서버의 예전 paused로 쌓인 no_bet 행이 마틴 중인 표를 덮지 않도록
-                        if (fullRestore && serverDeduped.length > localLen) {
-                            calcState[id].history = serverDeduped;
-                        }
+                        var byRound = {};
+                        serverDeduped.forEach(function(s) {
+                            var loc = localHist.find(function(h) { return h && Number(h.round) === Number(s.round); });
+                            if (loc && loc.no_bet === true) byRound[Number(s.round)] = Object.assign({}, s, { no_bet: true, betAmount: 0 });
+                            else byRound[Number(s.round)] = s;
+                        });
+                        localHist.forEach(function(loc) {
+                            if (!loc || loc.round == null) return;
+                            var rn = Number(loc.round);
+                            if (!(rn in byRound)) byRound[rn] = loc;
+                        });
+                        calcState[id].history = Object.keys(byRound).map(Number).sort(function(a, b) { return a - b; }).map(function(r) { return byRound[r]; });
                     } else {
                         calcState[id].history = serverDeduped;
                     }
@@ -6040,6 +6048,17 @@ RESULTS_HTML = '''
                     else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = 0; else currentBet = baseIn; }
                     else { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
                     if (cap <= 0) return 0;
+                }
+                var prevRound = roundNum - 1;
+                var prevEntry = (calcState[id].history || []).find(function(h) { return h && Number(h.round) === prevRound; });
+                if (prevEntry && (prevEntry.actual === 'pending' || !prevEntry.actual || prevEntry.actual === '') && useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
+                    var pendingNoBet = prevEntry.no_bet === true || (prevEntry.betAmount != null && prevEntry.betAmount === 0);
+                    if (!pendingNoBet) {
+                        var assumeBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
+                        cap -= Math.min(assumeBet, Math.floor(cap));
+                        martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1);
+                        if (cap <= 0) return 0;
+                    }
                 }
                 if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
                 return Math.min(currentBet, Math.floor(cap));
