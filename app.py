@@ -993,6 +993,8 @@ def _apply_results_to_calcs(results):
                         c['pending_predicted'] = stored_for_round['predicted']
                         c['pending_prob'] = stored_for_round.get('probability')
                         c['pending_color'] = stored_for_round.get('pick_color')
+                        _, amt = _server_calc_effective_pick_and_amount(c)
+                        c['pending_bet_amount'] = amt if amt is not None and amt > 0 else None
                         updated = True
                         _push_current_pick_from_calc(int(cid), c)  # 매크로가 곧바로 픽 수신
                     continue
@@ -1078,6 +1080,24 @@ def _apply_results_to_calcs(results):
                     history_entry['betAmount'] = 0
                 # 서버에서 계산기 수익, 마틴게일, 연승/연패 계산
                 history_entry = _calculate_calc_profit_server(c, history_entry)
+                # 금액 고정: pending_round 정할 때 저장해 둔 금액 사용(DB history 지연으로 마틴 단계 어긋남 방지)
+                stored_amt = c.get('pending_bet_amount')
+                if stored_amt is not None and not history_entry.get('no_bet') and history_entry.get('actual') and history_entry.get('actual') != 'pending':
+                    try:
+                        amt = int(stored_amt)
+                        if amt >= 0:
+                            history_entry['betAmount'] = amt
+                            odds_val = float(c.get('odds', 1.97))
+                            act = history_entry.get('actual')
+                            pred = history_entry.get('predicted')
+                            if act == 'joker':
+                                history_entry['profit'] = -amt
+                            elif pred == act:
+                                history_entry['profit'] = int(amt * (odds_val - 1))
+                            else:
+                                history_entry['profit'] = -amt
+                    except (TypeError, ValueError):
+                        pass
                 c['history'] = (c.get('history') or []) + [history_entry]
                 # 해당 회차 완료 시점의 계산기 15회 승률 저장 (표 15회승률 열용)
                 completed_new = [x for x in c['history'] if x.get('actual') and x.get('actual') != 'pending']
@@ -1094,6 +1114,8 @@ def _apply_results_to_calcs(results):
                     c['pending_predicted'] = stored_for_round['predicted']
                     c['pending_prob'] = stored_for_round.get('probability')
                     c['pending_color'] = stored_for_round.get('pick_color')
+                    _, next_amt = _server_calc_effective_pick_and_amount(c)
+                    c['pending_bet_amount'] = next_amt if next_amt is not None and next_amt > 0 else None
                     updated = True
                     _push_current_pick_from_calc(int(cid), c)  # 매크로가 곧바로 픽 수신
             if updated:
@@ -4225,7 +4247,8 @@ RESULTS_HTML = '''
                     pending_round: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.round) || calcState[id].pending_round) : null,
                     pending_predicted: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.value) || calcState[id].pending_predicted) : null,
                     pending_prob: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.prob != null) ? lastServerPrediction.prob : calcState[id].pending_prob) : null,
-                    pending_color: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.color) || calcState[id].pending_color) : null
+                    pending_color: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.color) || calcState[id].pending_color) : null,
+                    pending_bet_amount: (calcState[id].pending_bet_amount != null && calcState[id].pending_bet_amount > 0) ? calcState[id].pending_bet_amount : null
                 };
             });
             return payload;
@@ -4303,6 +4326,7 @@ RESULTS_HTML = '''
                 calcState[id].pending_predicted = c.pending_predicted != null ? c.pending_predicted : null;
                 calcState[id].pending_prob = c.pending_prob != null ? c.pending_prob : null;
                 calcState[id].pending_color = c.pending_color || null;
+                calcState[id].pending_bet_amount = (c.pending_bet_amount != null && !isNaN(Number(c.pending_bet_amount)) && Number(c.pending_bet_amount) > 0) ? Number(c.pending_bet_amount) : null;
                 var pauseThrRestore = (typeof c.pause_win_rate_threshold === 'number' && c.pause_win_rate_threshold >= 0 && c.pause_win_rate_threshold <= 100) ? c.pause_win_rate_threshold : 45;
                 calcState[id].pause_low_win_rate_enabled = !!c.pause_low_win_rate_enabled;
                 calcState[id].pause_win_rate_threshold = pauseThrRestore;
@@ -6040,6 +6064,10 @@ RESULTS_HTML = '''
         function getBetForRound(id, roundNum) {
             try {
                 if (!calcState[id] || roundNum == null) return 0;
+                // 서버가 저장한 pending 회차 금액이 있으면 그대로 사용(금액 왔다갔다 방지)
+                var pr = calcState[id].pending_round;
+                var pba = calcState[id].pending_bet_amount;
+                if (pr != null && Number(pr) === Number(roundNum) && pba != null && pba > 0) return Math.floor(pba);
                 const capIn = parseFloat(document.getElementById('calc-' + id + '-capital')?.value) || 1000000;
                 const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
                 const oddsIn = parseFloat(document.getElementById('calc-' + id + '-odds')?.value) || 1.97;
@@ -7067,6 +7095,7 @@ RESULTS_HTML = '''
                 state.pending_predicted = null;
                 state.pending_prob = null;
                 state.pending_color = null;
+                state.pending_bet_amount = null;
                 lastResetOrRunAt = Date.now();
                 saveCalcStateToServer();
                 updateCalcSummary(id);
@@ -7096,6 +7125,7 @@ RESULTS_HTML = '''
                 state.pending_predicted = null;
                 state.pending_prob = null;
                 state.pending_color = null;
+                state.pending_bet_amount = null;
                 state.paused = false;
                 lastResetOrRunAt = Date.now();
                 await saveCalcStateToServer();
@@ -7822,7 +7852,7 @@ def api_calc_state():
             if state is None:
                 state = {}
             # 계산기 1,2,3만 반환 (레거시 defense 제거 후 클라이언트 호환)
-            _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 46, 'lose_streak_reverse_min_streak': 4, 'win_rate_direction_reverse': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
+            _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 46, 'lose_streak_reverse_min_streak': 4, 'win_rate_direction_reverse': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None}
             calcs = {}
             for cid in ('1', '2', '3'):
                 calcs[cid] = state[cid] if (cid in state and isinstance(state.get(cid), dict)) else dict(_default)
@@ -7917,9 +7947,10 @@ def api_calc_state():
                     'pending_predicted': c.get('pending_predicted'),
                     'pending_prob': c.get('pending_prob'),
                     'pending_color': c.get('pending_color'),
+                    'pending_bet_amount': current_c.get('pending_bet_amount') if current_c.get('pending_bet_amount') is not None else c.get('pending_bet_amount'),
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 46, 'lose_streak_reverse_min_streak': 4, 'win_rate_direction_reverse': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 46, 'lose_streak_reverse_min_streak': 4, 'win_rate_direction_reverse': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None}
         save_calc_state(session_id, out)
         # 계산기 running 상태를 current_pick에 반영 → 에뮬레이터 매크로가 목표 달성 시 자동 중지
         if bet_int:
