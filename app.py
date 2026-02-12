@@ -4273,10 +4273,12 @@ RESULTS_HTML = '''
             var rounds = Object.keys(byRound).map(Number).sort(function(a, b) { return a - b; });
             return rounds.map(function(r) { return byRound[r]; });
         }
-        function applyCalcsToState(calcs, serverTimeSec, restoreUi) {
+        function applyCalcsToState(calcs, serverTimeSec, restoreUi, skipIds) {
+            skipIds = skipIds || [];
             const st = serverTimeSec || Math.floor(Date.now() / 1000);
             const fullRestore = restoreUi === true;
             CALC_IDS.forEach(id => {
+                if (skipIds.indexOf(id) >= 0) return;
                 const c = calcs[String(id)] || {};
                 // 실행 중일 때: 일반 폴링에서는 로컬 유지(깜빡임 방지). 서버가 로컬보다 많을 때만 서버 적용(창 내렸다 올렸을 때 계산기표 복구)
                 const serverRunning = !!c.running;
@@ -4429,7 +4431,9 @@ RESULTS_HTML = '''
             } catch (e) { console.warn('계산기 상태 로드 실패:', e); }
             finally { window.__calcStateLoadInProgress = false; }
         }
-        async function saveCalcStateToServer() {
+        async function saveCalcStateToServer(opt) {
+            opt = opt || {};
+            const skipApplyForIds = opt.skipApplyForIds || [];  // 정지/리셋 시 해당 calc는 서버 응답 적용 안 함 (로컬 상태 유지)
             try {
                 const session_id = 'default';
                 const payload = buildCalcPayload();
@@ -4442,10 +4446,10 @@ RESULTS_HTML = '''
                     body: JSON.stringify({ session_id: session_id, calcs: payload })
                 });
                 const data = await res.json().catch(function() { return {}; });
-                // 저장 후 서버가 반환한 병합 state 적용 → 2행부터 배팅금액/픽이 결과값으로 바뀌는 현상 방지
                 if (data.calcs && typeof data.calcs === 'object') {
-                    applyCalcsToState(data.calcs, data.server_time || lastServerTimeSec, false);
+                    applyCalcsToState(data.calcs, data.server_time || lastServerTimeSec, false, skipApplyForIds);
                     CALC_IDS.forEach(function(id) {
+                        if (skipApplyForIds.indexOf(id) >= 0) return;
                         if (typeof updateCalcDetail === 'function') updateCalcDetail(id);
                         if (typeof updateCalcSummary === 'function') updateCalcSummary(id);
                         if (typeof updateCalcStatus === 'function') updateCalcStatus(id);
@@ -7086,12 +7090,11 @@ RESULTS_HTML = '''
                 state.pending_color = null;
                 state.pending_bet_amount = null;
                 lastResetOrRunAt = Date.now();
-                await saveCalcStateToServer();
                 updateCalcSummary(id);
                 updateCalcDetail(id);
                 updateCalcStatus(id);
-                // 정지 시 current_pick 비움 + running=false 저장 — 매크로가 정지 상태인데도 픽을 가져가지 않도록
                 postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null, running: false });
+                await saveCalcStateToServer({ skipApplyForIds: [id] });
             });
         });
         document.querySelectorAll('.calc-reset').forEach(btn => {
@@ -7117,13 +7120,13 @@ RESULTS_HTML = '''
                 state.pending_bet_amount = null;
                 state.paused = false;
                 lastResetOrRunAt = Date.now();
-                await saveCalcStateToServer();
                 updateCalcSummary(id);
                 updateCalcDetail(id);
                 updateCalcStatus(id);
                 updateCalcBetCopyLine(id);
                 const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
                 if (saveBtn) saveBtn.style.display = 'none';
+                await saveCalcStateToServer({ skipApplyForIds: [id] });
             });
         });
         function exportCalcHistoryToCsv(id) {
@@ -7371,7 +7374,7 @@ RESULTS_HTML = '''
             // 계산기 실행 중일 때 서버 상태 주기적으로 가져와 UI 실시간 반영 (멈춰 보이는 현상 방지)
             // 백그라운드일 때는 간격을 늘림 (브라우저 제한 고려)
             calcStatePollIntervalId = setInterval(() => {
-                if (Date.now() - lastResetOrRunAt < 3500) return;
+                if (Date.now() - lastResetOrRunAt < 6000) return;
                 const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
                 if (anyRunning) {
                     loadCalcStateFromServer(false).then(function() { updateAllCalcs(); }).catch(function(e) { console.warn('계산기 상태 폴링:', e); });

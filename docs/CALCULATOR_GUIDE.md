@@ -40,6 +40,11 @@
 - **코드 위치**: `app.py` 내 `updateCalcDetail`, `roundToBetProfit`를 채우는 **두 번째 for 루프**(마틴 테이블·cap·currentBet으로 회차별 bet/profit 계산). 완료 행 셀을 그릴 때 `roundToBetProfit[rn]`의 `betAmount`/`profit`만 사용.
 - 이 섹션은 **삭제·완화하지 말 것**. 계산기 표가 “이제야 잘 들어오는” 동작을 유지하기 위한 불변 규칙이다.
 
+### ⛔ 순익 계산 (변경 금지)
+
+- **순익(총합)**은 `getCalcResult(id)`의 `profit`으로 표시. **마틴게일 시뮬레이션**으로만 계산 (`cap - capIn`).
+- 서버 `h.profit`/`h.betAmount` 합산·사용 **금지**. 표의 각 행 수익과 동일 출처(시뮬레이션) 유지.
+
 ---
 
 ## 설정 옵션
