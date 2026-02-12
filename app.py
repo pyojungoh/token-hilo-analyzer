@@ -7349,8 +7349,32 @@ RESULTS_HTML = '''
         var calcStatusPollIntervalId = null;
         var calcStatePollIntervalId = null;
         var timerUpdateIntervalId = null;
+        var predictionPollIntervalId = null;
         // 리셋/실행 직후에는 서버 폴링 스킵 (저장 반영 전에 예전 상태로 덮어쓰는 것 방지)
         var lastResetOrRunAt = 0;
+        
+        function refreshPredictionPickOnly() {
+            var pickContainer = document.getElementById('prediction-pick-container');
+            if (!pickContainer) return;
+            function dr(r) { return r != null ? String(r) : '-'; }
+            var disp = allResults.slice(0, 15);
+            var is15Joker = disp.length >= 15 && !!disp[14].joker;
+            var predict = '보류', predProb = 0, colorToPick = '-', colorClass = 'black';
+            if (lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) {
+                predict = lastPrediction.value;
+                predProb = (lastPrediction.prob != null && !isNaN(lastPrediction.prob)) ? lastPrediction.prob : 0;
+                var sc = normalizePickColor(lastPrediction.color);
+                colorToPick = (sc === '빨강' || sc === '검정') ? sc : (lastPrediction.value === '정' ? '빨강' : '검정');
+                colorClass = colorToPick === '빨강' ? 'red' : 'black';
+            }
+            var showHold = is15Joker || predict === '보류';
+            var displayRoundNum = (lastPrediction && lastPrediction.round) ? lastPrediction.round : (allResults.length > 0 && allResults[0].gameID != null ? Number(allResults[0].gameID) + 1 : 0);
+            var roundIconMain = getRoundIcon(displayRoundNum);
+            var u35WarningBlock = lastWarningU35 ? ('<div class="prediction-warning-u35">⚠ U자+줄 3~5 구간 · 줄(유지) 보정 적용</div>') : '';
+            var leftBlock = showHold ? ('<div class="prediction-pick"><div class="prediction-pick-title">예측 픽</div><div class="prediction-card" style="background:#455a64;border-color:#78909c"><span class="pred-value-big" style="color:#fff;font-size:1.2em">보류</span></div><div class="prediction-prob-under" style="color:#ffb74d">' + (is15Joker ? '15번 카드 조커 · 배팅하지 마세요' : '서버 예측 대기 중') + '</div><div class="pred-round">' + dr(displayRoundNum) + '회 ' + roundIconMain + '</div></div>') : ('<div class="prediction-pick"><div class="prediction-pick-title prediction-pick-title-betting">배팅중<br>' + (colorToPick === '빨강' ? 'RED' : 'BLACK') + '</div><div class="prediction-card card-' + colorClass + '"><span class="pred-value-big">' + predict + '</span></div><div class="prediction-prob-under">예측 확률 ' + (typeof predProb === 'number' ? predProb.toFixed(1) : '0') + '%</div><div class="pred-round">' + dr(displayRoundNum) + '회 ' + roundIconMain + '</div>' + u35WarningBlock + '</div>');
+            pickContainer.innerHTML = leftBlock;
+            pickContainer.setAttribute('data-section', '메인 예측기');
+        }
         
         function setupIntervals() {
             // 기존 interval 정리
@@ -7358,9 +7382,10 @@ RESULTS_HTML = '''
             if (calcStatusPollIntervalId) clearInterval(calcStatusPollIntervalId);
             if (calcStatePollIntervalId) clearInterval(calcStatePollIntervalId);
             if (timerUpdateIntervalId) clearInterval(timerUpdateIntervalId);
+            if (predictionPollIntervalId) clearInterval(predictionPollIntervalId);
             
             // 탭 가시성에 따라 간격 조정. 과도한 폴링 시 ERR_INSUFFICIENT_RESOURCES 방지를 위해 완만한 간격 사용
-            var resultsInterval = isTabVisible ? 450 : 1200;
+            var resultsInterval = isTabVisible ? 280 : 1200;
             var calcStatusInterval = isTabVisible ? 350 : 1200;  // 픽 서버 전달(매크로용). 350ms로 요청 수 완화
             var calcStateInterval = isTabVisible ? 2200 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
             var timerInterval = isTabVisible ? 200 : 1000;
@@ -7371,8 +7396,8 @@ RESULTS_HTML = '''
                 const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
                 const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
                 const criticalPhase = r <= 3 || r >= 8;
-                // 백그라운드일 때는 최소 1초 간격, 보일 때는 더 빠른 간격
-                const baseInterval = allResults.length === 0 ? 200 : (anyRunning ? 150 : (criticalPhase ? 200 : 300));
+                // 백그라운드일 때는 최소 1초 간격, 보일 때는 더 빠른 간격 (예측픽 빨리 나오도록 단축)
+                const baseInterval = allResults.length === 0 ? 200 : (anyRunning ? 100 : (criticalPhase ? 150 : 200));
                 const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
                 if (Date.now() - lastResultsUpdate > interval) {
                     loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
@@ -7398,6 +7423,23 @@ RESULTS_HTML = '''
             // 0.2초마다 타이머 업데이트 (UI만 업데이트, 서버 요청은 1초마다)
             // 백그라운드일 때는 1초 간격으로 조정 (브라우저 제한)
             timerUpdateIntervalId = setInterval(updateTimer, timerInterval);
+            
+            // 예측픽만 경량 폴링: 캐시 기반으로 0.1초마다 받아서 카드만 먼저 갱신 (예측픽이 늦게 나오는 현상 완화)
+            if (isTabVisible) {
+                predictionPollIntervalId = setInterval(function() {
+                    fetch('/api/current-prediction?t=' + Date.now(), { cache: 'no-cache' }).then(function(r) { return r.json(); }).then(function(data) {
+                        var sp = data && data.server_prediction;
+                        if (!sp || (sp.value !== '정' && sp.value !== '꺽')) return;
+                        var newRound = sp.round != null ? Number(sp.round) : NaN;
+                        var prevRound = (lastPrediction && lastPrediction.round != null) ? Number(lastPrediction.round) : NaN;
+                        if (isNaN(newRound) || (!isNaN(prevRound) && newRound < prevRound)) return;
+                        var normColor = normalizePickColor(sp.color) || sp.color || null;
+                        lastPrediction = { value: sp.value, round: sp.round, prob: sp.prob != null ? sp.prob : 0, color: normColor };
+                        lastWarningU35 = !!(sp.warning_u35);
+                        refreshPredictionPickOnly();
+                    }).catch(function() {});
+                }, 100);
+            }
         }
         
         // 초기 설정
@@ -7864,6 +7906,16 @@ def get_results():
         })
         err_resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
         return err_resp, 200
+
+
+@app.route('/api/current-prediction', methods=['GET'])
+def get_current_prediction():
+    """예측픽만 경량 반환(캐시 기반). 화면에서 예측픽을 빨리 표시하기 위해 짧은 간격 폴링용."""
+    global results_cache
+    sp = None
+    if results_cache and results_cache.get('server_prediction'):
+        sp = results_cache['server_prediction']
+    return jsonify({'server_prediction': sp})
 
 
 @app.route('/api/calc-state', methods=['GET', 'POST'])
