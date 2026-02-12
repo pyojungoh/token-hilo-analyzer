@@ -6801,10 +6801,10 @@ RESULTS_HTML = '''
                         continue;
                     }
                     
-                    // 완료 행 배팅금액은 아래 마틴게일 시뮬레이션으로만 채움 (서버 h.betAmount 미사용 → 2열부터 마틴 정확)
+                    // [변경 금지] 완료 행 배팅금액은 아래 마틴 시뮬레이션으로만 채움. 서버 h.betAmount는 완료 행 표시에 사용하지 않음. CALCULATOR_GUIDE.md "계산기 표 데이터 출처" 참고.
                 }
                 
-                // 완료 행 전부 마틴게일 시뮬레이션으로 배팅금액·수익 채움 (표시 일관성)
+                // [변경 금지] 완료 행 전부 마틴게일 시뮬레이션으로 배팅금액·수익 채움. 표시는 roundToBetProfit[rn]만 사용.
                 var martinTableDetail = getMartinTable(martingaleType, baseIn);
                 let cap = capIn, currentBet = baseIn, martingaleStep = 0;
                 for (let i = 0; i < completedHist.length; i++) {
