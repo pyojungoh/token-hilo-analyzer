@@ -5975,9 +5975,13 @@ RESULTS_HTML = '''
                     for (let i = 0; i < completedHist.length; i++) {
                         const h = completedHist[i];
                         if (h.no_bet === true || (h.betAmount != null && h.betAmount === 0)) continue;
-                        if (h.profit != null) totalProfit += h.profit;
                         const isJoker = h.actual === 'joker';
                         const isWin = !isJoker && h.predicted === h.actual;
+                        var rowProfit = h.profit;
+                        if (rowProfit == null && h.betAmount != null && h.betAmount > 0) {
+                            rowProfit = isJoker ? -h.betAmount : (isWin ? Math.floor(h.betAmount * (oddsIn - 1)) : -h.betAmount);
+                        }
+                        if (rowProfit != null) totalProfit += rowProfit;
                         if (isWin) wins++;
                         else if (!isJoker) losses++;
                         if (h.max_win_streak != null) maxWinStreak = Math.max(maxWinStreak, h.max_win_streak);
@@ -6014,7 +6018,7 @@ RESULTS_HTML = '''
                 if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
                     currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
                 }
-                const bet = Math.min(currentBet, Math.floor(cap));
+                var bet = (h.betAmount != null && h.betAmount > 0) ? Math.min(h.betAmount, Math.floor(cap)) : Math.min(currentBet, Math.floor(cap));
                 if (cap < bet || cap <= 0) { bust = true; processedCount = i; break; }
                 const isJoker = h.actual === 'joker';
                 const isWin = !isJoker && h.predicted === h.actual;
@@ -6777,7 +6781,7 @@ RESULTS_HTML = '''
                     }
                 }
                 
-                // 서버에서 계산된 값이 없는 경우 클라이언트에서 계산 (폴백)
+                // 서버에서 계산된 값이 없는 경우 클라이언트에서 계산 (폴백). 서버 값이 있는 행도 자본/마틴 단계는 반영해 다음 행 계산이 맞게 나오도록 함.
                 var martinTableDetail = getMartinTable(martingaleType, baseIn);
                 let cap = capIn, currentBet = baseIn, martingaleStep = 0;
                 for (let i = 0; i < completedHist.length; i++) {
@@ -6786,14 +6790,22 @@ RESULTS_HTML = '''
                     const rn = h.round != null ? Number(h.round) : NaN;
                     if (isNaN(rn)) continue;
                     
-                    // 이미 서버에서 계산된 값이 있으면 스킵
-                    if (roundToBetProfit[rn]) continue;
-                    
                     var wasPaused = (h.no_bet === true || (h.betAmount != null && h.betAmount === 0));
                     if (wasPaused) {
                         const isJokerPaused = h.actual === 'joker';
                         const isWinPaused = !isJokerPaused && h.predicted === h.actual;
-                        roundToBetProfit[rn] = { betAmount: 0, profit: 0, isWin: isWinPaused, isJoker: isJokerPaused };
+                        if (!roundToBetProfit[rn]) roundToBetProfit[rn] = { betAmount: 0, profit: 0, isWin: isWinPaused, isJoker: isJokerPaused };
+                        continue;
+                    }
+                    
+                    if (roundToBetProfit[rn]) {
+                        // 이미 서버/첫 루프에서 값 있음 → 배팅금액은 그대로 두고, 자본·마틴 단계만 갱신 (다음 행 폴백 계산용)
+                        const bet = roundToBetProfit[rn].betAmount || 0;
+                        const isJoker = roundToBetProfit[rn].isJoker;
+                        const isWin = roundToBetProfit[rn].isWin;
+                        if (isJoker) { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
+                        else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = 0; else currentBet = baseIn; }
+                        else { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
                         continue;
                     }
                     
