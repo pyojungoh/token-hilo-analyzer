@@ -1,0 +1,45 @@
+---
+description: 승률방향 반픽 민감도 조정 — 포인트값만 수정. "승률방향 조정" 요청 시 반드시 이 규칙 참고.
+globs: app.py
+alwaysApply: true
+---
+
+# 승률방향 민감도 조정 규칙 (절대 준수)
+
+사용자가 **승률방향 조정**, **승률방향 민감도**, **오름/내림 판단** 등으로 요청하면 **반드시** 아래 방식만 따른다.
+
+## ⛔ 원칙: 포인트값만 수정
+
+- 오름/내림 판단을 바꾸려면 **아래 4개 포인트값만** 수정한다.
+- 다른 로직(예: 쿨다운, last_trend_direction 분기 등)을 추가·변경하지 않는다.
+- **서버·클라이언트·패널** 모두 동일한 값으로 맞춰야 한다.
+
+## 포인트값 목록 (4개)
+
+| 상수 | 위치 | 현재값 | 효과 |
+|------|------|--------|------|
+| **WIN_RATE_DIR_DELTA4** | 서버 `_server_win_rate_direction_zone` | 0.35 | 4구간 차이 %p — 이 값 넘으면 오름/내림 (↑=보수적, ↓=민감) |
+| **WIN_RATE_DIR_DELTA5** | 서버 `_server_win_rate_direction_zone` | 0.42 | 5구간 차이 %p — 고점하락/저점상승 판정 |
+| **WIN_RATE_DIR_RATIO_LOW** | 서버 `_server_win_rate_direction_zone` | 0.52 | 정픽(low_rising) — ratio 이 값 이상+오름 시 정픽 (↓=오름인데 반대 덜 발생) |
+| **WIN_RATE_DIR_RATIO_HIGH** | 서버 `_server_win_rate_direction_zone` | 0.5 | 반대픽(high_falling) — ratio 이 이하면 내림 시 반대픽 |
+
+## 수정 시 반드시 같이 바꿀 위치
+
+1. **서버**: `app.py` `_server_win_rate_direction_zone` 함수 내 `WIN_RATE_DIR_*` 상수
+2. **클라이언트 getWinRateDirectionZone**: `app.py` 내 `var D4 = 0.35, D5 = 0.42, R_LOW = 0.52, R_HIGH = 0.5;`
+3. **클라이언트 renderWinRateDirectionPanel** (방향·추세 구간): `d4 = 0.35`, `d5 = 0.42`, `R_LOW = 0.52`
+
+세 곳 모두 동일한 숫자로 맞출 것.
+
+## 민감도 조정 가이드
+
+| 현상 | 조치 |
+|------|------|
+| 방향이 3~4회만에 자주 바뀜 | DELTA4, DELTA5 **값 올리기** (보수적) |
+| 오름인데 반대로 감 | RATIO_LOW **값 내리기** (0.52 → 0.5 등) |
+| 반대픽이 너무 늦게/안 들어감 | RATIO_HIGH **값 올리기** 또는 DELTA4/DELTA5 **내리기** |
+| 정픽이 너무 늦게/안 들어감 | RATIO_LOW **값 내리기** |
+
+---
+
+이 규칙을 수정·확장할 때는 "포인트값만 수정" 원칙을 유지한다.
