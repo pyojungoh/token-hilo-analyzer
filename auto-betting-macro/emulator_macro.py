@@ -1058,6 +1058,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         except (TypeError, ValueError):
             return
         # 픽 수신 즉시 배팅 (시작 누르면 담회차 말고 바로 현재 회차부터)
+        self._log("픽 수신: %s회 %s %s원 (서버에서 전달)" % (round_num, pick_color, amount))
         self._pick_history.append((round_num, pick_color))
         # 이미 이 회차로 배팅했으면 스킵 (중복 배팅 방지). 오래된 회차는 목록에서 제거
         with self._lock:

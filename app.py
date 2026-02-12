@@ -7865,13 +7865,13 @@ def get_results():
         global results_cache, last_update_time
         result_source = request.args.get('result_source', '').strip()
 
-        # 매 요청마다 DB에서 응답 생성. 3h 사용해 성능 최적화 (최신 회차만 필요)
-        payload = _build_results_payload_db_only(hours=3)
+        # 매 요청마다 DB에서 응답 생성. 24h 구간으로 타임존/커밋 타이밍에 따른 최신 회차 누락 방지 (규칙 준수)
+        payload = _build_results_payload_db_only(hours=24)
         if payload and payload.get('results'):
             results_cache = payload
             last_update_time = time.time() * 1000
         if not payload or not payload.get('results'):
-            payload = _build_results_payload_db_only(hours=12) or payload
+            payload = _build_results_payload_db_only(hours=72) or payload
             if payload and payload.get('results'):
                 results_cache = payload
                 last_update_time = time.time() * 1000
@@ -8391,8 +8391,14 @@ def api_current_pick():
                         pr = int(c.get('pending_round'))
                         rn = int(round_num) if not isinstance(round_num, int) else round_num
                         if pr == rn:
+                            client_amt = suggested_amount
                             _, server_amt = _server_calc_effective_pick_and_amount(c)
                             suggested_amount = server_amt
+                            try:
+                                if client_amt is not None and int(client_amt) != int(server_amt):
+                                    print(f"[배팅연동] calc {calculator_id} 보정: client={client_amt} server={server_amt} (round={rn})")
+                            except (TypeError, ValueError):
+                                pass
                     except (TypeError, ValueError):
                         pass
         except Exception:
