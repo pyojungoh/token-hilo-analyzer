@@ -809,11 +809,19 @@ def _server_win_rate_direction_zone(ph):
 
 
 def _effective_win_rate_direction_zone(ph, c, current_round):
-    """히스테리시스 적용된 zone + 쿨다운(4경기). c에 last_win_rate_zone, last_win_rate_zone_change_round 저장."""
+    """히스테리시스 적용된 zone + 쿨다운(4경기). c에 last_win_rate_zone, last_win_rate_zone_change_round 저장.
+    쿨다운은 반대픽(high_falling) 진입 시에만 적용 — 정픽(low_rising) 복귀는 즉시 적용해 패널 표시와 배팅 일치."""
     raw_zone = _server_win_rate_direction_zone(ph)
     last_zone = c.get('last_win_rate_zone')
     last_change = c.get('last_win_rate_zone_change_round')
     WIN_RATE_ZONE_COOLDOWN = 4
+    # low_rising(정픽) 복귀 시 쿨다운 미적용 — 패널에 정픽참고 뜨면 즉시 정픽으로 배팅
+    if raw_zone == 'low_rising':
+        if raw_zone != last_zone:
+            c['last_win_rate_zone'] = raw_zone
+            c['last_win_rate_zone_change_round'] = current_round
+        return raw_zone
+    # high_falling(반대픽) 또는 mid_flat: 쿨다운 적용 (반대픽 진입 후 4경기 유지)
     if current_round is not None and last_zone and last_change is not None:
         if current_round - last_change < WIN_RATE_ZONE_COOLDOWN:
             return last_zone
@@ -6119,17 +6127,7 @@ RESULTS_HTML = '''
                     else { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
                     if (cap <= 0) return 0;
                 }
-                var prevRound = roundNum - 1;
-                var prevEntry = (calcState[id].history || []).find(function(h) { return h && Number(h.round) === prevRound; });
-                if (prevEntry && (prevEntry.actual === 'pending' || !prevEntry.actual || prevEntry.actual === '') && useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
-                    var pendingNoBet = prevEntry.no_bet === true || (prevEntry.betAmount != null && prevEntry.betAmount === 0);
-                    if (!pendingNoBet) {
-                        var assumeBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
-                        cap -= Math.min(assumeBet, Math.floor(cap));
-                        martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1);
-                        if (cap <= 0) return 0;
-                    }
-                }
+                // [변경] 직전 회차가 pending일 때 패배 가정 제거 — 마틴 한 단계 더 가는 버그 방지 (계산기표 vs 자동배팅 금액 불일치 원인)
                 if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
                 return Math.min(currentBet, Math.floor(cap));
             } catch (e) { return 0; }
@@ -6357,6 +6355,15 @@ RESULTS_HTML = '''
             var lastZone = calcState[id] && calcState[id].last_win_rate_zone;
             var lastChange = calcState[id] && calcState[id].last_win_rate_zone_change_round;
             var COOLDOWN = 4;
+            // low_rising(정픽) 복귀 시 쿨다운 미적용 — 패널에 정픽참고 뜨면 즉시 정픽으로 배팅
+            if (rawZone === 'low_rising') {
+                if (rawZone !== lastZone) {
+                    calcState[id].last_win_rate_zone = rawZone;
+                    calcState[id].last_win_rate_zone_change_round = currentRound;
+                }
+                return rawZone;
+            }
+            // high_falling(반대픽) 또는 mid_flat: 쿨다운 적용
             if (currentRound != null && lastZone && lastChange != null && (currentRound - lastChange) < COOLDOWN) return lastZone;
             if (rawZone && rawZone !== lastZone) {
                 calcState[id].last_win_rate_zone = rawZone;
