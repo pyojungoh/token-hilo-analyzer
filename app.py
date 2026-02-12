@@ -604,15 +604,17 @@ def save_calc_state(session_id, state_dict):
 
 
 def _merge_calc_histories(client_hist, server_hist):
-    """회차별로 병합. 같은 회차는 클라이언트 행 우선. 단, 서버가 멈춤(no_bet)으로 저장한 회차는 서버 no_bet/betAmount 우선 — 클라이언트가 잘못 보낸 금액으로 덮어쓰지 않음."""
+    """회차별로 병합. 같은 회차는 클라이언트 행 우선. 단, 서버가 멈춤(no_bet)이면 서버 no_bet/betAmount 우선.
+    서버가 해당 회차에 배팅금액을 계산해 둔 경우(no_bet 아님)에도 서버 betAmount·profit 우선 — 클라이언트 마틴 단계 어긋남/지연으로 금액 충돌 방지."""
     by_round = {}
+    server_by_round = {}
     server_no_bet_rounds = set()
     for h in (server_hist or []):
         if not isinstance(h, dict):
             continue
         rn = h.get('round')
         if rn is not None:
-            by_round[rn] = dict(h)
+            server_by_round[rn] = dict(h)
             if h.get('no_bet') or (h.get('betAmount') is not None and h.get('betAmount') == 0):
                 server_no_bet_rounds.add(rn)
     for h in (client_hist or []):
@@ -624,7 +626,21 @@ def _merge_calc_histories(client_hist, server_hist):
             if rn in server_no_bet_rounds:
                 merged['no_bet'] = True
                 merged['betAmount'] = 0
+            elif rn in server_by_round:
+                # 서버에 같은 회차가 있고, 서버가 배팅금액을 계산해 둔 경우 → 서버 금액/수익/결과 사용 (충돌 방지)
+                s = server_by_round[rn]
+                if s.get('betAmount') is not None and not (s.get('no_bet') or s.get('betAmount') == 0):
+                    merged['betAmount'] = s.get('betAmount')
+                    merged['no_bet'] = False
+                if s.get('profit') is not None:
+                    merged['profit'] = s.get('profit')
+                if s.get('actual') and s.get('actual') != 'pending':
+                    merged['actual'] = s.get('actual')
             by_round[rn] = merged
+    # 서버에만 있는 회차(클라이언트가 아직 못 받은 회차) 추가
+    for rn, s in server_by_round.items():
+        if rn not in by_round:
+            by_round[rn] = dict(s)
     try:
         rounds = sorted(by_round.keys(), key=lambda x: (x if isinstance(x, (int, float)) else 0))
     except (TypeError, ValueError):
