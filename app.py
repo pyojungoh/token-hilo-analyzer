@@ -787,23 +787,37 @@ def _server_win_rate_direction_zone(ph):
     current = rates[-1]
     rate5ago = rates[-6]
     delta5 = current - rate5ago
-    ratio = (current - low) / (high - low) if high > low else 0.5
-    # [승률방향] 포인트값만 수정해서 오름/내림 판단. 민감도 조정 시 아래 4개만 변경.
-    # DELTA↑=보수적(방향 덜 바뀜), RATIO_LOW_RISING↓=오름→정픽 더 쉽게(오름인데 반대 방지)
-    WIN_RATE_DIR_DELTA4 = 0.35   # 4구간 차이 %p — 이 값 넘으면 오름/내림 (0.3→과반응, 0.4→둔감)
-    WIN_RATE_DIR_DELTA5 = 0.42   # 5구간 차이 %p — 고점하락/저점상승 판정
-    WIN_RATE_DIR_RATIO_LOW = 0.52  # 정픽(low_rising) — ratio 이 값 이상이면 오름 시 정픽 (0.6→오름인데 반대 자주 발생)
-    WIN_RATE_DIR_RATIO_HIGH = 0.5  # 반대픽(high_falling) — ratio 이 이하면 내림 시 반대픽
+    # 저점 40~43% / 고점 57~60% 반영: ratio를 고정 밴드 기준으로 정의 (실제 승률 구간과 일치)
+    WIN_RATE_LOW_BAND = 43.0   # 저점 상한 %
+    WIN_RATE_HIGH_BAND = 57.0  # 고점 하한 %
+    if current <= WIN_RATE_LOW_BAND:
+        ratio_fixed = 0.0  # 저점 부근
+    elif current >= WIN_RATE_HIGH_BAND:
+        ratio_fixed = 1.0  # 고점 부근
+    else:
+        ratio_fixed = (current - WIN_RATE_LOW_BAND) / (WIN_RATE_HIGH_BAND - WIN_RATE_LOW_BAND)
+    ratio_dynamic = (current - low) / (high - low) if high > low else 0.5
+    WIN_RATE_DIR_DELTA4 = 0.35
+    WIN_RATE_DIR_DELTA5 = 0.42
     if len(derived) >= 4:
         recent = rates[-1]
         prev4 = rates[-4]
-        if recent > prev4 + WIN_RATE_DIR_DELTA4 and ratio >= WIN_RATE_DIR_RATIO_LOW:
-            return 'low_rising'  # 오름 + 상위 구간 → 정픽
-        if recent < prev4 - WIN_RATE_DIR_DELTA4 and ratio <= WIN_RATE_DIR_RATIO_HIGH:
-            return 'high_falling'  # 내림 + 하위 구간 → 반대픽
-    if delta5 < -WIN_RATE_DIR_DELTA5 and ratio >= WIN_RATE_DIR_RATIO_HIGH:
+        is_rising = recent > prev4 + WIN_RATE_DIR_DELTA4
+        is_falling = recent < prev4 - WIN_RATE_DIR_DELTA4
+        # 저점 부근(40~43%) + 오름세 → 정픽(low_rising)
+        if current <= WIN_RATE_LOW_BAND and is_rising:
+            return 'low_rising'
+        # 고점 부근(57~60%) + 내림세 → 반대픽(high_falling)
+        if current >= WIN_RATE_HIGH_BAND and is_falling:
+            return 'high_falling'
+        # 기존 ratio 기반 판정 (중간 구간)
+        if is_rising and ratio_dynamic >= 0.52:
+            return 'low_rising'
+        if is_falling and ratio_dynamic <= 0.5:
+            return 'high_falling'
+    if delta5 < -WIN_RATE_DIR_DELTA5 and (ratio_fixed >= 0.5 or ratio_dynamic >= 0.5):
         return 'high_falling'
-    if delta5 > WIN_RATE_DIR_DELTA5 and ratio >= WIN_RATE_DIR_RATIO_LOW:
+    if delta5 > WIN_RATE_DIR_DELTA5 and (ratio_fixed <= 0.5 or ratio_dynamic >= 0.52):
         return 'low_rising'
     return 'mid_flat'
 
@@ -4069,6 +4083,8 @@ RESULTS_HTML = '''
         // 예측 기록 (최근 30회): { round, predicted, actual } — 새로고침 후에도 유지되도록 localStorage 저장
         const PREDICTION_HISTORY_KEY = 'tokenHiloPredictionHistory';
         let predictionHistory = [];
+        // 회차별 실제 결과(카드 기준) — API round_actuals로 예측기표 결과열 표시 보정
+        let roundActualsFromServer = {};
         try {
             const saved = localStorage.getItem(PREDICTION_HISTORY_KEY);
             if (saved) {
@@ -4597,6 +4613,7 @@ RESULTS_HTML = '''
                 // 서버에 저장된 시스템 예측 기록 복원 (어디서 접속해도 동일). 무효 항목 제거해 ReferenceError 방지
                 if (Object.prototype.hasOwnProperty.call(data, 'prediction_history') && Array.isArray(data.prediction_history)) {
                     predictionHistory = data.prediction_history.slice(-300).filter(function(h) { return h && typeof h === 'object'; });
+                    roundActualsFromServer = (data.round_actuals && typeof data.round_actuals === 'object') ? data.round_actuals : {};
                     savePredictionHistory();
                     if (typeof renderWinRateDirectionPanel === 'function') renderWinRateDirectionPanel();
                     // 서버 prediction_history로 계산기 히스토리 '대기' 보정 — actual(결과)만 서버 값으로 채움. 픽(predicted/pickColor)은 배팅중 픽 유지(덮어쓰지 않음)
@@ -5730,7 +5747,8 @@ RESULTS_HTML = '''
                                 return '<td class="' + c + '">' + (h.predicted != null ? h.predicted : '-') + '</td>';
                             }).join('');
                             const rowOutcome = rev.map(function(h) {
-                                const out = h.actual === 'joker' ? '조커' : (h.predicted === h.actual ? '승' : '패');
+                                var actualForDisplay = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
+                                const out = actualForDisplay === 'joker' ? '조커' : (h.predicted === actualForDisplay ? '승' : '패');
                                 const c = out === '승' ? 'streak-win' : out === '패' ? 'streak-lose' : 'streak-joker';
                                 return '<td class="' + c + '">' + out + '</td>';
                             }).join('');
@@ -6342,17 +6360,22 @@ RESULTS_HTML = '''
             var current = derivedSeries[derivedSeries.length - 1].rate50;
             var rate5Ago = derivedSeries[derivedSeries.length - 6].rate50;
             var delta5 = current - rate5Ago;
-            var ratio = (current - low) / (high - low);
-            // [승률방향] 서버와 동일 포인트값 — WIN_RATE_DIR_* 상수 사용 (민감도 조정 시 여기만)
+            var ratioDynamic = (current - low) / (high - low);
+            var WIN_RATE_LOW_BAND = 43, WIN_RATE_HIGH_BAND = 57;
+            var ratioFixed = current <= WIN_RATE_LOW_BAND ? 0 : (current >= WIN_RATE_HIGH_BAND ? 1 : (current - WIN_RATE_LOW_BAND) / (WIN_RATE_HIGH_BAND - WIN_RATE_LOW_BAND));
             var D4 = 0.35, D5 = 0.42, R_LOW = 0.52, R_HIGH = 0.5;
             if (derivedSeries.length >= 4) {
                 var recent = derivedSeries[derivedSeries.length - 1].rate50;
                 var prev4 = derivedSeries[derivedSeries.length - 4].rate50;
-                if (recent > prev4 + D4 && ratio >= R_LOW) return 'low_rising';
-                if (recent < prev4 - D4 && ratio <= R_HIGH) return 'high_falling';
+                var isRising = recent > prev4 + D4;
+                var isFalling = recent < prev4 - D4;
+                if (current <= WIN_RATE_LOW_BAND && isRising) return 'low_rising';
+                if (current >= WIN_RATE_HIGH_BAND && isFalling) return 'high_falling';
+                if (isRising && ratioDynamic >= R_LOW) return 'low_rising';
+                if (isFalling && ratioDynamic <= R_HIGH) return 'high_falling';
             }
-            if (delta5 < -D5 && ratio >= R_HIGH) return 'high_falling';
-            if (delta5 > D5 && ratio >= R_LOW) return 'low_rising';
+            if (delta5 < -D5 && (ratioFixed >= 0.5 || ratioDynamic >= R_HIGH)) return 'high_falling';
+            if (delta5 > D5 && (ratioFixed <= 0.5 || ratioDynamic >= R_LOW)) return 'low_rising';
             return 'mid_flat';
         }
         function getEffectiveWinRateDirectionZone(ph, id, currentRound) {
@@ -6436,19 +6459,31 @@ RESULTS_HTML = '''
                     vsHighText = (vsHigh <= 0 ? '' : '+') + vsHigh.toFixed(1) + '%p';
                     vsLowText = (vsLow >= 0 ? '+' : '') + vsLow.toFixed(1) + '%p';
                 }
-                // 추세 구간: 방향(오름/내림)과 비율 일치 시 그에 맞게 표시. WIN_RATE_DIR_* 포인트값과 동일
+                // 추세 구간: 저점 40~43% / 고점 57~60% 반영. 서버 getWinRateDirectionZone과 동일 로직
                 if (derivedSeries.length >= 6 && high != null && low != null && high > low) {
                     var rate5Ago = derivedSeries[derivedSeries.length - 6].rate50;
                     var delta5 = current - rate5Ago;
                     var ratio = (current - low) / (high - low);
-                    var d5 = 0.42;
-                    var R_LOW = 0.52;
-                    if (direction === '오름' && ratio >= R_LOW) {
+                    var d4 = 0.35, d5 = 0.42;
+                    var WIN_RATE_LOW_BAND = 43, WIN_RATE_HIGH_BAND = 57;
+                    var isRising = direction === '오름';
+                    var isFalling = direction === '내림';
+                    if (current <= WIN_RATE_LOW_BAND && isRising) {
+                        trendZoneLabel = '저점 부근·오름';
+                        refPickText = '정픽 참고';
+                        refPickClass = 'color:#81c784;';
+                        lastWinRateDirectionRef = '오름';
+                    } else if (current >= WIN_RATE_HIGH_BAND && isFalling) {
+                        trendZoneLabel = '고점 부근·내림';
+                        refPickText = '반대픽 참고';
+                        refPickClass = 'color:#e57373;';
+                        lastWinRateDirectionRef = '내림';
+                    } else if (isRising && ratio >= 0.52) {
                         trendZoneLabel = '오름·상위 구간';
                         refPickText = '정픽 참고';
                         refPickClass = 'color:#81c784;';
                         lastWinRateDirectionRef = '오름';
-                    } else if (direction === '내림' && ratio <= 0.5) {
+                    } else if (isFalling && ratio <= 0.5) {
                         trendZoneLabel = '내림·하위 구간';
                         refPickText = '반대픽 참고';
                         refPickClass = 'color:#e57373;';
@@ -6458,7 +6493,7 @@ RESULTS_HTML = '''
                         refPickText = '반대픽 참고';
                         refPickClass = 'color:#e57373;';
                         lastWinRateDirectionRef = '내림';
-                    } else if (delta5 > d5 && ratio <= 0.5) {
+                    } else if (delta5 > d5 && (current <= WIN_RATE_LOW_BAND || ratio < 0.52)) {
                         trendZoneLabel = '저점 상승 구간';
                         refPickText = '정픽 참고';
                         refPickClass = 'color:#81c784;';

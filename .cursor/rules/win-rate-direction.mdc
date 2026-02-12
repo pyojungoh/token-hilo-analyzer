@@ -14,14 +14,19 @@ alwaysApply: true
 - 다른 로직(예: 쿨다운, last_trend_direction 분기 등)을 추가·변경하지 않는다.
 - **서버·클라이언트·패널** 모두 동일한 값으로 맞춰야 한다.
 
-## 포인트값 목록 (4개)
+## 저점/고점 고정 밴드 (로직 유지)
+
+- **저점 부근**: 현재 50회 승률 ≤ 43% → 저점에서 오름세면 정픽(low_rising).
+- **고점 부근**: 현재 50회 승률 ≥ 57% → 고점에서 내림세면 반대픽(high_falling).
+- 서버·클라이언트·패널 모두 `WIN_RATE_LOW_BAND = 43`, `WIN_RATE_HIGH_BAND = 57` 동일 적용.
+
+## 포인트값 목록 (DELTA/RATIO)
 
 | 상수 | 위치 | 현재값 | 효과 |
 |------|------|--------|------|
-| **WIN_RATE_DIR_DELTA4** | 서버 `_server_win_rate_direction_zone` | 0.35 | 4구간 차이 %p — 이 값 넘으면 오름/내림 (↑=보수적, ↓=민감) |
+| **WIN_RATE_DIR_DELTA4** | 서버 `_server_win_rate_direction_zone` | 0.35 | 4구간 차이 %p — 오름/내림 판정 |
 | **WIN_RATE_DIR_DELTA5** | 서버 `_server_win_rate_direction_zone` | 0.42 | 5구간 차이 %p — 고점하락/저점상승 판정 |
-| **WIN_RATE_DIR_RATIO_LOW** | 서버 `_server_win_rate_direction_zone` | 0.52 | 정픽(low_rising) — ratio 이 값 이상+오름 시 정픽 (↓=오름인데 반대 덜 발생) |
-| **WIN_RATE_DIR_RATIO_HIGH** | 서버 `_server_win_rate_direction_zone` | 0.5 | 반대픽(high_falling) — ratio 이 이하면 내림 시 반대픽 |
+| ratio_dynamic 0.52 / 0.5 | 동일 | 0.52, 0.5 | 중간 구간 정픽/반대픽 기준 |
 
 ## 수정 시 반드시 같이 바꿀 위치
 
