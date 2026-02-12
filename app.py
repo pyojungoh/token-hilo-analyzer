@@ -5059,7 +5059,7 @@ RESULTS_HTML = '''
                                     var winRateDirRevEl = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
                                     var useWinRateDirRev = !!(winRateDirRevEl && winRateDirRevEl.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
                                     if (useWinRateDirRev && typeof getEffectiveWinRateDirectionZone === 'function') {
-                                        var phForZone = ((typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : []).filter(function(p) { return p && Number(p.round) !== currentRoundNum; });
+                                        var phForZone = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
                                         var zone = getEffectiveWinRateDirectionZone(phForZone, id, currentRoundNum);
                                         if (zone === 'high_falling') { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; calcState[id].last_trend_direction = 'down'; }
                                         else if (zone === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
@@ -5123,7 +5123,7 @@ RESULTS_HTML = '''
                                     var winRateDirRevElA = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
                                     var useWinRateDirRevActual = !!(winRateDirRevElA && winRateDirRevElA.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
                                     if (useWinRateDirRevActual && typeof getEffectiveWinRateDirectionZone === 'function') {
-                                        var phForZoneA = ((typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : []).filter(function(p) { return p && Number(p.round) !== currentRoundNum; });
+                                        var phForZoneA = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
                                         var zoneA = getEffectiveWinRateDirectionZone(phForZoneA, id, currentRoundNum);
                                         if (zoneA === 'high_falling') { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; calcState[id].last_trend_direction = 'down'; }
                                         else if (zoneA === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
@@ -5213,7 +5213,7 @@ RESULTS_HTML = '''
                                     var winRateDirRevEl2 = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
                                     var useWinRateDirRev2 = !!(winRateDirRevEl2 && winRateDirRevEl2.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
                                     if (useWinRateDirRev2 && typeof getEffectiveWinRateDirectionZone === 'function') {
-                                        var phForZone2 = ((typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : []).filter(function(p) { return p && Number(p.round) !== currentRoundNum; });
+                                        var phForZone2 = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
                                         var zone2 = getEffectiveWinRateDirectionZone(phForZone2, id, currentRoundNum);
                                         if (zone2 === 'high_falling') { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; calcState[id].last_trend_direction = 'down'; }
                                         else if (zone2 === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
@@ -5272,7 +5272,7 @@ RESULTS_HTML = '''
                                     var winRateDirRevEl3 = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
                                     var useWinRateDirRev3 = !!(winRateDirRevEl3 && winRateDirRevEl3.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
                                     if (useWinRateDirRev3 && typeof getEffectiveWinRateDirectionZone === 'function') {
-                                        var phForZone3 = ((typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : []).filter(function(p) { return p && Number(p.round) !== currentRoundNum; });
+                                        var phForZone3 = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
                                         var zone3 = getEffectiveWinRateDirectionZone(phForZone3, id, currentRoundNum);
                                         if (zone3 === 'high_falling') { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; calcState[id].last_trend_direction = 'down'; }
                                         else if (zone3 === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
