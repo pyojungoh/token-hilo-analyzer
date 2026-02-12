@@ -4514,9 +4514,15 @@ RESULTS_HTML = '''
             } catch (e) { console.warn('계산기 상태 로드 실패:', e); }
             finally { window.__calcStateLoadInProgress = false; }
         }
+        var lastSaveCalcStateAt = 0;
+        var SAVE_CALC_STATE_THROTTLE_MS = 2500;  // ERR_INSUFFICIENT_RESOURCES 방지: 동기화/폴링 유발 저장은 최대 2.5초에 1회
         async function saveCalcStateToServer(opt) {
             opt = opt || {};
             const skipApplyForIds = opt.skipApplyForIds || [];  // 정지/리셋 시 해당 calc는 서버 응답 적용 안 함 (로컬 상태 유지)
+            const immediate = !!opt.immediate;  // 실행/정지/리셋 등 사용자 액션은 즉시 저장
+            const now = Date.now();
+            if (!immediate && (now - lastSaveCalcStateAt) < SAVE_CALC_STATE_THROTTLE_MS) return;
+            lastSaveCalcStateAt = now;
             try {
                 const session_id = 'default';
                 const payload = buildCalcPayload();
@@ -7127,7 +7133,7 @@ RESULTS_HTML = '''
                     calcState[id].running = false;
                     calcState[id].timer_completed = true;
                     if (calcState[id].history.length > 0) appendCalcLog(id);
-                    saveCalcStateToServer();
+                    saveCalcStateToServer({ immediate: true });
                     updateCalcSummary(id);
                     updateCalcStatus(id);
                     const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
@@ -7142,7 +7148,7 @@ RESULTS_HTML = '''
                         if (r.profit >= targetAmount) {
                             calcState[id].running = false;
                             calcState[id].timer_completed = true;
-                            saveCalcStateToServer();
+                            saveCalcStateToServer({ immediate: true });
                             updateCalcSummary(id);
                             updateCalcStatus(id);
                             postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null });
@@ -7257,7 +7263,7 @@ RESULTS_HTML = '''
                 updateCalcDetail(id);
                 updateCalcStatus(id);
                 postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null, running: false });
-                await saveCalcStateToServer({ skipApplyForIds: [id] });
+                await saveCalcStateToServer({ skipApplyForIds: [id], immediate: true });
             });
         });
         document.querySelectorAll('.calc-reset').forEach(btn => {
@@ -7289,7 +7295,7 @@ RESULTS_HTML = '''
                 updateCalcBetCopyLine(id);
                 const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
                 if (saveBtn) saveBtn.style.display = 'none';
-                await saveCalcStateToServer({ skipApplyForIds: [id] });
+                await saveCalcStateToServer({ skipApplyForIds: [id], immediate: true });
             });
         });
         function exportCalcHistoryToCsv(id) {
