@@ -6801,20 +6801,10 @@ RESULTS_HTML = '''
                         continue;
                     }
                     
-                    // 서버에서 계산된 값이 있으면 사용. 단 chronologically 첫 회차(i===0)인데 저장 금액이 base보다 크면 이전 회차 누락으로 잘못 들어온 값일 수 있으므로 폴백에서 base부터 재계산
-                    if (h.betAmount != null && h.betAmount > 0 && !(i === 0 && h.betAmount > baseIn)) {
-                        const isJoker = h.actual === 'joker';
-                        const isWin = !isJoker && h.predicted === h.actual;
-                        var profitVal = h.profit;
-                        if (profitVal == null || profitVal === undefined) {
-                            profitVal = isJoker ? -h.betAmount : (isWin ? Math.floor(h.betAmount * (oddsIn - 1)) : -h.betAmount);
-                        }
-                        roundToBetProfit[rn] = { betAmount: h.betAmount, profit: profitVal, isWin: isWin, isJoker: isJoker };
-                        continue;
-                    }
+                    // 완료 행 배팅금액은 아래 마틴게일 시뮬레이션으로만 채움 (서버 h.betAmount 미사용 → 2열부터 마틴 정확)
                 }
                 
-                // 서버에서 계산된 값이 없는 경우 클라이언트에서 계산 (폴백). 서버 값이 있는 행도 자본/마틴 단계는 반영해 다음 행 계산이 맞게 나오도록 함.
+                // 완료 행 전부 마틴게일 시뮬레이션으로 배팅금액·수익 채움 (표시 일관성)
                 var martinTableDetail = getMartinTable(martingaleType, baseIn);
                 let cap = capIn, currentBet = baseIn, martingaleStep = 0;
                 for (let i = 0; i < completedHist.length; i++) {
