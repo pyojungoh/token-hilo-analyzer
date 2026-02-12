@@ -995,6 +995,7 @@ def _apply_results_to_calcs(results):
             if not state or not isinstance(state, dict):
                 continue
             updated = False
+            to_push = []  # (calculator_id, c) — save_calc_state 후에 푸시해 POST 시 서버 보정이 동작하도록
             for cid in ('1', '2', '3'):
                 c = state.get(cid)
                 if not c or not isinstance(c, dict) or not c.get('running'):
@@ -1010,7 +1011,7 @@ def _apply_results_to_calcs(results):
                         _, amt = _server_calc_effective_pick_and_amount(c)
                         c['pending_bet_amount'] = amt if amt is not None and amt > 0 else None
                         updated = True
-                        _push_current_pick_from_calc(int(cid), c)  # 매크로가 곧바로 픽 수신
+                        to_push.append((int(cid), c))
                     continue
                 actual = _get_actual_for_round(results, pending_round)
                 if actual is None:
@@ -1131,9 +1132,11 @@ def _apply_results_to_calcs(results):
                     _, next_amt = _server_calc_effective_pick_and_amount(c)
                     c['pending_bet_amount'] = next_amt if next_amt is not None and next_amt > 0 else None
                     updated = True
-                    _push_current_pick_from_calc(int(cid), c)  # 매크로가 곧바로 픽 수신
+                    to_push.append((int(cid), c))
             if updated:
-                save_calc_state(session_id, state)
+                save_calc_state(session_id, state)  # 먼저 저장 → POST /api/current-pick 시 get_calc_state가 새 상태를 읽어 금액 보정 가능
+                for calc_id, calc_c in to_push:
+                    _push_current_pick_from_calc(calc_id, calc_c)
     except Exception as e:
         print(f"[스케줄러] 회차 반영 오류: {str(e)[:200]}")
 
