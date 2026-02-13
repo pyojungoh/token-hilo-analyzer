@@ -687,7 +687,7 @@ def get_chunk_profile_stats(conn, profile, current_round=None):
             else:
                 kkeok_weighted += w
         total = jung_weighted + kkeok_weighted
-        if total < 5:
+        if total < 2:
             return None
         return {'jung_count': jung_weighted, 'kkeok_count': kkeok_weighted}
     except Exception:
@@ -2634,7 +2634,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         jc = chunk_profile_stats.get('jung_count') or 0
         kc = chunk_profile_stats.get('kkeok_count') or 0
         total = jc + kc
-        if total >= 5:
+        if total >= 2:
             jr = jc / total if total else 0
             kr = kc / total if total else 0
             w = 0.08 if total >= 15 else 0.05
@@ -2674,6 +2674,9 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         if shape_win_stats:
             pong_chunk_debug['shape_jung_count'] = shape_win_stats.get('jung_count')
             pong_chunk_debug['shape_kkeok_count'] = shape_win_stats.get('kkeok_count')
+        chunk_profile = _get_chunk_profile_from_results(results)
+        if chunk_profile:
+            pong_chunk_debug['chunk_profile'] = list(chunk_profile)
         if chunk_profile_stats:
             pong_chunk_debug['chunk_profile_jung'] = chunk_profile_stats.get('jung_count')
             pong_chunk_debug['chunk_profile_kkeok'] = chunk_profile_stats.get('kkeok_count')
@@ -6292,9 +6295,12 @@ RESULTS_HTML = '''
                             var chunkProfileStatsLabel = '—';
                             if (d.chunk_profile_jung != null && d.chunk_profile_kkeok != null) {
                                 var cj = Number(d.chunk_profile_jung) || 0, ck = Number(d.chunk_profile_kkeok) || 0;
-                                if (cj + ck >= 5) {
+                                if (cj + ck >= 2) {
                                     chunkProfileStatsLabel = '다음 정 ' + cj.toFixed(1) + ', 꺽 ' + ck.toFixed(1) + ' (유사 덩어리 가중)';
                                 }
+                            }
+                            if (chunkProfileStatsLabel === '—' && d.chunk_profile && Array.isArray(d.chunk_profile) && d.chunk_profile.length >= 2) {
+                                chunkProfileStatsLabel = '수집 중 (덩어리: ' + d.chunk_profile.join(',') + ')';
                             }
                             var latestNextPickLabel = '—';
                             if (d.latest_next_pick && (d.latest_next_pick === '정' || d.latest_next_pick === '꺽')) {
