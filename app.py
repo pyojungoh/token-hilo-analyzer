@@ -8652,32 +8652,44 @@ def api_current_pick():
                 out['pick_color'] = None
                 out['round'] = None
                 out['suggested_amount'] = None
-            # GET 시 금액: 스케줄러가 회차 반영 시 저장한 pending_bet_amount 우선(표와 동일 시점), 없으면 재계산
+            # GET 시 금액: 선택한 계산기 상단 "배팅중" 금액 = 클라이언트가 POST한 값(DB) 우선. 없을 때만 서버 재계산
             try:
-                state = get_calc_state('default') or {}
-                c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
-                if c and c.get('running') and c.get('pending_round') is not None:
-                    if out is None:
-                        out = dict(empty_pick)
+                db_amt = out.get('suggested_amount') if out else None
+                try:
+                    db_amt_val = int(db_amt) if db_amt is not None else 0
+                except (TypeError, ValueError):
+                    db_amt_val = 0
+                if out and db_amt_val > 0:
+                    # 계산기 상단에서 POST한 배팅중 금액이 있으면 그대로 반환 (매크로가 이 값 사용)
                     if not isinstance(out, dict):
                         out = dict(out) if out else dict(empty_pick)
                     out = dict(out)
-                    stored_amt = c.get('pending_bet_amount')
-                    if stored_amt is not None:
-                        try:
-                            amt_val = int(stored_amt)
-                            if amt_val > 0:
-                                out['suggested_amount'] = amt_val
-                            else:
-                                out['suggested_amount'] = None
-                        except (TypeError, ValueError):
-                            stored_amt = None
-                    if stored_amt is None:
-                        _, server_amt = _server_calc_effective_pick_and_amount(c)
-                        out['suggested_amount'] = int(server_amt) if server_amt is not None else None
-                elif c and c.get('paused') and out and isinstance(out, dict):
-                    out = dict(out)
-                    out['suggested_amount'] = None
+                    out['suggested_amount'] = db_amt_val
+                else:
+                    state = get_calc_state('default') or {}
+                    c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
+                    if c and c.get('running') and c.get('pending_round') is not None:
+                        if out is None:
+                            out = dict(empty_pick)
+                        if not isinstance(out, dict):
+                            out = dict(out) if out else dict(empty_pick)
+                        out = dict(out)
+                        stored_amt = c.get('pending_bet_amount')
+                        if stored_amt is not None:
+                            try:
+                                amt_val = int(stored_amt)
+                                if amt_val > 0:
+                                    out['suggested_amount'] = amt_val
+                                else:
+                                    out['suggested_amount'] = None
+                            except (TypeError, ValueError):
+                                stored_amt = None
+                        if stored_amt is None:
+                            _, server_amt = _server_calc_effective_pick_and_amount(c)
+                            out['suggested_amount'] = int(server_amt) if server_amt is not None else None
+                    elif c and c.get('paused') and out and isinstance(out, dict):
+                        out = dict(out)
+                        out['suggested_amount'] = None
             except Exception:
                 pass
             return jsonify(out if out else empty_pick), 200
@@ -8693,7 +8705,7 @@ def api_current_pick():
         probability = data.get('probability')
         suggested_amount = data.get('suggestedAmount') or data.get('suggested_amount')
         running = data.get('running')  # True/False 또는 없음 — 정지 시 클라이언트가 running: false 보내면 DB에 반영해 GET 시 픽 미반환
-        # 마틴 금액은 서버 한 곳에서만 결정: 계산기(1,2,3) POST 시 서버 calc 상태로 픽·회차·금액 전부 갱신. 클라이언트 suggested_amount 무시.
+        # 픽/회차는 서버 calc 상태로 맞추고, 금액은 선택한 계산기 상단 "배팅중"에서 보낸 값(suggested_amount) 그대로 사용 — 매크로가 그 금액을 GET으로 받음
         try:
             state = get_calc_state('default') or {}
             c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
@@ -8704,8 +8716,15 @@ def api_current_pick():
                     if srv_pick is not None:
                         pick_color = srv_pick
                     round_num = pr
-                    # 금액은 항상 서버 값만 사용 (클라이언트 값 사용 금지)
-                    suggested_amount = int(server_amt) if server_amt is not None else 0
+                    # 금액: 클라이언트(계산기 상단 배팅중)가 보낸 값이 있으면 그대로 사용, 없을 때만 서버 재계산
+                    try:
+                        client_amt = int(suggested_amount) if suggested_amount is not None else 0
+                    except (TypeError, ValueError):
+                        client_amt = 0
+                    if client_amt > 0:
+                        suggested_amount = client_amt
+                    else:
+                        suggested_amount = int(server_amt) if server_amt is not None else 0
                 except (TypeError, ValueError):
                     pass
             elif c is not None and c.get('paused'):
