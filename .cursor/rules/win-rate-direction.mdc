@@ -44,6 +44,7 @@ alwaysApply: true
 - 15경기 샘플은 **5회 이상**일 때만 적용; 그 미만이면 가중치 미적용.
 - **동기화**: 서버 `_server_win_rate_direction_zone`, `_server_calc_effective_pick_and_amount`, 클라이언트 `getWinRateDirectionZone`, `renderWinRateDirectionPanel`, 결과 반영·배팅중 카드 모두 동일 기준(53% / 47%) 적용.
 - **줄 5 이상 반픽 억제**: 방향 메뉴 옵션 "줄 5 이상 반픽 억제" 켜면, 실제 결과가 5연승 또는 5연패(같은 결과 5회 연속)일 때 승률반픽·연패반픽·승률방향 반픽 모두 미적용. 서버·클라이언트 `streak_suppress_reverse` 동일.
+- **연패 중 방향 고정**: 옵션 "연패 중 방향 고정" 켜면, 계산기 배팅이 연패 중(1연패 이상)일 때 방향을 바꾸지 않고 마지막 승 직후의 zone(low_rising/high_falling/mid_flat)을 유지. 서버 `_effective_win_rate_direction_zone`, 클라이언트 `getEffectiveWinRateDirectionZone` 모두 `lock_direction_on_lose_streak`, `last_win_rate_zone_on_win` 동일 적용.
 
 ## 민감도 조정 가이드
 

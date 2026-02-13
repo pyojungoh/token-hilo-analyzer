@@ -877,24 +877,43 @@ def _server_win_rate_direction_zone(ph):
 
 def _effective_win_rate_direction_zone(ph, c, current_round):
     """히스테리시스 적용된 zone. c에 last_win_rate_zone, last_win_rate_zone_change_round 저장.
-    쿨다운 제거 — 내림 감지 시 반대픽 즉시 전환."""
+    쿨다운 제거 — 내림 감지 시 반대픽 즉시 전환.
+    연패 중 방향 고정(lock_direction_on_lose_streak): 배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지."""
     raw_zone = _server_win_rate_direction_zone(ph)
     last_zone = c.get('last_win_rate_zone')
-    # low_rising(정픽) / high_falling(반대픽) / mid_flat 모두 raw 즉시 반영
+    lock_on_streak = bool(c.get('lock_direction_on_lose_streak', True))
+    lose_streak = _get_lose_streak_from_history(c.get('history') or [])
+
+    # 연패 중 방향 고정: 연패 >= 1이면 마지막 승 직후 zone 사용
+    if lock_on_streak and lose_streak >= 1:
+        zone_on_win = c.get('last_win_rate_zone_on_win')
+        if zone_on_win in ('low_rising', 'high_falling', 'mid_flat'):
+            return zone_on_win
+        # 저장된 값 없으면 last_zone 사용 (연패 직전에 사용하던 방향)
+        if last_zone in ('low_rising', 'high_falling', 'mid_flat'):
+            return last_zone
+        return raw_zone if raw_zone else last_zone
+
+    # 연패 0이면 raw_zone 반영 (승 직후이므로 zone_on_win 갱신)
     if raw_zone == 'low_rising':
         if raw_zone != last_zone:
             c['last_win_rate_zone'] = raw_zone
             c['last_win_rate_zone_change_round'] = current_round
+        c['last_win_rate_zone_on_win'] = raw_zone
         return raw_zone
     if raw_zone == 'high_falling':
         if raw_zone != last_zone:
             c['last_win_rate_zone'] = raw_zone
             c['last_win_rate_zone_change_round'] = current_round
+        c['last_win_rate_zone_on_win'] = raw_zone
         return raw_zone
     if raw_zone and raw_zone != last_zone:
         c['last_win_rate_zone'] = raw_zone
         c['last_win_rate_zone_change_round'] = current_round
-    return raw_zone if raw_zone else last_zone
+    effective = raw_zone if raw_zone else last_zone
+    if effective:
+        c['last_win_rate_zone_on_win'] = effective
+    return effective
 
 
 def _update_calc_paused_after_round(c):
@@ -3925,7 +3944,7 @@ RESULTS_HTML = '''
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-1-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label></td></tr>
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-1-lose-streak-reverse"> 연패≥<input type="number" id="calc-1-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-1-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
-                                    <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-1-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label></td></tr>
+                                    <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-1-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-1-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                     <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-1-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-1-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
@@ -3964,7 +3983,7 @@ RESULTS_HTML = '''
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-2-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label></td></tr>
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-2-lose-streak-reverse"> 연패≥<input type="number" id="calc-2-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-2-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
-                                    <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-2-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label></td></tr>
+                                    <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-2-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-2-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                     <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-2-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-2-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
@@ -4003,7 +4022,7 @@ RESULTS_HTML = '''
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-3-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label></td></tr>
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-3-lose-streak-reverse"> 연패≥<input type="number" id="calc-3-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-3-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
-                                    <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-3-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label></td></tr>
+                                    <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-3-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-3-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                     <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-3-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-3-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
@@ -4301,6 +4320,7 @@ RESULTS_HTML = '''
                 lose_streak_reverse_min_streak: 3,
                 win_rate_direction_reverse: false,
                 streak_suppress_reverse: false,
+                lock_direction_on_lose_streak: true,
                 last_trend_direction: null,
                 martingale: false,
                 martingale_type: 'pyo',
@@ -4368,6 +4388,7 @@ RESULTS_HTML = '''
                     lose_streak_reverse_min_streak: (function() { var el = document.getElementById('calc-' + id + '-lose-streak-reverse-min'); var v = el && !isNaN(parseInt(el.value, 10)) ? Math.max(2, Math.min(15, parseInt(el.value, 10))) : 3; return typeof v === 'number' && !isNaN(v) ? v : 3; })(),
                     win_rate_direction_reverse: !!(document.getElementById('calc-' + id + '-win-rate-direction-reverse') && document.getElementById('calc-' + id + '-win-rate-direction-reverse').checked),
                     streak_suppress_reverse: !!(document.getElementById('calc-' + id + '-streak-suppress-reverse') && document.getElementById('calc-' + id + '-streak-suppress-reverse').checked),
+                    lock_direction_on_lose_streak: !!(document.getElementById('calc-' + id + '-lock-direction-on-lose-streak') && document.getElementById('calc-' + id + '-lock-direction-on-lose-streak').checked),
                     last_trend_direction: (calcState[id].last_trend_direction === 'up' || calcState[id].last_trend_direction === 'down') ? calcState[id].last_trend_direction : null,
                     martingale: !!(martingaleEl && martingaleEl.checked),
                     martingale_type: (martingaleTypeEl && martingaleTypeEl.value) || 'pyo',
@@ -4386,7 +4407,8 @@ RESULTS_HTML = '''
                     pending_color: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.color) || calcState[id].pending_color) : null,
                     pending_bet_amount: (calcState[id].pending_bet_amount != null && calcState[id].pending_bet_amount > 0) ? calcState[id].pending_bet_amount : null,
                     last_win_rate_zone: (calcState[id].last_win_rate_zone === 'high_falling' || calcState[id].last_win_rate_zone === 'low_rising' || calcState[id].last_win_rate_zone === 'mid_flat') ? calcState[id].last_win_rate_zone : null,
-                    last_win_rate_zone_change_round: (calcState[id].last_win_rate_zone_change_round != null && !isNaN(Number(calcState[id].last_win_rate_zone_change_round))) ? Number(calcState[id].last_win_rate_zone_change_round) : null
+                    last_win_rate_zone_change_round: (calcState[id].last_win_rate_zone_change_round != null && !isNaN(Number(calcState[id].last_win_rate_zone_change_round))) ? Number(calcState[id].last_win_rate_zone_change_round) : null,
+                    last_win_rate_zone_on_win: (calcState[id].last_win_rate_zone_on_win === 'high_falling' || calcState[id].last_win_rate_zone_on_win === 'low_rising' || calcState[id].last_win_rate_zone_on_win === 'mid_flat') ? calcState[id].last_win_rate_zone_on_win : null
                 };
             });
             return payload;
@@ -4518,9 +4540,11 @@ RESULTS_HTML = '''
                 calcState[id].lose_streak_reverse_min_streak = minStreakRestore;
                 calcState[id].win_rate_direction_reverse = !!c.win_rate_direction_reverse;
                 calcState[id].streak_suppress_reverse = !!c.streak_suppress_reverse;
+                calcState[id].lock_direction_on_lose_streak = c.lock_direction_on_lose_streak !== false;
                 calcState[id].last_trend_direction = (c.last_trend_direction === 'up' || c.last_trend_direction === 'down') ? c.last_trend_direction : null;
                 calcState[id].last_win_rate_zone = (c.last_win_rate_zone === 'high_falling' || c.last_win_rate_zone === 'low_rising' || c.last_win_rate_zone === 'mid_flat') ? c.last_win_rate_zone : null;
                 calcState[id].last_win_rate_zone_change_round = (c.last_win_rate_zone_change_round != null && !isNaN(Number(c.last_win_rate_zone_change_round))) ? Number(c.last_win_rate_zone_change_round) : null;
+                calcState[id].last_win_rate_zone_on_win = (c.last_win_rate_zone_on_win === 'high_falling' || c.last_win_rate_zone_on_win === 'low_rising' || c.last_win_rate_zone_on_win === 'mid_flat') ? c.last_win_rate_zone_on_win : null;
                 if (!fullRestore) return;
                 calcState[id].reverse = !!c.reverse;
                 calcState[id].win_rate_reverse = !!c.win_rate_reverse;
@@ -4550,6 +4574,8 @@ RESULTS_HTML = '''
                 if (winRateDirRevEl) winRateDirRevEl.checked = !!calcState[id].win_rate_direction_reverse;
                 var streakSuppressEl = document.getElementById('calc-' + id + '-streak-suppress-reverse');
                 if (streakSuppressEl) streakSuppressEl.checked = !!calcState[id].streak_suppress_reverse;
+                var lockDirEl = document.getElementById('calc-' + id + '-lock-direction-on-lose-streak');
+                if (lockDirEl) lockDirEl.checked = calcState[id].lock_direction_on_lose_streak !== false;
                 const martingaleEl = document.getElementById('calc-' + id + '-martingale');
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 if (martingaleEl) martingaleEl.checked = !!calcState[id].martingale;
@@ -6591,12 +6617,22 @@ RESULTS_HTML = '''
         function getEffectiveWinRateDirectionZone(ph, id, currentRound) {
             var rawZone = getWinRateDirectionZone(ph);
             var lastZone = calcState[id] && calcState[id].last_win_rate_zone;
+            var lockOnStreak = !!(calcState[id] && calcState[id].lock_direction_on_lose_streak);
+            var loseStreak = typeof getLoseStreak === 'function' ? getLoseStreak(id) : 0;
+            // 연패 중 방향 고정: 연패 >= 1이면 마지막 승 직후 zone 사용
+            if (lockOnStreak && loseStreak >= 1) {
+                var zoneOnWin = calcState[id] && calcState[id].last_win_rate_zone_on_win;
+                if (zoneOnWin === 'low_rising' || zoneOnWin === 'high_falling' || zoneOnWin === 'mid_flat') return zoneOnWin;
+                if (lastZone === 'low_rising' || lastZone === 'high_falling' || lastZone === 'mid_flat') return lastZone;
+                return rawZone || lastZone;
+            }
             // 쿨다운 제거 — 내림 감지 시 반대픽 즉시 전환
             if (rawZone === 'low_rising') {
                 if (rawZone !== lastZone) {
                     calcState[id].last_win_rate_zone = rawZone;
                     calcState[id].last_win_rate_zone_change_round = currentRound;
                 }
+                calcState[id].last_win_rate_zone_on_win = rawZone;
                 return rawZone;
             }
             if (rawZone === 'high_falling') {
@@ -6604,13 +6640,16 @@ RESULTS_HTML = '''
                     calcState[id].last_win_rate_zone = rawZone;
                     calcState[id].last_win_rate_zone_change_round = currentRound;
                 }
+                calcState[id].last_win_rate_zone_on_win = rawZone;
                 return rawZone;
             }
             if (rawZone && rawZone !== lastZone) {
                 calcState[id].last_win_rate_zone = rawZone;
                 calcState[id].last_win_rate_zone_change_round = currentRound;
             }
-            return rawZone || lastZone;
+            var effective = rawZone || lastZone;
+            if (effective) calcState[id].last_win_rate_zone_on_win = effective;
+            return effective;
         }
         function renderWinRateDirectionPanel() {
             var tbody = document.getElementById('win-rate-direction-tbody');
@@ -7377,6 +7416,10 @@ RESULTS_HTML = '''
                 calcState[id].lose_streak_reverse_min_streak = (loseStreakMinRunEl && !isNaN(parseInt(loseStreakMinRunEl.value, 10))) ? Math.max(2, Math.min(15, parseInt(loseStreakMinRunEl.value, 10))) : 3;
                 const winRateDirRevRun = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
                 calcState[id].win_rate_direction_reverse = !!(winRateDirRevRun && winRateDirRevRun.checked);
+                var streakSuppressRun = document.getElementById('calc-' + id + '-streak-suppress-reverse');
+                calcState[id].streak_suppress_reverse = !!(streakSuppressRun && streakSuppressRun.checked);
+                var lockDirRun = document.getElementById('calc-' + id + '-lock-direction-on-lose-streak');
+                calcState[id].lock_direction_on_lose_streak = !(lockDirRun && !lockDirRun.checked);
                 calcState[id].last_trend_direction = null;
                 const pauseLowRun = document.getElementById('calc-' + id + '-pause-low-win-rate');
                 const pauseThrRunEl = document.getElementById('calc-' + id + '-pause-win-rate-threshold');
@@ -8346,6 +8389,7 @@ def api_calc_state():
                     'lose_streak_reverse_min_streak': max(2, min(15, int(c.get('lose_streak_reverse_min_streak') or 3))),
                     'win_rate_direction_reverse': bool(c.get('win_rate_direction_reverse')),
                     'streak_suppress_reverse': bool(c.get('streak_suppress_reverse')),
+                    'lock_direction_on_lose_streak': bool(c.get('lock_direction_on_lose_streak', True)),
                     'last_trend_direction': c.get('last_trend_direction') if c.get('last_trend_direction') in ('up', 'down') else None,
                     'martingale': bool(c.get('martingale')),
                     'martingale_type': str(c.get('martingale_type') or 'pyo'),
@@ -8364,9 +8408,10 @@ def api_calc_state():
                     'pending_bet_amount': current_c.get('pending_bet_amount') if current_c.get('pending_bet_amount') is not None else c.get('pending_bet_amount'),
                     'last_win_rate_zone': c.get('last_win_rate_zone') or current_c.get('last_win_rate_zone'),
                     'last_win_rate_zone_change_round': c.get('last_win_rate_zone_change_round') if c.get('last_win_rate_zone_change_round') is not None else current_c.get('last_win_rate_zone_change_round'),
+                    'last_win_rate_zone_on_win': c.get('last_win_rate_zone_on_win') or current_c.get('last_win_rate_zone_on_win'),
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'lock_direction_on_lose_streak': True, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None, 'last_win_rate_zone_on_win': None}
         save_calc_state(session_id, out)
         # 계산기 running 상태를 current_pick에 반영 → 에뮬레이터 매크로가 목표 달성 시 자동 중지
         if bet_int:
