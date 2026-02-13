@@ -7032,19 +7032,20 @@ RESULTS_HTML = '''
                         byRound[Number(p.round)] = { actual: p.actual };
                     }
                 });
+                var currentPredRound = (typeof lastPrediction !== 'undefined' && lastPrediction && lastPrediction.round != null) ? Number(lastPrediction.round) : null;
+                var running = !!(calcState[id] && calcState[id].running);
                 var changed = false;
                 var hist = calcState[id].history || [];
                 hist.forEach(function(h) {
                     if (!h) return;
-                    // pending이거나 실제 결과가 없는 경우 서버에서 가져옴
-                    if (h.actual === 'pending' || !h.actual || h.actual === '') {
-                        var r = Number(h.round);
-                        if (isNaN(r)) return;
-                        var fromServer = byRound[r];
-                        if (!fromServer) return;
-                        h.actual = fromServer.actual;
-                        changed = true;
-                    }
+                    if (h.actual !== 'pending' && h.actual != null && h.actual !== '') return;
+                    var r = Number(h.round);
+                    if (isNaN(r)) return;
+                    if (running && r === currentPredRound) return;
+                    var fromServer = byRound[r];
+                    if (!fromServer) return;
+                    h.actual = fromServer.actual;
+                    changed = true;
                 });
                 if (changed) {
                     calcState[id].history = dedupeCalcHistoryByRound(hist);
