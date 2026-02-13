@@ -804,8 +804,8 @@ def _server_win_rate_direction_zone(ph):
     else:
         ratio_fixed = (current - WIN_RATE_LOW_BAND) / (WIN_RATE_HIGH_BAND - WIN_RATE_LOW_BAND)
     ratio_dynamic = (current - low) / (high - low) if high > low else 0.5
-    WIN_RATE_DIR_DELTA4 = 0.42   # 더 일찍 전환: 오름/내림 판정 민감
-    WIN_RATE_DIR_DELTA5 = 0.47   # 더 일찍 전환: 고점하락/저점상승 판정 민감
+    WIN_RATE_DIR_DELTA4 = 0.46   # 올릴수록 방향 전환 보수적(천천히) — 오름/내림 판정
+    WIN_RATE_DIR_DELTA5 = 0.52   # 올릴수록 방향 전환 보수적 — 고점하락/저점상승 판정
     if len(derived) >= 4:
         recent = rates[-1]
         prev4 = rates[-4]
@@ -6397,7 +6397,7 @@ RESULTS_HTML = '''
             var ratioDynamic = (current - low) / (high - low);
             var WIN_RATE_LOW_BAND = 43, WIN_RATE_HIGH_BAND = 57;
             var ratioFixed = current <= WIN_RATE_LOW_BAND ? 0 : (current >= WIN_RATE_HIGH_BAND ? 1 : (current - WIN_RATE_LOW_BAND) / (WIN_RATE_HIGH_BAND - WIN_RATE_LOW_BAND));
-            var D4 = 0.42, D5 = 0.47, R_LOW = 0.48, R_HIGH = 0.54;
+            var D4 = 0.46, D5 = 0.52, R_LOW = 0.48, R_HIGH = 0.54;
             if (derivedSeries.length >= 4) {
                 var recent = derivedSeries[derivedSeries.length - 1].rate50;
                 var prev4 = derivedSeries[derivedSeries.length - 4].rate50;
@@ -6493,7 +6493,7 @@ RESULTS_HTML = '''
                 if (derivedSeries.length >= 4) {
                     var recent = derivedSeries[derivedSeries.length - 1].rate50;
                     var prev = derivedSeries[derivedSeries.length - 4].rate50;
-                    var d4 = 0.42;  // WIN_RATE_DIR_DELTA4와 동일 — 포인트값만 조정
+                    var d4 = 0.46;  // WIN_RATE_DIR_DELTA4와 동일 — 포인트값만 조정
                     if (recent > prev + d4) { direction = '오름'; directionClass = 'color:#81c784;'; }
                     else if (recent < prev - d4) { direction = '내림'; directionClass = 'color:#e57373;'; }
                 }
@@ -6517,7 +6517,7 @@ RESULTS_HTML = '''
                     var rate5Ago = derivedSeries[derivedSeries.length - 6].rate50;
                     var delta5 = current - rate5Ago;
                     var ratio = (current - low) / (high - low);
-                    var d4 = 0.42, d5 = 0.47;
+                    var d4 = 0.46, d5 = 0.52;
                     var WIN_RATE_LOW_BAND = 43, WIN_RATE_HIGH_BAND = 57;
                     var isRising = direction === '오름';
                     var isFalling = direction === '내림';

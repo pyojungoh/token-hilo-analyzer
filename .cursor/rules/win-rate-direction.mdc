@@ -24,15 +24,15 @@ alwaysApply: true
 
 | 상수 | 위치 | 현재값 | 효과 |
 |------|------|--------|------|
-| **WIN_RATE_DIR_DELTA4** | 서버 `_server_win_rate_direction_zone` | 0.42 | 4구간 차이 %p — 오름/내림 판정 (↑=보수적, 반대픽 덜 나옴) |
-| **WIN_RATE_DIR_DELTA5** | 서버 `_server_win_rate_direction_zone` | 0.47 | 5구간 차이 %p — 고점하락/저점상승 판정 |
+| **WIN_RATE_DIR_DELTA4** | 서버 `_server_win_rate_direction_zone` | 0.46 | 4구간 차이 %p — 오름/내림 판정 (↑=보수적, 반대픽 덜 나옴) |
+| **WIN_RATE_DIR_DELTA5** | 서버 `_server_win_rate_direction_zone` | 0.52 | 5구간 차이 %p — 고점하락/저점상승 판정 |
 | R_LOW / R_HIGH (ratio) | 동일 | 0.48, 0.54 | 중간 구간 정픽/반대픽 기준 |
 
 ## 수정 시 반드시 같이 바꿀 위치
 
 1. **서버**: `app.py` `_server_win_rate_direction_zone` 함수 내 `WIN_RATE_DIR_*` 상수
-2. **클라이언트 getWinRateDirectionZone**: `app.py` 내 `var D4 = 0.42, D5 = 0.47, R_LOW = 0.48, R_HIGH = 0.54;`
-3. **클라이언트 renderWinRateDirectionPanel** (방향·추세 구간): `d4 = 0.42`, `d5 = 0.47`, `R_LOW = 0.48`, `R_HIGH = 0.54`
+2. **클라이언트 getWinRateDirectionZone**: `app.py` 내 `var D4 = 0.46, D5 = 0.52, R_LOW = 0.48, R_HIGH = 0.54;`
+3. **클라이언트 renderWinRateDirectionPanel** (방향·추세 구간): `d4 = 0.46`, `d5 = 0.52`, `R_LOW = 0.48`, `R_HIGH = 0.54`
 
 세 곳 모두 동일한 숫자로 맞출 것.
 
