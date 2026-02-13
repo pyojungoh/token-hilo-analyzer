@@ -8807,18 +8807,35 @@ def api_current_pick():
                 try:
                     srv_pick, server_amt = _server_calc_effective_pick_and_amount(c)
                     pr = c.get('pending_round')
-                    if srv_pick is not None:
-                        pick_color = srv_pick
-                    round_num = pr
-                    # 금액: 클라이언트(계산기 상단 배팅중)가 보낸 값이 있으면 그대로 사용, 없을 때만 서버 재계산
+                    # 클라이언트 회차가 서버보다 크면 클라이언트 값 사용 — 1회차 느림 방지 (결과 반영 직후 클라이언트가 먼저 POST할 때)
                     try:
-                        client_amt = int(suggested_amount) if suggested_amount is not None else 0
+                        pr_int = int(pr) if pr is not None else None
+                        cr_int = int(round_num) if round_num is not None else None
+                        use_client_round = cr_int is not None and (pr_int is None or cr_int > pr_int)
                     except (TypeError, ValueError):
-                        client_amt = 0
-                    if client_amt > 0:
-                        suggested_amount = client_amt
+                        use_client_round = False
+                    if use_client_round:
+                        round_num = cr_int
+                        # 픽/금액도 클라이언트 사용 (서버는 아직 새 회차 반영 전)
+                        if pick_color:
+                            pass  # 클라이언트 pick_color 그대로
+                        try:
+                            client_amt = int(suggested_amount) if suggested_amount is not None else 0
+                            suggested_amount = client_amt if client_amt > 0 else (int(server_amt) if server_amt is not None else 0)
+                        except (TypeError, ValueError):
+                            suggested_amount = int(server_amt) if server_amt is not None else 0
                     else:
-                        suggested_amount = int(server_amt) if server_amt is not None else 0
+                        round_num = pr
+                        if srv_pick is not None:
+                            pick_color = srv_pick
+                        try:
+                            client_amt = int(suggested_amount) if suggested_amount is not None else 0
+                            if client_amt > 0:
+                                suggested_amount = client_amt
+                            else:
+                                suggested_amount = int(server_amt) if server_amt is not None else 0
+                        except (TypeError, ValueError):
+                            suggested_amount = int(server_amt) if server_amt is not None else 0
                 except (TypeError, ValueError):
                     pass
             elif c is not None and c.get('paused'):
