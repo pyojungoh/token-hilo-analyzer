@@ -6280,6 +6280,18 @@ RESULTS_HTML = '''
             var wins = last15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; });
             return (wins.length / last15.length) * 100;
         }
+        /** 해당 회차(upToRound) 완료 시점의 15회 승률. 표 15회승률 열 저장값 보정용 — 완료 행에 rate15 없을 때 한 번만 채움. */
+        function getCalcRecent15WinRateAtRound(id, upToRound) {
+            var hist = calcState[id] && calcState[id].history;
+            if (!Array.isArray(hist) || upToRound == null) return null;
+            var completed = hist.filter(function(h) { return h && h.actual && h.actual !== 'pending' && h.actual !== '' && h.round != null; });
+            completed.sort(function(a, b) { return (Number(a.round) || 0) - (Number(b.round) || 0); });
+            var upTo = completed.filter(function(h) { return Number(h.round) <= Number(upToRound); });
+            var last15 = upTo.slice(-15);
+            if (last15.length < 1) return null;
+            var wins = last15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; });
+            return Math.round((wins.length / last15.length) * 1000) / 10;
+        }
         /** 경고 표와 동일한 합산승률(blended). 멈춤은 계산기 표 15회 승률 기준으로 변경됨. */
         function getBlendedWinRate() {
             var vh = Array.isArray(predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object' && h.actual !== 'joker'; }) : [];
@@ -7080,15 +7092,24 @@ RESULTS_HTML = '''
                 const pickVal = h.predicted === '정' ? '정' : '꺽';
                 const pickClass = (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : 'pick-kkuk')));
                 const warningWinRateVal = (typeof h.warningWinRate === 'number' && !isNaN(h.warningWinRate)) ? h.warningWinRate.toFixed(1) + '%' : '-';
-                // 15회 승률: 저장값 없으면 pending/대기 행에는 현재 15회 승률 표시 (1열에 정보 들어가게)
+                // 15회 승률: CALCULATOR_GUIDE — 표에는 회차별 저장값(rate15) 표시. 없으면 완료 행은 해당 시점 15회 승률 계산 후 저장(한 번만).
                 var rate15Val;
                 if (typeof h.rate15 === 'number' && !isNaN(h.rate15)) {
                     rate15Val = h.rate15.toFixed(1) + '%';
-                } else if ((h.actual === 'pending' || !h.actual || h.actual === '') && typeof getCalcRecent15WinRate === 'function') {
-                    var r15 = getCalcRecent15WinRate(id);
-                    rate15Val = (typeof r15 === 'number' && !isNaN(r15)) ? r15.toFixed(1) + '%' : '-';
+                } else if (h.actual === 'pending' || !h.actual || h.actual === '') {
+                    if (typeof getCalcRecent15WinRate === 'function') {
+                        var r15 = getCalcRecent15WinRate(id);
+                        rate15Val = (typeof r15 === 'number' && !isNaN(r15)) ? r15.toFixed(1) + '%' : '-';
+                    } else rate15Val = '-';
                 } else {
-                    rate15Val = '-';
+                    // 완료 행인데 rate15 없음 → 해당 회차 시점 15회 승률 계산 후 h.rate15에 저장(저장되면 다음부터 표시 유지)
+                    if (typeof getCalcRecent15WinRateAtRound === 'function' && !isNaN(rn)) {
+                        var atRound = getCalcRecent15WinRateAtRound(id, rn);
+                        if (atRound != null && !isNaN(atRound)) {
+                            h.rate15 = atRound;
+                            rate15Val = atRound.toFixed(1) + '%';
+                        } else rate15Val = '-';
+                    } else rate15Val = '-';
                 }
                 var betStr, profitStr, res, outcome, resultClass, outClass;
                 // 계산기 표는 한 행 기준 통일: 픽·배팅금액·수익·승패 모두 이 행(h)의 predicted/actual만 사용 (예측기표 actual 혼합 시 행 내 불일치 방지)
