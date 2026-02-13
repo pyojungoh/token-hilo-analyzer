@@ -1175,6 +1175,7 @@ def _round_eq(a, b):
 def _calculate_calc_profit_server(calc_state, history_entry):
     """서버에서 계산기 수익, 마틴게일 단계, 연승/연패 계산. history_entry에 계산된 값 추가."""
     MARTIN_PYO_RATIOS = [1, 1.5, 2.5, 4, 7, 12, 20, 40, 40]
+    MARTIN_PYO2_RATIOS = [1, 1.5, 2.5, 4, 7, 12, 20, 45, 80, 100]
     
     capital = float(calc_state.get('capital', 1000000))
     base = float(calc_state.get('base', 10000))
@@ -1207,7 +1208,8 @@ def _calculate_calc_profit_server(calc_state, history_entry):
     current_bet = base
     
     # 마틴게일 테이블 생성
-    martin_table = [round(base * r) for r in MARTIN_PYO_RATIOS]
+    ratios = MARTIN_PYO2_RATIOS if martingale_type == 'pyo2' else MARTIN_PYO_RATIOS
+    martin_table = [round(base * r) for r in ratios]
     if martingale_type == 'pyo_half':
         martin_table = [round(x / 2) for x in martin_table]
     
@@ -1216,7 +1218,7 @@ def _calculate_calc_profit_server(calc_state, history_entry):
         if h.get('no_bet') or (h.get('betAmount') == 0):
             continue
         
-        if martingale and martingale_type in ('pyo', 'pyo_half'):
+        if martingale and martingale_type in ('pyo', 'pyo_half', 'pyo2'):
             current_bet = martin_table[min(martingale_step, len(martin_table) - 1)]
         else:
             current_bet = min(current_bet, int(cap))
@@ -1232,19 +1234,19 @@ def _calculate_calc_profit_server(calc_state, history_entry):
         
         if is_joker:
             cap -= bet
-            if martingale and martingale_type in ('pyo', 'pyo_half'):
+            if martingale and martingale_type in ('pyo', 'pyo_half', 'pyo2'):
                 martingale_step = min(martingale_step + 1, len(martin_table) - 1)
             else:
                 current_bet = min(current_bet * 2, int(cap))
         elif is_win:
             cap += bet * (odds - 1)
-            if martingale and martingale_type in ('pyo', 'pyo_half'):
+            if martingale and martingale_type in ('pyo', 'pyo_half', 'pyo2'):
                 martingale_step = 0
             else:
                 current_bet = base
         else:
             cap -= bet
-            if martingale and martingale_type in ('pyo', 'pyo_half'):
+            if martingale and martingale_type in ('pyo', 'pyo_half', 'pyo2'):
                 martingale_step = min(martingale_step + 1, len(martin_table) - 1)
             else:
                 current_bet = min(current_bet * 2, int(cap))
@@ -1253,7 +1255,7 @@ def _calculate_calc_profit_server(calc_state, history_entry):
             break
     
     # 현재 회차의 배팅금액 계산
-    if martingale and martingale_type in ('pyo', 'pyo_half'):
+    if martingale and martingale_type in ('pyo', 'pyo_half', 'pyo2'):
         current_bet = martin_table[min(martingale_step, len(martin_table) - 1)]
     else:
         current_bet = min(current_bet, int(cap))
@@ -4330,7 +4332,7 @@ RESULTS_HTML = '''
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-1-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-1-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-1-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
-                                            <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
+                                            <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option><option value="pyo2">표마틴 2</option></select></label></td></tr>
                                             <tr><td>목표</td><td><label><input type="checkbox" id="calc-1-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-1-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-1-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
                                             <tr><td>배팅복사</td><td><span id="calc-1-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
                                         </table>
@@ -4377,7 +4379,7 @@ RESULTS_HTML = '''
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-2-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-2-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-2-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
-                                            <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
+                                            <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option><option value="pyo2">표마틴 2</option></select></label></td></tr>
                                             <tr><td>목표</td><td><label><input type="checkbox" id="calc-2-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-2-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-2-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
                                             <tr><td>배팅복사</td><td><span id="calc-2-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
                                         </table>
@@ -4424,7 +4426,7 @@ RESULTS_HTML = '''
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-3-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-3-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-3-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
-                                            <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
+                                            <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option><option value="pyo2">표마틴 2</option></select></label></td></tr>
                                             <tr><td>목표</td><td><label><input type="checkbox" id="calc-3-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-3-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-3-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
                                             <tr><td>배팅복사</td><td><span id="calc-3-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
                                         </table>
@@ -4700,9 +4702,12 @@ RESULTS_HTML = '''
         const calcState = {};
         // 표마틴: 기준금액(배팅금액)에 맞게 9단계. 비율 [1, 1.5, 2.5, 4, 7, 12, 20, 40, 40]
         var MARTIN_PYO_RATIOS = [1, 1.5, 2.5, 4, 7, 12, 20, 40, 40];
+        // 표마틴 2: 10단계. 비율 [1, 1.5, 2.5, 4, 7, 12, 20, 45, 80, 100]
+        var MARTIN_PYO2_RATIOS = [1, 1.5, 2.5, 4, 7, 12, 20, 45, 80, 100];
         function getMartinTable(type, baseAmount) {
             var base = (baseAmount != null && !isNaN(Number(baseAmount)) && Number(baseAmount) > 0) ? Number(baseAmount) : 10000;
-            var table = MARTIN_PYO_RATIOS.map(function(r) { return Math.round(base * r); });
+            var ratios = (type === 'pyo2') ? MARTIN_PYO2_RATIOS : MARTIN_PYO_RATIOS;
+            var table = ratios.map(function(r) { return Math.round(base * r); });
             return (type === 'pyo_half') ? table.map(function(x) { return Math.floor(x / 2); }) : table;
         }
         CALC_IDS.forEach(id => {
@@ -4955,7 +4960,7 @@ RESULTS_HTML = '''
                 var thr = (typeof c.win_rate_threshold === 'number' && c.win_rate_threshold >= 0 && c.win_rate_threshold <= 100) ? c.win_rate_threshold : 46;
                 calcState[id].win_rate_threshold = thr;
                 calcState[id].martingale = !!c.martingale;
-                calcState[id].martingale_type = (c.martingale_type === 'pyo_half' ? 'pyo_half' : 'pyo');
+                calcState[id].martingale_type = (c.martingale_type === 'pyo_half' ? 'pyo_half' : (c.martingale_type === 'pyo2' ? 'pyo2' : 'pyo'));
                 calcState[id].target_enabled = !!c.target_enabled;
                 calcState[id].target_amount = Math.max(0, parseInt(c.target_amount, 10) || 0);
                 const durEl = document.getElementById('calc-' + id + '-duration');
@@ -4985,7 +4990,7 @@ RESULTS_HTML = '''
                 const martingaleEl = document.getElementById('calc-' + id + '-martingale');
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 if (martingaleEl) martingaleEl.checked = !!calcState[id].martingale;
-                if (martingaleTypeEl) martingaleTypeEl.value = (calcState[id].martingale_type === 'pyo_half' ? 'pyo_half' : 'pyo');
+                if (martingaleTypeEl) martingaleTypeEl.value = (calcState[id].martingale_type === 'pyo_half' ? 'pyo_half' : (calcState[id].martingale_type === 'pyo2' ? 'pyo2' : 'pyo'));
                 const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
                 const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
                 if (targetEnabledEl) targetEnabledEl.checked = !!calcState[id].target_enabled;
@@ -6672,7 +6677,7 @@ RESULTS_HTML = '''
                 if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
                 if (h.actual === 'pending') continue;  // 미결 회차는 배팅금·수익 계산에서 제외
                 if (h.no_bet === true || (h.betAmount != null && h.betAmount === 0)) continue;  // 멈춤 회차(배팅 안 함)는 순익/자본 계산에서 제외
-                if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
+                if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) {
                     currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
                 }
                 var bet = Math.min(currentBet, Math.floor(cap));  // 완료 행은 시뮬레이션 기준 배팅금만 사용 (h.betAmount 미사용)
@@ -6681,13 +6686,13 @@ RESULTS_HTML = '''
                 const isWin = !isJoker && h.predicted === h.actual;
                 if (isJoker) {
                     cap -= bet;
-                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1);
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1);
                     else currentBet = Math.min(currentBet * 2, Math.floor(cap));
                     curWin = 0;
                     curLose = 0;
                 } else if (isWin) {
                     cap += bet * (oddsIn - 1);
-                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = 0;
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) martingaleStep = 0;
                     else currentBet = baseIn;
                     wins++;
                     curWin++;
@@ -6695,7 +6700,7 @@ RESULTS_HTML = '''
                     if (curWin > maxWinStreak) maxWinStreak = curWin;
                 } else {
                     cap -= bet;
-                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1);
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1);
                     else currentBet = Math.min(currentBet * 2, Math.floor(cap));
                     losses++;
                     curLose++;
@@ -6706,7 +6711,7 @@ RESULTS_HTML = '''
                 if (cap <= 0) { bust = true; break; }
             }
             var martinTableFinal = getMartinTable(martingaleType, baseIn);
-            if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
+            if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) {
                 currentBet = bust ? 0 : martinTableFinal[Math.min(martingaleStep, martinTableFinal.length - 1)];
             }
             if (calcState[id]) {
@@ -6740,18 +6745,18 @@ RESULTS_HTML = '''
                     var h = sorted[i];
                     if (!h || typeof h.predicted === 'undefined' || typeof h.actual === 'undefined') continue;
                     if (h.no_bet === true || (h.betAmount != null && h.betAmount === 0)) continue;  // 멈춤 회차는 배팅 없음 → 자본/마틴 단계 변화 없음
-                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
                     var bet = Math.min(currentBet, Math.floor(cap));
                     if (cap < bet || cap <= 0) return 0;
                     var isJoker = h.actual === 'joker';
                     var isWin = !isJoker && h.predicted === h.actual;
-                    if (isJoker) { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
-                    else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = 0; else currentBet = baseIn; }
-                    else { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
+                    if (isJoker) { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
+                    else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) martingaleStep = 0; else currentBet = baseIn; }
+                    else { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) martingaleStep = Math.min(martingaleStep + 1, martinTable.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
                     if (cap <= 0) return 0;
                 }
                 // [변경] 직전 회차가 pending일 때 패배 가정 제거 — 마틴 한 단계 더 가는 버그 방지 (계산기표 vs 자동배팅 금액 불일치 원인)
-                if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
+                if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
                 return Math.min(currentBet, Math.floor(cap));
             } catch (e) { return 0; }
         }
@@ -7620,21 +7625,21 @@ RESULTS_HTML = '''
                         const bet = roundToBetProfit[rn].betAmount || 0;
                         const isJoker = roundToBetProfit[rn].isJoker;
                         const isWin = roundToBetProfit[rn].isWin;
-                        if (isJoker) { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
-                        else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = 0; else currentBet = baseIn; }
-                        else { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
+                        if (isJoker) { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
+                        else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) martingaleStep = 0; else currentBet = baseIn; }
+                        else { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
                         continue;
                     }
                     
-                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) currentBet = martinTableDetail[Math.min(martingaleStep, martinTableDetail.length - 1)];
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) currentBet = martinTableDetail[Math.min(martingaleStep, martinTableDetail.length - 1)];
                     const bet = Math.min(currentBet, Math.floor(cap));
                     if (cap < bet || cap <= 0) break;
                     const isJoker = h.actual === 'joker';
                     const isWin = !isJoker && h.predicted === h.actual;
                     roundToBetProfit[rn] = { betAmount: bet, profit: isJoker ? -bet : (isWin ? Math.floor(bet * (oddsIn - 1)) : -bet), isWin: isWin, isJoker: isJoker };
-                    if (isJoker) { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
-                    else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = 0; else currentBet = baseIn; }
-                    else { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
+                    if (isJoker) { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
+                    else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) martingaleStep = 0; else currentBet = baseIn; }
+                    else { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
                 }
             // 1열(대기) 배팅금액: 위 시뮬레이션 직후 currentBet 사용 → 2열(완료)과 동일 기준, getBetForRound 타이밍 꼬임 방지
             var lastCompletedRound = completedHist.length ? Math.max.apply(null, completedHist.map(function(he) { return Number(he.round) || 0; })) : null;
