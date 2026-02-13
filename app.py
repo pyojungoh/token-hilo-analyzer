@@ -1391,6 +1391,12 @@ def _apply_results_to_calcs(results):
                 # 경고 합산승률 저장
                 if blended is not None:
                     history_entry['warningWinRate'] = blended
+                # 모양: 가장 최근 다음 픽에만 배팅 — 값 없거나 픽 불일치면 no_bet
+                if c.get('shape_only_latest_next_pick') and results_for_shape and len(results_for_shape) >= 16:
+                    latest_next = _get_latest_next_pick_for_chunk(results_for_shape)
+                    if not latest_next or latest_next not in ('정', '꺽') or pred_for_calc != latest_next:
+                        history_entry['no_bet'] = True
+                        history_entry['betAmount'] = 0
                 # 멈춤 상태 확인 — 마틴 사용 중 연패 구간이면 멈춤 적용 안 함(연패 후 승 다음에만 멈춤)
                 paused = c.get('paused', False)
                 if paused and c.get('martingale'):
@@ -1653,6 +1659,24 @@ def _server_calc_effective_pick_and_amount(c):
     pick_color = 'RED' if color == '빨강' else ('BLACK' if color == '검정' else None)
     if pick_color is None:
         return None, 0
+    # 모양: 가장 최근 다음 픽에 뜬 픽에만 배팅. 값 없으면 배팅 안 함
+    if c.get('shape_only_latest_next_pick'):
+        results = None
+        try:
+            results = (results_cache or {}).get('results') if results_cache else None
+            if not results or len(results) < 16:
+                results = get_recent_results(hours=24)
+                if results:
+                    results = _sort_results_newest_first(results)
+        except Exception:
+            results = None
+        if not results or len(results) < 16:
+            return None, 0
+        latest_next = _get_latest_next_pick_for_chunk(results)
+        if not latest_next or latest_next not in ('정', '꺽'):
+            return None, 0
+        if pred != latest_next:
+            return None, 0
     if c.get('paused'):
         return pick_color, 0
     dummy = {'round': pr, 'actual': 'pending'}
@@ -4236,6 +4260,7 @@ RESULTS_HTML = '''
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-1-lose-streak-reverse"> 연패≥<input type="number" id="calc-1-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-1-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                     <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-1-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-1-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
+                                    <tr><td>모양</td><td><label><input type="checkbox" id="calc-1-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
                                     <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-1-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-1-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
@@ -4275,6 +4300,7 @@ RESULTS_HTML = '''
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-2-lose-streak-reverse"> 연패≥<input type="number" id="calc-2-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-2-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                     <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-2-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-2-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
+                                    <tr><td>모양</td><td><label><input type="checkbox" id="calc-2-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
                                     <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-2-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-2-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
@@ -4314,6 +4340,7 @@ RESULTS_HTML = '''
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-3-lose-streak-reverse"> 연패≥<input type="number" id="calc-3-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-3-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                     <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-3-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-3-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
+                                    <tr><td>모양</td><td><label><input type="checkbox" id="calc-3-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
                                     <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-3-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-3-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
@@ -4612,6 +4639,7 @@ RESULTS_HTML = '''
                 win_rate_direction_reverse: false,
                 streak_suppress_reverse: false,
                 lock_direction_on_lose_streak: true,
+                shape_only_latest_next_pick: false,
                 last_trend_direction: null,
                 martingale: false,
                 martingale_type: 'pyo',
@@ -4680,6 +4708,7 @@ RESULTS_HTML = '''
                     win_rate_direction_reverse: !!(document.getElementById('calc-' + id + '-win-rate-direction-reverse') && document.getElementById('calc-' + id + '-win-rate-direction-reverse').checked),
                     streak_suppress_reverse: !!(document.getElementById('calc-' + id + '-streak-suppress-reverse') && document.getElementById('calc-' + id + '-streak-suppress-reverse').checked),
                     lock_direction_on_lose_streak: !!(document.getElementById('calc-' + id + '-lock-direction-on-lose-streak') && document.getElementById('calc-' + id + '-lock-direction-on-lose-streak').checked),
+                    shape_only_latest_next_pick: !!(document.getElementById('calc-' + id + '-shape-only-latest-next-pick') && document.getElementById('calc-' + id + '-shape-only-latest-next-pick').checked),
                     last_trend_direction: (calcState[id].last_trend_direction === 'up' || calcState[id].last_trend_direction === 'down') ? calcState[id].last_trend_direction : null,
                     martingale: !!(martingaleEl && martingaleEl.checked),
                     martingale_type: (martingaleTypeEl && martingaleTypeEl.value) || 'pyo',
@@ -4832,6 +4861,7 @@ RESULTS_HTML = '''
                 calcState[id].win_rate_direction_reverse = !!c.win_rate_direction_reverse;
                 calcState[id].streak_suppress_reverse = !!c.streak_suppress_reverse;
                 calcState[id].lock_direction_on_lose_streak = c.lock_direction_on_lose_streak !== false;
+                calcState[id].shape_only_latest_next_pick = !!c.shape_only_latest_next_pick;
                 calcState[id].last_trend_direction = (c.last_trend_direction === 'up' || c.last_trend_direction === 'down') ? c.last_trend_direction : null;
                 calcState[id].last_win_rate_zone = (c.last_win_rate_zone === 'high_falling' || c.last_win_rate_zone === 'low_rising' || c.last_win_rate_zone === 'mid_flat') ? c.last_win_rate_zone : null;
                 calcState[id].last_win_rate_zone_change_round = (c.last_win_rate_zone_change_round != null && !isNaN(Number(c.last_win_rate_zone_change_round))) ? Number(c.last_win_rate_zone_change_round) : null;
@@ -4867,6 +4897,8 @@ RESULTS_HTML = '''
                 if (streakSuppressEl) streakSuppressEl.checked = !!calcState[id].streak_suppress_reverse;
                 var lockDirEl = document.getElementById('calc-' + id + '-lock-direction-on-lose-streak');
                 if (lockDirEl) lockDirEl.checked = calcState[id].lock_direction_on_lose_streak !== false;
+                var shapeOnlyEl = document.getElementById('calc-' + id + '-shape-only-latest-next-pick');
+                if (shapeOnlyEl) shapeOnlyEl.checked = !!calcState[id].shape_only_latest_next_pick;
                 const martingaleEl = document.getElementById('calc-' + id + '-martingale');
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 if (martingaleEl) martingaleEl.checked = !!calcState[id].martingale;
@@ -7220,6 +7252,16 @@ RESULTS_HTML = '''
                             }
                             if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
                         }
+                        // 모양: 가장 최근 다음 픽에만 배팅 — 값 없거나 픽 불일치면 보류
+                        var shapeOnly = !!(calcState[id] && calcState[id].shape_only_latest_next_pick);
+                        var latestNext = (typeof lastPongChunkDebug !== 'undefined' && lastPongChunkDebug && (lastPongChunkDebug.latest_next_pick === '정' || lastPongChunkDebug.latest_next_pick === '꺽')) ? lastPongChunkDebug.latest_next_pick : null;
+                        if (shapeOnly && (!latestNext || latestNext !== bettingText)) {
+                            bettingText = '보류';
+                            bettingIsRed = false;
+                            if (curRound != null && calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === curRound) {
+                                calcState[id].lastBetPickForRound = { round: curRound, value: '보류', isRed: false };
+                            }
+                        }
                         predictionCardEl.textContent = predictionText;
                         predictionCardEl.className = 'calc-current-card calc-card-prediction card-' + (predictionIsRed ? 'jung' : 'kkuk');
                         predictionCardEl.title = '';
@@ -7227,9 +7269,10 @@ RESULTS_HTML = '''
                         bettingCardEl.className = 'calc-current-card calc-card-betting card-' + (bettingIsRed ? 'jung' : 'kkuk');
                         bettingCardEl.title = '';
                         // 매크로: 1행(배팅중 행)과 동일한 출처 — getBetForRound 사용 (getCalcResult 대신)
-                        var betAmt = (effectivePausedForRound(id) ? 0 : (curRound != null && typeof getBetForRound === 'function' ? getBetForRound(id, curRound) : 0));
-                        var suggestedAmt = betAmt > 0 ? betAmt : null;
-                        postCurrentPickIfChanged(parseInt(id, 10) || 1, { pickColor: bettingIsRed ? 'RED' : 'BLACK', round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: typeof predProb === 'number' && !isNaN(predProb) ? predProb : null, suggested_amount: suggestedAmt });
+                        var betAmt = (effectivePausedForRound(id) || (shapeOnly && bettingText === '보류') ? 0 : (curRound != null && typeof getBetForRound === 'function' ? getBetForRound(id, curRound) : 0));
+                        var suggestedAmt = (bettingText === '보류' && shapeOnly) ? null : (betAmt > 0 ? betAmt : null);
+                        var postPickColor = (bettingText === '보류' && shapeOnly) ? null : (bettingIsRed ? 'RED' : 'BLACK');
+                        postCurrentPickIfChanged(parseInt(id, 10) || 1, { pickColor: postPickColor, round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: typeof predProb === 'number' && !isNaN(predProb) ? predProb : null, suggested_amount: suggestedAmt });
                         if (lastPrediction && lastPrediction.round != null) {
                             savedBetPickByRound[Number(lastPrediction.round)] = { value: bettingText, isRed: bettingIsRed };
                             var sbKeys = Object.keys(savedBetPickByRound).map(Number).filter(function(k) { return !isNaN(k); }).sort(function(a,b) { return a - b; });
@@ -7241,8 +7284,9 @@ RESULTS_HTML = '''
                             var r = getCalcResult(id);
                             var hasRound = calcState[id].history.some(function(h) { return h && Number(h.round) === roundNum; });
                             var betForThisRound = getBetForRound(id, roundNum);
-                            if (!hasRound && (betForThisRound > 0 || effectivePausedForRound(id))) {
-                                var isNoBet = !!effectivePausedForRound(id);
+                            var shapeOnlyNoBet = !!(shapeOnly && bettingText === '보류');
+                            if (!hasRound && (betForThisRound > 0 || effectivePausedForRound(id) || shapeOnlyNoBet)) {
+                                var isNoBet = !!effectivePausedForRound(id) || shapeOnlyNoBet;
                                 var amt = isNoBet ? 0 : betForThisRound;
                                 calcState[id].history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: amt, no_bet: isNoBet, actual: 'pending', warningWinRate: typeof blended === 'number' ? blended : null });
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
@@ -7719,6 +7763,8 @@ RESULTS_HTML = '''
                 calcState[id].streak_suppress_reverse = !!(streakSuppressRun && streakSuppressRun.checked);
                 var lockDirRun = document.getElementById('calc-' + id + '-lock-direction-on-lose-streak');
                 calcState[id].lock_direction_on_lose_streak = !(lockDirRun && !lockDirRun.checked);
+                var shapeOnlyRun = document.getElementById('calc-' + id + '-shape-only-latest-next-pick');
+                calcState[id].shape_only_latest_next_pick = !!(shapeOnlyRun && shapeOnlyRun.checked);
                 calcState[id].last_trend_direction = null;
                 const pauseLowRun = document.getElementById('calc-' + id + '-pause-low-win-rate');
                 const pauseThrRunEl = document.getElementById('calc-' + id + '-pause-win-rate-threshold');
@@ -8611,7 +8657,7 @@ def api_calc_state():
             if state is None:
                 state = {}
             # 계산기 1,2,3만 반환 (레거시 defense 제거 후 클라이언트 호환)
-            _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None}
+            _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'shape_only_latest_next_pick': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None}
             calcs = {}
             for cid in ('1', '2', '3'):
                 calcs[cid] = state[cid] if (cid in state and isinstance(state.get(cid), dict)) else dict(_default)
@@ -8693,6 +8739,7 @@ def api_calc_state():
                     'win_rate_direction_reverse': bool(c.get('win_rate_direction_reverse')),
                     'streak_suppress_reverse': bool(c.get('streak_suppress_reverse')),
                     'lock_direction_on_lose_streak': bool(c.get('lock_direction_on_lose_streak', True)),
+                    'shape_only_latest_next_pick': bool(c.get('shape_only_latest_next_pick')),
                     'last_trend_direction': c.get('last_trend_direction') if c.get('last_trend_direction') in ('up', 'down') else None,
                     'martingale': bool(c.get('martingale')),
                     'martingale_type': str(c.get('martingale_type') or 'pyo'),
@@ -8714,7 +8761,7 @@ def api_calc_state():
                     'last_win_rate_zone_on_win': c.get('last_win_rate_zone_on_win') or current_c.get('last_win_rate_zone_on_win'),
                 }
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'lock_direction_on_lose_streak': True, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None, 'last_win_rate_zone_on_win': None}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'lock_direction_on_lose_streak': True, 'shape_only_latest_next_pick': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None, 'last_win_rate_zone_on_win': None}
         save_calc_state(session_id, out)
         # 계산기 running 상태를 current_pick에 반영 → 에뮬레이터 매크로가 목표 달성 시 자동 중지
         if bet_int:
@@ -8736,7 +8783,7 @@ def api_calc_state():
         session_id = ((request.get_json(force=True, silent=True) or {}).get('session_id') or '').strip() or 'default'
         calcs = (request.get_json(force=True, silent=True) or {}).get('calcs') or {}
         out_fallback = {}
-        _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None}
+        _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 46, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'shape_only_latest_next_pick': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None}
         for cid in ('1', '2', '3'):
             c = calcs.get(cid) or {}
             if isinstance(c, dict):
