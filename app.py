@@ -534,7 +534,7 @@ def _get_shape_stats_for_results(results):
 
 
 def _get_chunk_profile_from_results(results):
-    """results로부터 현재 덩어리 프로필 추출. 없으면 None."""
+    """results로부터 현재 덩어리 프로필 추출. 없으면 None. 엄격 추출 실패 시 완화 추출 시도."""
     if not results or len(results) < 16:
         return None
     graph_values = _build_graph_values(results)
@@ -546,7 +546,13 @@ def _get_chunk_profile_from_results(results):
     if len(use) >= 2 and (use[0] is True or use[0] is False) and (use[1] is True or use[1] is False):
         first_is_line = (use[0] == use[1])
     profiles = _extract_chunk_profiles(line_runs, pong_runs, first_is_line)
-    return profiles[0] if profiles else None
+    if profiles:
+        return profiles[0]
+    # 완화: line_runs 중 2 이상인 것만 모아 2개 이상이면 프로필로 사용 (덩어리 구간 판별과 유사)
+    heights = [r for r in line_runs if r >= 2]
+    if len(heights) >= 2:
+        return tuple(heights[:8])
+    return None
 
 
 def _get_chunk_stats_for_results(results):
@@ -6301,6 +6307,9 @@ RESULTS_HTML = '''
                             }
                             if (chunkProfileStatsLabel === '—' && d.chunk_profile && Array.isArray(d.chunk_profile) && d.chunk_profile.length >= 2) {
                                 chunkProfileStatsLabel = '수집 중 (덩어리: ' + d.chunk_profile.join(',') + ')';
+                            }
+                            if (chunkProfileStatsLabel === '—') {
+                                chunkProfileStatsLabel = '덩어리 구간 아님';
                             }
                             var latestNextPickLabel = '—';
                             if (d.latest_next_pick && (d.latest_next_pick === '정' || d.latest_next_pick === '꺽')) {
