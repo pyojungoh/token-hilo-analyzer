@@ -940,9 +940,14 @@ def _calculate_calc_profit_server(calc_state, history_entry):
     martingale_type = calc_state.get('martingale_type', 'pyo')
     
     history = calc_state.get('history', [])
-    # 현재 회차 이전의 완료된 회차만 계산
-    completed_history = [h for h in history if h.get('round') != history_entry.get('round') and h.get('actual') and h.get('actual') != 'pending']
-    completed_history.sort(key=lambda x: x.get('round', 0))
+    # 현재 회차 이전의 완료된 회차만 계산 (회차별 1건만 — 중복 시 마틴 단계가 잘못 올라가는 것 방지)
+    completed_list = [h for h in history if h.get('round') != history_entry.get('round') and h.get('actual') and h.get('actual') != 'pending']
+    by_round = {}
+    for h in completed_list:
+        rn = h.get('round')
+        if rn is not None:
+            by_round[rn] = h
+    completed_history = sorted(by_round.values(), key=lambda x: x.get('round', 0))
     
     martingale_step = 0
     cap = capital
@@ -1167,6 +1172,10 @@ def _apply_results_to_calcs(results):
                 if paused:
                     history_entry['no_bet'] = True
                     history_entry['betAmount'] = 0
+                # 같은 회차가 이미 히스토리에 있으면 추가하지 않음 (스케줄러 중복 실행 시 마틴 단계·금액 꼬임 방지)
+                existing_rounds = {h.get('round') for h in (c.get('history') or []) if h.get('round') is not None}
+                if pending_round in existing_rounds:
+                    continue
                 # 서버에서 계산기 수익, 마틴게일, 연승/연패 계산
                 history_entry = _calculate_calc_profit_server(c, history_entry)
                 # 금액 고정: pending_round 정할 때 저장해 둔 금액 사용(DB history 지연으로 마틴 단계 어긋남 방지)
@@ -8581,6 +8590,23 @@ def api_current_pick():
                 out['pick_color'] = None
                 out['round'] = None
                 out['suggested_amount'] = None
+            # GET 시에도 금액은 항상 서버에서 재계산해 반환 (DB 지연/중복으로 마틴 단계 어긋남 방지)
+            try:
+                state = get_calc_state('default') or {}
+                c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
+                if c and c.get('running') and c.get('pending_round') is not None:
+                    _, server_amt = _server_calc_effective_pick_and_amount(c)
+                    if out is None:
+                        out = dict(empty_pick)
+                    if not isinstance(out, dict):
+                        out = dict(out) if out else dict(empty_pick)
+                    out = dict(out)
+                    out['suggested_amount'] = int(server_amt) if server_amt is not None else None
+                elif c and c.get('paused') and out and isinstance(out, dict):
+                    out = dict(out)
+                    out['suggested_amount'] = None
+            except Exception:
+                pass
             return jsonify(out if out else empty_pick), 200
         # POST: 테이블 없으면 생성 후 저장 (계산기별)
         data = request.get_json(force=True, silent=True) or {}
