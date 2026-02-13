@@ -71,6 +71,32 @@ def set_calculator_running(conn, calculator_id, running):
         return False
 
 
+def set_current_pick_pick_only(conn, pick_color=None, round_num=None, probability=None, calculator_id=1):
+    """
+    픽/회차/확률만 갱신. suggested_amount는 건드리지 않음.
+    — 매크로 금액은 오직 클라이언트(계산기 상단 배팅중)에서만 설정. 서버는 덮어쓰지 않음.
+    """
+    if conn is None:
+        return False
+    calc_id = int(calculator_id) if calculator_id in (1, 2, 3) else 1
+    try:
+        cur = conn.cursor()
+        cur.execute('''
+            INSERT INTO current_pick (id, pick_color, round_num, probability, suggested_amount, updated_at)
+            VALUES (%s, %s, %s, %s, NULL, CURRENT_TIMESTAMP)
+            ON CONFLICT (id) DO UPDATE SET
+                pick_color = EXCLUDED.pick_color,
+                round_num = EXCLUDED.round_num,
+                probability = EXCLUDED.probability,
+                updated_at = CURRENT_TIMESTAMP
+        ''', (calc_id, pick_color, int(round_num) if round_num is not None else None,
+              float(probability) if probability is not None else None))
+        cur.close()
+        return True
+    except Exception:
+        return False
+
+
 def set_current_pick(conn, pick_color=None, round_num=None, probability=None, suggested_amount=None, calculator_id=1):
     """
     DB에 해당 계산기의 현재 예측 픽 1건 저장 (id=calculator_id 행 upsert).

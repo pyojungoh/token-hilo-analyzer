@@ -1738,10 +1738,11 @@ def _server_calc_effective_pick_and_amount(c):
 
 
 def _push_current_pick_from_calc(calculator_id, c):
-    """서버에서 계산기 픽을 current_pick에 즉시 반영 — 매크로가 클라이언트를 기다리지 않고 픽 수신."""
+    """서버에서 계산기 픽을 current_pick에 즉시 반영 — 매크로가 클라이언트를 기다리지 않고 픽 수신.
+    금액(suggested_amount)은 건드리지 않음 — 오직 클라이언트(계산기 상단 배팅중)에서만 설정."""
     if not bet_int or not DB_AVAILABLE or not DATABASE_URL:
         return
-    pick_color, suggested_amount = _server_calc_effective_pick_and_amount(c)
+    pick_color, _ = _server_calc_effective_pick_and_amount(c)
     if pick_color is None:
         return
     conn = get_db_connection(statement_timeout_sec=3)
@@ -1749,8 +1750,8 @@ def _push_current_pick_from_calc(calculator_id, c):
         return
     try:
         calc_id = int(calculator_id) if calculator_id in (1, 2, 3) else 1
-        ok = bet_int.set_current_pick(conn, pick_color=pick_color, round_num=c.get('pending_round'),
-                                       suggested_amount=suggested_amount, calculator_id=calc_id)
+        ok = bet_int.set_current_pick_pick_only(conn, pick_color=pick_color, round_num=c.get('pending_round'),
+                                                calculator_id=calc_id)
         if ok:
             conn.commit()
     except Exception:
@@ -6657,7 +6658,7 @@ RESULTS_HTML = '''
             const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
             const useMartingale = !!(martingaleEl && martingaleEl.checked);
             const martingaleType = (martingaleTypeEl && martingaleTypeEl.value) || 'pyo';
-            const hist = dedupeCalcHistoryByRound(calcState[id].history || []);
+            const hist = dedupeCalcHistoryByRound(calcState[id].history || []).sort(function(a, b) { return Number(a.round) - Number(b.round); });
             
             // [변경 금지] 순익·보유자산은 CALCULATOR_GUIDE에 따라 마틴게일 시뮬레이션으로만 계산.
             // 서버 h.profit/h.betAmount는 DB 병합 타이밍으로 어긋날 수 있으므로 사용하지 않음. 표와 동일 출처 보장.
@@ -7452,7 +7453,9 @@ RESULTS_HTML = '''
             const r = getCalcResult(id);
             const profitStr = (r.profit >= 0 ? '+' : '') + r.profit.toLocaleString() + '원';
             const profitClass = r.profit > 0 ? 'profit-plus' : (r.profit < 0 ? 'profit-minus' : '');
-            var betDisplay = (effectivePausedForRound(id) ? '-' : (r.currentBet.toLocaleString() + '원'));
+            var curRound = (state.pending_round != null) ? state.pending_round : (typeof lastPrediction !== 'undefined' && lastPrediction && lastPrediction.round != null ? lastPrediction.round : null);
+            var betForDisplay = (state.running && curRound != null) ? getBetForRound(id, curRound) : r.currentBet;
+            var betDisplay = (effectivePausedForRound(id) ? '-' : (betForDisplay.toLocaleString() + '원'));
             // 보유자산·순익·배팅중이 그대로면 그리드 전체를 다시 쓰지 않고 경과만 갱신 (깜빡임 방지)
             try {
                 var cache = window.__calcSummaryCache = window.__calcSummaryCache || {};
@@ -7482,7 +7485,7 @@ RESULTS_HTML = '''
                 '<span class="label">순익</span><span class="value ' + profitClass + '">' + profitStr + '</span>' +
                 '<span class="label">배팅중</span><span class="value">' + betDisplay + '</span>' +
                 '<span class="label">경과</span><span class="value">' + elapsedStr + '</span></div>';
-            updateCalcBetCopyLine(id, effectivePausedForRound(id) ? 0 : r.currentBet);
+            updateCalcBetCopyLine(id, effectivePausedForRound(id) ? 0 : betForDisplay);
             updateCalcStatus(id);
             } catch (e) { console.warn('updateCalcSummary', id, e); }
         }
@@ -9248,44 +9251,18 @@ def api_current_pick():
                 out['pick_color'] = None
                 out['round'] = None
                 out['suggested_amount'] = None
-            # GET 시 금액: 선택한 계산기 상단 "배팅중" 금액 = 클라이언트가 POST한 값(DB) 우선. 없을 때만 서버 재계산
+            # GET 시 금액: 오직 클라이언트(계산기 상단 배팅중)가 POST한 DB 값만 사용. 서버 재계산/fallback 없음.
             try:
                 db_amt = out.get('suggested_amount') if out else None
                 try:
                     db_amt_val = int(db_amt) if db_amt is not None else 0
                 except (TypeError, ValueError):
                     db_amt_val = 0
-                if out and db_amt_val > 0:
-                    # 계산기 상단에서 POST한 배팅중 금액이 있으면 그대로 반환 (매크로가 이 값 사용)
+                if out:
                     if not isinstance(out, dict):
                         out = dict(out) if out else dict(empty_pick)
                     out = dict(out)
-                    out['suggested_amount'] = db_amt_val
-                else:
-                    state = get_calc_state('default') or {}
-                    c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
-                    if c and c.get('running') and c.get('pending_round') is not None:
-                        if out is None:
-                            out = dict(empty_pick)
-                        if not isinstance(out, dict):
-                            out = dict(out) if out else dict(empty_pick)
-                        out = dict(out)
-                        stored_amt = c.get('pending_bet_amount')
-                        if stored_amt is not None:
-                            try:
-                                amt_val = int(stored_amt)
-                                if amt_val > 0:
-                                    out['suggested_amount'] = amt_val
-                                else:
-                                    out['suggested_amount'] = None
-                            except (TypeError, ValueError):
-                                stored_amt = None
-                        if stored_amt is None:
-                            _, server_amt = _server_calc_effective_pick_and_amount(c)
-                            out['suggested_amount'] = int(server_amt) if server_amt is not None else None
-                    elif c and c.get('paused') and out and isinstance(out, dict):
-                        out = dict(out)
-                        out['suggested_amount'] = None
+                    out['suggested_amount'] = db_amt_val if db_amt_val > 0 else None
             except Exception:
                 pass
             return jsonify(out if out else empty_pick), 200
@@ -9301,15 +9278,14 @@ def api_current_pick():
         probability = data.get('probability')
         suggested_amount = data.get('suggestedAmount') or data.get('suggested_amount')
         running = data.get('running')  # True/False 또는 없음 — 정지 시 클라이언트가 running: false 보내면 DB에 반영해 GET 시 픽 미반환
-        # 픽/회차는 서버 calc 상태로 맞추고, 금액은 선택한 계산기 상단 "배팅중"에서 보낸 값(suggested_amount) 그대로 사용 — 매크로가 그 금액을 GET으로 받음
+        # 픽/회차는 서버 calc 상태로 맞추고, 금액은 오직 클라이언트(계산기 상단 배팅중)에서만 — 매크로가 그 금액을 GET으로 받음
         try:
             state = get_calc_state('default') or {}
             c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
             if c is not None and c.get('running') and c.get('pending_round') is not None:
                 try:
-                    srv_pick, server_amt = _server_calc_effective_pick_and_amount(c)
+                    srv_pick, _ = _server_calc_effective_pick_and_amount(c)
                     pr = c.get('pending_round')
-                    # 클라이언트 회차가 서버보다 크면 클라이언트 값 사용 — 1회차 느림 방지 (결과 반영 직후 클라이언트가 먼저 POST할 때)
                     try:
                         pr_int = int(pr) if pr is not None else None
                         cr_int = int(round_num) if round_num is not None else None
@@ -9318,30 +9294,18 @@ def api_current_pick():
                         use_client_round = False
                     if use_client_round:
                         round_num = cr_int
-                        # 픽/금액도 클라이언트 사용 (서버는 아직 새 회차 반영 전)
-                        if pick_color:
-                            pass  # 클라이언트 pick_color 그대로
-                        try:
-                            client_amt = int(suggested_amount) if suggested_amount is not None else 0
-                            suggested_amount = client_amt if client_amt > 0 else (int(server_amt) if server_amt is not None else 0)
-                        except (TypeError, ValueError):
-                            suggested_amount = int(server_amt) if server_amt is not None else 0
                     else:
                         round_num = pr
                         if srv_pick is not None:
                             pick_color = srv_pick
-                        try:
-                            client_amt = int(suggested_amount) if suggested_amount is not None else 0
-                            if client_amt > 0:
-                                suggested_amount = client_amt
-                            else:
-                                suggested_amount = int(server_amt) if server_amt is not None else 0
-                        except (TypeError, ValueError):
-                            suggested_amount = int(server_amt) if server_amt is not None else 0
                 except (TypeError, ValueError):
                     pass
-            elif c is not None and c.get('paused'):
-                suggested_amount = 0  # 서버가 멈춤이면 무조건 0 — 에뮬레이터 배팅 스킵
+            # 금액: 클라이언트가 보낸 값만 사용
+            try:
+                client_amt = int(suggested_amount) if suggested_amount is not None else 0
+                suggested_amount = client_amt if client_amt > 0 else (0 if c and c.get('paused') else None)
+            except (TypeError, ValueError):
+                suggested_amount = 0 if c and c.get('paused') else None
         except Exception:
             pass
         conn = get_db_connection(statement_timeout_sec=5)
