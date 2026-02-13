@@ -4459,6 +4459,18 @@ RESULTS_HTML = '''
                             if (!(rn in byRound)) byRound[rn] = loc;
                         });
                         calcState[id].history = Object.keys(byRound).map(Number).sort(function(a, b) { return a - b; }).map(function(r) { return byRound[r]; });
+                    } else if (localRunning) {
+                        // 로컬만 실행 중(서버가 아직 반영 전): 히스토리를 서버로 통째로 덮어쓰지 않음 → 보유자산/순익/배팅중 깜빡임 방지
+                        var byRoundLocal = {};
+                        localHist.forEach(function(loc) {
+                            if (!loc || loc.round == null) return;
+                            byRoundLocal[Number(loc.round)] = loc;
+                        });
+                        serverDeduped.forEach(function(s) {
+                            var rn = Number(s.round);
+                            if (!(rn in byRoundLocal)) byRoundLocal[rn] = s;
+                        });
+                        calcState[id].history = Object.keys(byRoundLocal).map(Number).sort(function(a, b) { return a - b; }).map(function(r) { return byRoundLocal[r]; });
                     } else {
                         calcState[id].history = serverDeduped;
                     }
@@ -4471,7 +4483,7 @@ RESULTS_HTML = '''
                         }
                     });
                 } else {
-                    if (!(localRunning && serverRunning)) calcState[id].history = [];
+                    if (!localRunning) calcState[id].history = [];
                 }
                 // 폴링 시: 로컬이 실행 중인데 서버가 아직 저장 전(running false, started_at 0)이면 덮어쓰지 않음 → 깜빡임 방지
                 var serverStartedAt = c.started_at || 0;
