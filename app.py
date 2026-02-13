@@ -6073,11 +6073,18 @@ RESULTS_HTML = '''
                         colorClass = colorToPick === '빨강' ? 'red' : 'black';
                     }
                     // 표시용 픽/색은 서버 출처(lastPrediction)만 사용. 없으면 보류.
+                    // 색상: 서버 color 우선. 없으면 15번째 카드 기준 (정=같은색/꺽=반대색) — 정/꺽≠빨강/검정 고정 아님.
                     if (lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) {
                         predict = lastPrediction.value;
                         predProb = (lastPrediction.prob != null && !isNaN(lastPrediction.prob)) ? lastPrediction.prob : predProb;
-                        var serverColor = normalizePickColor(lastPrediction.color);
-                        colorToPick = (serverColor === '빨강' || serverColor === '검정') ? serverColor : (lastPrediction.value === '정' ? '빨강' : '검정');
+                        var normColor = normalizePickColor(lastPrediction.color);
+                        if (normColor === '빨강' || normColor === '검정') {
+                            colorToPick = normColor;
+                        } else {
+                            var card15Ref = displayResults.length >= 15 ? parseCardValue(displayResults[14].result || '') : null;
+                            var is15RedRef = card15Ref ? card15Ref.isRed : false;
+                            colorToPick = predict === '정' ? (is15RedRef ? '빨강' : '검정') : (is15RedRef ? '검정' : '빨강');
+                        }
                         colorClass = colorToPick === '빨강' ? 'red' : 'black';
                     } else {
                         predict = '보류';
@@ -7209,9 +7216,17 @@ RESULTS_HTML = '''
                         // 배팅중인 회차는 이미 정한 계산기 픽만 유지 — lastPrediction이 잠깐 예측기로 바뀌어도 저장된 픽으로 POST/표시해 예측기 픽으로 배팅 나가는 것 방지
                         var curRound = lastPrediction && lastPrediction.round != null ? Number(lastPrediction.round) : null;
                         var saved = (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === curRound) ? calcState[id].lastBetPickForRound : null;
-                        // 상단 예측픽: lastPrediction.value 사용
+                        // 상단 예측픽: lastPrediction.value 사용. 색상은 서버 color 우선, 없으면 15번째 카드 기준 (정/꺽≠빨강/검정 고정 아님)
                         var predictionText = lastPrediction.value;
-                        var predictionIsRed = (predictionText === '정');  // 값에 맞춰 색상: 정=빨강, 꺽=검정 (배팅중과 일치)
+                        var card15Calc = (typeof allResults !== 'undefined' && allResults.length >= 15) ? parseCardValue(allResults[14].result || '') : null;
+                        var is15RedCalc = card15Calc ? card15Calc.isRed : false;
+                        var normPredColor = normalizePickColor(lastPrediction.color);
+                        var predictionIsRed;
+                        if (normPredColor === '빨강' || normPredColor === '검정') {
+                            predictionIsRed = (normPredColor === '빨강');
+                        } else {
+                            predictionIsRed = predictionText === '정' ? is15RedCalc : !is15RedCalc;
+                        }
                         var bettingText, bettingIsRed;
                         if (saved && (saved.value === '정' || saved.value === '꺽')) {
                             bettingText = saved.value;
@@ -7270,7 +7285,7 @@ RESULTS_HTML = '''
                         if (shapeOnly) {
                             if (latestNext) {
                                 bettingText = latestNext;
-                                bettingIsRed = (latestNext === '정');
+                                bettingIsRed = (latestNext === '정' ? is15RedCalc : !is15RedCalc);  // 15번째 카드 기준 (정=같은색, 꺽=반대색)
                                 if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
                             } else {
                                 bettingText = '보류';
@@ -7305,7 +7320,7 @@ RESULTS_HTML = '''
                             var shapeOnlyNoBet = !!(shapeOnly && bettingText === '보류');
                             var predForHistory = shapeOnlyNoBet ? predBeforeShapeOnly : bettingText;
                             if (predForHistory !== '정' && predForHistory !== '꺽') predForHistory = predBeforeShapeOnly;
-                            var pickColorForHistory = (predForHistory === '정' ? '빨강' : '검정');
+                            var pickColorForHistory = (predForHistory === '정' ? (is15RedCalc ? '빨강' : '검정') : (is15RedCalc ? '검정' : '빨강'));
                             if (pendingRow) {
                                 pendingRow.predicted = predForHistory;
                                 pendingRow.pickColor = pickColorForHistory;
@@ -8128,8 +8143,14 @@ RESULTS_HTML = '''
             if (lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) {
                 predict = lastPrediction.value;
                 predProb = (lastPrediction.prob != null && !isNaN(lastPrediction.prob)) ? lastPrediction.prob : 0;
-                var sc = normalizePickColor(lastPrediction.color);
-                colorToPick = (sc === '빨강' || sc === '검정') ? sc : (lastPrediction.value === '정' ? '빨강' : '검정');
+                var normColor = normalizePickColor(lastPrediction.color);
+                if (normColor === '빨강' || normColor === '검정') {
+                    colorToPick = normColor;
+                } else {
+                    var card15Ref = disp.length >= 15 && !disp[14].joker ? parseCardValue(disp[14].result || '') : null;
+                    var is15RedRef = card15Ref ? card15Ref.isRed : false;
+                    colorToPick = predict === '정' ? (is15RedRef ? '빨강' : '검정') : (is15RedRef ? '검정' : '빨강');
+                }
                 colorClass = colorToPick === '빨강' ? 'red' : 'black';
             }
             var showHold = is15Joker || predict === '보류';
