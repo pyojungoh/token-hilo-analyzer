@@ -4451,6 +4451,7 @@ RESULTS_HTML = '''
                             var loc = localHist.find(function(h) { return h && Number(h.round) === rn; });
                             if (loc && loc.no_bet === true) byRound[rn] = Object.assign({}, s, { no_bet: true, betAmount: 0 });
                             else if (loc && loc.actual === 'pending' && rn === currentPredRound) byRound[rn] = loc;
+                            else if (loc && loc.actual !== 'pending' && loc.actual != null && (s.actual === 'pending' || !s.actual)) byRound[rn] = loc;
                             else byRound[rn] = s;
                         });
                         localHist.forEach(function(loc) {
@@ -7340,7 +7341,7 @@ RESULTS_HTML = '''
             });
             }, 1000);
         function updateAllCalcs() {
-            CALC_IDS.forEach(id => { updateCalcSummary(id); updateCalcDetail(id); updateCalcStatus(id); });
+            CALC_IDS.forEach(id => { updateCalcDetail(id); updateCalcStatus(id); updateCalcSummary(id); });
         }
         try { updateAllCalcs(); } catch (e) { console.warn('초기 계산기 상태:', e); }
         document.querySelectorAll('.calc-run').forEach(btn => {
