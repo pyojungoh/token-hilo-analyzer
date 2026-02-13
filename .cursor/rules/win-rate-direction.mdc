@@ -24,15 +24,15 @@ alwaysApply: true
 
 | 상수 | 위치 | 현재값 | 효과 |
 |------|------|--------|------|
-| **WIN_RATE_DIR_DELTA4** | 서버 `_server_win_rate_direction_zone` | 0.38 | 4구간 차이 %p — 오름/내림 판정 (↑=보수적, 내림 시 반대픽 더 빨리) |
+| **WIN_RATE_DIR_DELTA4** | 서버 `_server_win_rate_direction_zone` | 0.45 | 4구간 차이 %p — 오름세 판정 보수적 (예측 틀릴 때 정픽 덜 고집) |
 | **WIN_RATE_DIR_DELTA5** | 서버 `_server_win_rate_direction_zone` | 0.44 | 5구간 차이 %p — 고점하락/저점상승 판정 |
 | R_LOW / R_HIGH (ratio) | 동일 | 0.48, 0.57 | 중간 구간 정픽/반대픽 기준 (R_HIGH 올리면 내림 시 반대픽 더 빨리) |
 
 ## 수정 시 반드시 같이 바꿀 위치
 
 1. **서버**: `app.py` `_server_win_rate_direction_zone` 함수 내 `WIN_RATE_DIR_*` 상수
-2. **클라이언트 getWinRateDirectionZone**: `app.py` 내 `var D4 = 0.38, D5 = 0.44, R_LOW = 0.48, R_HIGH = 0.57;`
-3. **클라이언트 renderWinRateDirectionPanel** (방향·추세 구간): `d4 = 0.38`, `d5 = 0.44`, ratio 기준 `0.48`, `0.57`
+2. **클라이언트 getWinRateDirectionZone**: `app.py` 내 `var D4 = 0.45, D5 = 0.44, R_LOW = 0.48, R_HIGH = 0.57;`
+3. **클라이언트 renderWinRateDirectionPanel** (방향·추세 구간): `d4 = 0.45`, `d5 = 0.44`, ratio 기준 `0.48`, `0.57`
 
 세 곳 모두 동일한 숫자로 맞출 것.
 
@@ -40,9 +40,9 @@ alwaysApply: true
 
 - **메인 예측기 픽** 기준 최근 15경기 승률(조커 제외)을 계산해, 롤링 100회만으로 정픽/반대픽을 고집하는 것을 완화한다.
 - **반대픽 억제**: 최근 15승률 ≥ **53%**이면 high_falling(반대픽) → mid_flat으로 완화. (예측이 잘 맞으면 반대픽 덜 감.) 승률반픽·연패반픽도 동일: 15승률 ≥ 53%이면 반픽 미적용.
-- **정픽 억제**: 최근 15승률 ≤ **47%**이면 low_rising(정픽) → mid_flat으로 완화. (예측이 안 맞으면 정픽 고집 덜 함.)
+- **정픽 억제**: 최근 15승률 ≤ **50%**이면 low_rising(정픽) → mid_flat으로 완화. (예측이 안 맞으면 정픽 고집 덜 함.)
 - 15경기 샘플은 **5회 이상**일 때만 적용; 그 미만이면 가중치 미적용.
-- **동기화**: 서버 `_server_win_rate_direction_zone`, `_server_calc_effective_pick_and_amount`, 클라이언트 `getWinRateDirectionZone`, `renderWinRateDirectionPanel`, 결과 반영·배팅중 카드 모두 동일 기준(53% / 47%) 적용.
+- **동기화**: 서버 `_server_win_rate_direction_zone`, `_server_calc_effective_pick_and_amount`, 클라이언트 `getWinRateDirectionZone`, `renderWinRateDirectionPanel`, 결과 반영·배팅중 카드 모두 동일 기준(53% / 50%) 적용.
 - **줄 5 이상 반픽 억제**: 방향 메뉴 옵션 "줄 5 이상 반픽 억제" 켜면, 실제 결과가 5연승 또는 5연패(같은 결과 5회 연속)일 때 승률반픽·연패반픽·승률방향 반픽 모두 미적용. 서버·클라이언트 `streak_suppress_reverse` 동일.
 - **연패 중 방향 고정**: 옵션 "연패 중 방향 고정" 켜면, 계산기 배팅이 연패 중(1연패 이상)일 때 방향을 바꾸지 않고 마지막 승 직후의 zone(low_rising/high_falling/mid_flat)을 유지. 서버 `_effective_win_rate_direction_zone`, 클라이언트 `getEffectiveWinRateDirectionZone` 모두 `lock_direction_on_lose_streak`, `last_win_rate_zone_on_win` 동일 적용.
 
@@ -55,7 +55,7 @@ alwaysApply: true
 | 반대픽이 너무 늦게/안 들어감 | RATIO_HIGH **값 올리기** 또는 DELTA4/DELTA5 **내리기** |
 | 정픽이 너무 늦게/안 들어감 | RATIO_LOW **값 내리기** |
 | 예측 잘 맞는데 반대픽 고집 | 15경기 억제 상한 **53%** 올리기 (더 쉽게 반대픽 억제) |
-| 예측 안 맞는데 정픽 고집 | 15경기 억제 하한 **47%** 내리기 (더 쉽게 정픽 억제) |
+| 예측 안 맞는데 정픽 고집 | 15경기 억제 하한 **50%** 올리기 (더 쉽게 정픽 억제) |
 
 ---
 
