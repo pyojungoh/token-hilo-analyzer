@@ -1181,7 +1181,7 @@ def _round_eq(a, b):
 def _calculate_calc_profit_server(calc_state, history_entry):
     """서버에서 계산기 수익, 마틴게일 단계, 연승/연패 계산. history_entry에 계산된 값 추가."""
     MARTIN_PYO_RATIOS = [1, 1.5, 2.5, 4, 7, 12, 20, 40, 40]
-    MARTIN_PYO2_RATIOS = [1, 1.5, 2.5, 4, 7, 12, 20, 45, 80, 100]
+    MARTIN_PYO2_RATIOS = [1, 2, 3, 5, 8, 14, 24, 40, 90, 160, 200]
     
     capital = float(calc_state.get('capital', 1000000))
     base = float(calc_state.get('base', 10000))
@@ -4736,8 +4736,8 @@ RESULTS_HTML = '''
         const calcState = {};
         // 표마틴: 기준금액(배팅금액)에 맞게 9단계. 비율 [1, 1.5, 2.5, 4, 7, 12, 20, 40, 40]
         var MARTIN_PYO_RATIOS = [1, 1.5, 2.5, 4, 7, 12, 20, 40, 40];
-        // 표마틴 2: 10단계. 비율 [1, 1.5, 2.5, 4, 7, 12, 20, 45, 80, 100]
-        var MARTIN_PYO2_RATIOS = [1, 1.5, 2.5, 4, 7, 12, 20, 45, 80, 100];
+        // 표마틴 2: 11단계. 비율 [1, 2, 3, 5, 8, 14, 24, 40, 90, 160, 200] (base 5000→5천~100만)
+        var MARTIN_PYO2_RATIOS = [1, 2, 3, 5, 8, 14, 24, 40, 90, 160, 200];
         function getMartinTable(type, baseAmount) {
             var base = (baseAmount != null && !isNaN(Number(baseAmount)) && Number(baseAmount) > 0) ? Number(baseAmount) : 10000;
             var ratios = (type === 'pyo2') ? MARTIN_PYO2_RATIOS : MARTIN_PYO_RATIOS;
