@@ -796,7 +796,8 @@ def _merge_calc_histories(client_hist, server_hist):
         pred = h.get('predicted')
         if pred in ('정', '꺽'):
             rn = h.get('round')
-            client_pick_by_round[rn] = {'predicted': pred, 'pickColor': h.get('pickColor') or h.get('pick_color')}
+            cb = h.get('betAmount')
+            client_pick_by_round[rn] = {'predicted': pred, 'pickColor': h.get('pickColor') or h.get('pick_color'), 'no_bet': h.get('no_bet'), 'betAmount': cb}
     for h in (client_hist or []):
         if not isinstance(h, dict):
             continue
@@ -811,6 +812,11 @@ def _merge_calc_histories(client_hist, server_hist):
             by_round[rn]['predicted'] = pick['predicted']
             if pick.get('pickColor') is not None:
                 by_round[rn]['pickColor'] = pick['pickColor']
+            # shape_only: 클라이언트가 배팅했다고 판단(정/꺽 픽 + no_bet false 또는 betAmount>0)이면 서버 no_bet 덮어씀
+            cb = pick.get('betAmount')
+            cb_positive = cb is not None and (isinstance(cb, (int, float)) and cb > 0)
+            if pick.get('no_bet') is False or cb_positive:
+                by_round[rn]['no_bet'] = False
     try:
         rounds = sorted(by_round.keys(), key=lambda x: (x if isinstance(x, (int, float)) else 0))
     except (TypeError, ValueError):
