@@ -4062,6 +4062,7 @@ RESULTS_HTML = '''
         .calc-round-table th { background: #333; color: #81c784; }
         .calc-round-table td.pick-jung, .calc-round-table td.pick-red { background: #b71c1c; color: #fff; }
         .calc-round-table td.pick-kkuk, .calc-round-table td.pick-black { background: #111; color: #fff; }
+        .calc-round-table td.pick-hold { background: transparent; color: inherit; }
         .calc-round-table .win { color: #ffeb3b; font-weight: 600; }
         .calc-round-table .lose { color: #c62828; font-weight: 500; }
         .calc-round-table .joker { color: #64b5f6; }
@@ -7545,8 +7546,9 @@ RESULTS_HTML = '''
                 if (!isNaN(rn) && seenRoundNums[rn]) continue;
                 if (!isNaN(rn)) seenRoundNums[rn] = true;
                 const roundStr = h.round != null ? String(h.round) : '-';
-                const pickVal = h.predicted === '정' ? '정' : '꺽';
-                const pickClass = (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : 'pick-kkuk')));
+                const isNoBetRow = (h.no_bet === true || (h.betAmount != null && h.betAmount === 0));
+                const pickVal = isNoBetRow ? '보류' : (h.predicted === '정' ? '정' : '꺽');
+                const pickClass = isNoBetRow ? 'pick-hold' : (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (h.predicted === '정' ? 'pick-jung' : 'pick-kkuk')));
                 const warningWinRateVal = (typeof h.warningWinRate === 'number' && !isNaN(h.warningWinRate)) ? h.warningWinRate.toFixed(1) + '%' : '-';
                 // 15회 승률: CALCULATOR_GUIDE — 표에는 회차별 저장값(rate15) 표시. 없으면 완료 행은 해당 시점 15회 승률 계산 후 저장(한 번만).
                 var rate15Val;
