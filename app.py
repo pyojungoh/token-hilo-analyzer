@@ -4025,6 +4025,7 @@ RESULTS_HTML = '''
         .calc-current-card.calc-card-prediction { width: 36px; height: 22px; line-height: 22px; font-size: 0.85em; }
         .calc-current-card.card-jung { background: #b71c1c; }
         .calc-current-card.card-kkuk { background: #111; }
+        .calc-current-card.card-hold { background: #455a64; color: #fff; }
         .calc-dropdown-header .calc-toggle { font-size: 0.8em; color: #888; }
         .calc-dropdown.collapsed .calc-dropdown-body { display: none !important; }
         .calc-dropdown:not(.collapsed) .calc-dropdown-header .calc-toggle { transform: rotate(180deg); }
@@ -7284,7 +7285,7 @@ RESULTS_HTML = '''
                         predictionCardEl.className = 'calc-current-card calc-card-prediction card-' + (predictionIsRed ? 'jung' : 'kkuk');
                         predictionCardEl.title = '';
                         bettingCardEl.textContent = bettingText;
-                        bettingCardEl.className = 'calc-current-card calc-card-betting card-' + (bettingIsRed ? 'jung' : 'kkuk');
+                        bettingCardEl.className = 'calc-current-card calc-card-betting card-' + (bettingText === '보류' ? 'hold' : (bettingIsRed ? 'jung' : 'kkuk'));
                         bettingCardEl.title = '';
                         // 매크로: 1행(배팅중 행)과 동일한 출처 — getBetForRound 사용 (getCalcResult 대신)
                         var betAmt = (effectivePausedForRound(id) || (shapeOnly && bettingText === '보류') ? 0 : (curRound != null && typeof getBetForRound === 'function' ? getBetForRound(id, curRound) : 0));
@@ -7295,20 +7296,28 @@ RESULTS_HTML = '''
                             savedBetPickByRound[Number(lastPrediction.round)] = { value: bettingText, isRed: bettingIsRed };
                             var sbKeys = Object.keys(savedBetPickByRound).map(Number).filter(function(k) { return !isNaN(k); }).sort(function(a,b) { return a - b; });
                             while (sbKeys.length > SAVED_BET_PICK_MAX) { delete savedBetPickByRound[sbKeys.shift()]; }
-                            // 배팅중 뜨자마자 표에 픽+배팅금액 행 추가 (결과 대기)
+                            // 배팅중 뜨자마자 표에 픽+배팅금액 행 추가 (결과 대기). 기존 pending 행이 있으면 배팅중과 동기화
                             var firstBet = calcState[id].first_bet_round || 0;
                             var roundNum = Number(lastPrediction.round);
                             if (firstBet > 0 && roundNum < firstBet) { /* 첫배팅 회차 전이면 스킵 */ } else {
                             var r = getCalcResult(id);
                             var hasRound = calcState[id].history.some(function(h) { return h && Number(h.round) === roundNum; });
-                            var betForThisRound = getBetForRound(id, roundNum);
+                            var pendingRow = hasRound ? calcState[id].history.find(function(h) { return h && Number(h.round) === roundNum && (h.actual === 'pending' || !h.actual || h.actual === ''); }) : null;
                             var shapeOnlyNoBet = !!(shapeOnly && bettingText === '보류');
-                            if (!hasRound && (betForThisRound > 0 || effectivePausedForRound(id) || shapeOnlyNoBet)) {
+                            var predForHistory = shapeOnlyNoBet ? predBeforeShapeOnly : bettingText;
+                            if (predForHistory !== '정' && predForHistory !== '꺽') predForHistory = predBeforeShapeOnly;
+                            var pickColorForHistory = (predForHistory === '정' ? '빨강' : '검정');
+                            if (pendingRow) {
+                                pendingRow.predicted = predForHistory;
+                                pendingRow.pickColor = pickColorForHistory;
+                                pendingRow.no_bet = !!effectivePausedForRound(id) || shapeOnlyNoBet;
+                                pendingRow.betAmount = (pendingRow.no_bet ? 0 : (typeof getBetForRound === 'function' ? getBetForRound(id, roundNum) : 0));
+                                calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
+                                saveCalcStateToServer();
+                                updateCalcDetail(id);
+                            } else if (!hasRound && (getBetForRound(id, roundNum) > 0 || effectivePausedForRound(id) || shapeOnlyNoBet)) {
                                 var isNoBet = !!effectivePausedForRound(id) || shapeOnlyNoBet;
-                                var amt = isNoBet ? 0 : betForThisRound;
-                                var predForHistory = shapeOnlyNoBet ? predBeforeShapeOnly : bettingText;
-                                if (predForHistory !== '정' && predForHistory !== '꺽') predForHistory = predBeforeShapeOnly;
-                                var pickColorForHistory = (predForHistory === '정' ? '빨강' : '검정');
+                                var amt = isNoBet ? 0 : getBetForRound(id, roundNum);
                                 calcState[id].history.push({ round: roundNum, predicted: predForHistory, pickColor: pickColorForHistory, betAmount: amt, no_bet: isNoBet, actual: 'pending', warningWinRate: typeof blended === 'number' ? blended : null });
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 saveCalcStateToServer();
