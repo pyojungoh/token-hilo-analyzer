@@ -7558,6 +7558,7 @@ RESULTS_HTML = '''
             // 회차별 픽/결과/승패/배팅금액/수익 행 목록 (pending=대기, completed=결과·수익)
             let rows = [];
             var seenRoundNums = {};
+            var curBetRound = (typeof lastPrediction !== 'undefined' && lastPrediction && lastPrediction.round != null) ? Number(lastPrediction.round) : null;
             for (let i = usedHist.length - 1; i >= 0; i--) {
                 const h = usedHist[i];
                 if (!h || typeof h.predicted === 'undefined') continue;
@@ -7565,10 +7566,25 @@ RESULTS_HTML = '''
                 if (!isNaN(rn) && seenRoundNums[rn]) continue;
                 if (!isNaN(rn)) seenRoundNums[rn] = true;
                 const roundStr = h.round != null ? String(h.round) : '-';
-                const hasValidPred = (h.predicted === '정' || h.predicted === '꺽');
-                const isNoBetRow = (h.no_bet === true || (h.betAmount != null && h.betAmount === 0) || !hasValidPred);
-                const pickVal = isNoBetRow ? '보류' : (h.predicted === '정' ? '정' : '꺽');
-                const pickClass = isNoBetRow ? 'pick-hold' : (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (h.predicted === '정' ? 'pick-jung' : 'pick-kkuk')));
+                const isPendingRow = (h.actual === 'pending' || !h.actual || h.actual === '');
+                var pickVal, pickClass;
+                if (isPendingRow && !isNaN(rn) && rn === curBetRound && (typeof savedBetPickByRound !== 'undefined' || (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === rn))) {
+                    var betPick = (typeof savedBetPickByRound !== 'undefined' && savedBetPickByRound[rn]) || (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === rn ? calcState[id].lastBetPickForRound : null);
+                    if (betPick) {
+                        pickVal = (betPick.value === '정' || betPick.value === '꺽') ? betPick.value : '보류';
+                        pickClass = pickVal === '보류' ? 'pick-hold' : (betPick.isRed ? 'pick-jung' : 'pick-kkuk');
+                    } else {
+                        var hasValidPred = (h.predicted === '정' || h.predicted === '꺽');
+                        var isNoBetRow = (h.no_bet === true || (h.betAmount != null && h.betAmount === 0) || !hasValidPred);
+                        pickVal = isNoBetRow ? '보류' : (h.predicted === '정' ? '정' : '꺽');
+                        pickClass = isNoBetRow ? 'pick-hold' : (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (h.predicted === '정' ? 'pick-jung' : 'pick-kkuk')));
+                    }
+                } else {
+                    const hasValidPred = (h.predicted === '정' || h.predicted === '꺽');
+                    const isNoBetRow = (h.no_bet === true || (h.betAmount != null && h.betAmount === 0) || !hasValidPred);
+                    pickVal = isNoBetRow ? '보류' : (h.predicted === '정' ? '정' : '꺽');
+                    pickClass = isNoBetRow ? 'pick-hold' : (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (h.predicted === '정' ? 'pick-jung' : 'pick-kkuk')));
+                }
                 const warningWinRateVal = (typeof h.warningWinRate === 'number' && !isNaN(h.warningWinRate)) ? h.warningWinRate.toFixed(1) + '%' : '-';
                 // 15회 승률: CALCULATOR_GUIDE — 표에는 회차별 저장값(rate15) 표시. 없으면 완료 행은 해당 시점 15회 승률 계산 후 저장(한 번만).
                 var rate15Val;
