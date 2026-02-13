@@ -799,18 +799,18 @@ def _server_recent_15_win_rate(completed_list):
 
 def _server_win_rate_direction_zone(ph):
     """예측 이력(과거→현재)으로 롤링 100회 승률 구간 계산. 'high_falling'|'low_rising'|'mid_flat'|None. 클라이언트 승률방향 패널과 동일 공식.
-    최근 15경기 승률 가중: 예측 잘 맞으면(53% 이상) 반대픽 억제, 안 맞으면(50% 이하) 정픽 억제. 승률/연패 반픽도 15경기 53% 이상이면 미적용."""
+    최근 10경기 승률 가중: 예측 잘 맞으면(53% 이상) 반대픽 억제, 안 맞으면(50% 이하) 정픽 억제. 승률/연패 반픽은 15경기 53% 이상이면 미적용."""
     if not ph or len(ph) < 100:
         return None
     vh = [h for h in ph if h and h.get('actual') is not None and str(h.get('actual', '')).strip() and str(h.get('actual')) != 'pending']
     if len(vh) < 100:
         return None
-    # 메인 예측기 최근 15경기 승률 (조커 제외) — 정픽/반대픽 판정에 가중
-    last15 = [h for h in vh[-15:] if h.get('actual') not in ('joker', '조커')]
-    rate15_pct = None
-    if len(last15) >= 5:
-        wins15 = sum(1 for h in last15 if h.get('predicted') == h.get('actual'))
-        rate15_pct = 100.0 * wins15 / len(last15)
+    # 메인 예측기 최근 10경기 승률 (조커 제외) — 정픽/반대픽 판정에 가중
+    last10 = [h for h in vh[-10:] if h.get('actual') not in ('joker', '조커')]
+    rate10_pct = None
+    if len(last10) >= 3:
+        wins10 = sum(1 for h in last10 if h.get('predicted') == h.get('actual'))
+        rate10_pct = 100.0 * wins10 / len(last10)
     derived = []
     for i in range(99, len(vh)):
         w = vh[i - 99:i + 1]
@@ -845,31 +845,31 @@ def _server_win_rate_direction_zone(ph):
         is_rising = recent > prev4 + WIN_RATE_DIR_DELTA4
         is_falling = recent < prev4 - WIN_RATE_DIR_DELTA4
         # 저점 부근(40~43%) + 오름세 → 정픽(low_rising)
-        # 메인 예측 최근 15경기 승률로 반픽/정픽 억제 (53%/50% — 예측 틀릴 때 정픽 더 쉽게 억제)
+        # 메인 예측 최근 10경기 승률로 반픽/정픽 억제 (53%/50% — 예측 틀릴 때 정픽 더 쉽게 억제)
         if current <= WIN_RATE_LOW_BAND and is_rising:
-            if rate15_pct is not None and rate15_pct <= 50:
-                return 'mid_flat'  # 최근 15회 승률 낮으면 정픽 고집 완화
+            if rate10_pct is not None and rate10_pct <= 50:
+                return 'mid_flat'  # 최근 10회 승률 낮으면 정픽 고집 완화
             return 'low_rising'
         # 고점 부근(57~60%) + 내림세 → 반대픽(high_falling)
         if current >= WIN_RATE_HIGH_BAND and is_falling:
-            if rate15_pct is not None and rate15_pct >= 53:
-                return 'mid_flat'  # 최근 15회 예측 잘 맞으면 반대픽 억제
+            if rate10_pct is not None and rate10_pct >= 53:
+                return 'mid_flat'  # 최근 10회 예측 잘 맞으면 반대픽 억제
             return 'high_falling'
         # 기존 ratio 기반 판정 (중간 구간) — R_LOW 0.48, R_HIGH 0.57 (내림 시 반대픽 더 빨리)
         if is_rising and ratio_dynamic >= 0.48:
-            if rate15_pct is not None and rate15_pct <= 50:
+            if rate10_pct is not None and rate10_pct <= 50:
                 return 'mid_flat'
             return 'low_rising'
         if is_falling and ratio_dynamic <= 0.57:
-            if rate15_pct is not None and rate15_pct >= 53:
+            if rate10_pct is not None and rate10_pct >= 53:
                 return 'mid_flat'
             return 'high_falling'
     if delta5 < -WIN_RATE_DIR_DELTA5 and (ratio_fixed >= 0.5 or ratio_dynamic >= 0.57):
-        if rate15_pct is not None and rate15_pct >= 53:
+        if rate10_pct is not None and rate10_pct >= 53:
             return 'mid_flat'
         return 'high_falling'
     if delta5 > WIN_RATE_DIR_DELTA5 and (ratio_fixed <= 0.5 or ratio_dynamic >= 0.48):
-        if rate15_pct is not None and rate15_pct <= 50:
+        if rate10_pct is not None and rate10_pct <= 50:
             return 'mid_flat'
         return 'low_rising'
     return 'mid_flat'
@@ -6558,11 +6558,11 @@ RESULTS_HTML = '''
             if (!Array.isArray(ph) || ph.length < WIN_RATE_DIRECTION_WINDOW) return null;
             var vh = ph.filter(function(h) { return h && typeof h === 'object' && h.actual != null && h.actual !== ''; });
             if (vh.length > 600) vh = vh.slice(-600);
-            var last15 = vh.slice(-15).filter(function(h) { return h.actual !== 'joker' && h.actual !== '조커'; });
-            var rate15Pct = null;
-            if (last15.length >= 5) {
-                var wins15 = last15.filter(function(h) { return h.predicted === h.actual; }).length;
-                rate15Pct = 100 * wins15 / last15.length;
+            var last10 = vh.slice(-10).filter(function(h) { return h.actual !== 'joker' && h.actual !== '조커'; });
+            var rate10Pct = null;
+            if (last10.length >= 3) {
+                var wins10 = last10.filter(function(h) { return h.predicted === h.actual; }).length;
+                rate10Pct = 100 * wins10 / last10.length;
             }
             var derivedSeries = [];
             for (var i = WIN_RATE_DIRECTION_WINDOW - 1; i < vh.length; i++) {
@@ -6589,30 +6589,30 @@ RESULTS_HTML = '''
                 var prev4 = derivedSeries[derivedSeries.length - 4].rate50;
                 var isRising = recent > prev4 + D4;
                 var isFalling = recent < prev4 - D4;
-                // 메인 예측 15경기 승률로 반픽/정픽 억제 (53%/50% — 예측 틀릴 때 정픽 더 쉽게 억제)
+                // 메인 예측 최근 10경기 승률로 반픽/정픽 억제 (53%/50% — 예측 틀릴 때 정픽 더 쉽게 억제)
                 if (current <= WIN_RATE_LOW_BAND && isRising) {
-                    if (rate15Pct != null && rate15Pct <= 50) return 'mid_flat';
+                    if (rate10Pct != null && rate10Pct <= 50) return 'mid_flat';
                     return 'low_rising';
                 }
                 if (current >= WIN_RATE_HIGH_BAND && isFalling) {
-                    if (rate15Pct != null && rate15Pct >= 53) return 'mid_flat';
+                    if (rate10Pct != null && rate10Pct >= 53) return 'mid_flat';
                     return 'high_falling';
                 }
                 if (isRising && ratioDynamic >= R_LOW) {
-                    if (rate15Pct != null && rate15Pct <= 50) return 'mid_flat';
+                    if (rate10Pct != null && rate10Pct <= 50) return 'mid_flat';
                     return 'low_rising';
                 }
                 if (isFalling && ratioDynamic <= R_HIGH) {
-                    if (rate15Pct != null && rate15Pct >= 53) return 'mid_flat';
+                    if (rate10Pct != null && rate10Pct >= 53) return 'mid_flat';
                     return 'high_falling';
                 }
             }
             if (delta5 < -D5 && (ratioFixed >= 0.5 || ratioDynamic >= R_HIGH)) {
-                if (rate15Pct != null && rate15Pct >= 53) return 'mid_flat';
+                if (rate10Pct != null && rate10Pct >= 53) return 'mid_flat';
                 return 'high_falling';
             }
             if (delta5 > D5 && (ratioFixed <= 0.5 || ratioDynamic >= R_LOW)) {
-                if (rate15Pct != null && rate15Pct <= 50) return 'mid_flat';
+                if (rate10Pct != null && rate10Pct <= 50) return 'mid_flat';
                 return 'low_rising';
             }
             return 'mid_flat';
@@ -6664,11 +6664,11 @@ RESULTS_HTML = '''
             // 메인 예측기 밑 결과 표와 동일한 데이터(predictionHistory)에서 롤링 100회 승률 계산 → 고점/저점/중간/방향 즉시 표시
             var vh = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && typeof h === 'object' && h.actual != null && h.actual !== ''; }) : [];
             if (vh.length > 600) vh = vh.slice(-600);
-            var last15Panel = vh.slice(-15).filter(function(h) { return h.actual !== 'joker' && h.actual !== '조커'; });
-            var rate15PctPanel = null;
-            if (last15Panel.length >= 5) {
-                var wins15Panel = last15Panel.filter(function(h) { return h.predicted === h.actual; }).length;
-                rate15PctPanel = 100 * wins15Panel / last15Panel.length;
+            var last10Panel = vh.slice(-10).filter(function(h) { return h.actual !== 'joker' && h.actual !== '조커'; });
+            var rate10PctPanel = null;
+            if (last10Panel.length >= 3) {
+                var wins10Panel = last10Panel.filter(function(h) { return h.predicted === h.actual; }).length;
+                rate10PctPanel = 100 * wins10Panel / last10Panel.length;
             }
             var derivedSeries = [];
             for (var i = winRateDirWindow - 1; i < vh.length; i++) {
@@ -6760,8 +6760,8 @@ RESULTS_HTML = '''
                         refPickText = '기존 전략 유지' + suffix;
                         refPickClass = 'color:#b0bec5;';
                     }
-                    if (refPickText === '반대픽 참고' && rate15PctPanel != null && rate15PctPanel >= 53) { refPickText = '기존 전략 유지 (최근 15회 예측 양호)'; refPickClass = 'color:#b0bec5;'; }
-                    if (refPickText === '정픽 참고' && rate15PctPanel != null && rate15PctPanel <= 50) { refPickText = '기존 전략 유지 (최근 15회 예측 저조)'; refPickClass = 'color:#b0bec5;'; }
+                    if (refPickText === '반대픽 참고' && rate10PctPanel != null && rate10PctPanel >= 53) { refPickText = '기존 전략 유지 (최근 10회 예측 양호)'; refPickClass = 'color:#b0bec5;'; }
+                    if (refPickText === '정픽 참고' && rate10PctPanel != null && rate10PctPanel <= 50) { refPickText = '기존 전략 유지 (최근 10회 예측 저조)'; refPickClass = 'color:#b0bec5;'; }
                 }
             } else {
                 var v100cur = vh.slice(-winRateDirWindow);
