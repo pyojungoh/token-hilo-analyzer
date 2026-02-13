@@ -4419,6 +4419,7 @@ RESULTS_HTML = '''
             skipIds = skipIds || [];
             const st = serverTimeSec || Math.floor(Date.now() / 1000);
             const fullRestore = restoreUi === true;
+            var currentPredRound = (typeof lastPrediction !== 'undefined' && lastPrediction && lastPrediction.round != null) ? Number(lastPrediction.round) : null;
             CALC_IDS.forEach(id => {
                 if (skipIds.indexOf(id) >= 0) return;
                 const c = calcs[String(id)] || {};
@@ -4446,9 +4447,11 @@ RESULTS_HTML = '''
                     if (localRunning && serverRunning) {
                         var byRound = {};
                         serverDeduped.forEach(function(s) {
-                            var loc = localHist.find(function(h) { return h && Number(h.round) === Number(s.round); });
-                            if (loc && loc.no_bet === true) byRound[Number(s.round)] = Object.assign({}, s, { no_bet: true, betAmount: 0 });
-                            else byRound[Number(s.round)] = s;
+                            var rn = Number(s.round);
+                            var loc = localHist.find(function(h) { return h && Number(h.round) === rn; });
+                            if (loc && loc.no_bet === true) byRound[rn] = Object.assign({}, s, { no_bet: true, betAmount: 0 });
+                            else if (loc && loc.actual === 'pending' && rn === currentPredRound) byRound[rn] = loc;
+                            else byRound[rn] = s;
                         });
                         localHist.forEach(function(loc) {
                             if (!loc || loc.round == null) return;
