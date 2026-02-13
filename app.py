@@ -913,6 +913,9 @@ def _effective_win_rate_direction_zone(ph, c, current_round):
     effective = raw_zone if raw_zone else last_zone
     if effective:
         c['last_win_rate_zone_on_win'] = effective
+    # 승 직후 mid_flat이면 last_trend_direction 초기화 — 연패 중 반픽에서 이어지던 'down' 제거, 정픽으로 전환
+    if effective == 'mid_flat':
+        c['last_trend_direction'] = None
     return effective
 
 
@@ -6649,6 +6652,8 @@ RESULTS_HTML = '''
             }
             var effective = rawZone || lastZone;
             if (effective) calcState[id].last_win_rate_zone_on_win = effective;
+            // 승 직후 mid_flat이면 last_trend_direction 초기화 — 연패 중 반픽에서 이어지던 'down' 제거, 정픽으로 전환
+            if (effective === 'mid_flat' && calcState[id]) calcState[id].last_trend_direction = null;
             return effective;
         }
         function renderWinRateDirectionPanel() {
