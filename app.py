@@ -726,8 +726,11 @@ def get_chunk_profile_stats(conn, profile, current_round=None):
         total = jung_weighted + kkeok_weighted
         if total < 2:
             return None
-        # 억지 유사 매칭 방어: total만 유지. diff_ratio는 제거(너무 높으면 수집중만 나옴). 연패 방어로 보완
-        if total < 2:
+        # 억지 유사 매칭 방어: total 3 이상, diff_ratio 15% 이상 (너무 높으면 수집중만 나옴)
+        CHUNK_MIN_TOTAL = 3
+        CHUNK_MIN_DIFF_RATIO = 0.15
+        diff_ratio = abs(jung_weighted - kkeok_weighted) / total if total > 0 else 0
+        if total < CHUNK_MIN_TOTAL or diff_ratio < CHUNK_MIN_DIFF_RATIO:
             return None
         return {'jung_count': jung_weighted, 'kkeok_count': kkeok_weighted}
     except Exception:
