@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <title>매크로 연습 페이지</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: "Malgun Gothic", "Noto Sans KR", sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; padding: 12px; }
+        h1 { font-size: 1.1em; margin: 0 0 12px; color: #64b5f6; }
+        .section { background: #16213e; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+        .section h2 { font-size: 0.95em; color: #aaa; margin: 0 0 8px; }
+        /* 배팅 UI — 매크로가 탭하는 영역. 버튼 크기 키워서 좌표 잡기 쉽게 */
+        .bet-ui { display: flex; flex-direction: column; gap: 10px; max-width: 320px; }
+        .bet-ui label { font-size: 0.9em; color: #bbb; }
+        .bet-ui input[type="text"] { padding: 14px 12px; font-size: 1.1em; background: #0d0d0d; border: 2px solid #37474f; border-radius: 6px; color: #fff; }
+        .bet-ui input:focus { border-color: #64b5f6; outline: none; }
+        .bet-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
+        .bet-btn { padding: 16px 24px; font-size: 1.05em; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; min-width: 100px; }
+        .bet-btn.red { background: #b71c1c; color: #fff; }
+        .bet-btn.black { background: #212121; color: #fff; }
+        .bet-btn.confirm { background: #0f3460; color: #64b5f6; border: 1px solid #64b5f6; }
+        .bet-btn:hover { opacity: 0.9; }
+        /* 분석기 현재 픽 (연습 시 참고) */
+        .analyzer-pick { font-size: 1.1em; margin: 6px 0; }
+        .analyzer-pick .color { font-weight: bold; }
+        .analyzer-pick .color.red { color: #e57373; }
+        .analyzer-pick .color.black { color: #90a4ae; }
+        .analyzer-pick .amount { color: #81c784; margin-left: 8px; }
+        /* 액션 로그 — 마틴 확인용 */
+        .log-box { background: #0d0d0d; border: 1px solid #333; border-radius: 6px; padding: 10px; max-height: 220px; overflow-y: auto; font-family: monospace; font-size: 0.85em; line-height: 1.5; color: #b0b0b0; }
+        .log-box .line { margin: 2px 0; }
+        .log-box .line.amount { color: #81c784; }
+        .log-box .line.red { color: #e57373; }
+        .log-box .line.black { color: #90a4ae; }
+        .log-box .line.confirm { color: #64b5f6; }
+        .hint { font-size: 0.8em; color: #888; margin-top: 8px; }
+    </style>
+</head>
+<body>
+    <h1>자동배팅 매크로 연습 페이지</h1>
+    <p class="hint">에뮬레이터 브라우저에서 이 페이지를 열고, 매크로에서 좌표 찾기로 배팅금액·RED·BLACK·정정을 잡은 뒤 시작하면 됩니다. 아래 로그로 마틴 금액이 잘 들어가는지 확인하세요. 계산기 2/3 테스트는 주소에 ?calculator=2 또는 ?calculator=3 을 붙이면 됩니다.</p>
+
+    <div class="section">
+        <h2>분석기 현재 픽 (참고)</h2>
+        <div id="analyzer-pick" class="analyzer-pick">— 로딩 중</div>
+        <div id="analyzer-meta" style="font-size:0.85em;color:#888;">—</div>
+    </div>
+
+    <div class="section">
+        <h2>배팅 UI (매크로가 탭하는 영역)</h2>
+        <div class="bet-ui">
+            <label for="bet-amount">배팅금액</label>
+            <input type="text" id="bet-amount" inputmode="numeric" placeholder="금액 입력" autocomplete="off" />
+            <div class="bet-buttons">
+                <button type="button" class="bet-btn red" id="btn-red">RED</button>
+                <button type="button" class="bet-btn black" id="btn-black">BLACK</button>
+                <button type="button" class="bet-btn confirm" id="btn-confirm">정정</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>액션 로그 (마틴 확인용)</h2>
+        <div class="log-box" id="log-box"></div>
+        <p class="hint">금액 입력·RED/BLACK·정정 시 로그가 쌓입니다. 정정 시점의 금액이 마틴 단계와 맞는지 확인하세요.</p>
+    </div>
+
+    <script>
+(function() {
+        var logBox = document.getElementById('log-box');
+        var betAmount = document.getElementById('bet-amount');
+        var analyzerPick = document.getElementById('analyzer-pick');
+        var analyzerMeta = document.getElementById('analyzer-meta');
+
+        function nowStr() {
+            var d = new Date();
+            return d.getHours() + ':' + String(d.getMinutes()).padStart(2,'0') + ':' + String(d.getSeconds()).padStart(2,'0');
+        }
+        function addLog(text, className) {
+            var line = document.createElement('div');
+            line.className = 'line' + (className ? ' ' + className : '');
+            line.textContent = '[' + nowStr() + '] ' + text;
+            logBox.appendChild(line);
+            logBox.scrollTop = logBox.scrollHeight;
+        }
+
+        betAmount.addEventListener('input', function() {
+            var v = this.value.replace(/\D/g, '');
+            if (this.value !== v) this.value = v;
+            if (v.length > 0) addLog('금액 입력: ' + (v ? parseInt(v, 10).toLocaleString() + '원' : '(비움)'), 'amount');
+        });
+        betAmount.addEventListener('focus', function() { addLog('배팅금액 포커스', 'amount'); });
+
+        document.getElementById('btn-red').addEventListener('click', function() {
+            addLog('RED 클릭', 'red');
+        });
+        document.getElementById('btn-black').addEventListener('click', function() {
+            addLog('BLACK 클릭', 'black');
+        });
+        document.getElementById('btn-confirm').addEventListener('click', function() {
+            var amt = betAmount.value.replace(/\D/g, '') || '0';
+            addLog('정정 클릭 | 금액: ' + parseInt(amt, 10).toLocaleString() + '원', 'confirm');
+        });
+
+        var calcId = 1;
+        try {
+            var m = /calculator=([123])/.exec(location.search);
+            if (m) calcId = parseInt(m[1], 10);
+        } catch (e) {}
+        function pollAnalyzerPick() {
+            fetch('/api/current-pick?calculator=' + calcId, { cache: 'no-cache' }).then(function(r) { return r.json(); }).then(function(data) {
+                var color = data.pick_color || data.pickColor;
+                var round = data.round;
+                var amt = data.suggested_amount != null ? data.suggested_amount : (data.suggestedAmount != null ? data.suggestedAmount : null);
+                var run = data.running;
+                if (color) {
+                    var c = (color + '').toUpperCase();
+                    var isRed = c === 'RED' || color === '빨강';
+                    analyzerPick.innerHTML = '<span class="color ' + (isRed ? 'red' : 'black') + '">' + (isRed ? 'RED' : 'BLACK') + '</span>' +
+                        (amt != null && amt > 0 ? '<span class="amount">' + Number(amt).toLocaleString() + '원</span>' : '');
+                    analyzerMeta.textContent = '계산기 ' + calcId + ' | 회차: ' + (round != null ? round : '—') + (run === false ? ' | 정지' : '');
+                } else {
+                    analyzerPick.textContent = '— 픽 없음';
+                    analyzerMeta.textContent = run === false ? '계산기 정지' : '대기 중';
+                }
+            }).catch(function() {
+                analyzerPick.textContent = '— API 연결 실패 (같은 도메인에서 열어야 함)';
+                analyzerMeta.textContent = '';
+            });
+        }
+        pollAnalyzerPick();
+        setInterval(pollAnalyzerPick, 2000);
+})();
+    </script>
+</body>
+</html>
