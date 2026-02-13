@@ -233,6 +233,20 @@ def init_database():
             CREATE INDEX IF NOT EXISTS idx_shape_occurrences_sig_round
             ON shape_win_occurrences (signature, round_num DESC)
         ''')
+        # chunk_profile_occurrences: 덩어리(2개 이상 줄 이어진 구간) 프로필별 다음 결과. 유사 덩어리 가중치용
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS chunk_profile_occurrences (
+                id SERIAL PRIMARY KEY,
+                profile_json TEXT NOT NULL,
+                next_actual TEXT NOT NULL,
+                round_num INTEGER NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        ''')
+        cur.execute('''
+            CREATE INDEX IF NOT EXISTS idx_chunk_profile_round
+            ON chunk_profile_occurrences (round_num DESC)
+        ''')
         for col, typ in [('next_jung_count', 'INTEGER DEFAULT 0'), ('next_kkeok_count', 'INTEGER DEFAULT 0')]:
             cur.execute(
                 "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'shape_win_stats' AND column_name = %s",
@@ -519,6 +533,45 @@ def _get_shape_stats_for_results(results):
             pass
 
 
+def _get_chunk_profile_from_results(results):
+    """results로부터 현재 덩어리 프로필 추출. 없으면 None."""
+    if not results or len(results) < 16:
+        return None
+    graph_values = _build_graph_values(results)
+    if len(graph_values) < 4:
+        return None
+    use = graph_values[:30]
+    line_runs, pong_runs = _get_line_pong_runs(use)
+    first_is_line = True
+    if len(use) >= 2 and (use[0] is True or use[0] is False) and (use[1] is True or use[1] is False):
+        first_is_line = (use[0] == use[1])
+    profiles = _extract_chunk_profiles(line_runs, pong_runs, first_is_line)
+    return profiles[0] if profiles else None
+
+
+def _get_chunk_stats_for_results(results):
+    """현재 results 덩어리 프로필과 유사한 과거 덩어리의 '다음 결과' 가중 통계. 최근·유사할수록 가중치 높게."""
+    if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
+        return None
+    profile = _get_chunk_profile_from_results(results)
+    if not profile:
+        return None
+    try:
+        current_round = int(str(results[0].get('gameID', '0') or '0'), 10)
+    except (ValueError, TypeError):
+        current_round = None
+    conn = get_db_connection(statement_timeout_sec=3)
+    if not conn:
+        return None
+    try:
+        return get_chunk_profile_stats(conn, profile, current_round=current_round)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _get_latest_next_pick_for_shape(results):
     """현재 results에 해당하는 그래프 모양과 같은 shape_signature를 가진 가장 최근 항목의 다음 픽을 찾음."""
     if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
@@ -600,6 +653,73 @@ def update_shape_win_stats(conn, signature, actual, round_num=None):
         cur.close()
     except Exception as e:
         print(f"[경고] shape_win_stats 갱신 실패: {str(e)[:150]}")
+
+
+def get_chunk_profile_stats(conn, profile, current_round=None):
+    """
+    유사 덩어리 프로필의 '다음 결과' 가중 합계. 최근·유사할수록 가중치 높게.
+    profile: (h1, h2, ...) 튜플. 유사도 >= 0.5인 과거 기록만 사용.
+    반환: {jung_count, kkeok_count} 또는 None.
+    """
+    if not conn or not profile:
+        return None
+    try:
+        import json
+        cur = conn.cursor()
+        cur.execute('''
+            SELECT profile_json, next_actual, round_num FROM chunk_profile_occurrences
+            ORDER BY round_num DESC
+            LIMIT 500
+        ''')
+        rows = cur.fetchall()
+        cur.close()
+        if not rows:
+            return None
+        CHUNK_DECAY_BASE = 0.95
+        CHUNK_DECAY_STEP = 15
+        CHUNK_SIM_THRESHOLD = 0.5
+        jung_weighted = 0.0
+        kkeok_weighted = 0.0
+        for profile_json, next_actual, rnd in rows:
+            try:
+                other = tuple(json.loads(profile_json))
+            except Exception:
+                continue
+            sim = _chunk_profile_similarity(profile, other)
+            if sim < CHUNK_SIM_THRESHOLD:
+                continue
+            age = max(0, (current_round or 0) - rnd)
+            w = (CHUNK_DECAY_BASE ** (age / CHUNK_DECAY_STEP)) * sim
+            if next_actual == '정':
+                jung_weighted += w
+            else:
+                kkeok_weighted += w
+        total = jung_weighted + kkeok_weighted
+        if total < 5:
+            return None
+        return {'jung_count': jung_weighted, 'kkeok_count': kkeok_weighted}
+    except Exception:
+        return None
+
+
+def update_chunk_profile_occurrences(conn, profile, actual, round_num=None):
+    """덩어리 프로필 다음 결과 저장. 예측 기록 저장 시 호출."""
+    if not conn or not profile or round_num is None:
+        return
+    try:
+        import json
+        is_jung = (actual == '정' or (isinstance(actual, str) and '정' in actual))
+        next_actual = '정' if is_jung else '꺽'
+        profile_json = json.dumps(list(profile))
+        cur = conn.cursor()
+        cur.execute('''
+            INSERT INTO chunk_profile_occurrences (profile_json, next_actual, round_num)
+            VALUES (%s, %s, %s)
+        ''', (profile_json, next_actual, int(round_num)))
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        print(f"[경고] chunk_profile_occurrences 저장 실패: {str(e)[:100]}")
 
 
 # DB 없을 때 계산기 상태 in-memory 저장 (새로고침 시 유지, 서버 재시작 시 초기화)
@@ -1216,6 +1336,21 @@ def _apply_results_to_calcs(results):
                     probability=c.get('pending_prob'), pick_color=pick_color_for_record or c.get('pending_color'),
                     results=results_for_shape
                 )
+                if results_for_shape and len(results_for_shape) >= 16 and DB_AVAILABLE and DATABASE_URL:
+                    sig = _get_shape_signature(results_for_shape)
+                    if sig:
+                        conn_shape = get_db_connection(statement_timeout_sec=3)
+                        if conn_shape:
+                            try:
+                                update_shape_win_stats(conn_shape, sig, actual, round_num=pending_round)
+                                chunk_prof = _get_chunk_profile_from_results(results_for_shape)
+                                if chunk_prof:
+                                    update_chunk_profile_occurrences(conn_shape, chunk_prof, actual, round_num=pending_round)
+                            finally:
+                                try:
+                                    conn_shape.close()
+                                except Exception:
+                                    pass
                 # 계산기 히스토리·표시용: 배팅한 픽(반픽/승률반픽 적용)
                 pred_for_calc = pending_predicted
                 bet_color_for_history = _normalize_pick_color_value(c.get('pending_color'))
@@ -1611,6 +1746,9 @@ def _merge_round_predictions_into_history(round_actuals, results=None):
                     if conn2:
                         try:
                             update_shape_win_stats(conn2, sig, actual, round_num=rnd)
+                            chunk_prof = _get_chunk_profile_from_results(results[1:])
+                            if chunk_prof:
+                                update_chunk_profile_occurrences(conn2, chunk_prof, actual, round_num=rnd)
                         finally:
                             try:
                                 conn2.close()
@@ -1662,6 +1800,9 @@ def _backfill_latest_round_to_prediction_history(results):
             if conn:
                 try:
                     update_shape_win_stats(conn, sig, actual, round_num=latest_round)
+                    chunk_prof = _get_chunk_profile_from_results(results[1:])
+                    if chunk_prof:
+                        update_chunk_profile_occurrences(conn, chunk_prof, actual, round_num=latest_round)
                 finally:
                     try:
                         conn.close()
@@ -2008,6 +2149,77 @@ def _detect_chunk_shape(line_runs, pong_runs, first_is_line):
     return None
 
 
+def _extract_chunk_profiles(line_runs, pong_runs, first_is_line):
+    """
+    덩어리 = 2개 이상의 줄들이 이어진 구간. 줄 = 같은 결과 연속(정정/꺽꺽).
+    연속 줄 패턴: 2+줄, 1퐁당, 2+줄, 1퐁당. 퐁당 = 1개씩 정꺽정꺽.
+    반환: [profile_tuple, ...] - 추출된 덩어리 프로필들. 맨 앞이 최신 덩어리.
+    프로필 = (h1, h2, ...) 줄들의 높이(블록 개수).
+    """
+    if not line_runs and not pong_runs:
+        return []
+    profiles = []
+    chunk_heights = []
+    li, pi = 0, 0
+    expect_line = first_is_line
+    max_iter = len(line_runs) + len(pong_runs)
+    for _ in range(max_iter):
+        if expect_line and li < len(line_runs):
+            run_val = line_runs[li]
+            li += 1
+            is_line = True
+        elif not expect_line and pi < len(pong_runs):
+            run_val = pong_runs[pi]
+            pi += 1
+            is_line = False
+        else:
+            break
+        expect_line = not expect_line
+
+        if is_line:
+            if run_val >= 5:
+                if len(chunk_heights) >= 2:
+                    profiles.append(tuple(chunk_heights))
+                chunk_heights = []
+            elif run_val == 1:
+                if len(chunk_heights) >= 2:
+                    profiles.append(tuple(chunk_heights))
+                chunk_heights = []
+            elif run_val >= 2:
+                chunk_heights.append(run_val)
+        else:
+            if run_val >= 2:
+                if len(chunk_heights) >= 2:
+                    profiles.append(tuple(chunk_heights))
+                chunk_heights = []
+            elif run_val == 1:
+                pass
+    if len(chunk_heights) >= 2:
+        profiles.append(tuple(chunk_heights))
+    return profiles
+
+
+def _chunk_profile_similarity(profile_a, profile_b):
+    """
+    덩어리 프로필 유사도 0~1. 높이 분포 기반.
+    같은 길이 + 비슷한 높이 → 높은 유사도. 최근 덩어리와 비슷할 때 가중치 상승용.
+    """
+    if not profile_a or not profile_b:
+        return 0.0
+    a, b = list(profile_a), list(profile_b)
+    if len(a) != len(b):
+        len_penalty = 0.7 ** abs(len(a) - len(b))
+    else:
+        len_penalty = 1.0
+    n = min(len(a), len(b))
+    if n == 0:
+        return 0.0
+    diff_sum = sum(abs(a[i] - b[i]) for i in range(n))
+    max_diff = n * 5
+    height_sim = 1.0 - min(1.0, diff_sum / max(max_diff, 1))
+    return height_sim * len_penalty
+
+
 def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_short, pong_pct_prev):
     """
     퐁당 / 덩어리 / 줄 세 가지 구간 판별. 시각화·예측픽 가중치에 사용.
@@ -2168,13 +2380,14 @@ def _symmetry_line_for_n(graph_values, n):
     }
 
 
-def compute_prediction(results, prediction_history, prev_symmetry_counts=None, shape_win_stats=None):
+def compute_prediction(results, prediction_history, prev_symmetry_counts=None, shape_win_stats=None, chunk_profile_stats=None):
     """
     서버 측 예측 공식. JS와 동일한 입력·출력.
     results: 최신순 결과 리스트, 각 항목 dict(result, joker, gameID 등)
     prediction_history: [{round, predicted, actual}, ...], actual이 'joker'면 제외 후 사용
     prev_symmetry_counts: {left, right} 이전 좌우 줄 개수(선택)
     shape_win_stats: {jung_count, kkeok_count} 저장된 모양별 '그 다음 실제 결과' 누적(선택). 있으면 해당 모양 가중치 반영.
+    chunk_profile_stats: {jung_count, kkeok_count} 유사 덩어리 프로필의 '다음 결과' 가중 통계(선택). 최근·유사 덩어리일수록 가중치 높게 반영.
     반환: {'value': '정'|'꺽'|None, 'round': int, 'prob': float, 'color': '빨강'|'검정'|None}
     15번 카드가 조커면 value=None, color=None (픽 보류).
     좌우 대칭·줄 유사도는 15·20·30열 가중 평균으로 반영(데이터 있으면).
@@ -2424,6 +2637,21 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
             elif kr >= 0.55:
                 pong_w += w
                 line_w = max(0.0, line_w - w * 0.5)
+    # 유사 덩어리 가중치: 최근·비슷한 덩어리일수록 가중치 높게. 덩어리 높이 프로필 기반.
+    if chunk_profile_stats:
+        jc = chunk_profile_stats.get('jung_count') or 0
+        kc = chunk_profile_stats.get('kkeok_count') or 0
+        total = jc + kc
+        if total >= 5:
+            jr = jc / total if total else 0
+            kr = kc / total if total else 0
+            w = 0.08 if total >= 15 else 0.05
+            if jr >= 0.55:
+                line_w += w
+                pong_w = max(0.0, pong_w - w * 0.5)
+            elif kr >= 0.55:
+                pong_w += w
+                line_w = max(0.0, line_w - w * 0.5)
     total_w = line_w + pong_w
     if total_w > 0:
         line_w /= total_w
@@ -2454,6 +2682,9 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         if shape_win_stats:
             pong_chunk_debug['shape_jung_count'] = shape_win_stats.get('jung_count')
             pong_chunk_debug['shape_kkeok_count'] = shape_win_stats.get('kkeok_count')
+        if chunk_profile_stats:
+            pong_chunk_debug['chunk_profile_jung'] = chunk_profile_stats.get('jung_count')
+            pong_chunk_debug['chunk_profile_kkeok'] = chunk_profile_stats.get('kkeok_count')
     return {
         'value': predict, 'round': predicted_round_full, 'prob': round(pred_prob, 1), 'color': color_to_pick,
         'warning_u35': u35_detected,
@@ -3891,7 +4122,7 @@ RESULTS_HTML = '''
             <div id="panel-pong-chunk" class="analysis-panel active">
                 <div id="pong-chunk-collapse-body" class="prob-bucket-collapse-body">
                 <div id="pong-chunk-section" style="margin-top:0;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
-                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">최근 그래프에서 <strong>줄(유지)</strong>·<strong>퐁당(바뀜)</strong>·<strong>덩어리(블록 반복)</strong>·<strong>U자 구간</strong>을 판별해 가중치에 반영합니다. U자 구간은 연패가 많아 유지 쪽 보정·멈춤 권장. <strong>감지된 모양</strong>은 저장·대조용 코드(앞 3 run을 S/M/L 구간으로 표시, 예: L,S,M).</p>
+                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">최근 그래프에서 <strong>줄(유지)</strong>·<strong>퐁당(바뀜)</strong>·<strong>덩어리(블록 반복)</strong>·<strong>U자 구간</strong>을 판별해 가중치에 반영합니다. U자 구간은 연패가 많아 유지 쪽 보정·멈춤 권장. <strong>감지된 모양</strong>은 저장·대조용 코드(앞 3 run을 S/M/L 구간으로 표시, 예: L,S,M). <strong>유사 덩어리</strong>는 현재 덩어리와 높이 프로필이 비슷한 과거 덩어리의 다음 결과를 가중 합산해 반영합니다.</p>
                     <div id="pong-chunk-data" style="font-size:0.9em;color:#ccc;"><table class="symmetry-line-table" style="width:100%;max-width:420px;"><tbody id="pong-chunk-tbody"><tr><td colspan="2" style="color:#888;">데이터 로딩 후 표시</td></tr></tbody></table></div>
                 </div>
                 </div>
@@ -6072,6 +6303,13 @@ RESULTS_HTML = '''
                                 var j = Number(d.shape_jung_count) || 0, k = Number(d.shape_kkeok_count) || 0;
                                 shapeStatsLabel = '다음 정 ' + j + '회, 꺽 ' + k + '회 (저장된 통계)';
                             }
+                            var chunkProfileStatsLabel = '—';
+                            if (d.chunk_profile_jung != null && d.chunk_profile_kkeok != null) {
+                                var cj = Number(d.chunk_profile_jung) || 0, ck = Number(d.chunk_profile_kkeok) || 0;
+                                if (cj + ck >= 5) {
+                                    chunkProfileStatsLabel = '다음 정 ' + cj.toFixed(1) + ', 꺽 ' + ck.toFixed(1) + ' (유사 덩어리 가중)';
+                                }
+                            }
                             var latestNextPickLabel = '—';
                             if (d.latest_next_pick && (d.latest_next_pick === '정' || d.latest_next_pick === '꺽')) {
                                 latestNextPickLabel = d.latest_next_pick;
@@ -6082,6 +6320,7 @@ RESULTS_HTML = '''
                                 '<tr><td>U자 구간</td><td>' + uShapeLabel + '</td></tr>' +
                                 '<tr><td><strong>감지된 모양(시그니처)</strong></td><td><code style="font-size:0.9em">' + shapeSig + '</code></td></tr>' +
                                 '<tr><td>모양별 다음 결과 통계</td><td>' + shapeStatsLabel + '</td></tr>' +
+                                '<tr><td>유사 덩어리 다음 결과</td><td>' + chunkProfileStatsLabel + '</td></tr>' +
                                 '<tr><td>가장 최근 다음 픽</td><td>' + latestNextPickLabel + '</td></tr>' +
                                 '<tr><td>맨 앞 run 타입</td><td>' + (d.first_run_type || '—') + '</td></tr>' +
                                 '<tr><td>맨 앞 run 길이</td><td>' + (d.first_run_len != null ? d.first_run_len : '—') + '</td></tr>' +
@@ -7957,7 +8196,8 @@ def _build_results_payload_db_only(hours=24):
                         # 퐁당/덩어리 판별 메뉴용: 저장 픽은 유지하되 현재 그래프 기준 phase/debug만 계산해 병합. 모양별 승률 보정 반영.
                         try:
                             shape_stats = _get_shape_stats_for_results(results)
-                            computed = compute_prediction(results, ph, shape_win_stats=shape_stats)
+                            chunk_stats = _get_chunk_stats_for_results(results)
+                            computed = compute_prediction(results, ph, shape_win_stats=shape_stats, chunk_profile_stats=chunk_stats)
                             if computed:
                                 server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                 server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
@@ -8134,7 +8374,8 @@ def _build_results_payload():
                             }
                             try:
                                 shape_stats = _get_shape_stats_for_results(results)
-                                computed = compute_prediction(results, ph, shape_win_stats=shape_stats)
+                                chunk_stats = _get_chunk_stats_for_results(results)
+                                computed = compute_prediction(results, ph, shape_win_stats=shape_stats, chunk_profile_stats=chunk_stats)
                                 if computed:
                                     server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                     server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
@@ -8212,7 +8453,8 @@ def _build_results_payload():
                             }
                             try:
                                 shape_stats = _get_shape_stats_for_results(results)
-                                computed = compute_prediction(results, ph, shape_win_stats=shape_stats)
+                                chunk_stats = _get_chunk_stats_for_results(results)
+                                computed = compute_prediction(results, ph, shape_win_stats=shape_stats, chunk_profile_stats=chunk_stats)
                                 if computed:
                                     server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                     server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
@@ -8226,7 +8468,8 @@ def _build_results_payload():
                     print(f"[API] server_pred 구성 오류: {str(e)[:100]}")
             if server_pred is None:
                 shape_stats = _get_shape_stats_for_results(results) if len(results) >= 16 else None
-                server_pred = compute_prediction(results, ph, shape_win_stats=shape_stats) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
+                chunk_stats = _get_chunk_stats_for_results(results) if len(results) >= 16 else None
+                server_pred = compute_prediction(results, ph, shape_win_stats=shape_stats, chunk_profile_stats=chunk_stats) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
             blended = _blended_win_rate(ph)
             round_actuals = _build_round_actuals(results)
             return {
