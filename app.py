@@ -726,6 +726,12 @@ def get_chunk_profile_stats(conn, profile, current_round=None):
         total = jung_weighted + kkeok_weighted
         if total < 2:
             return None
+        # 억지 유사 매칭 방어: 신뢰도 부족 시 None (배팅 안 함)
+        CHUNK_MIN_TOTAL = 5
+        CHUNK_MIN_DIFF_RATIO = 0.25
+        diff_ratio = abs(jung_weighted - kkeok_weighted) / total if total > 0 else 0
+        if total < CHUNK_MIN_TOTAL or diff_ratio < CHUNK_MIN_DIFF_RATIO:
+            return None
         return {'jung_count': jung_weighted, 'kkeok_count': kkeok_weighted}
     except Exception:
         return None
@@ -1433,7 +1439,22 @@ def _apply_results_to_calcs(results):
                 # 모양: 유사 덩어리 다음 결과 높은값에만 배팅 — 값 있으면 그 픽으로 배팅, 없으면 no_bet
                 if c.get('shape_only_latest_next_pick') and results_for_shape and len(results_for_shape) >= 16:
                     latest_next = _get_chunk_pick_by_higher_stats(results_for_shape)
-                    if not latest_next or latest_next not in ('정', '꺽'):
+                    # 연패 방어: shape_only 연패 N회 이상 시 1회 휴식 후 재개 (억지 매칭 연패 방지)
+                    skip_due_to_loss_streak = False
+                    if latest_next and latest_next in ('정', '꺽') and c.get('shape_only_loss_streak_skip', True):
+                        completed = [h for h in (c.get('history') or []) if h.get('actual') and h.get('actual') != 'pending']
+                        loss_streak = 0
+                        for h in reversed(completed):
+                            if h.get('no_bet') or (h.get('betAmount') is not None and h.get('betAmount') == 0):
+                                break  # no_bet = 휴식. 연패 끊김 → 다음 회차부터 배팅 재개
+                            is_loss = h.get('actual') == 'joker' or h.get('predicted') != h.get('actual')
+                            if is_loss:
+                                loss_streak += 1
+                            else:
+                                break
+                        if loss_streak >= 2:
+                            skip_due_to_loss_streak = True
+                    if not latest_next or latest_next not in ('정', '꺽') or skip_due_to_loss_streak:
                         history_entry['no_bet'] = True
                         history_entry['betAmount'] = 0
                     else:
@@ -1721,6 +1742,19 @@ def _server_calc_effective_pick_and_amount(c):
         if not results or len(results) < 16:
             return None, 0
         latest_next = _get_chunk_pick_by_higher_stats(results)
+        # 연패 방어: shape_only 연패 2회 이상 시 1회 휴식 후 재개
+        if latest_next and latest_next in ('정', '꺽') and c.get('shape_only_loss_streak_skip', True):
+            completed = [h for h in (c.get('history') or []) if h.get('actual') and h.get('actual') != 'pending']
+            loss_streak = 0
+            for h in reversed(completed):
+                if h.get('no_bet') or (h.get('betAmount') is not None and h.get('betAmount') == 0):
+                    break  # no_bet = 휴식. 연패 끊김 → 다음 회차부터 배팅 재개
+                if h.get('actual') == 'joker' or h.get('predicted') != h.get('actual'):
+                    loss_streak += 1
+                else:
+                    break
+            if loss_streak >= 2:
+                latest_next = None
         if not latest_next or latest_next not in ('정', '꺽'):
             return None, 0
         pred = latest_next
@@ -4329,7 +4363,7 @@ RESULTS_HTML = '''
                                             <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-1-lose-streak-reverse"> 연패≥<input type="number" id="calc-1-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-1-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-1-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-1-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
-                                            <tr><td>모양</td><td><label><input type="checkbox" id="calc-1-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
+                                            <tr><td>모양</td><td><label><input type="checkbox" id="calc-1-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅</label> <label><input type="checkbox" id="calc-1-shape-only-loss-streak-skip" checked title="연패 2회 이상 시 1회 휴식 후 재개 (억지 매칭 연패 방지)"> 연패 2회↑ 1회휴식</label></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-1-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-1-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
                                             <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option><option value="pyo2">표마틴 2</option></select></label></td></tr>
@@ -4376,7 +4410,7 @@ RESULTS_HTML = '''
                                             <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-2-lose-streak-reverse"> 연패≥<input type="number" id="calc-2-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-2-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-2-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-2-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
-                                            <tr><td>모양</td><td><label><input type="checkbox" id="calc-2-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
+                                            <tr><td>모양</td><td><label><input type="checkbox" id="calc-2-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅</label> <label><input type="checkbox" id="calc-2-shape-only-loss-streak-skip" checked title="연패 2회 이상 시 1회 휴식 후 재개 (억지 매칭 연패 방지)"> 연패 2회↑ 1회휴식</label></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-2-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-2-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
                                             <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option><option value="pyo2">표마틴 2</option></select></label></td></tr>
@@ -4423,7 +4457,7 @@ RESULTS_HTML = '''
                                             <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-3-lose-streak-reverse"> 연패≥<input type="number" id="calc-3-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-3-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-3-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-3-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
-                                            <tr><td>모양</td><td><label><input type="checkbox" id="calc-3-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
+                                            <tr><td>모양</td><td><label><input type="checkbox" id="calc-3-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅</label> <label><input type="checkbox" id="calc-3-shape-only-loss-streak-skip" checked title="연패 2회 이상 시 1회 휴식 후 재개 (억지 매칭 연패 방지)"> 연패 2회↑ 1회휴식</label></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-3-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-3-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
                                             <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option><option value="pyo2">표마틴 2</option></select></label></td></tr>
@@ -4728,6 +4762,7 @@ RESULTS_HTML = '''
                 streak_suppress_reverse: false,
                 lock_direction_on_lose_streak: true,
                 shape_only_latest_next_pick: false,
+                shape_only_loss_streak_skip: true,
                 last_trend_direction: null,
                 martingale: false,
                 martingale_type: 'pyo',
@@ -4797,6 +4832,7 @@ RESULTS_HTML = '''
                     streak_suppress_reverse: !!(document.getElementById('calc-' + id + '-streak-suppress-reverse') && document.getElementById('calc-' + id + '-streak-suppress-reverse').checked),
                     lock_direction_on_lose_streak: !!(document.getElementById('calc-' + id + '-lock-direction-on-lose-streak') && document.getElementById('calc-' + id + '-lock-direction-on-lose-streak').checked),
                     shape_only_latest_next_pick: !!(document.getElementById('calc-' + id + '-shape-only-latest-next-pick') && document.getElementById('calc-' + id + '-shape-only-latest-next-pick').checked),
+                    shape_only_loss_streak_skip: !!(document.getElementById('calc-' + id + '-shape-only-loss-streak-skip') && document.getElementById('calc-' + id + '-shape-only-loss-streak-skip').checked),
                     last_trend_direction: (calcState[id].last_trend_direction === 'up' || calcState[id].last_trend_direction === 'down') ? calcState[id].last_trend_direction : null,
                     martingale: !!(martingaleEl && martingaleEl.checked),
                     martingale_type: (martingaleTypeEl && martingaleTypeEl.value) || 'pyo',
@@ -4950,6 +4986,7 @@ RESULTS_HTML = '''
                 calcState[id].streak_suppress_reverse = !!c.streak_suppress_reverse;
                 calcState[id].lock_direction_on_lose_streak = c.lock_direction_on_lose_streak !== false;
                 calcState[id].shape_only_latest_next_pick = !!c.shape_only_latest_next_pick;
+                calcState[id].shape_only_loss_streak_skip = c.shape_only_loss_streak_skip !== false;
                 calcState[id].last_trend_direction = (c.last_trend_direction === 'up' || c.last_trend_direction === 'down') ? c.last_trend_direction : null;
                 calcState[id].last_win_rate_zone = (c.last_win_rate_zone === 'high_falling' || c.last_win_rate_zone === 'low_rising' || c.last_win_rate_zone === 'mid_flat') ? c.last_win_rate_zone : null;
                 calcState[id].last_win_rate_zone_change_round = (c.last_win_rate_zone_change_round != null && !isNaN(Number(c.last_win_rate_zone_change_round))) ? Number(c.last_win_rate_zone_change_round) : null;
@@ -4987,6 +5024,8 @@ RESULTS_HTML = '''
                 if (lockDirEl) lockDirEl.checked = calcState[id].lock_direction_on_lose_streak !== false;
                 var shapeOnlyEl = document.getElementById('calc-' + id + '-shape-only-latest-next-pick');
                 if (shapeOnlyEl) shapeOnlyEl.checked = !!calcState[id].shape_only_latest_next_pick;
+                var shapeOnlyLossSkipEl = document.getElementById('calc-' + id + '-shape-only-loss-streak-skip');
+                if (shapeOnlyLossSkipEl) shapeOnlyLossSkipEl.checked = calcState[id].shape_only_loss_streak_skip !== false;
                 const martingaleEl = document.getElementById('calc-' + id + '-martingale');
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 if (martingaleEl) martingaleEl.checked = !!calcState[id].martingale;
@@ -7355,6 +7394,17 @@ RESULTS_HTML = '''
                         var predBeforeShapeOnly = bettingText;  // shape_only 보류 시 history에는 '정'/'꺽' 저장 (승패 계산용)
                         var shapeOnly = !!(calcState[id] && calcState[id].shape_only_latest_next_pick);
                         var latestNext = (typeof lastPongChunkDebug !== 'undefined' && lastPongChunkDebug && (lastPongChunkDebug.latest_next_pick === '정' || lastPongChunkDebug.latest_next_pick === '꺽')) ? lastPongChunkDebug.latest_next_pick : null;
+                        // 연패 방어: shape_only 연패 2회↑ 시 1회 휴식 후 재개
+                        if (shapeOnly && latestNext && calcState[id].shape_only_loss_streak_skip !== false) {
+                            var completed = (calcState[id].history || []).filter(function(h) { return h && h.actual && h.actual !== 'pending'; });
+                            var lossSt = 0;
+                            for (var ii = completed.length - 1; ii >= 0; ii--) {
+                                var hh = completed[ii];
+                                if (hh.no_bet === true || (hh.betAmount != null && hh.betAmount === 0)) break;  // no_bet = 휴식 → 다음 회차 배팅 재개
+                                if (hh.actual === 'joker' || hh.predicted !== hh.actual) lossSt++; else break;
+                            }
+                            if (lossSt >= 2) latestNext = null;
+                        }
                         if (shapeOnly) {
                             if (latestNext) {
                                 bettingText = latestNext;
@@ -7921,6 +7971,8 @@ RESULTS_HTML = '''
                 calcState[id].lock_direction_on_lose_streak = !(lockDirRun && !lockDirRun.checked);
                 var shapeOnlyRun = document.getElementById('calc-' + id + '-shape-only-latest-next-pick');
                 calcState[id].shape_only_latest_next_pick = !!(shapeOnlyRun && shapeOnlyRun.checked);
+                var shapeOnlyLossSkipRun = document.getElementById('calc-' + id + '-shape-only-loss-streak-skip');
+                calcState[id].shape_only_loss_streak_skip = !!(shapeOnlyLossSkipRun && shapeOnlyLossSkipRun.checked);
                 calcState[id].last_trend_direction = null;
                 const pauseLowRun = document.getElementById('calc-' + id + '-pause-low-win-rate');
                 const pauseThrRunEl = document.getElementById('calc-' + id + '-pause-win-rate-threshold');
@@ -8902,6 +8954,7 @@ def api_calc_state():
                     'streak_suppress_reverse': bool(c.get('streak_suppress_reverse')),
                     'lock_direction_on_lose_streak': bool(c.get('lock_direction_on_lose_streak', True)),
                     'shape_only_latest_next_pick': bool(c.get('shape_only_latest_next_pick')),
+                    'shape_only_loss_streak_skip': bool(c.get('shape_only_loss_streak_skip', True)),
                     'last_trend_direction': c.get('last_trend_direction') if c.get('last_trend_direction') in ('up', 'down') else None,
                     'martingale': bool(c.get('martingale')),
                     'martingale_type': str(c.get('martingale_type') or 'pyo'),
