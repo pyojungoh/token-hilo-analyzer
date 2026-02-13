@@ -6724,10 +6724,7 @@ RESULTS_HTML = '''
         function getBetForRound(id, roundNum) {
             try {
                 if (!calcState[id] || roundNum == null) return 0;
-                // 서버가 저장한 pending 회차 금액이 있으면 그대로 사용(금액 왔다갔다 방지)
-                var pr = calcState[id].pending_round;
-                var pba = calcState[id].pending_bet_amount;
-                if (pr != null && Number(pr) === Number(roundNum) && pba != null && pba > 0) return Math.floor(pba);
+                // 항상 history 기반 시뮬레이션으로 계산. pending_bet_amount는 사용하지 않음(서버 stale 값 고정 방지)
                 const capIn = parseFloat(document.getElementById('calc-' + id + '-capital')?.value) || 1000000;
                 const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
                 const oddsIn = parseFloat(document.getElementById('calc-' + id + '-odds')?.value) || 1.97;
