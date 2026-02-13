@@ -4092,6 +4092,13 @@ RESULTS_HTML = '''
         .calc-bet-copy-amount:hover { background: #455a64; color: #a5d6a7; }
         .calc-bet-copy-amount:active { background: #546e7a; }
         .calc-bet-copy-hint { font-size: 0.85em; color: #78909c; margin-left: 4px; }
+        .calc-options-collapse { margin-top: 6px; margin-bottom: 4px; width: 100%; flex-basis: 100%; }
+        .calc-options-toggle { padding: 4px 10px; font-size: 0.85em; color: #81c784; background: transparent; border: 1px solid #555; border-radius: 4px; cursor: pointer; }
+        .calc-options-toggle:hover { background: #37474f; color: #a5d6a7; }
+        .calc-options-collapse.collapsed .calc-options-body { display: none !important; }
+        .calc-options-collapse:not(.collapsed) .calc-options-toggle { margin-bottom: 6px; }
+        .calc-options-collapse.collapsed .calc-options-toggle::before { content: '▼ '; }
+        .calc-options-collapse:not(.collapsed) .calc-options-toggle::before { content: '▲ '; }
         @media (max-width: 520px) {
             .calc-dropdown-body { flex-direction: column; }
             .calc-body-row { flex: 1 1 auto; max-width: none; }
@@ -4311,16 +4318,23 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-1-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label></td></tr>
-                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
-                                    <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-1-lose-streak-reverse"> 연패≥<input type="number" id="calc-1-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-1-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
-                                    <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-1-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-1-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
-                                    <tr><td>모양</td><td><label><input type="checkbox" id="calc-1-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
-                                    <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-1-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-1-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
-                                    <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
-                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
-                                    <tr><td>목표</td><td><label><input type="checkbox" id="calc-1-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-1-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-1-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
-                                    <tr><td>배팅복사</td><td><span id="calc-1-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
                                 </table>
+                                <div class="calc-options-collapse collapsed" data-calc="1">
+                                    <button type="button" class="calc-options-toggle" data-calc="1" title="클릭하여 기타 옵션 펼치기/접기">기타 옵션</button>
+                                    <div class="calc-options-body">
+                                        <table class="calc-settings-table">
+                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                            <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-1-lose-streak-reverse"> 연패≥<input type="number" id="calc-1-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-1-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
+                                            <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-1-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-1-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
+                                            <tr><td>모양</td><td><label><input type="checkbox" id="calc-1-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
+                                            <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-1-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-1-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
+                                            <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
+                                            <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
+                                            <tr><td>목표</td><td><label><input type="checkbox" id="calc-1-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-1-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-1-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
+                                            <tr><td>배팅복사</td><td><span id="calc-1-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
+                                        </table>
+                                    </div>
+                                </div>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="1">실행</button>
                                     <button type="button" class="calc-stop" data-calc="1">정지</button>
@@ -4351,16 +4365,23 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-2-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label></td></tr>
-                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
-                                    <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-2-lose-streak-reverse"> 연패≥<input type="number" id="calc-2-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-2-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
-                                    <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-2-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-2-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
-                                    <tr><td>모양</td><td><label><input type="checkbox" id="calc-2-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
-                                    <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-2-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-2-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
-                                    <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
-                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
-                                    <tr><td>목표</td><td><label><input type="checkbox" id="calc-2-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-2-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-2-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
-                                    <tr><td>배팅복사</td><td><span id="calc-2-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
                                 </table>
+                                <div class="calc-options-collapse collapsed" data-calc="2">
+                                    <button type="button" class="calc-options-toggle" data-calc="2" title="클릭하여 기타 옵션 펼치기/접기">기타 옵션</button>
+                                    <div class="calc-options-body">
+                                        <table class="calc-settings-table">
+                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                            <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-2-lose-streak-reverse"> 연패≥<input type="number" id="calc-2-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-2-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
+                                            <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-2-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-2-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
+                                            <tr><td>모양</td><td><label><input type="checkbox" id="calc-2-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
+                                            <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-2-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-2-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
+                                            <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
+                                            <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
+                                            <tr><td>목표</td><td><label><input type="checkbox" id="calc-2-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-2-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-2-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
+                                            <tr><td>배팅복사</td><td><span id="calc-2-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
+                                        </table>
+                                    </div>
+                                </div>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="2">실행</button>
                                     <button type="button" class="calc-stop" data-calc="2">정지</button>
@@ -4391,16 +4412,23 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-3-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label></td></tr>
-                                    <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
-                                    <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-3-lose-streak-reverse"> 연패≥<input type="number" id="calc-3-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-3-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
-                                    <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-3-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-3-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
-                                    <tr><td>모양</td><td><label><input type="checkbox" id="calc-3-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
-                                    <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-3-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-3-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
-                                    <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
-                                    <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
-                                    <tr><td>목표</td><td><label><input type="checkbox" id="calc-3-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-3-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-3-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
-                                    <tr><td>배팅복사</td><td><span id="calc-3-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
                                 </table>
+                                <div class="calc-options-collapse collapsed" data-calc="3">
+                                    <button type="button" class="calc-options-toggle" data-calc="3" title="클릭하여 기타 옵션 펼치기/접기">기타 옵션</button>
+                                    <div class="calc-options-body">
+                                        <table class="calc-settings-table">
+                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                            <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-3-lose-streak-reverse"> 연패≥<input type="number" id="calc-3-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-3-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
+                                            <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-3-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-3-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
+                                            <tr><td>모양</td><td><label><input type="checkbox" id="calc-3-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
+                                            <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-3-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-3-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
+                                            <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
+                                            <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
+                                            <tr><td>목표</td><td><label><input type="checkbox" id="calc-3-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-3-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-3-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
+                                            <tr><td>배팅복사</td><td><span id="calc-3-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
+                                        </table>
+                                    </div>
+                                </div>
                                 <div class="calc-buttons">
                                     <button type="button" class="calc-run" data-calc="3">실행</button>
                                     <button type="button" class="calc-stop" data-calc="3">정지</button>
@@ -7744,6 +7772,25 @@ RESULTS_HTML = '''
                 if (dd) dd.classList.toggle('collapsed');
             });
         });
+        (function() {
+            var key = 'calc_options_collapsed';
+            try {
+                var saved = localStorage.getItem(key);
+                if (saved === '0' || saved === 'false') {
+                    document.querySelectorAll('.calc-options-collapse').forEach(function(w) { w.classList.remove('collapsed'); });
+                }
+            } catch (e) {}
+            document.querySelectorAll('.calc-options-toggle').forEach(btn => {
+                btn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    const wrap = this.closest('.calc-options-collapse');
+                    if (wrap) {
+                        wrap.classList.toggle('collapsed');
+                        try { localStorage.setItem(key, wrap.classList.contains('collapsed') ? '1' : '0'); } catch (e2) {}
+                    }
+                });
+            });
+        })();
         document.querySelectorAll('.bet-calc-tabs .tab').forEach(tab => {
             tab.addEventListener('click', function() {
                 const t = this.getAttribute('data-tab');
