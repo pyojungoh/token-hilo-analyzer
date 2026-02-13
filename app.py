@@ -618,12 +618,23 @@ def _get_latest_next_pick_for_chunk(results):
 
 
 def _get_chunk_pick_by_higher_stats(results):
-    """유사 덩어리들의 다음 결과 가중 합(jung_count, kkeok_count) 중 높은 쪽을 반환. shape_only 옵션용."""
+    """유사 덩어리들의 다음 결과 가중 합(jung_count, kkeok_count) 중 높은 쪽을 반환. shape_only 옵션용.
+    긴줄(4+)일 때는 줄을 타도록 정/꺽에 10% 가산. 퐁당·짧은줄일 때는 기존대로(꺽 위주)."""
     if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
         return None
     profile = _get_chunk_profile_from_results(results)
     if not profile:
         return None
+    # 맥락: 긴줄이면 줄을 타고, 퐁당/짧은줄이면 꺽 위주
+    graph_values = _build_graph_values(results)
+    line_runs, pong_runs = _get_line_pong_runs(graph_values[:30]) if len(graph_values) >= 4 else ([], [])
+    first_is_line = True
+    if len(graph_values) >= 2 and graph_values[0] is not None and graph_values[1] is not None:
+        first_is_line = (graph_values[0] == graph_values[1])
+    in_long_line = (first_is_line and line_runs and line_runs[0] >= 4)
+    follow_value = None  # 긴줄일 때 따라갈 값: True=정, False=꺽
+    if in_long_line and graph_values:
+        follow_value = graph_values[0]  # 현재 줄의 정/꺽 (True=정, False=꺽)
     try:
         current_round = int(str(results[0].get('gameID', '0') or '0'), 10)
     except (ValueError, TypeError):
@@ -637,6 +648,13 @@ def _get_chunk_pick_by_higher_stats(results):
             return None
         jc = stats.get('jung_count') or 0
         kc = stats.get('kkeok_count') or 0
+        # 긴줄일 때: 따라갈 값(정 또는 꺽)에 10% 가산 → 줄을 타도록
+        if in_long_line and follow_value is not None:
+            THRESH = 0.9
+            if follow_value:  # 정 줄
+                return '정' if jc >= kc * THRESH else '꺽'
+            else:  # 꺽 줄
+                return '꺽' if kc >= jc * THRESH else '정'
         return '정' if jc >= kc else '꺽'
     except Exception as e:
         print(f"[경고] 유사 덩어리 높은값 픽 조회 실패: {str(e)[:150]}")

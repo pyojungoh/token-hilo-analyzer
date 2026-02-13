@@ -49,12 +49,14 @@ COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드"
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
 # 배팅 동작 간 지연(초). 픽 나오면 최대한 빠르게 쏘도록 짧게 둠. 입력/확정이 안 먹으면 값을 늘리세요.
-BET_DELAY_AFTER_AMOUNT_TAP = 0.10
-BET_DELAY_AFTER_INPUT = 0.08
-BET_DELAY_AFTER_BACK = 0.10
-BET_DELAY_AFTER_COLOR_TAP = 0.08
-BET_DELAY_BETWEEN_CONFIRM_TAPS = 0.08
-BET_DELAY_AFTER_CONFIRM = 0.08
+BET_DELAY_AFTER_AMOUNT_TAP = 0.04   # 배팅금 탭 후 키보드 포커스 대기 (LDPlayer 느리면 0.06~0.08로)
+BET_DELAY_AFTER_INPUT = 0.05
+BET_DELAY_AFTER_BACK = 0.05
+BET_DELAY_AFTER_COLOR_TAP = 0.05
+BET_DELAY_BETWEEN_CONFIRM_TAPS = 0.05
+BET_DELAY_AFTER_CONFIRM = 0.05
+BET_AMOUNT_SWIPE_MS = 120   # 배팅금 칸 터치 지속(ms). 터치 안 먹으면 150~180으로
+BET_COLOR_SWIPE_MS = 80     # 레드/블랙/정정 터치 지속. 안 먹으면 100~120으로
 BET_CONFIRM_TAP_COUNT = 1  # 정정 버튼 1번만
 BET_RETRY_ATTEMPTS = 2  # 실패 시 재시도 횟수
 BET_RETRY_DELAY = 0.8   # 재시도 전 대기(초)
@@ -1176,21 +1178,23 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 self._pending_bet_rounds.pop(round_num, None)
             return False
 
-        def tap_swipe(ax, ay, coord_key=None):
+        def tap_swipe(ax, ay, coord_key=None, duration_ms=None):
             """tap 대신 swipe(터치 다운·업) — 웹/앱에서 버튼이 tap에 안 먹을 때 사용."""
             tx, ty = _apply_window_offset(coords, ax, ay, key=coord_key)
-            adb_swipe(device, tx, ty, 100)
+            ms = duration_ms if duration_ms is not None else BET_COLOR_SWIPE_MS
+            adb_swipe(device, tx, ty, ms)
 
         last_error = None
         for attempt in range(BET_RETRY_ATTEMPTS):
             try:
-                # 1) 배팅금액 칸 탭 → 포커스 대기 → 기존 값 삭제(DEL) → 금액 입력 → 키보드 닫기
-                tap_swipe(bet_xy[0], bet_xy[1], "bet_amount")
+                # 1) 배팅금액 칸 탭(지속 시간 길게 → 터치 확실) → 포커스 대기 → 기존 값 삭제(DEL) → 금액 입력 → 키보드 닫기
+                tx, ty = _apply_window_offset(coords, bet_xy[0], bet_xy[1], key="bet_amount")
+                adb_swipe(device, tx, ty, BET_AMOUNT_SWIPE_MS)
                 time.sleep(BET_DELAY_AFTER_AMOUNT_TAP)
                 for _ in range(15):
                     adb_keyevent(device, KEYCODE_DEL)
-                    time.sleep(0.003)
-                time.sleep(0.04)
+                    time.sleep(0.002)
+                time.sleep(0.02)
                 adb_input_text(device, bet_amount)
                 time.sleep(BET_DELAY_AFTER_INPUT)
                 adb_keyevent(device, 4)  # BACK
@@ -1202,11 +1206,11 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 button_name = "레드" if tap_red_button else "블랙"
                 cx, cy = _apply_window_offset(coords, color_xy[0], color_xy[1], key=color_key)
                 self._log("ADB: 픽 %s → %s 버튼 탭 (%s,%s)" % (pick_color, button_name, cx, cy))
-                tap_swipe(color_xy[0], color_xy[1], color_key)
+                tap_swipe(color_xy[0], color_xy[1], color_key, BET_COLOR_SWIPE_MS)
                 time.sleep(BET_DELAY_AFTER_COLOR_TAP)
                 # 3) 정정 버튼(배팅 확정) — 1번만 탭 (여러 번 누르면 버벅거림)
                 if confirm_xy and len(confirm_xy) >= 2:
-                    tap_swipe(confirm_xy[0], confirm_xy[1], "confirm")
+                    tap_swipe(confirm_xy[0], confirm_xy[1], "confirm", BET_COLOR_SWIPE_MS)
                     time.sleep(BET_DELAY_AFTER_CONFIRM)
 
                 pred_text = "정" if pick_color == "RED" else "꺽"
