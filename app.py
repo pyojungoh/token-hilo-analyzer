@@ -7258,6 +7258,7 @@ RESULTS_HTML = '''
                             if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
                         }
                         // 모양: 가장 최근 다음 픽에만 배팅 — 값 있으면 그 픽으로 배팅, 없으면 보류
+                        var predBeforeShapeOnly = bettingText;  // shape_only 보류 시 history에는 '정'/'꺽' 저장 (승패 계산용)
                         var shapeOnly = !!(calcState[id] && calcState[id].shape_only_latest_next_pick);
                         var latestNext = (typeof lastPongChunkDebug !== 'undefined' && lastPongChunkDebug && (lastPongChunkDebug.latest_next_pick === '정' || lastPongChunkDebug.latest_next_pick === '꺽')) ? lastPongChunkDebug.latest_next_pick : null;
                         if (shapeOnly) {
@@ -7299,7 +7300,10 @@ RESULTS_HTML = '''
                             if (!hasRound && (betForThisRound > 0 || effectivePausedForRound(id) || shapeOnlyNoBet)) {
                                 var isNoBet = !!effectivePausedForRound(id) || shapeOnlyNoBet;
                                 var amt = isNoBet ? 0 : betForThisRound;
-                                calcState[id].history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: amt, no_bet: isNoBet, actual: 'pending', warningWinRate: typeof blended === 'number' ? blended : null });
+                                var predForHistory = shapeOnlyNoBet ? predBeforeShapeOnly : bettingText;
+                                if (predForHistory !== '정' && predForHistory !== '꺽') predForHistory = predBeforeShapeOnly;
+                                var pickColorForHistory = (predForHistory === '정' ? '빨강' : '검정');
+                                calcState[id].history.push({ round: roundNum, predicted: predForHistory, pickColor: pickColorForHistory, betAmount: amt, no_bet: isNoBet, actual: 'pending', warningWinRate: typeof blended === 'number' ? blended : null });
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 saveCalcStateToServer();
                                 updateCalcDetail(id);
@@ -7546,7 +7550,8 @@ RESULTS_HTML = '''
                 if (!isNaN(rn) && seenRoundNums[rn]) continue;
                 if (!isNaN(rn)) seenRoundNums[rn] = true;
                 const roundStr = h.round != null ? String(h.round) : '-';
-                const isNoBetRow = (h.no_bet === true || (h.betAmount != null && h.betAmount === 0));
+                const hasValidPred = (h.predicted === '정' || h.predicted === '꺽');
+                const isNoBetRow = (h.no_bet === true || (h.betAmount != null && h.betAmount === 0) || !hasValidPred);
                 const pickVal = isNoBetRow ? '보류' : (h.predicted === '정' ? '정' : '꺽');
                 const pickClass = isNoBetRow ? 'pick-hold' : (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (h.predicted === '정' ? 'pick-jung' : 'pick-kkuk')));
                 const warningWinRateVal = (typeof h.warningWinRate === 'number' && !isNaN(h.warningWinRate)) ? h.warningWinRate.toFixed(1) + '%' : '-';
