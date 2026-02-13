@@ -5145,7 +5145,7 @@ RESULTS_HTML = '''
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 var entryJ = calcState[id].history.find(function(h) { return h && Number(h.round) === currentRoundNum; });
-                                if (entryJ && entryJ.actual && entryJ.actual !== 'pending' && typeof getCalcRecent15WinRate === 'function') entryJ.rate15 = getCalcRecent15WinRate(id);
+                                if (entryJ && entryJ.actual && entryJ.actual !== 'pending' && typeof getCalcRecent15WinRate === 'function' && (entryJ.rate15 == null || entryJ.rate15 === undefined)) entryJ.rate15 = getCalcRecent15WinRate(id);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
                             });
                             saveCalcStateToServer();
@@ -5218,7 +5218,7 @@ RESULTS_HTML = '''
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 var entryA = calcState[id].history.find(function(h) { return h && Number(h.round) === currentRoundNum; });
-                                if (entryA && entryA.actual && entryA.actual !== 'pending' && typeof getCalcRecent15WinRate === 'function') entryA.rate15 = getCalcRecent15WinRate(id);
+                                if (entryA && entryA.actual && entryA.actual !== 'pending' && typeof getCalcRecent15WinRate === 'function' && (entryA.rate15 == null || entryA.rate15 === undefined)) entryA.rate15 = getCalcRecent15WinRate(id);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + currentRoundFull + '_' + actual;
                                 if (pred === actual) checkPauseAfterWin(id);
                                 updateCalcSummary(id);
@@ -5304,7 +5304,7 @@ RESULTS_HTML = '''
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 var entryJ2 = calcState[id].history.find(function(h) { return h && Number(h.round) === currentRoundNum; });
-                                if (entryJ2 && entryJ2.actual && entryJ2.actual !== 'pending' && typeof getCalcRecent15WinRate === 'function') entryJ2.rate15 = getCalcRecent15WinRate(id);
+                                if (entryJ2 && entryJ2.actual && entryJ2.actual !== 'pending' && typeof getCalcRecent15WinRate === 'function' && (entryJ2.rate15 == null || entryJ2.rate15 === undefined)) entryJ2.rate15 = getCalcRecent15WinRate(id);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
                                 updateCalcSummary(id);
                                 updateCalcDetail(id);
@@ -5366,7 +5366,7 @@ RESULTS_HTML = '''
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 var entryA3 = calcState[id].history.find(function(h) { return h && Number(h.round) === currentRoundNum; });
-                                if (entryA3 && entryA3.actual && entryA3.actual !== 'pending' && typeof getCalcRecent15WinRate === 'function') entryA3.rate15 = getCalcRecent15WinRate(id);
+                                if (entryA3 && entryA3.actual && entryA3.actual !== 'pending' && typeof getCalcRecent15WinRate === 'function' && (entryA3.rate15 == null || entryA3.rate15 === undefined)) entryA3.rate15 = getCalcRecent15WinRate(id);
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-' + currentRoundFull + '_' + actual;
                                 if (pred === actual) checkPauseAfterWin(id);
                                 updateCalcSummary(id);
@@ -6862,6 +6862,7 @@ RESULTS_HTML = '''
             const elapsedStr = state.running && typeof formatMmSs === 'function' ? formatMmSs(state.elapsed || 0) : '-';
             const timerNote = state.timer_completed ? '<span class="calc-timer-note" style="color:#64b5f6;font-weight:bold;grid-column:1/-1">타이머 완료</span>' : '';
             if (hist.length === 0) {
+                try { var __c = window.__calcSummaryCache; if (__c && __c[id]) delete __c[id]; } catch (e) {}
                 var targetNoteEmpty = '';
                 const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
                 const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
@@ -6880,6 +6881,21 @@ RESULTS_HTML = '''
             const r = getCalcResult(id);
             const profitStr = (r.profit >= 0 ? '+' : '') + r.profit.toLocaleString() + '원';
             const profitClass = r.profit > 0 ? 'profit-plus' : (r.profit < 0 ? 'profit-minus' : '');
+            var betDisplay = (effectivePausedForRound(id) ? '-' : (r.currentBet.toLocaleString() + '원'));
+            // 보유자산·순익·배팅중이 그대로면 그리드 전체를 다시 쓰지 않고 경과만 갱신 (깜빡임 방지)
+            try {
+                var cache = window.__calcSummaryCache = window.__calcSummaryCache || {};
+                if (cache[id] && cache[id].cap === r.cap && cache[id].profit === r.profit && cache[id].betDisplay === betDisplay) {
+                    var grid = el.querySelector('.calc-summary-grid');
+                    if (grid) {
+                        var valueSpans = grid.querySelectorAll('span.value');
+                        if (valueSpans.length >= 4) valueSpans[3].textContent = elapsedStr;
+                    }
+                    updateCalcStatus(id);
+                    return;
+                }
+                cache[id] = { cap: r.cap, profit: r.profit, betDisplay: betDisplay };
+            } catch (skipErr) {}
             var targetNote = '';
             const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
             const targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
@@ -6890,7 +6906,6 @@ RESULTS_HTML = '''
                 if (remain <= 0) targetNote = '<span class="calc-timer-note" style="color:#81c784;font-weight:bold;grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 달성</span>';
                 else targetNote = '<span class="calc-timer-note" style="grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 목표까지: ' + remain.toLocaleString() + '원 남음</span>';
             }
-            var betDisplay = (effectivePausedForRound(id) ? '-' : (r.currentBet.toLocaleString() + '원'));
             el.innerHTML = '<div class="calc-summary-grid">' + timerNote + targetNote +
                 '<span class="label">보유자산</span><span class="value">' + r.cap.toLocaleString() + '원</span>' +
                 '<span class="label">순익</span><span class="value ' + profitClass + '">' + profitStr + '</span>' +
@@ -7424,7 +7439,13 @@ RESULTS_HTML = '''
         CALC_IDS.forEach(id => {
             ['capital', 'base', 'odds', 'target-amount'].forEach(f => {
                 const el = document.getElementById('calc-' + id + '-' + f);
-                if (el) el.addEventListener('input', () => { updateCalcSummary(id); updateCalcDetail(id); });
+                if (el) {
+                    el.addEventListener('input', () => { updateCalcSummary(id); updateCalcDetail(id); });
+                    // 자본/배팅금액/배당 변경 시 서버에 저장 — 매크로가 GET으로 받는 금액이 표와 동일하도록
+                    if (f === 'capital' || f === 'base' || f === 'odds') {
+                        el.addEventListener('change', function() { try { saveCalcStateToServer({ immediate: true }); } catch (e) {} });
+                    }
+                }
             });
             const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
             if (targetEnabledEl) targetEnabledEl.addEventListener('change', () => { updateCalcSummary(id); });
