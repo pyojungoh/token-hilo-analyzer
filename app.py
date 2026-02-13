@@ -7686,9 +7686,12 @@ RESULTS_HTML = '''
                     else if (isWin) { cap += bet * (oddsIn - 1); if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) martingaleStep = 0; else currentBet = baseIn; }
                     else { cap -= bet; if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) martingaleStep = Math.min(martingaleStep + 1, martinTableDetail.length - 1); else currentBet = Math.min(currentBet * 2, Math.floor(cap)); }
                 }
-            // 1열(대기) 배팅금액: 위 시뮬레이션 직후 currentBet 사용 → 2열(완료)과 동일 기준, getBetForRound 타이밍 꼬임 방지
+            // 1열(대기) 배팅금액: 시뮬레이션 직후 martingaleStep 기준으로 다음 회차 금액 계산 (루프 종료 시 currentBet=직전회차 금액이므로 martinTable로 갱신)
+            if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half' || martingaleType === 'pyo2')) {
+                currentBet = martinTableDetail[Math.min(martingaleStep, martinTableDetail.length - 1)];
+            }
             var lastCompletedRound = completedHist.length ? Math.max.apply(null, completedHist.map(function(he) { return Number(he.round) || 0; })) : null;
-            var nextRoundBet = (lastCompletedRound != null && cap > 0) ? Math.min(currentBet, Math.floor(cap)) : 0;
+            var nextRoundBet = cap > 0 ? Math.min(currentBet, Math.floor(cap)) : 0;
             // 회차별 픽/결과/승패/배팅금액/수익 행 목록 (pending=대기, completed=결과·수익)
             let rows = [];
             var seenRoundNums = {};
