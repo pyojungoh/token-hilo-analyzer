@@ -572,45 +572,37 @@ def _get_chunk_stats_for_results(results):
             pass
 
 
-def _get_latest_next_pick_for_shape(results):
-    """현재 results에 해당하는 그래프 모양과 같은 shape_signature를 가진 가장 최근 항목의 다음 픽을 찾음."""
+def _get_latest_next_pick_for_chunk(results):
+    """현재 results의 덩어리 프로필과 유사한 가장 최근 덩어리의 다음 결과(정/꺽)를 반환. 유사 덩어리 공식용."""
     if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
         return None
-    sig = _get_shape_signature(results)
-    if not sig:
+    profile = _get_chunk_profile_from_results(results)
+    if not profile:
         return None
     conn = get_db_connection(statement_timeout_sec=3)
     if not conn:
         return None
     try:
+        import json
         cur = conn.cursor()
-        # 같은 shape_signature를 가진 가장 최근 항목 찾기
         cur.execute('''
-            SELECT round_num, prediction_details->>'shape_signature' as shape_sig
-            FROM prediction_history
-            WHERE prediction_details->>'shape_signature' = %s
+            SELECT profile_json, next_actual, round_num FROM chunk_profile_occurrences
             ORDER BY round_num DESC
-            LIMIT 1
-        ''', (sig,))
-        row = cur.fetchone()
-        if not row:
-            cur.close()
-            return None
-        latest_round = row[0]
-        # 그 다음 회차의 actual 값 찾기
-        cur.execute('''
-            SELECT actual
-            FROM prediction_history
-            WHERE round_num = %s
-            LIMIT 1
-        ''', (latest_round + 1,))
-        next_row = cur.fetchone()
+            LIMIT 200
+        ''')
+        rows = cur.fetchall()
         cur.close()
-        if not next_row or not next_row[0]:
-            return None
-        return next_row[0]
+        CHUNK_SIM_THRESHOLD = 0.5
+        for profile_json, next_actual, rnd in rows:
+            try:
+                other = tuple(json.loads(profile_json))
+            except Exception:
+                continue
+            if _chunk_profile_similarity(profile, other) >= CHUNK_SIM_THRESHOLD:
+                return next_actual if next_actual in ('정', '꺽') else None
+        return None
     except Exception as e:
-        print(f"[경고] 가장 최근 다음 픽 조회 실패: {str(e)[:150]}")
+        print(f"[경고] 가장 최근 다음 픽(덩어리) 조회 실패: {str(e)[:150]}")
         return None
     finally:
         try:
@@ -4122,7 +4114,7 @@ RESULTS_HTML = '''
             <div id="panel-pong-chunk" class="analysis-panel active">
                 <div id="pong-chunk-collapse-body" class="prob-bucket-collapse-body">
                 <div id="pong-chunk-section" style="margin-top:0;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
-                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">최근 그래프에서 <strong>줄(유지)</strong>·<strong>퐁당(바뀜)</strong>·<strong>덩어리(블록 반복)</strong>·<strong>U자 구간</strong>을 판별해 가중치에 반영합니다. U자 구간은 연패가 많아 유지 쪽 보정·멈춤 권장. <strong>감지된 모양</strong>은 저장·대조용 코드(앞 3 run을 S/M/L 구간으로 표시, 예: L,S,M). <strong>유사 덩어리</strong>는 현재 덩어리와 높이 프로필이 비슷한 과거 덩어리의 다음 결과를 가중 합산해 반영합니다.</p>
+                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">최근 그래프에서 <strong>줄(유지)</strong>·<strong>퐁당(바뀜)</strong>·<strong>덩어리(블록 반복)</strong>·<strong>U자 구간</strong>을 판별해 가중치에 반영합니다. U자 구간은 연패가 많아 유지 쪽 보정·멈춤 권장. <strong>유사 덩어리</strong>는 현재 덩어리와 높이 프로필이 비슷한 과거 덩어리의 다음 결과를 가중 합산해 반영하며, <strong>가장 최근 다음 픽</strong>은 유사 덩어리 중 가장 최근 것의 다음 결과입니다.</p>
                     <div id="pong-chunk-data" style="font-size:0.9em;color:#ccc;"><table class="symmetry-line-table" style="width:100%;max-width:420px;"><tbody id="pong-chunk-tbody"><tr><td colspan="2" style="color:#888;">데이터 로딩 후 표시</td></tr></tbody></table></div>
                 </div>
                 </div>
@@ -6297,12 +6289,6 @@ RESULTS_HTML = '''
                             var segmentLabel = (d.segment_type && segmentLabels[d.segment_type]) ? segmentLabels[d.segment_type] : (d.segment_type || '—');
                             var chunkShapeLabel = (d.chunk_shape && chunkShapeLabels[d.chunk_shape]) ? chunkShapeLabels[d.chunk_shape] : (d.chunk_shape || '—');
                             var uShapeLabel = (d.u_shape === true) ? '감지됨 (유지 가중치↑, 멈춤 권장)' : '—';
-                            var shapeSig = (d.shape_signature && String(d.shape_signature).trim()) ? d.shape_signature : '—';
-                            var shapeStatsLabel = '—';
-                            if (d.shape_jung_count != null && d.shape_kkeok_count != null) {
-                                var j = Number(d.shape_jung_count) || 0, k = Number(d.shape_kkeok_count) || 0;
-                                shapeStatsLabel = '다음 정 ' + j + '회, 꺽 ' + k + '회 (저장된 통계)';
-                            }
                             var chunkProfileStatsLabel = '—';
                             if (d.chunk_profile_jung != null && d.chunk_profile_kkeok != null) {
                                 var cj = Number(d.chunk_profile_jung) || 0, ck = Number(d.chunk_profile_kkeok) || 0;
@@ -6318,8 +6304,6 @@ RESULTS_HTML = '''
                                 '<tr><td>구간 유형</td><td>' + segmentLabel + '</td></tr>' +
                                 '<tr><td>덩어리 모양</td><td>' + chunkShapeLabel + '</td></tr>' +
                                 '<tr><td>U자 구간</td><td>' + uShapeLabel + '</td></tr>' +
-                                '<tr><td><strong>감지된 모양(시그니처)</strong></td><td><code style="font-size:0.9em">' + shapeSig + '</code></td></tr>' +
-                                '<tr><td>모양별 다음 결과 통계</td><td>' + shapeStatsLabel + '</td></tr>' +
                                 '<tr><td>유사 덩어리 다음 결과</td><td>' + chunkProfileStatsLabel + '</td></tr>' +
                                 '<tr><td>가장 최근 다음 픽</td><td>' + latestNextPickLabel + '</td></tr>' +
                                 '<tr><td>맨 앞 run 타입</td><td>' + (d.first_run_type || '—') + '</td></tr>' +
@@ -8202,7 +8186,7 @@ def _build_results_payload_db_only(hours=24):
                                 server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                 server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
                                 # 가장 최근 다음 픽 추가
-                                latest_next_pick = _get_latest_next_pick_for_shape(results)
+                                latest_next_pick = _get_latest_next_pick_for_chunk(results)
                                 if latest_next_pick:
                                     server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
                         except Exception:
@@ -8380,7 +8364,7 @@ def _build_results_payload():
                                     server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                     server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
                                     # 가장 최근 다음 픽 추가
-                                    latest_next_pick = _get_latest_next_pick_for_shape(results)
+                                    latest_next_pick = _get_latest_next_pick_for_chunk(results)
                                     if latest_next_pick:
                                         server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
                             except Exception:
@@ -8459,7 +8443,7 @@ def _build_results_payload():
                                     server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                     server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
                                     # 가장 최근 다음 픽 추가
-                                    latest_next_pick = _get_latest_next_pick_for_shape(results)
+                                    latest_next_pick = _get_latest_next_pick_for_chunk(results)
                                     if latest_next_pick:
                                         server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
                             except Exception:
