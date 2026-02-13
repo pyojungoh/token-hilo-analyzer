@@ -7211,8 +7211,7 @@ RESULTS_HTML = '''
                         var saved = (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === curRound) ? calcState[id].lastBetPickForRound : null;
                         // 상단 예측픽: lastPrediction.value 사용
                         var predictionText = lastPrediction.value;
-                        var predColorNorm = normalizePickColor(lastPrediction.color);
-                        var predictionIsRed = (predColorNorm === '빨강' || predColorNorm === '검정') ? (predColorNorm === '빨강') : (predictionText === '정');
+                        var predictionIsRed = (predictionText === '정');  // 값에 맞춰 색상: 정=빨강, 꺽=검정 (배팅중과 일치)
                         var bettingText, bettingIsRed;
                         if (saved && (saved.value === '정' || saved.value === '꺽')) {
                             bettingText = saved.value;
