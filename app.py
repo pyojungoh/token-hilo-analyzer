@@ -6888,8 +6888,9 @@ RESULTS_HTML = '''
                         bettingCardEl.textContent = bettingText;
                         bettingCardEl.className = 'calc-current-card calc-card-betting card-' + (bettingIsRed ? 'jung' : 'kkuk');
                         bettingCardEl.title = '';
-                        var betAmt = (lastPrediction && lastPrediction.round != null && typeof getBetForRound === 'function') ? getBetForRound(id, lastPrediction.round) : 0;
-                        var suggestedAmt = (effectivePausedForRound(id) ? null : (betAmt > 0 ? betAmt : null));
+                        var rForAmt = (typeof getCalcResult === 'function') ? getCalcResult(id) : null;
+                        var betAmt = (effectivePausedForRound(id) ? 0 : (rForAmt && rForAmt.currentBet > 0 ? rForAmt.currentBet : 0));
+                        var suggestedAmt = betAmt > 0 ? betAmt : null;
                         postCurrentPickIfChanged(parseInt(id, 10) || 1, { pickColor: bettingIsRed ? 'RED' : 'BLACK', round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: typeof predProb === 'number' && !isNaN(predProb) ? predProb : null, suggested_amount: suggestedAmt });
                         if (lastPrediction && lastPrediction.round != null) {
                             savedBetPickByRound[Number(lastPrediction.round)] = { value: bettingText, isRed: bettingIsRed };
