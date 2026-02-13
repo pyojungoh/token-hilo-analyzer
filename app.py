@@ -929,6 +929,16 @@ def _update_calc_paused_after_round(c):
     # 옵션 꺼져 있으면 기존 paused 유지(서버가 강제로 False로 바꾸지 않음)
 
 
+def _round_eq(a, b):
+    """회차 비교: int/str 혼용 시에도 동일 회차면 True (표·매크로 금액 일치용)."""
+    if a is None or b is None:
+        return a == b
+    try:
+        return int(a) == int(b)
+    except (TypeError, ValueError):
+        return a == b
+
+
 def _calculate_calc_profit_server(calc_state, history_entry):
     """서버에서 계산기 수익, 마틴게일 단계, 연승/연패 계산. history_entry에 계산된 값 추가."""
     MARTIN_PYO_RATIOS = [1, 1.5, 2.5, 4, 7, 12, 20, 40, 40]
@@ -940,14 +950,24 @@ def _calculate_calc_profit_server(calc_state, history_entry):
     martingale_type = calc_state.get('martingale_type', 'pyo')
     
     history = calc_state.get('history', [])
-    # 현재 회차 이전의 완료된 회차만 계산 (회차별 1건만 — 중복 시 마틴 단계가 잘못 올라가는 것 방지)
-    completed_list = [h for h in history if h.get('round') != history_entry.get('round') and h.get('actual') and h.get('actual') != 'pending']
+    entry_round = history_entry.get('round')
+    # 현재 회차 이전의 완료된 회차만 계산 (회차별 1건만, int/str 혼용 시에도 pending 제외 — 매크로 금액 정확도)
+    completed_list = [h for h in history if h.get('actual') and h.get('actual') != 'pending' and not _round_eq(h.get('round'), entry_round)]
     by_round = {}
     for h in completed_list:
         rn = h.get('round')
         if rn is not None:
-            by_round[rn] = h
-    completed_history = sorted(by_round.values(), key=lambda x: x.get('round', 0))
+            try:
+                by_round[int(rn)] = h
+            except (TypeError, ValueError):
+                by_round[rn] = h
+    def _round_sort_key(x):
+        r = x.get('round')
+        try:
+            return (0, int(r)) if r is not None else (1, 0)
+        except (TypeError, ValueError):
+            return (1, 0)
+    completed_history = sorted(by_round.values(), key=_round_sort_key)
     
     martingale_step = 0
     cap = capital
@@ -8632,18 +8652,29 @@ def api_current_pick():
                 out['pick_color'] = None
                 out['round'] = None
                 out['suggested_amount'] = None
-            # GET 시에도 금액은 항상 서버에서 재계산해 반환 (DB 지연/중복으로 마틴 단계 어긋남 방지)
+            # GET 시 금액: 스케줄러가 회차 반영 시 저장한 pending_bet_amount 우선(표와 동일 시점), 없으면 재계산
             try:
                 state = get_calc_state('default') or {}
                 c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
                 if c and c.get('running') and c.get('pending_round') is not None:
-                    _, server_amt = _server_calc_effective_pick_and_amount(c)
                     if out is None:
                         out = dict(empty_pick)
                     if not isinstance(out, dict):
                         out = dict(out) if out else dict(empty_pick)
                     out = dict(out)
-                    out['suggested_amount'] = int(server_amt) if server_amt is not None else None
+                    stored_amt = c.get('pending_bet_amount')
+                    if stored_amt is not None:
+                        try:
+                            amt_val = int(stored_amt)
+                            if amt_val > 0:
+                                out['suggested_amount'] = amt_val
+                            else:
+                                out['suggested_amount'] = None
+                        except (TypeError, ValueError):
+                            stored_amt = None
+                    if stored_amt is None:
+                        _, server_amt = _server_calc_effective_pick_and_amount(c)
+                        out['suggested_amount'] = int(server_amt) if server_amt is not None else None
                 elif c and c.get('paused') and out and isinstance(out, dict):
                     out = dict(out)
                     out['suggested_amount'] = None

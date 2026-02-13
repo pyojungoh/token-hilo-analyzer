@@ -309,6 +309,11 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._display_candidate = None
         self._display_confirm_count = 0
         self._display_confirm_needed = 2
+        # 배팅금액 2~3회만 받고 즉시 배팅 (계산기 표와 동일 금액 확정용)
+        self._amount_confirm_round = None
+        self._amount_confirm_pick = None
+        self._amount_confirm_amounts = []
+        self._amount_confirm_want = 3
         # 좌표 찾기 (한곳에 통합)
         self._coord_listener = None
         self._coord_capture_key = None
@@ -1057,9 +1062,6 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             round_num = int(round_num)
         except (TypeError, ValueError):
             return
-        # 픽 수신 즉시 배팅 (시작 누르면 담회차 말고 바로 현재 회차부터)
-        self._log("픽 수신: %s회 %s %s원 (서버에서 전달)" % (round_num, pick_color, amount))
-        self._pick_history.append((round_num, pick_color))
         # 이미 이 회차로 배팅했으면 스킵 (중복 배팅 방지). 오래된 회차는 목록에서 제거
         with self._lock:
             for old_r in list(self._pending_bet_rounds.keys()):
@@ -1069,9 +1071,60 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 return
         if self._last_bet_round is not None and round_num <= self._last_bet_round:
             return
+
+        # 배팅금액 2~3회만 받고 즉시 배팅: 같은 회차 금액을 2~3번만 수집한 뒤 마지막(최신) 금액으로 재빨리 배팅
+        if self._amount_confirm_round is not None and self._amount_confirm_round != round_num:
+            self._amount_confirm_round = None
+            self._amount_confirm_pick = None
+            self._amount_confirm_amounts = []
+        if self._amount_confirm_round == round_num:
+            # 이미 이 회차로 금액 수집 중 → 추가 수집 (최대 3개)
+            if len(self._amount_confirm_amounts) < self._amount_confirm_want:
+                self._amount_confirm_amounts.append(amt_val)
+            if len(self._amount_confirm_amounts) >= 2:
+                final_amt = self._amount_confirm_amounts[-1]
+                self._log("픽 수신: %s회 %s %s원 (2~3회 확인 후 배팅)" % (round_num, pick_color, final_amt))
+                self._pick_history.append((round_num, pick_color))
+                self._amount_confirm_round = None
+                self._amount_confirm_pick = None
+                self._amount_confirm_amounts = []
+                self._coords = load_coords()
+                self._run_bet(round_num, pick_color, final_amt)
+            return
+        # 이 회차 첫 수신 → 금액 2~3회만 더 받고 배팅
+        self._amount_confirm_round = round_num
+        self._amount_confirm_pick = pick_color
+        self._amount_confirm_amounts = [amt_val]
+        self._log("픽 수신: %s회 %s %s원 (금액 2~3회 확인 후 즉시 배팅)" % (round_num, pick_color, amount))
+        self._pick_history.append((round_num, pick_color))
+        if HAS_PYQT:
+            QTimer.singleShot(100, self._poll)
+            QTimer.singleShot(220, self._poll)
+            # 2~3회 못 받아도 400ms 후 1회 분 금액으로 배팅 (멈춤 방지)
+            QTimer.singleShot(400, self._on_amount_confirm_timeout)
+        # 2번째·3번째 응답에서 위 분기로 들어와 2회 이상 모이면 _run_bet 호출됨
+        return
+
+    def _on_amount_confirm_timeout(self):
+        """금액 2~3회 수집 타임아웃: 1회 분이라도 있으면 그 금액으로 즉시 배팅."""
+        if not self._running or self._amount_confirm_round is None:
+            return
+        if not self._amount_confirm_amounts:
+            self._amount_confirm_round = None
+            self._amount_confirm_pick = None
+            return
+        round_num = self._amount_confirm_round
+        pick_color = self._amount_confirm_pick
+        final_amt = self._amount_confirm_amounts[-1]
+        self._amount_confirm_round = None
+        self._amount_confirm_pick = None
+        self._amount_confirm_amounts = []
+        with self._lock:
+            if round_num in self._pending_bet_rounds or (self._last_bet_round is not None and round_num <= self._last_bet_round):
+                return
+        self._log("픽 수신: %s회 %s %s원 (확인 1회분으로 즉시 배팅)" % (round_num, pick_color, final_amt))
         self._coords = load_coords()
-        # 계산기에서 픽 바뀌면 바로 사이트로 전송 (게임 타이머 OCR 없이 즉시 배팅)
-        self._run_bet(round_num, pick_color, amount)
+        self._run_bet(round_num, pick_color, final_amt)
 
     def _run_bet(self, round_num, pick_color, amount):
         """실제 배팅 실행. 성공 시 _last_bet_round 갱신."""
