@@ -8125,6 +8125,24 @@ RESULTS_HTML = '''
             });
             const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
             if (targetEnabledEl) targetEnabledEl.addEventListener('change', () => { updateCalcSummary(id); });
+            // 마틴 체크/마틴방식 변경 시 calcState 동기화·저장·배팅중 표시 갱신 (상단 배팅중이 설정한 마틴금액 반영)
+            const martingaleEl = document.getElementById('calc-' + id + '-martingale');
+            const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
+            if (martingaleEl) {
+                martingaleEl.addEventListener('change', function() {
+                    if (calcState[id]) calcState[id].martingale = !!martingaleEl.checked;
+                    try { saveCalcStateToServer({ immediate: true }); } catch (e) {}
+                    updateCalcSummary(id); updateCalcDetail(id);
+                });
+            }
+            if (martingaleTypeEl) {
+                martingaleTypeEl.addEventListener('change', function() {
+                    var v = martingaleTypeEl.value;
+                    if (calcState[id]) calcState[id].martingale_type = (v === 'pyo_half' ? 'pyo_half' : (v === 'pyo2' ? 'pyo2' : 'pyo'));
+                    try { saveCalcStateToServer({ immediate: true }); } catch (e) {}
+                    updateCalcSummary(id); updateCalcDetail(id);
+                });
+            }
         });
         document.addEventListener('click', function(e) {
             var t = e.target && e.target.closest('.calc-bet-copy-amount');
