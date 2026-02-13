@@ -1,0 +1,74 @@
+---
+description: 정/꺽 ↔ RED/BLACK 색상 매핑 핵심 규칙 (절대 위반 금지)
+alwaysApply: true
+---
+
+# 정/꺽 ↔ 배팅 색상 핵심 규칙 (절대 위반 금지)
+
+이 분석기의 **가장 중요하고 핵심이 되는 룰**이다. **어떠한 경우에도 어겨선 안 된다.**
+
+---
+
+## 게임 규칙
+
+- **예측**: 아직 나오지 않은 15번째 카드의 색상을 예측한다.
+- **정**: 15번째 카드와 **같은 색**으로 예측하면 정.
+- **꺽**: 15번째 카드와 **반대 색**으로 예측하면 꺽.
+
+따라서 **정/꺽과 RED/BLACK는 고정 매핑이 아니다.** 기준 카드(15번째 또는 1번째) 색상에 따라 달라진다.
+
+---
+
+## 배팅 색상 결정 공식
+
+| 기준 카드(15번째) | 정 예측 시 배팅 | 꺽 예측 시 배팅 |
+|------------------|----------------|----------------|
+| 빨강 | 빨강(RED) | 검정(BLACK) |
+| 검정 | 검정(BLACK) | 빨강(RED) |
+
+- **정** = 기준 카드와 같은 색에 배팅
+- **꺽** = 기준 카드와 반대 색에 배팅
+
+---
+
+## ⛔ 절대 금지
+
+```javascript
+// ❌ 절대 사용 금지 — 정/꺽을 빨강/검정에 고정 매핑
+colorToPick = (predict === '정' ? '빨강' : '검정');
+predictionIsRed = (predictionText === '정');
+```
+
+---
+
+## ✅ 올바른 방식
+
+1. **서버 color 우선**: `lastPrediction.color` / `predForRound.color`가 있으면 그대로 사용.
+2. **없을 때**: 기준 카드(15번째, `results[14]` 또는 `displayResults[14]`) 색상으로 계산.
+
+```javascript
+// ✅ 서버 color 우선
+var normColor = normalizePickColor(lastPrediction.color);
+if (normColor === '빨강' || normColor === '검정') {
+    colorToPick = normColor;
+} else {
+    // 15번째 카드 기준 계산
+    var is15Red = card15 ? card15.isRed : false;
+    colorToPick = predict === '정' ? (is15Red ? '빨강' : '검정') : (is15Red ? '검정' : '빨강');
+}
+```
+
+---
+
+## 적용 위치 (동기화 필수)
+
+- 메인 예측기 (loadResults, refreshPredictionPickOnly)
+- 계산기 예측픽/배팅중 카드
+- 계산기 표 1행(배팅중 행) 픽 열
+- shape_only latest_next 픽 색상
+- pickColorForHistory, pending 행 pickColor
+- 서버 fallback (pending_color 없을 때)
+
+---
+
+이 규칙을 수정·완화·삭제하지 말 것. 코드 변경 시 위 공식을 위반하지 않도록 반드시 확인한다.

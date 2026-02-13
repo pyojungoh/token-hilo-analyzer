@@ -579,7 +579,7 @@ def _get_chunk_stats_for_results(results):
 
 
 def _get_latest_next_pick_for_chunk(results):
-    """현재 results의 덩어리 프로필과 유사한 가장 최근 덩어리의 다음 결과(정/꺽)를 반환. 유사 덩어리 공식용."""
+    """현재 results의 덩어리 프로필과 유사한 가장 최근 덩어리의 다음 결과(정/꺽)를 반환. (레거시, shape 옵션은 _get_chunk_pick_by_higher_stats 사용)"""
     if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
         return None
     profile = _get_chunk_profile_from_results(results)
@@ -609,6 +609,37 @@ def _get_latest_next_pick_for_chunk(results):
         return None
     except Exception as e:
         print(f"[경고] 가장 최근 다음 픽(덩어리) 조회 실패: {str(e)[:150]}")
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _get_chunk_pick_by_higher_stats(results):
+    """유사 덩어리들의 다음 결과 가중 합(jung_count, kkeok_count) 중 높은 쪽을 반환. shape_only 옵션용."""
+    if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
+        return None
+    profile = _get_chunk_profile_from_results(results)
+    if not profile:
+        return None
+    try:
+        current_round = int(str(results[0].get('gameID', '0') or '0'), 10)
+    except (ValueError, TypeError):
+        current_round = None
+    conn = get_db_connection(statement_timeout_sec=3)
+    if not conn:
+        return None
+    try:
+        stats = get_chunk_profile_stats(conn, profile, current_round=current_round)
+        if not stats:
+            return None
+        jc = stats.get('jung_count') or 0
+        kc = stats.get('kkeok_count') or 0
+        return '정' if jc >= kc else '꺽'
+    except Exception as e:
+        print(f"[경고] 유사 덩어리 높은값 픽 조회 실패: {str(e)[:150]}")
         return None
     finally:
         try:
@@ -1397,15 +1428,21 @@ def _apply_results_to_calcs(results):
                 # 경고 합산승률 저장
                 if blended is not None:
                     history_entry['warningWinRate'] = blended
-                # 모양: 가장 최근 다음 픽에만 배팅 — 값 있으면 그 픽으로 배팅, 없으면 no_bet
+                # 모양: 유사 덩어리 다음 결과 높은값에만 배팅 — 값 있으면 그 픽으로 배팅, 없으면 no_bet
                 if c.get('shape_only_latest_next_pick') and results_for_shape and len(results_for_shape) >= 16:
-                    latest_next = _get_latest_next_pick_for_chunk(results_for_shape)
+                    latest_next = _get_chunk_pick_by_higher_stats(results_for_shape)
                     if not latest_next or latest_next not in ('정', '꺽'):
                         history_entry['no_bet'] = True
                         history_entry['betAmount'] = 0
                     else:
                         history_entry['predicted'] = latest_next
-                        history_entry['pickColor'] = '빨강' if latest_next == '정' else '검정'
+                        is_15_red = get_card_color_from_result(results_for_shape[14]) if len(results_for_shape) >= 15 else None
+                        if is_15_red is True:
+                            history_entry['pickColor'] = '빨강' if latest_next == '정' else '검정'
+                        elif is_15_red is False:
+                            history_entry['pickColor'] = '검정' if latest_next == '정' else '빨강'
+                        else:
+                            history_entry['pickColor'] = '빨강' if latest_next == '정' else '검정'
                 # 멈춤 상태 확인 — 마틴 사용 중 연패 구간이면 멈춤 적용 안 함(연패 후 승 다음에만 멈춤)
                 paused = c.get('paused', False)
                 if paused and c.get('martingale'):
@@ -1668,7 +1705,7 @@ def _server_calc_effective_pick_and_amount(c):
     pick_color = 'RED' if color == '빨강' else ('BLACK' if color == '검정' else None)
     if pick_color is None:
         return None, 0
-    # 모양: 가장 최근 다음 픽에 뜬 픽에만 배팅. 값 있으면 그 픽으로 배팅, 없으면 배팅 안 함
+    # 모양: 유사 덩어리 다음 결과 높은값에만 배팅. 값 있으면 그 픽으로 배팅, 없으면 배팅 안 함
     if c.get('shape_only_latest_next_pick'):
         results = None
         try:
@@ -1681,12 +1718,17 @@ def _server_calc_effective_pick_and_amount(c):
             results = None
         if not results or len(results) < 16:
             return None, 0
-        latest_next = _get_latest_next_pick_for_chunk(results)
+        latest_next = _get_chunk_pick_by_higher_stats(results)
         if not latest_next or latest_next not in ('정', '꺽'):
             return None, 0
         pred = latest_next
-        color = '빨강' if latest_next == '정' else '검정'
-        pick_color = 'RED' if latest_next == '정' else 'BLACK'
+        is_15_red = get_card_color_from_result(results[14]) if len(results) >= 15 else None
+        if is_15_red is True:
+            color, pick_color = ('빨강', 'RED') if latest_next == '정' else ('검정', 'BLACK')
+        elif is_15_red is False:
+            color, pick_color = ('검정', 'BLACK') if latest_next == '정' else ('빨강', 'RED')
+        else:
+            color, pick_color = ('빨강', 'RED') if latest_next == '정' else ('검정', 'BLACK')
     if c.get('paused'):
         return pick_color, 0
     dummy = {'round': pr, 'actual': 'pending'}
@@ -4159,7 +4201,7 @@ RESULTS_HTML = '''
             <div id="panel-pong-chunk" class="analysis-panel active">
                 <div id="pong-chunk-collapse-body" class="prob-bucket-collapse-body">
                 <div id="pong-chunk-section" style="margin-top:0;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
-                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">최근 그래프에서 <strong>줄(유지)</strong>·<strong>퐁당(바뀜)</strong>·<strong>덩어리(블록 반복)</strong>·<strong>U자 구간</strong>을 판별해 가중치에 반영합니다. U자 구간은 연패가 많아 유지 쪽 보정·멈춤 권장. <strong>유사 덩어리</strong>는 현재 덩어리와 높이 프로필이 비슷한 과거 덩어리의 다음 결과를 가중 합산해 반영하며, <strong>가장 최근 다음 픽</strong>은 유사 덩어리 중 가장 최근 것의 다음 결과입니다.</p>
+                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">최근 그래프에서 <strong>줄(유지)</strong>·<strong>퐁당(바뀜)</strong>·<strong>덩어리(블록 반복)</strong>·<strong>U자 구간</strong>을 판별해 가중치에 반영합니다. U자 구간은 연패가 많아 유지 쪽 보정·멈춤 권장. <strong>유사 덩어리</strong>는 현재 덩어리와 높이 프로필이 비슷한 과거 덩어리의 다음 결과를 가중 합산해 반영하며, <strong>유사 덩어리 높은값</strong>은 유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽입니다.</p>
                     <div id="pong-chunk-data" style="font-size:0.9em;color:#ccc;"><table class="symmetry-line-table" style="width:100%;max-width:420px;"><tbody id="pong-chunk-tbody"><tr><td colspan="2" style="color:#888;">데이터 로딩 후 표시</td></tr></tbody></table></div>
                 </div>
                 </div>
@@ -4272,7 +4314,7 @@ RESULTS_HTML = '''
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-1-lose-streak-reverse"> 연패≥<input type="number" id="calc-1-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-1-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                     <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-1-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-1-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
-                                    <tr><td>모양</td><td><label><input type="checkbox" id="calc-1-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
+                                    <tr><td>모양</td><td><label><input type="checkbox" id="calc-1-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
                                     <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-1-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-1-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
@@ -4312,7 +4354,7 @@ RESULTS_HTML = '''
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-2-lose-streak-reverse"> 연패≥<input type="number" id="calc-2-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-2-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                     <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-2-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-2-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
-                                    <tr><td>모양</td><td><label><input type="checkbox" id="calc-2-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
+                                    <tr><td>모양</td><td><label><input type="checkbox" id="calc-2-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
                                     <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-2-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-2-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
@@ -4352,7 +4394,7 @@ RESULTS_HTML = '''
                                     <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
                                     <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-3-lose-streak-reverse"> 연패≥<input type="number" id="calc-3-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-3-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                     <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-3-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-3-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
-                                    <tr><td>모양</td><td><label><input type="checkbox" id="calc-3-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
+                                    <tr><td>모양</td><td><label><input type="checkbox" id="calc-3-shape-only-latest-next-pick" title="유사 덩어리들의 다음 결과(정/꺽) 가중 합 중 높은 쪽에만 배팅. 값이 없으면 배팅 안 함"> 유사 덩어리 높은값에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
                                     <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-3-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-3-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                     <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
                                     <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
@@ -6371,7 +6413,7 @@ RESULTS_HTML = '''
                                 '<tr><td>덩어리 모양</td><td>' + chunkShapeLabel + '</td></tr>' +
                                 '<tr><td>U자 구간</td><td>' + uShapeLabel + '</td></tr>' +
                                 '<tr><td>유사 덩어리 다음 결과</td><td>' + chunkProfileStatsLabel + '</td></tr>' +
-                                '<tr><td>가장 최근 다음 픽</td><td>' + latestNextPickLabel + '</td></tr>' +
+                                '<tr><td>유사 덩어리 높은값</td><td>' + latestNextPickLabel + '</td></tr>' +
                                 '<tr><td>맨 앞 run 타입</td><td>' + (d.first_run_type || '—') + '</td></tr>' +
                                 '<tr><td>맨 앞 run 길이</td><td>' + (d.first_run_len != null ? d.first_run_len : '—') + '</td></tr>' +
                                 '<tr><td>최근 15개 퐁당%</td><td>' + (d.pong_pct_short != null ? d.pong_pct_short.toFixed(1) + '%' : '—') + '</td></tr>' +
@@ -7278,7 +7320,7 @@ RESULTS_HTML = '''
                             }
                             if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
                         }
-                        // 모양: 가장 최근 다음 픽에만 배팅 — 값 있으면 그 픽으로 배팅, 없으면 보류
+                        // 모양: 유사 덩어리 높은값에만 배팅 — 값 있으면 그 픽으로 배팅, 없으면 보류
                         var predBeforeShapeOnly = bettingText;  // shape_only 보류 시 history에는 '정'/'꺽' 저장 (승패 계산용)
                         var shapeOnly = !!(calcState[id] && calcState[id].shape_only_latest_next_pick);
                         var latestNext = (typeof lastPongChunkDebug !== 'undefined' && lastPongChunkDebug && (lastPongChunkDebug.latest_next_pick === '정' || lastPongChunkDebug.latest_next_pick === '꺽')) ? lastPongChunkDebug.latest_next_pick : null;
@@ -8314,8 +8356,8 @@ def _build_results_payload_db_only(hours=24):
                             if computed:
                                 server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                 server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
-                                # 가장 최근 다음 픽 추가
-                                latest_next_pick = _get_latest_next_pick_for_chunk(results)
+                                # 유사 덩어리 다음 결과 높은값 추가 (shape_only 옵션용)
+                                latest_next_pick = _get_chunk_pick_by_higher_stats(results)
                                 if latest_next_pick:
                                     server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
                         except Exception:
@@ -8492,8 +8534,8 @@ def _build_results_payload():
                                 if computed:
                                     server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                     server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
-                                    # 가장 최근 다음 픽 추가
-                                    latest_next_pick = _get_latest_next_pick_for_chunk(results)
+                                    # 유사 덩어리 다음 결과 높은값 추가 (shape_only 옵션용)
+                                    latest_next_pick = _get_chunk_pick_by_higher_stats(results)
                                     if latest_next_pick:
                                         server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
                             except Exception:
@@ -8571,8 +8613,8 @@ def _build_results_payload():
                                 if computed:
                                     server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                     server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
-                                    # 가장 최근 다음 픽 추가
-                                    latest_next_pick = _get_latest_next_pick_for_chunk(results)
+                                    # 유사 덩어리 다음 결과 높은값 추가 (shape_only 옵션용)
+                                    latest_next_pick = _get_chunk_pick_by_higher_stats(results)
                                     if latest_next_pick:
                                         server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
                             except Exception:
