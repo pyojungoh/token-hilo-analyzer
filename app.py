@@ -219,6 +219,20 @@ def init_database():
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             )
         ''')
+        # shape_win_occurrences: 회차별 모양→다음 결과 기록. 최근 데이터에 더 높은 가중치 적용용
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS shape_win_occurrences (
+                id SERIAL PRIMARY KEY,
+                signature TEXT NOT NULL,
+                next_actual TEXT NOT NULL,
+                round_num INTEGER NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        ''')
+        cur.execute('''
+            CREATE INDEX IF NOT EXISTS idx_shape_occurrences_sig_round
+            ON shape_win_occurrences (signature, round_num DESC)
+        ''')
         for col, typ in [('next_jung_count', 'INTEGER DEFAULT 0'), ('next_kkeok_count', 'INTEGER DEFAULT 0')]:
             cur.execute(
                 "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'shape_win_stats' AND column_name = %s",
@@ -433,11 +447,41 @@ def _get_shape_signature(results):
     return ",".join(parts) if parts else ""
 
 
-def get_shape_win_stats(conn, signature):
-    """모양 시그니처별 '그 다음 실제 결과' 누적. 반환: {jung_count, kkeok_count} (이 모양 다음에 정/꺽 나온 횟수) 또는 None."""
+def get_shape_win_stats(conn, signature, current_round=None):
+    """모양 시그니처별 '그 다음 실제 결과' 누적. 반환: {jung_count, kkeok_count} (이 모양 다음에 정/꺽 나온 횟수) 또는 None.
+    current_round가 있으면 shape_win_occurrences에서 최근 100건만 조회해 회차 기반 감쇠(0.95^(age/15)) 적용. 가중 합이 10 미만이면 shape_win_stats 폴백."""
     if not conn or not signature:
         return None
     try:
+        cur = conn.cursor()
+        if current_round is not None:
+            try:
+                cur.execute('''
+                    SELECT next_actual, round_num FROM shape_win_occurrences
+                    WHERE signature = %s
+                    ORDER BY round_num DESC
+                    LIMIT 100
+                ''', (signature,))
+                rows = cur.fetchall()
+            except Exception:
+                rows = []
+            finally:
+                cur.close()
+            if rows:
+                SHAPE_DECAY_BASE = 0.95
+                SHAPE_DECAY_STEP = 15
+                jung_weighted = 0.0
+                kkeok_weighted = 0.0
+                for next_actual, rnd in rows:
+                    age = max(0, current_round - rnd)
+                    w = SHAPE_DECAY_BASE ** (age / SHAPE_DECAY_STEP)
+                    if next_actual == '정':
+                        jung_weighted += w
+                    else:
+                        kkeok_weighted += w
+                total = jung_weighted + kkeok_weighted
+                if total >= 10:
+                    return {'jung_count': jung_weighted, 'kkeok_count': kkeok_weighted}
         cur = conn.cursor()
         cur.execute('''
             SELECT next_jung_count, next_kkeok_count FROM shape_win_stats WHERE signature = %s
@@ -452,17 +496,22 @@ def get_shape_win_stats(conn, signature):
 
 
 def _get_shape_stats_for_results(results):
-    """현재 results에 해당하는 그래프 모양의 '다음 결과' 누적 통계. 예측픽 계산 시 shape_win_stats 인자로 넘길 때 사용."""
+    """현재 results에 해당하는 그래프 모양의 '다음 결과' 누적 통계. 예측픽 계산 시 shape_win_stats 인자로 넘길 때 사용.
+    current_round를 넘겨 최근 과거 모양에 더 높은 가중치 적용."""
     if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
         return None
     sig = _get_shape_signature(results)
     if not sig:
         return None
+    try:
+        current_round = int(str(results[0].get('gameID', '0') or '0'), 10)
+    except (ValueError, TypeError):
+        current_round = None
     conn = get_db_connection(statement_timeout_sec=3)
     if not conn:
         return None
     try:
-        return get_shape_win_stats(conn, sig)
+        return get_shape_win_stats(conn, sig, current_round=current_round)
     finally:
         try:
             conn.close()
@@ -517,11 +566,13 @@ def _get_latest_next_pick_for_shape(results):
             pass
 
 
-def update_shape_win_stats(conn, signature, actual):
-    """예측 기록 저장 시 호출: 해당 회차 예측 시점의 모양 다음에 실제로 나온 결과(정/꺽)만 누적. 예측값은 사용 안 함."""
+def update_shape_win_stats(conn, signature, actual, round_num=None):
+    """예측 기록 저장 시 호출: 해당 회차 예측 시점의 모양 다음에 실제로 나온 결과(정/꺽)만 누적. 예측값은 사용 안 함.
+    round_num이 있으면 shape_win_occurrences에도 저장해 최근 데이터 가중치 적용에 사용."""
     if not conn or not signature:
         return
     is_jung = (actual == '정' or (isinstance(actual, str) and '정' in actual))
+    next_actual = '정' if is_jung else '꺽'
     try:
         cur = conn.cursor()
         if is_jung:
@@ -540,6 +591,11 @@ def update_shape_win_stats(conn, signature, actual):
                     next_kkeok_count = shape_win_stats.next_kkeok_count + 1,
                     updated_at = NOW()
             ''', (signature,))
+        if round_num is not None:
+            cur.execute('''
+                INSERT INTO shape_win_occurrences (signature, next_actual, round_num)
+                VALUES (%s, %s, %s)
+            ''', (signature, next_actual, int(round_num)))
         conn.commit()
         cur.close()
     except Exception as e:
@@ -1554,7 +1610,7 @@ def _merge_round_predictions_into_history(round_actuals, results=None):
                     conn2 = get_db_connection(statement_timeout_sec=3)
                     if conn2:
                         try:
-                            update_shape_win_stats(conn2, sig, actual)
+                            update_shape_win_stats(conn2, sig, actual, round_num=rnd)
                         finally:
                             try:
                                 conn2.close()
@@ -1605,7 +1661,7 @@ def _backfill_latest_round_to_prediction_history(results):
             conn = get_db_connection(statement_timeout_sec=3)
             if conn:
                 try:
-                    update_shape_win_stats(conn, sig, actual)
+                    update_shape_win_stats(conn, sig, actual, round_num=latest_round)
                 finally:
                     try:
                         conn.close()
