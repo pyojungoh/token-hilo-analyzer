@@ -1391,12 +1391,15 @@ def _apply_results_to_calcs(results):
                 # 경고 합산승률 저장
                 if blended is not None:
                     history_entry['warningWinRate'] = blended
-                # 모양: 가장 최근 다음 픽에만 배팅 — 값 없거나 픽 불일치면 no_bet
+                # 모양: 가장 최근 다음 픽에만 배팅 — 값 있으면 그 픽으로 배팅, 없으면 no_bet
                 if c.get('shape_only_latest_next_pick') and results_for_shape and len(results_for_shape) >= 16:
                     latest_next = _get_latest_next_pick_for_chunk(results_for_shape)
-                    if not latest_next or latest_next not in ('정', '꺽') or pred_for_calc != latest_next:
+                    if not latest_next or latest_next not in ('정', '꺽'):
                         history_entry['no_bet'] = True
                         history_entry['betAmount'] = 0
+                    else:
+                        history_entry['predicted'] = latest_next
+                        history_entry['pickColor'] = '빨강' if latest_next == '정' else '검정'
                 # 멈춤 상태 확인 — 마틴 사용 중 연패 구간이면 멈춤 적용 안 함(연패 후 승 다음에만 멈춤)
                 paused = c.get('paused', False)
                 if paused and c.get('martingale'):
@@ -1659,7 +1662,7 @@ def _server_calc_effective_pick_and_amount(c):
     pick_color = 'RED' if color == '빨강' else ('BLACK' if color == '검정' else None)
     if pick_color is None:
         return None, 0
-    # 모양: 가장 최근 다음 픽에 뜬 픽에만 배팅. 값 없으면 배팅 안 함
+    # 모양: 가장 최근 다음 픽에 뜬 픽에만 배팅. 값 있으면 그 픽으로 배팅, 없으면 배팅 안 함
     if c.get('shape_only_latest_next_pick'):
         results = None
         try:
@@ -1675,8 +1678,9 @@ def _server_calc_effective_pick_and_amount(c):
         latest_next = _get_latest_next_pick_for_chunk(results)
         if not latest_next or latest_next not in ('정', '꺽'):
             return None, 0
-        if pred != latest_next:
-            return None, 0
+        pred = latest_next
+        color = '빨강' if latest_next == '정' else '검정'
+        pick_color = 'RED' if latest_next == '정' else 'BLACK'
     if c.get('paused'):
         return pick_color, 0
     dummy = {'round': pr, 'actual': 'pending'}
@@ -7252,14 +7256,20 @@ RESULTS_HTML = '''
                             }
                             if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
                         }
-                        // 모양: 가장 최근 다음 픽에만 배팅 — 값 없거나 픽 불일치면 보류
+                        // 모양: 가장 최근 다음 픽에만 배팅 — 값 있으면 그 픽으로 배팅, 없으면 보류
                         var shapeOnly = !!(calcState[id] && calcState[id].shape_only_latest_next_pick);
                         var latestNext = (typeof lastPongChunkDebug !== 'undefined' && lastPongChunkDebug && (lastPongChunkDebug.latest_next_pick === '정' || lastPongChunkDebug.latest_next_pick === '꺽')) ? lastPongChunkDebug.latest_next_pick : null;
-                        if (shapeOnly && (!latestNext || latestNext !== bettingText)) {
-                            bettingText = '보류';
-                            bettingIsRed = false;
-                            if (curRound != null && calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === curRound) {
-                                calcState[id].lastBetPickForRound = { round: curRound, value: '보류', isRed: false };
+                        if (shapeOnly) {
+                            if (latestNext) {
+                                bettingText = latestNext;
+                                bettingIsRed = (latestNext === '정');
+                                if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
+                            } else {
+                                bettingText = '보류';
+                                bettingIsRed = false;
+                                if (curRound != null && calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === curRound) {
+                                    calcState[id].lastBetPickForRound = { round: curRound, value: '보류', isRed: false };
+                                }
                             }
                         }
                         predictionCardEl.textContent = predictionText;
