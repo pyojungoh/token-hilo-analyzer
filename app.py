@@ -6932,8 +6932,8 @@ RESULTS_HTML = '''
                         bettingCardEl.textContent = bettingText;
                         bettingCardEl.className = 'calc-current-card calc-card-betting card-' + (bettingIsRed ? 'jung' : 'kkuk');
                         bettingCardEl.title = '';
-                        var rForAmt = (typeof getCalcResult === 'function') ? getCalcResult(id) : null;
-                        var betAmt = (effectivePausedForRound(id) ? 0 : (rForAmt && rForAmt.currentBet > 0 ? rForAmt.currentBet : 0));
+                        // 매크로: 1행(배팅중 행)과 동일한 출처 — getBetForRound 사용 (getCalcResult 대신)
+                        var betAmt = (effectivePausedForRound(id) ? 0 : (curRound != null && typeof getBetForRound === 'function' ? getBetForRound(id, curRound) : 0));
                         var suggestedAmt = betAmt > 0 ? betAmt : null;
                         postCurrentPickIfChanged(parseInt(id, 10) || 1, { pickColor: bettingIsRed ? 'RED' : 'BLACK', round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: typeof predProb === 'number' && !isNaN(predProb) ? predProb : null, suggested_amount: suggestedAmt });
                         if (lastPrediction && lastPrediction.round != null) {
