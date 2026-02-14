@@ -1724,7 +1724,7 @@ def _server_calc_effective_pick_and_amount(c):
     pick_color = 'RED' if color == '빨강' else ('BLACK' if color == '검정' else None)
     if pick_color is None:
         return None, 0
-    # 모양: 가장 최근 다음 픽에 뜬 픽에만 배팅. 값 없으면 배팅 안 함
+    # 모양: 가장 최근 다음 픽에만 배팅 — 값 있으면 그 픽 직접 사용(반픽/승률반픽 등 무시). 없으면 배팅 안 함
     if c.get('shape_only_latest_next_pick'):
         results = None
         try:
@@ -1740,8 +1740,15 @@ def _server_calc_effective_pick_and_amount(c):
         latest_next = _get_latest_next_pick_for_chunk(results)
         if not latest_next or latest_next not in ('정', '꺽'):
             return None, 0
-        if pred != latest_next:
-            return None, 0
+        pred = latest_next
+        is_15_red = get_card_color_from_result(results[14]) if len(results) >= 15 else None
+        if is_15_red is True:
+            color = '빨강' if pred == '정' else '검정'
+        elif is_15_red is False:
+            color = '검정' if pred == '정' else '빨강'
+        else:
+            color = '빨강' if pred == '정' else '검정'
+        pick_color = 'RED' if color == '빨강' else ('BLACK' if color == '검정' else None)
     if c.get('paused'):
         return pick_color, 0
     dummy = {'round': pr, 'actual': 'pending'}
@@ -7442,16 +7449,24 @@ RESULTS_HTML = '''
                             }
                             if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
                         }
-                        // 모양: 가장 최근 다음 픽에만 배팅 — 값 없거나 픽 불일치면 보류. history에는 정/꺽 저장(승패 계산용)
+                        // 모양: 가장 최근 다음 픽에만 배팅 — 값 있으면 그 픽을 배팅중에 직접 표시(반픽/승률반픽 등 무시). 없으면 보류
                         var predBeforeShapeOnly = bettingText;
                         var predBeforeShapeOnlyIsRed = bettingIsRed;
                         var shapeOnly = !!(calcState[id] && calcState[id].shape_only_latest_next_pick);
                         var latestNext = (typeof lastPongChunkDebug !== 'undefined' && lastPongChunkDebug && (lastPongChunkDebug.latest_next_pick === '정' || lastPongChunkDebug.latest_next_pick === '꺽')) ? lastPongChunkDebug.latest_next_pick : null;
-                        if (shapeOnly && (!latestNext || latestNext !== bettingText)) {
-                            bettingText = '보류';
-                            bettingIsRed = false;
-                            if (curRound != null && calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === curRound) {
-                                calcState[id].lastBetPickForRound = { round: curRound, value: '보류', isRed: false };
+                        if (shapeOnly) {
+                            if (latestNext) {
+                                bettingText = latestNext;
+                                var card15 = (allResults && allResults.length >= 15 && typeof parseCardValue === 'function') ? parseCardValue(allResults[14].result || '') : null;
+                                var is15Red = card15 ? !!card15.isRed : false;
+                                bettingIsRed = (latestNext === '정') ? is15Red : !is15Red;
+                                if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
+                            } else {
+                                bettingText = '보류';
+                                bettingIsRed = false;
+                                if (curRound != null && calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === curRound) {
+                                    calcState[id].lastBetPickForRound = { round: curRound, value: '보류', isRed: false };
+                                }
                             }
                         }
                         predictionCardEl.textContent = predictionText;
