@@ -1007,6 +1007,24 @@ def _get_lose_streak_from_history(history):
     return n
 
 
+def _get_display_win_rate(history, max_rows=200):
+    """계산기 표승률: 최근 max_rows개 중 배팅한 완료 행만, 조커=패. 승률 = 승/(승+패)*100. 표본 없으면 None."""
+    if not history:
+        return None
+    completed = [h for h in history if h.get('actual') and h.get('actual') != 'pending']
+    # 배팅한 행만 (멈춤 no_bet 제외. betAmount 없으면 no_bet 아닌 행 포함)
+    bet_rows = [h for h in completed if not h.get('no_bet')]
+    last_n = bet_rows[-max_rows:] if len(bet_rows) > max_rows else bet_rows
+    if not last_n:
+        return None
+    wins = sum(1 for h in last_n if h.get('actual') != 'joker' and h.get('predicted') == h.get('actual'))
+    losses = sum(1 for h in last_n if h.get('actual') == 'joker' or h.get('predicted') != h.get('actual'))
+    total = wins + losses
+    if total < 1:
+        return None
+    return 100.0 * wins / total
+
+
 def _server_recent_15_win_rate(completed_list):
     """완료된 회차 리스트에서 최근 15회 승률(%). 조커=패. 클라이언트 getCalcRecent15WinRate와 동일 로직."""
     if not completed_list:
@@ -1414,8 +1432,9 @@ def _apply_results_to_calcs(results):
                     pred_for_calc = '꺽' if pending_predicted == '정' else '정'
                     bet_color_for_history = _flip_pick_color(bet_color_for_history)
                 blended = _blended_win_rate(get_prediction_history(100))
-                thr = c.get('win_rate_threshold', 46)
-                if c.get('win_rate_reverse') and blended is not None and blended <= thr:
+                # 승률반픽: 표승률(계산기 최근 200회) 기준, 50% 이하면 반픽
+                display_wr = _get_display_win_rate(c.get('history') or [], 200)
+                if c.get('win_rate_reverse') and display_wr is not None and display_wr <= 50:
                     pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
                     bet_color_for_history = _flip_pick_color(bet_color_for_history)
                 lose_streak = _get_lose_streak_from_history(c.get('history') or [])
@@ -1699,8 +1718,9 @@ def _server_calc_effective_pick_and_amount(c):
         pred = '꺽' if pred == '정' else '정'
         color = _flip_pick_color(color)
     blended = _blended_win_rate(ph or get_prediction_history(100))
-    thr = c.get('win_rate_threshold', 46)
-    if c.get('win_rate_reverse') and blended is not None and blended <= thr and not no_reverse_in_streak and (main_rate15 is None or main_rate15 < 53):
+    # 승률반픽: 표승률(계산기 최근 200회) 기준, 50% 이하면 반픽
+    display_wr = _get_display_win_rate(c.get('history') or [], 200)
+    if c.get('win_rate_reverse') and display_wr is not None and display_wr <= 50 and not no_reverse_in_streak and (main_rate15 is None or main_rate15 < 53):
         pred = '꺽' if pred == '정' else '정'
         color = _flip_pick_color(color)
     lose_streak = _get_lose_streak_from_history(c.get('history') or [])
@@ -4371,7 +4391,7 @@ RESULTS_HTML = '''
                                     <div class="calc-options-toggle"><span class="calc-options-label">옵션</span><span class="calc-options-icon">▼</span></div>
                                     <div class="calc-options-body">
                                         <table class="calc-settings-table">
-                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label title="계산기 표승률(최근 200회) 50% 이하면 반픽, 이상이면 정픽">표승률≤50%일 때 반픽</label> <input type="hidden" id="calc-1-win-rate-threshold" value="50"></td></tr>
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-1-lose-streak-reverse"> 연패≥<input type="number" id="calc-1-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-1-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-1-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-1-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-1-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
@@ -4394,7 +4414,7 @@ RESULTS_HTML = '''
                                 <div class="calc-round-table-wrap" id="calc-1-round-table-wrap"></div>
                                 <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="1">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-1-streak">경기결과 (최근 30회): -</div>
-                                <div class="calc-stats" id="calc-1-stats">최대연승: - | 최대연패: - | 승률: - | 15회승률: -</div>
+                                <div class="calc-stats" id="calc-1-stats">최대연승: - | 최대연패: - | 승률: - | 표승률: - | 15회승률: -</div>
                             </div>
                         </div>
                     </div>
@@ -4418,7 +4438,7 @@ RESULTS_HTML = '''
                                     <div class="calc-options-toggle"><span class="calc-options-label">옵션</span><span class="calc-options-icon">▼</span></div>
                                     <div class="calc-options-body">
                                         <table class="calc-settings-table">
-                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label title="계산기 표승률(최근 200회) 50% 이하면 반픽, 이상이면 정픽">표승률≤50%일 때 반픽</label> <input type="hidden" id="calc-2-win-rate-threshold" value="50"></td></tr>
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-2-lose-streak-reverse"> 연패≥<input type="number" id="calc-2-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-2-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-2-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-2-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-2-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
@@ -4441,7 +4461,7 @@ RESULTS_HTML = '''
                                 <div class="calc-round-table-wrap" id="calc-2-round-table-wrap"></div>
                                 <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="2">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-2-streak">경기결과 (최근 30회): -</div>
-                                <div class="calc-stats" id="calc-2-stats">최대연승: - | 최대연패: - | 승률: - | 15회승률: -</div>
+                                <div class="calc-stats" id="calc-2-stats">최대연승: - | 최대연패: - | 승률: - | 표승률: - | 15회승률: -</div>
                             </div>
                         </div>
                     </div>
@@ -4465,7 +4485,7 @@ RESULTS_HTML = '''
                                     <div class="calc-options-toggle"><span class="calc-options-label">옵션</span><span class="calc-options-icon">▼</span></div>
                                     <div class="calc-options-body">
                                         <table class="calc-settings-table">
-                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label>합산승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="46" class="calc-threshold-input" title="이 값 이하일 때 승률반픽 발동">%일 때</label></td></tr>
+                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label title="계산기 표승률(최근 200회) 50% 이하면 반픽, 이상이면 정픽">표승률≤50%일 때 반픽</label> <input type="hidden" id="calc-3-win-rate-threshold" value="50"></td></tr>
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-3-lose-streak-reverse"> 연패≥<input type="number" id="calc-3-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-3-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-3-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-3-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-3-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
@@ -4488,7 +4508,7 @@ RESULTS_HTML = '''
                                 <div class="calc-round-table-wrap" id="calc-3-round-table-wrap"></div>
                                 <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="3">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-3-streak">경기결과 (최근 30회): -</div>
-                                <div class="calc-stats" id="calc-3-stats">최대연승: - | 최대연패: - | 승률: - | 15회승률: -</div>
+                                <div class="calc-stats" id="calc-3-stats">최대연승: - | 최대연패: - | 승률: - | 표승률: - | 15회승률: -</div>
                             </div>
                         </div>
                     </div>
@@ -5663,20 +5683,18 @@ RESULTS_HTML = '''
                                     const rev = !!(calcState[id] && calcState[id].reverse);
                                     pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
                                     const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
-                                    var thrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
-                                    var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
-                                    if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
+                                    var displayWr = (typeof getDisplayWinRate === 'function') ? getDisplayWinRate(id, 200) : null;
                                     var streakSuppress = !!(calcState[id] && calcState[id].streak_suppress_reverse);
                                     var noRevByMain15 = (r15 == null || r15 < 53);
                                     var noRevByStreak5 = !(streakSuppress && runLen >= 5);
-                                    if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr && noRevByMain15 && noRevByStreak5) pred = pred === '정' ? '꺽' : '정';
+                                    if (useWinRateRev && displayWr != null && displayWr <= 50 && noRevByMain15 && noRevByStreak5) pred = pred === '정' ? '꺽' : '정';
                                     var useLoseStreakRev = !!(calcState[id] && calcState[id].lose_streak_reverse);
                                     var loseStreakThrEl = document.getElementById('calc-' + id + '-lose-streak-reverse-threshold');
                                     var loseStreakThr = (loseStreakThrEl && !isNaN(parseFloat(loseStreakThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(loseStreakThrEl.value))) : (calcState[id] != null && typeof calcState[id].lose_streak_reverse_threshold === 'number' ? calcState[id].lose_streak_reverse_threshold : 48);
                                     if (useLoseStreakRev && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThr && noRevByMain15 && noRevByStreak5) pred = pred === '정' ? '꺽' : '정';
                                     betColor = normalizePickColor(predForRound.color);
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
-                                    if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr && noRevByMain15 && noRevByStreak5) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                    if (useWinRateRev && displayWr != null && displayWr <= 50 && noRevByMain15 && noRevByStreak5) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (useLoseStreakRev && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThr && noRevByMain15 && noRevByStreak5) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     var winRateDirRevEl = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
                                     var useWinRateDirRev = !!(winRateDirRevEl && winRateDirRevEl.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
@@ -5730,20 +5748,18 @@ RESULTS_HTML = '''
                                     const rev = !!(calcState[id] && calcState[id].reverse);
                                     pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
                                     const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
-                                    var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
-                                    var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
-                                    if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
+                                    var displayWrActual = (typeof getDisplayWinRate === 'function') ? getDisplayWinRate(id, 200) : null;
                                     var streakSuppressA = !!(calcState[id] && calcState[id].streak_suppress_reverse);
                                     var noRevByMain15A = (r15 == null || r15 < 53);
                                     var noRevByStreak5A = !(streakSuppressA && runLen >= 5);
-                                    if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual && noRevByMain15A && noRevByStreak5A) pred = pred === '정' ? '꺽' : '정';
+                                    if (useWinRateRevActual && displayWrActual != null && displayWrActual <= 50 && noRevByMain15A && noRevByStreak5A) pred = pred === '정' ? '꺽' : '정';
                                     var useLoseStreakRevActual = !!(calcState[id] && calcState[id].lose_streak_reverse);
                                     var loseStreakThrElActual = document.getElementById('calc-' + id + '-lose-streak-reverse-threshold');
                                     var loseStreakThrActual = (loseStreakThrElActual && !isNaN(parseFloat(loseStreakThrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(loseStreakThrElActual.value))) : (calcState[id] != null && typeof calcState[id].lose_streak_reverse_threshold === 'number' ? calcState[id].lose_streak_reverse_threshold : 48);
                                     if (useLoseStreakRevActual && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThrActual && noRevByMain15A && noRevByStreak5A) pred = pred === '정' ? '꺽' : '정';
                                     betColorActual = normalizePickColor(predForRound.color);
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
-                                    if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual && noRevByMain15A && noRevByStreak5A) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                    if (useWinRateRevActual && displayWrActual != null && displayWrActual <= 50 && noRevByMain15A && noRevByStreak5A) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (useLoseStreakRevActual && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThrActual && noRevByMain15A && noRevByStreak5A) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     var winRateDirRevElA = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
                                     var useWinRateDirRevActual = !!(winRateDirRevElA && winRateDirRevElA.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
@@ -5823,20 +5839,18 @@ RESULTS_HTML = '''
                                     const rev = !!(calcState[id] && calcState[id].reverse);
                                     pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
                                     const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
-                                    var thrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
-                                    var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
-                                    if (typeof thr !== 'number' || isNaN(thr)) thr = 50;
+                                    var displayWr2 = (typeof getDisplayWinRate === 'function') ? getDisplayWinRate(id, 200) : null;
                                     var streakSuppress2 = !!(calcState[id] && calcState[id].streak_suppress_reverse);
                                     var noRevByMain152 = (r15 == null || r15 < 53);
                                     var noRevByStreak52 = !(streakSuppress2 && runLen >= 5);
-                                    if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr && noRevByMain152 && noRevByStreak52) pred = pred === '정' ? '꺽' : '정';
+                                    if (useWinRateRev && displayWr2 != null && displayWr2 <= 50 && noRevByMain152 && noRevByStreak52) pred = pred === '정' ? '꺽' : '정';
                                     var useLoseStreakRev2 = !!(calcState[id] && calcState[id].lose_streak_reverse);
                                     var loseStreakThrEl2 = document.getElementById('calc-' + id + '-lose-streak-reverse-threshold');
                                     var loseStreakThr2 = (loseStreakThrEl2 && !isNaN(parseFloat(loseStreakThrEl2.value))) ? Math.max(0, Math.min(100, parseFloat(loseStreakThrEl2.value))) : (calcState[id] != null && typeof calcState[id].lose_streak_reverse_threshold === 'number' ? calcState[id].lose_streak_reverse_threshold : 48);
                                     if (useLoseStreakRev2 && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThr2 && noRevByMain152 && noRevByStreak52) pred = pred === '정' ? '꺽' : '정';
                                     betColor = normalizePickColor(predForRound.color);
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
-                                    if (useWinRateRev && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thr && noRevByMain152 && noRevByStreak52) betColor = betColor === '빨강' ? '검정' : '빨강';
+                                    if (useWinRateRev && displayWr2 != null && displayWr2 <= 50 && noRevByMain152 && noRevByStreak52) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (useLoseStreakRev2 && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThr2 && noRevByMain152 && noRevByStreak52) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     var winRateDirRevEl2 = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
                                     var useWinRateDirRev2 = !!(winRateDirRevEl2 && winRateDirRevEl2.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
@@ -5885,20 +5899,18 @@ RESULTS_HTML = '''
                                     const rev = !!(calcState[id] && calcState[id].reverse);
                                     pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
                                     const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
-                                    var thrElActual = document.getElementById('calc-' + id + '-win-rate-threshold');
-                                    var thrActual = (thrElActual && !isNaN(parseFloat(thrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(thrElActual.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
-                                    if (typeof thrActual !== 'number' || isNaN(thrActual)) thrActual = 50;
+                                    var displayWr3 = (typeof getDisplayWinRate === 'function') ? getDisplayWinRate(id, 200) : null;
                                     var streakSuppress3 = !!(calcState[id] && calcState[id].streak_suppress_reverse);
                                     var noRevByMain153 = (r15 == null || r15 < 53);
                                     var noRevByStreak53 = !(streakSuppress3 && runLen >= 5);
-                                    if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual && noRevByMain153 && noRevByStreak53) pred = pred === '정' ? '꺽' : '정';
+                                    if (useWinRateRevActual && displayWr3 != null && displayWr3 <= 50 && noRevByMain153 && noRevByStreak53) pred = pred === '정' ? '꺽' : '정';
                                     var useLoseStreakRev3 = !!(calcState[id] && calcState[id].lose_streak_reverse);
                                     var loseStreakThrEl3 = document.getElementById('calc-' + id + '-lose-streak-reverse-threshold');
                                     var loseStreakThr3 = (loseStreakThrEl3 && !isNaN(parseFloat(loseStreakThrEl3.value))) ? Math.max(0, Math.min(100, parseFloat(loseStreakThrEl3.value))) : (calcState[id] != null && typeof calcState[id].lose_streak_reverse_threshold === 'number' ? calcState[id].lose_streak_reverse_threshold : 48);
                                     if (useLoseStreakRev3 && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThr3 && noRevByMain153 && noRevByStreak53) pred = pred === '정' ? '꺽' : '정';
                                     betColorActual = normalizePickColor(predForRound.color);
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
-                                    if (useWinRateRevActual && (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrActual && noRevByMain153 && noRevByStreak53) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                    if (useWinRateRevActual && displayWr3 != null && displayWr3 <= 50 && noRevByMain153 && noRevByStreak53) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (useLoseStreakRev3 && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThr3 && noRevByMain153 && noRevByStreak53) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     var winRateDirRevEl3 = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
                                     var useWinRateDirRev3 = !!(winRateDirRevEl3 && winRateDirRevEl3.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
@@ -6906,6 +6918,19 @@ RESULTS_HTML = '''
             var wins = last15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; });
             return Math.round((wins.length / last15.length) * 1000) / 10;
         }
+        /** 표승률: 계산기 최근 200회 중 배팅한 완료 행만, 조커=패. 승률반픽 기준. */
+        function getDisplayWinRate(id, maxRows) {
+            var hist = calcState[id] && calcState[id].history;
+            if (!Array.isArray(hist)) return null;
+            var completed = hist.filter(function(h) { return h && h.actual && h.actual !== 'pending' && h.actual !== ''; });
+            var betRows = completed.filter(function(h) { return !h.no_bet && (h.betAmount || 0) > 0; });
+            var lastN = (maxRows || 200) >= betRows.length ? betRows : betRows.slice(-(maxRows || 200));
+            if (!lastN || lastN.length < 1) return null;
+            var wins = lastN.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+            var losses = lastN.filter(function(h) { return h.actual === 'joker' || h.predicted !== h.actual; }).length;
+            var total = wins + losses;
+            return total < 1 ? null : 100 * wins / total;
+        }
         /** 경고 표와 동일한 합산승률(blended). 멈춤은 계산기 표 15회 승률 기준으로 변경됨. */
         function getBlendedWinRate() {
             var vh = Array.isArray(predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object' && h.actual !== 'joker'; }) : [];
@@ -7407,7 +7432,6 @@ RESULTS_HTML = '''
                             bettingIsRed = predictionIsRed;
                             const rev = !!(calcState[id] && calcState[id].reverse);
                             if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
-                            var lowWinRate = false;
                             var r15Card = null, blendedCard = null;
                             try {
                                 var vh = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
@@ -7422,18 +7446,15 @@ RESULTS_HTML = '''
                                 var hit100r = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
                                 var loss100 = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
                                 var c100 = hit100r + loss100, r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
-                                var blended = 0.65 * r15 + 0.25 * r30 + 0.10 * r100;
-                                blendedCard = blended;
-                                var thrCardEl = document.getElementById('calc-' + id + '-win-rate-threshold');
-                                var thrCardNum = (thrCardEl && !isNaN(parseFloat(thrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrCardEl.value))) : (calcState[id] != null && typeof calcState[id].win_rate_threshold === 'number' ? calcState[id].win_rate_threshold : 46);
-                                if (typeof thrCardNum !== 'number' || isNaN(thrCardNum)) thrCardNum = 46;
-                                lowWinRate = (c15 > 0 || c30 > 0 || c100 > 0) && typeof blended === 'number' && blended <= thrCardNum;
+                                blendedCard = 0.65 * r15 + 0.25 * r30 + 0.10 * r100;
                             } catch (e2) {}
+                            var blended = blendedCard;
                             var runLenCard = getCurrentResultRunLength(typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory) ? predictionHistory : []);
                             var noRevByMain15Card = (r15Card == null || r15Card < 53);
                             var noRevByStreak5Card = !(calcState[id].streak_suppress_reverse && runLenCard >= 5);
                             const useWinRateRevCard = !!(calcState[id] && calcState[id].win_rate_reverse);
-                            if (useWinRateRevCard && lowWinRate && noRevByMain15Card && noRevByStreak5Card) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                            var displayWrCard = (typeof getDisplayWinRate === 'function') ? getDisplayWinRate(id, 200) : null;
+                            if (useWinRateRevCard && displayWrCard != null && displayWrCard <= 50 && noRevByMain15Card && noRevByStreak5Card) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                             var useLoseStreakRevCard = !!(calcState[id] && calcState[id].lose_streak_reverse);
                             var loseStreakThrCardEl = document.getElementById('calc-' + id + '-lose-streak-reverse-threshold');
                             var loseStreakThrCard = (loseStreakThrCardEl && !isNaN(parseFloat(loseStreakThrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(loseStreakThrCardEl.value))) : (calcState[id] != null && typeof calcState[id].lose_streak_reverse_threshold === 'number' ? calcState[id].lose_streak_reverse_threshold : 48);
