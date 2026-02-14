@@ -4015,6 +4015,7 @@ RESULTS_HTML = '''
         .calc-current-card.calc-card-prediction { width: 36px; height: 22px; line-height: 22px; font-size: 0.85em; }
         .calc-current-card.card-jung { background: #b71c1c; }
         .calc-current-card.card-kkuk { background: #111; }
+        .calc-current-card.card-hold { background: #555; color: #ccc; }
         .calc-dropdown-header .calc-toggle { font-size: 0.8em; color: #888; }
         .calc-dropdown.collapsed .calc-dropdown-body { display: none !important; }
         .calc-dropdown:not(.collapsed) .calc-dropdown-header .calc-toggle { transform: rotate(180deg); }
@@ -4065,6 +4066,7 @@ RESULTS_HTML = '''
         .calc-round-table th { background: #333; color: #81c784; }
         .calc-round-table td.pick-jung, .calc-round-table td.pick-red { background: #b71c1c; color: #fff; }
         .calc-round-table td.pick-kkuk, .calc-round-table td.pick-black { background: #111; color: #fff; }
+        .calc-round-table td.pick-hold { background: #555; color: #aaa; }
         .calc-round-table .win { color: #ffeb3b; font-weight: 600; }
         .calc-round-table .lose { color: #c62828; font-weight: 500; }
         .calc-round-table .joker { color: #64b5f6; }
@@ -5204,17 +5206,17 @@ RESULTS_HTML = '''
                     lastWarningU35 = !!(lastServerPrediction && sp && sp.warning_u35);
                     lastPongChunkPhase = (sp && (sp.pong_chunk_phase != null && sp.pong_chunk_phase !== '')) ? sp.pong_chunk_phase : null;
                     lastPongChunkDebug = (sp && sp.pong_chunk_debug && typeof sp.pong_chunk_debug === 'object') ? sp.pong_chunk_debug : {};
-                    if (lastServerPrediction) {
-                        var newRound = lastServerPrediction.round != null ? Number(lastServerPrediction.round) : NaN;
+                    if (sp && sp.round != null) {
+                        var newRound = Number(sp.round);
                         var prevRound = (lastPrediction && lastPrediction.round != null) ? Number(lastPrediction.round) : NaN;
-                        if (isNaN(newRound) || (!isNaN(prevRound) && newRound < prevRound)) {
-                            // 회차가 뒤로 돌아가면 lastPrediction 유지 → RED/BLACK 깜빡임 방지
-                        } else {
-                            var normColor = normalizePickColor(lastServerPrediction.color) || lastServerPrediction.color || null;
-                            lastPrediction = { value: lastServerPrediction.value, round: lastServerPrediction.round, prob: lastServerPrediction.prob != null ? lastServerPrediction.prob : 0, color: normColor };
-                            setRoundPrediction(lastServerPrediction.round, lastPrediction);
-                            fetch('/api/round-prediction', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ round: lastServerPrediction.round, predicted: lastServerPrediction.value, pickColor: normColor || lastServerPrediction.color, probability: lastServerPrediction.prob }) }).catch(function() {});
-                            if (typeof renderWinRateDirectionPanel === 'function') renderWinRateDirectionPanel();
+                        if (!isNaN(newRound) && (isNaN(prevRound) || newRound >= prevRound)) {
+                            var normColor = normalizePickColor(sp.color) || sp.color || null;
+                            lastPrediction = { value: sp.value, round: sp.round, prob: sp.prob != null ? sp.prob : 0, color: normColor };
+                            setRoundPrediction(sp.round, lastPrediction);
+                            if (lastServerPrediction) {
+                                fetch('/api/round-prediction', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ round: sp.round, predicted: sp.value, pickColor: normColor || sp.color, probability: sp.prob }) }).catch(function() {});
+                                if (typeof renderWinRateDirectionPanel === 'function') renderWinRateDirectionPanel();
+                            }
                         }
                     }
                     lastResultsUpdate = Date.now();  // 갱신 완료 시점에 폴링 간격 리셋
@@ -7206,19 +7208,19 @@ RESULTS_HTML = '''
                     const bettingCardEl = document.getElementById('calc-' + id + '-current-card');
                     const predictionCardEl = document.getElementById('calc-' + id + '-prediction-card');
                     if (!bettingCardEl || !predictionCardEl) return;
-                    if (state.running && lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) {
+                    if (state.running && lastPrediction && lastPrediction.round != null) {
                         var roundFull = lastPrediction.round != null ? String(lastPrediction.round) : '-';
                         var iconType = getRoundIconType(lastPrediction.round);
                         var roundLineHtml = '<span class="calc-round-badge calc-round-' + iconType + '">' + roundFull + '회 ' + getRoundIconHtml(lastPrediction.round) + '</span>';
                         if (bettingRoundEl) { bettingRoundEl.innerHTML = roundLineHtml; bettingRoundEl.className = 'calc-round-line'; }
                         if (predictionRoundEl) { predictionRoundEl.innerHTML = roundLineHtml; predictionRoundEl.className = 'calc-round-line'; }
-                        if (lastIs15Joker) {
+                        if (lastIs15Joker || !lastPrediction.value || lastPrediction.value === '') {
                             predictionCardEl.textContent = '보류';
-                            predictionCardEl.className = 'calc-current-card calc-card-prediction';
-                            predictionCardEl.title = '15번 카드 조커 · 배팅하지 마세요';
+                            predictionCardEl.className = 'calc-current-card calc-card-prediction card-hold';
+                            predictionCardEl.title = lastIs15Joker ? '15번 카드 조커 · 배팅하지 마세요' : '예측 대기 중';
                             bettingCardEl.textContent = '보류';
-                            bettingCardEl.className = 'calc-current-card calc-card-betting';
-                            bettingCardEl.title = '15번 카드 조커 · 배팅하지 마세요';
+                            bettingCardEl.className = 'calc-current-card calc-card-betting card-hold';
+                            bettingCardEl.title = lastIs15Joker ? '15번 카드 조커 · 배팅하지 마세요' : '예측 대기 중';
                             var betAmt = (lastPrediction && lastPrediction.round != null && typeof getBetForRound === 'function') ? getBetForRound(id, lastPrediction.round) : 0;
                             postCurrentPickIfChanged(parseInt(id, 10) || 1, { pickColor: null, round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: null, suggested_amount: betAmt > 0 ? betAmt : null });
                         } else {
@@ -7296,7 +7298,7 @@ RESULTS_HTML = '''
                         predictionCardEl.className = 'calc-current-card calc-card-prediction card-' + (predictionIsRed ? 'jung' : 'kkuk');
                         predictionCardEl.title = '';
                         bettingCardEl.textContent = bettingText;
-                        bettingCardEl.className = 'calc-current-card calc-card-betting' + (bettingText === '보류' ? '' : ' card-' + (bettingIsRed ? 'jung' : 'kkuk'));
+                        bettingCardEl.className = 'calc-current-card calc-card-betting' + (bettingText === '보류' ? ' card-hold' : ' card-' + (bettingIsRed ? 'jung' : 'kkuk'));
                         bettingCardEl.title = bettingText === '보류' ? '모양 옵션: 픽 불일치 또는 값 없음' : '';
                         // 매크로: 1행(배팅중 행)과 동일한 출처 — getBetForRound 사용 (getCalcResult 대신)
                         var betAmt = (effectivePausedForRound(id) || (shapeOnly && bettingText === '보류') ? 0 : (curRound != null && typeof getBetForRound === 'function' ? getBetForRound(id, curRound) : 0));
@@ -7568,7 +7570,7 @@ RESULTS_HTML = '''
                 if (!isNaN(rn)) seenRoundNums[rn] = true;
                 const roundStr = h.round != null ? String(h.round) : '-';
                 const pickVal = (h.predicted === '정' || h.predicted === '꺽') ? h.predicted : '보류';
-                const pickClass = (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : (pickVal === '꺽' ? 'pick-kkuk' : 'skip'))));
+                const pickClass = (pickVal === '보류' ? 'pick-hold' : (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : 'pick-kkuk'))));
                 const warningWinRateVal = (typeof h.warningWinRate === 'number' && !isNaN(h.warningWinRate)) ? h.warningWinRate.toFixed(1) + '%' : '-';
                 // 15회 승률: CALCULATOR_GUIDE — 표에는 회차별 저장값(rate15) 표시. 없으면 완료 행은 해당 시점 15회 승률 계산 후 저장(한 번만).
                 var rate15Val;
