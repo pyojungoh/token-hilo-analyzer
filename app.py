@@ -1744,7 +1744,7 @@ def _server_calc_effective_pick_and_amount(c):
     pick_color = 'RED' if color == '빨강' else ('BLACK' if color == '검정' else None)
     if pick_color is None:
         return None, 0
-    # 모양: 가장 최근 다음 픽에만 배팅 — 값 있으면 그 픽 직접 사용(반픽/승률반픽 등 무시). 없으면 배팅 안 함
+    # 모양: 가장 최근 다음 픽에만 배팅 — 값 있으면 그 픽을 기준으로 반픽/승률반픽 등 적용. 없으면 배팅 안 함
     if c.get('shape_only_latest_next_pick'):
         results = None
         try:
@@ -1768,6 +1768,29 @@ def _server_calc_effective_pick_and_amount(c):
             color = '검정' if pred == '정' else '빨강'
         else:
             color = '빨강' if pred == '정' else '검정'
+        # 모양 픽에 반픽/승률반픽/연패반픽/승률방향 반픽 적용 (다른 옵션과 중복 사용 가능)
+        if c.get('reverse'):
+            pred = '꺽' if pred == '정' else '정'
+            color = _flip_pick_color(color)
+        display_wr = _get_display_win_rate(c.get('history') or [], 200)
+        if c.get('win_rate_reverse') and display_wr is not None and display_wr <= 50 and not no_reverse_in_streak and (main_rate15 is None or main_rate15 < 53):
+            pred = '꺽' if pred == '정' else '정'
+            color = _flip_pick_color(color)
+        if c.get('lose_streak_reverse') and lose_streak >= lose_streak_min and blended is not None and blended <= lose_streak_thr and not no_reverse_in_streak and (main_rate15 is None or main_rate15 < 53):
+            pred = '꺽' if pred == '정' else '정'
+            color = _flip_pick_color(color)
+        if c.get('win_rate_direction_reverse') and not no_reverse_in_streak:
+            current_round = ph[-1]['round'] if ph else None
+            zone = _effective_win_rate_direction_zone(ph, c, current_round)
+            if zone == 'high_falling':
+                pred = '꺽' if pred == '정' else '정'
+                color = _flip_pick_color(color)
+                c['last_trend_direction'] = 'down'
+            elif zone == 'low_rising':
+                c['last_trend_direction'] = 'up'
+            elif zone == 'mid_flat' and c.get('last_trend_direction') == 'down':
+                pred = '꺽' if pred == '정' else '정'
+                color = _flip_pick_color(color)
         pick_color = 'RED' if color == '빨강' else ('BLACK' if color == '검정' else None)
     if c.get('paused'):
         return pick_color, 0
@@ -7419,6 +7442,25 @@ RESULTS_HTML = '''
                         // 배팅중인 회차는 이미 정한 계산기 픽만 유지 — lastPrediction이 잠깐 예측기로 바뀌어도 저장된 픽으로 POST/표시해 예측기 픽으로 배팅 나가는 것 방지
                         var curRound = lastPrediction && lastPrediction.round != null ? Number(lastPrediction.round) : null;
                         var saved = (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === curRound) ? calcState[id].lastBetPickForRound : null;
+                        // 반픽/승률반픽 등 판정용 — 모양 옵션과 중복 사용 시 shapeOnly 블록에서 필요
+                        var r15Card = null, blendedCard = null;
+                        try {
+                            var vh = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
+                            var v15 = vh.slice(-15), v30 = vh.slice(-30), v100 = vh.slice(-100);
+                            var hit15r = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                            var loss15 = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                            var c15 = hit15r + loss15; r15Card = c15 > 0 ? 100 * hit15r / c15 : 50;
+                            var hit30r = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                            var loss30 = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                            var c30 = hit30r + loss30; var r30 = c30 > 0 ? 100 * hit30r / c30 : 50;
+                            var hit100r = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
+                            var loss100 = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
+                            var c100 = hit100r + loss100; var r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
+                            blendedCard = 0.65 * r15Card + 0.25 * r30 + 0.10 * r100;
+                        } catch (e2) {}
+                        var runLenCard = getCurrentResultRunLength(typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory) ? predictionHistory : []);
+                        var noRevByMain15Card = (r15Card == null || r15Card < 53);
+                        var noRevByStreak5Card = !(calcState[id].streak_suppress_reverse && runLenCard >= 5);
                         // 상단 예측픽: lastPrediction.value 사용
                         var predictionText = lastPrediction.value;
                         var predColorNorm = normalizePickColor(lastPrediction.color);
@@ -7432,26 +7474,7 @@ RESULTS_HTML = '''
                             bettingIsRed = predictionIsRed;
                             const rev = !!(calcState[id] && calcState[id].reverse);
                             if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
-                            var r15Card = null, blendedCard = null;
-                            try {
-                                var vh = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
-                                var v15 = vh.slice(-15), v30 = vh.slice(-30), v100 = vh.slice(-100);
-                                var hit15r = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
-                                var loss15 = v15.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-                                var c15 = hit15r + loss15, r15 = c15 > 0 ? 100 * hit15r / c15 : 50;
-                                r15Card = r15;
-                                var hit30r = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
-                                var loss30 = v30.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-                                var c30 = hit30r + loss30, r30 = c30 > 0 ? 100 * hit30r / c30 : 50;
-                                var hit100r = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted === h.actual; }).length;
-                                var loss100 = v100.filter(function(h) { return h.actual !== 'joker' && h.predicted !== h.actual; }).length;
-                                var c100 = hit100r + loss100, r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
-                                blendedCard = 0.65 * r15 + 0.25 * r30 + 0.10 * r100;
-                            } catch (e2) {}
                             var blended = blendedCard;
-                            var runLenCard = getCurrentResultRunLength(typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory) ? predictionHistory : []);
-                            var noRevByMain15Card = (r15Card == null || r15Card < 53);
-                            var noRevByStreak5Card = !(calcState[id].streak_suppress_reverse && runLenCard >= 5);
                             const useWinRateRevCard = !!(calcState[id] && calcState[id].win_rate_reverse);
                             var displayWrCard = (typeof getDisplayWinRate === 'function') ? getDisplayWinRate(id, 200) : null;
                             if (useWinRateRevCard && displayWrCard != null && displayWrCard <= 50 && noRevByMain15Card && noRevByStreak5Card) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
@@ -7470,7 +7493,7 @@ RESULTS_HTML = '''
                             }
                             if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
                         }
-                        // 모양: 가장 최근 다음 픽에만 배팅 — 값 있으면 그 픽을 배팅중에 직접 표시(반픽/승률반픽 등 무시). 없으면 보류
+                        // 모양: 가장 최근 다음 픽에만 배팅 — 값 있으면 그 픽을 기준으로, 반픽/승률반픽 등 적용 후 표시. 없으면 보류
                         var predBeforeShapeOnly = bettingText;
                         var predBeforeShapeOnlyIsRed = bettingIsRed;
                         var shapeOnly = !!(calcState[id] && calcState[id].shape_only_latest_next_pick);
@@ -7481,6 +7504,24 @@ RESULTS_HTML = '''
                                 var card15 = (allResults && allResults.length >= 15 && typeof parseCardValue === 'function') ? parseCardValue(allResults[14].result || '') : null;
                                 var is15Red = card15 ? !!card15.isRed : false;
                                 bettingIsRed = (latestNext === '정') ? is15Red : !is15Red;
+                                // 모양 픽에 반픽/승률반픽/연패반픽/승률방향 반픽 적용 (다른 옵션과 중복 사용 가능)
+                                const rev = !!(calcState[id] && calcState[id].reverse);
+                                if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                                const useWinRateRevCard = !!(calcState[id] && calcState[id].win_rate_reverse);
+                                var displayWrCard = (typeof getDisplayWinRate === 'function') ? getDisplayWinRate(id, 200) : null;
+                                if (useWinRateRevCard && displayWrCard != null && displayWrCard <= 50 && noRevByMain15Card && noRevByStreak5Card) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                                var useLoseStreakRevCard = !!(calcState[id] && calcState[id].lose_streak_reverse);
+                                var loseStreakThrCardEl = document.getElementById('calc-' + id + '-lose-streak-reverse-threshold');
+                                var loseStreakThrCard = (loseStreakThrCardEl && !isNaN(parseFloat(loseStreakThrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(loseStreakThrCardEl.value))) : (calcState[id] != null && typeof calcState[id].lose_streak_reverse_threshold === 'number' ? calcState[id].lose_streak_reverse_threshold : 48);
+                                if (useLoseStreakRevCard && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blendedCard === 'number' && blendedCard <= loseStreakThrCard && noRevByMain15Card && noRevByStreak5Card) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                                var useWinRateDirRevCard = !!(document.getElementById('calc-' + id + '-win-rate-direction-reverse') && document.getElementById('calc-' + id + '-win-rate-direction-reverse').checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
+                                if (useWinRateDirRevCard && noRevByStreak5Card && typeof getEffectiveWinRateDirectionZone === 'function') {
+                                    var phCard = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
+                                    var zoneCard = getEffectiveWinRateDirectionZone(phCard, id, curRound);
+                                    if (zoneCard === 'high_falling') { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; calcState[id].last_trend_direction = 'down'; }
+                                    else if (zoneCard === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
+                                    else if (zoneCard === 'mid_flat' && calcState[id].last_trend_direction === 'down') { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                                }
                                 if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
                             } else {
                                 bettingText = '보류';
