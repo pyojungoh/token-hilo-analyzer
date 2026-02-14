@@ -8284,10 +8284,13 @@ RESULTS_HTML = '''
         function onCalcOptionChange(id) {
             syncCalcOptionsFromUI(id);
             calcState[id].lastBetPickForRound = null;  // 옵션 변경 시 저장된 픽 무효화 → 재계산
+            var curRound = (typeof lastPrediction !== 'undefined' && lastPrediction && lastPrediction.round != null) ? Number(lastPrediction.round) : null;
+            if (curRound != null && typeof savedBetPickByRound !== 'undefined') delete savedBetPickByRound[curRound];  // 캐시 무효화
             updateCalcStatus(id);
+            ensurePendingRowForRunningCalc(id);  // 1열 pending 행 보정
             updateCalcDetail(id);
             updateCalcSummary(id);
-            try { saveCalcStateToServer({ immediate: true }); } catch (e) {}
+            try { saveCalcStateToServer({ immediate: true, skipApplyForIds: [id] }); } catch (e) {}  // 서버 응답으로 로컬 덮어쓰기 방지
         }
         CALC_IDS.forEach(id => {
             ['capital', 'base', 'odds', 'target-amount'].forEach(f => {
