@@ -8228,7 +8228,6 @@ def _refresh_results_background():
         except Exception:
             pass
 
-@app.route('/api/results', methods=['GET'])
 def get_results():
     """경기 결과 API. 화면 송출 보장: 매 요청마다 DB에서 결과 생성(워커/캐시 무관)."""
     try:
@@ -8306,7 +8305,6 @@ def get_results():
         return err_resp, 200
 
 
-@app.route('/api/current-prediction', methods=['GET'])
 def get_current_prediction():
     """예측픽만 경량 반환(캐시 기반). 화면에서 예측픽을 빨리 표시하기 위해 짧은 간격 폴링용."""
     global results_cache
@@ -8316,7 +8314,6 @@ def get_current_prediction():
     return jsonify({'server_prediction': sp})
 
 
-@app.route('/api/calc-state', methods=['GET', 'POST'])
 def api_calc_state():
     """GET: 계산기 상태 조회. session_id 없으면 새로 생성. POST: 계산기 상태 저장. running=true이고 started_at 없으면 서버가 started_at 설정."""
     try:
@@ -8507,7 +8504,6 @@ def _backfill_blended_win_rate(conn):
         print(f"[경고] blended_win_rate backfill 실패: {str(e)[:150]}")
 
 
-@app.route('/api/win-rate-buckets', methods=['GET'])
 def api_win_rate_buckets():
     """합산승률 구간별 승/패 집계. prediction_history의 blended_win_rate 기준 5% 단위 구간(승률반픽 % 설정 참고용). ?backfill=1 시 null 행 보정."""
     if not DB_AVAILABLE or not DATABASE_URL:
@@ -8563,7 +8559,6 @@ def api_win_rate_buckets():
         return jsonify({'buckets': [], 'error': str(e)[:200]}), 200
 
 
-@app.route('/api/dont-bet-ranges', methods=['GET'])
 def api_dont_bet_ranges():
     """2연패가 발생한 회차들의 예측확률 범위(최소~최대)를 구해, '몇%부터 몇%까지 2연패 했다면 배팅하지 마세요' 반환."""
     if not DB_AVAILABLE or not DATABASE_URL:
@@ -8646,7 +8641,6 @@ def _compute_losing_streaks(history, min_streak=3):
     return streaks
 
 
-@app.route('/api/losing-streaks', methods=['GET'])
 def api_losing_streaks():
     """3연패 이상 구간 감지 후, 해당 구간의 예측확률 구간별 집계. 연패 구간 메뉴용."""
     if not DB_AVAILABLE or not DATABASE_URL:
@@ -8702,7 +8696,6 @@ def api_losing_streaks():
         return jsonify({'prob_buckets': [], 'streaks': [], 'total_streak_rounds': 0, 'error': str(e)[:200]}), 200
 
 
-@app.route('/api/round-prediction', methods=['POST'])
 def api_save_round_prediction():
     """배팅중(예측) 나올 때마다 회차별로 즉시 저장. round, predicted 필수. pick_color, probability 선택."""
     try:
@@ -8719,7 +8712,6 @@ def api_save_round_prediction():
         return jsonify({'ok': False, 'error': str(e)[:200]}), 200
 
 
-@app.route('/api/prediction-history', methods=['POST'])
 def api_save_prediction_history():
     """시스템 예측 기록 1건 저장 (round, predicted, actual, probability, pick_color). 어디서 접속해도 동일 기록 유지."""
     try:
@@ -8742,7 +8734,6 @@ def api_save_prediction_history():
         return jsonify({'ok': False, 'error': str(e)[:200]}), 500
 
 
-@app.route('/api/current-pick', methods=['GET', 'POST'])
 def api_current_pick():
     """GET: 배팅 연동 현재 예측 픽 조회 (계산기별). POST: 프론트엔드가 픽 갱신 시 저장 (계산기별)."""
     empty_pick = {'pick_color': None, 'round': None, 'probability': None, 'suggested_amount': None, 'updated_at': None, 'running': True}
@@ -8879,13 +8870,11 @@ def serve_tampermonkey_script():
         return Response('// Script file not found', status=404, mimetype='application/javascript')
 
 
-@app.route('/api/server-time', methods=['GET'])
 def api_server_time():
     """매크로 네이버 시계 동기화용. 분당 4게임(15초 주기) 배팅 타이밍 계산에 사용."""
     return jsonify({'server_time': int(time.time())}), 200
 
 
-@app.route('/api/current-status', methods=['GET'])
 def get_current_status():
     """현재 게임 상태"""
     try:
@@ -8911,7 +8900,6 @@ def get_current_status():
             'server_time': int(time.time())
         }), 200
 
-@app.route('/api/streaks', methods=['GET'])
 def get_streaks():
     """연승 데이터"""
     try:
@@ -8932,7 +8920,6 @@ def get_streaks():
             'timestamp': datetime.now().isoformat()
         }), 200
 
-@app.route('/api/streaks/<user_id>', methods=['GET'])
 def get_user_streak(user_id):
     """특정 유저 연승"""
     streaks_data = load_streaks_data()
@@ -8957,7 +8944,6 @@ def get_user_streak(user_id):
         'isExpert': max_streak >= 3
     })
 
-@app.route('/api/refresh', methods=['POST'])
 def refresh_data():
     """데이터 갱신 (스레드+타임아웃으로 먹통 방지)"""
     global game_data_cache, streaks_cache, results_cache, last_update_time
@@ -9023,7 +9009,6 @@ def index():
     """루트 - 분석기 페이지로 이동 (항상 내용이 보이도록)"""
     return redirect('/results', code=302)
 
-@app.route('/api/test-betting', methods=['GET'])
 def test_betting():
     """베팅 데이터 테스트 엔드포인트 (디버깅용)"""
     try:
@@ -9044,7 +9029,6 @@ def test_betting():
             'traceback': traceback.format_exc()
         }), 500
 
-@app.route('/api/debug/db-status', methods=['GET'])
 def debug_db_status():
     """데이터베이스 상태 확인 (디버깅용)"""
     try:
@@ -9138,7 +9122,6 @@ def debug_db_status():
             'traceback': traceback.format_exc()[:500]
         }), 500
 
-@app.route('/api/debug/init-db', methods=['POST'])
 def debug_init_db():
     """데이터베이스 테이블 수동 생성 (디버깅용)"""
     try:
@@ -9157,7 +9140,6 @@ def debug_init_db():
             'traceback': traceback.format_exc()[:500]
         }), 500
 
-@app.route('/api/debug/results-check', methods=['GET'])
 def debug_results_check():
     """결과 데이터 점검 (디버깅용)"""
     try:
