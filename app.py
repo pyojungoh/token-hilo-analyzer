@@ -4772,9 +4772,20 @@ RESULTS_HTML = '''
                     max_lose_streak_ever: calcState[id].maxLoseStreakEver || 0,
                     first_bet_round: calcState[id].first_bet_round || 0,
                     pending_round: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.round) || calcState[id].pending_round) : null,
-                    pending_predicted: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.value) || calcState[id].pending_predicted) : null,
+                    // 서버 history 저장 시 배팅 픽(반픽/승률반픽 적용) 사용. 예측기 픽(lastServerPrediction) 사용 시 정/꺽·색상 뒤바뀜 버그 발생
+                    pending_predicted: (function() {
+                        var pr = calcState[id].running ? ((lastServerPrediction && lastServerPrediction.round) || calcState[id].pending_round) : null;
+                        var bet = (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === pr && (calcState[id].lastBetPickForRound.value === '정' || calcState[id].lastBetPickForRound.value === '꺽')) ? calcState[id].lastBetPickForRound.value : null;
+                        if (bet) return bet;
+                        return calcState[id].running ? ((lastServerPrediction && lastServerPrediction.value) || calcState[id].pending_predicted) : null;
+                    })(),
                     pending_prob: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.prob != null) ? lastServerPrediction.prob : calcState[id].pending_prob) : null,
-                    pending_color: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.color) || calcState[id].pending_color) : null,
+                    pending_color: (function() {
+                        var pr = calcState[id].running ? ((lastServerPrediction && lastServerPrediction.round) || calcState[id].pending_round) : null;
+                        var bet = (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === pr && (calcState[id].lastBetPickForRound.value === '정' || calcState[id].lastBetPickForRound.value === '꺽')) ? calcState[id].lastBetPickForRound : null;
+                        if (bet) return bet.isRed ? '빨강' : '검정';
+                        return calcState[id].running ? ((lastServerPrediction && lastServerPrediction.color) || calcState[id].pending_color) : null;
+                    })(),
                     pending_bet_amount: (calcState[id].pending_bet_amount != null && calcState[id].pending_bet_amount > 0) ? calcState[id].pending_bet_amount : null,
                     last_win_rate_zone: (calcState[id].last_win_rate_zone === 'high_falling' || calcState[id].last_win_rate_zone === 'low_rising' || calcState[id].last_win_rate_zone === 'mid_flat') ? calcState[id].last_win_rate_zone : null,
                     last_win_rate_zone_change_round: (calcState[id].last_win_rate_zone_change_round != null && !isNaN(Number(calcState[id].last_win_rate_zone_change_round))) ? Number(calcState[id].last_win_rate_zone_change_round) : null,
@@ -5555,7 +5566,7 @@ RESULTS_HTML = '''
                                 const firstBetJoker = calcState[id].first_bet_round || 0;
                                 if (firstBetJoker > 0 && currentRoundNum < firstBetJoker) return;
                                 var pred, betColor;
-                                var saved = savedBetPickByRound[Number(currentRoundNum)];
+                                var saved = (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === currentRoundNum && (calcState[id].lastBetPickForRound.value === '정' || calcState[id].lastBetPickForRound.value === '꺽')) ? calcState[id].lastBetPickForRound : savedBetPickByRound[Number(currentRoundNum)];
                                 if (saved && (saved.value === '정' || saved.value === '꺽')) {
                                     pred = saved.value;
                                     betColor = saved.isRed ? '빨강' : '검정';
@@ -5622,7 +5633,7 @@ RESULTS_HTML = '''
                                 const firstBetActual = calcState[id].first_bet_round || 0;
                                 if (firstBetActual > 0 && currentRoundNum < firstBetActual) return;
                                 var pred, betColorActual;
-                                var saved = savedBetPickByRound[Number(currentRoundNum)];
+                                var saved = (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === currentRoundNum && (calcState[id].lastBetPickForRound.value === '정' || calcState[id].lastBetPickForRound.value === '꺽')) ? calcState[id].lastBetPickForRound : savedBetPickByRound[Number(currentRoundNum)];
                                 if (saved && (saved.value === '정' || saved.value === '꺽')) {
                                     pred = saved.value;
                                     betColorActual = saved.isRed ? '빨강' : '검정';
@@ -5715,7 +5726,7 @@ RESULTS_HTML = '''
                                 const firstBetJoker = calcState[id].first_bet_round || 0;
                                 if (firstBetJoker > 0 && currentRoundNum < firstBetJoker) return;
                                 var pred, betColor;
-                                var saved = savedBetPickByRound[Number(currentRoundNum)];
+                                var saved = (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === currentRoundNum && (calcState[id].lastBetPickForRound.value === '정' || calcState[id].lastBetPickForRound.value === '꺽')) ? calcState[id].lastBetPickForRound : savedBetPickByRound[Number(currentRoundNum)];
                                 if (saved && (saved.value === '정' || saved.value === '꺽')) {
                                     pred = saved.value;
                                     betColor = saved.isRed ? '빨강' : '검정';
@@ -5777,7 +5788,7 @@ RESULTS_HTML = '''
                                 const firstBetActual = calcState[id].first_bet_round || 0;
                                 if (firstBetActual > 0 && currentRoundNum < firstBetActual) return;
                                 var pred, betColorActual;
-                                var saved = savedBetPickByRound[Number(currentRoundNum)];
+                                var saved = (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === currentRoundNum && (calcState[id].lastBetPickForRound.value === '정' || calcState[id].lastBetPickForRound.value === '꺽')) ? calcState[id].lastBetPickForRound : savedBetPickByRound[Number(currentRoundNum)];
                                 if (saved && (saved.value === '정' || saved.value === '꺽')) {
                                     pred = saved.value;
                                     betColorActual = saved.isRed ? '빨강' : '검정';
