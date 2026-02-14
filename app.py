@@ -7875,7 +7875,6 @@ RESULTS_HTML = '''
 </html>
 '''
 
-@app.route('/results', methods=['GET'])
 def results_page():
     """경기 결과 웹페이지"""
     return render_template_string(RESULTS_HTML)
@@ -8841,7 +8840,6 @@ def api_current_pick():
 
 
 
-@app.route('/betting-helper', methods=['GET'])
 def betting_helper_page():
     """배팅 연동 페이지. 왼쪽 설정, 오른쪽 배팅 사이트 iframe. Tampermonkey 스크립트가 postMessage 수신."""
     return render_template(
@@ -8851,13 +8849,11 @@ def betting_helper_page():
     )
 
 
-@app.route('/practice', methods=['GET'])
 def practice_page():
     """자동배팅 매크로 연습용 페이지. 에뮬레이터 브라우저에서 열고 좌표 잡은 뒤 매크로로 탭·금액 테스트. 마틴 로그 확인용."""
     return render_template('practice.html')
 
 
-@app.route('/docs/tampermonkey-auto-bet.user.js', methods=['GET'])
 def serve_tampermonkey_script():
     """Tampermonkey 자동배팅 스크립트 제공 (배팅 사이트에서 우리 API 픽으로 자동 입력·클릭)."""
     path = os.path.join(os.path.dirname(__file__), 'docs', 'tampermonkey-auto-bet.user.js')
@@ -9004,7 +9000,6 @@ def health_check():
         'timestamp': datetime.now().isoformat()
     }), 200
 
-@app.route('/', methods=['GET'])
 def index():
     """루트 - 분석기 페이지로 이동 (항상 내용이 보이도록)"""
     return redirect('/results', code=302)
@@ -9193,12 +9188,13 @@ def debug_results_check():
             'traceback': traceback.format_exc()[:500]
         }), 500
 
-@app.route('/favicon.ico', methods=['GET'])
 def favicon():
     """favicon 404 에러 방지"""
     return '', 204  # No Content
 
-if __name__ == '__main__':
-    port = int(os.getenv('PORT', 5000))
-    print(f"[✅ 정보] Flask 서버 시작: http://0.0.0.0:{port}")
-    app.run(host='0.0.0.0', port=port, debug=False)
+from routes_api import api_bp, register_api_routes
+from routes_pages import pages_bp, register_pages_routes
+register_api_routes(app)
+app.register_blueprint(api_bp)
+register_pages_routes(app)
+app.register_blueprint(pages_bp)
