@@ -7280,7 +7280,9 @@ RESULTS_HTML = '''
                             }
                             if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
                         }
-                        // 모양: 가장 최근 다음 픽에만 배팅 — 값 없거나 픽 불일치면 보류
+                        // 모양: 가장 최근 다음 픽에만 배팅 — 값 없거나 픽 불일치면 보류. history에는 정/꺽 저장(승패 계산용)
+                        var predBeforeShapeOnly = bettingText;
+                        var predBeforeShapeOnlyIsRed = bettingIsRed;
                         var shapeOnly = !!(calcState[id] && calcState[id].shape_only_latest_next_pick);
                         var latestNext = (typeof lastPongChunkDebug !== 'undefined' && lastPongChunkDebug && (lastPongChunkDebug.latest_next_pick === '정' || lastPongChunkDebug.latest_next_pick === '꺽')) ? lastPongChunkDebug.latest_next_pick : null;
                         if (shapeOnly && (!latestNext || latestNext !== bettingText)) {
@@ -7294,8 +7296,8 @@ RESULTS_HTML = '''
                         predictionCardEl.className = 'calc-current-card calc-card-prediction card-' + (predictionIsRed ? 'jung' : 'kkuk');
                         predictionCardEl.title = '';
                         bettingCardEl.textContent = bettingText;
-                        bettingCardEl.className = 'calc-current-card calc-card-betting card-' + (bettingIsRed ? 'jung' : 'kkuk');
-                        bettingCardEl.title = '';
+                        bettingCardEl.className = 'calc-current-card calc-card-betting' + (bettingText === '보류' ? '' : ' card-' + (bettingIsRed ? 'jung' : 'kkuk'));
+                        bettingCardEl.title = bettingText === '보류' ? '모양 옵션: 픽 불일치 또는 값 없음' : '';
                         // 매크로: 1행(배팅중 행)과 동일한 출처 — getBetForRound 사용 (getCalcResult 대신)
                         var betAmt = (effectivePausedForRound(id) || (shapeOnly && bettingText === '보류') ? 0 : (curRound != null && typeof getBetForRound === 'function' ? getBetForRound(id, curRound) : 0));
                         var suggestedAmt = (bettingText === '보류' && shapeOnly) ? null : (betAmt > 0 ? betAmt : null);
@@ -7316,7 +7318,9 @@ RESULTS_HTML = '''
                             if (!hasRound && (betForThisRound > 0 || effectivePausedForRound(id) || shapeOnlyNoBet)) {
                                 var isNoBet = !!effectivePausedForRound(id) || shapeOnlyNoBet;
                                 var amt = isNoBet ? 0 : betForThisRound;
-                                calcState[id].history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: amt, no_bet: isNoBet, actual: 'pending', warningWinRate: typeof blended === 'number' ? blended : null });
+                                var predForHistory = (shapeOnlyNoBet && (predBeforeShapeOnly === '정' || predBeforeShapeOnly === '꺽')) ? predBeforeShapeOnly : bettingText;
+                                var pickColorForHistory = (shapeOnlyNoBet && (predBeforeShapeOnly === '정' || predBeforeShapeOnly === '꺽')) ? (predBeforeShapeOnlyIsRed ? '빨강' : '검정') : (bettingIsRed ? '빨강' : '검정');
+                                calcState[id].history.push({ round: roundNum, predicted: predForHistory, pickColor: pickColorForHistory, betAmount: amt, no_bet: isNoBet, actual: 'pending', warningWinRate: typeof blended === 'number' ? blended : null });
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 saveCalcStateToServer();
                                 updateCalcDetail(id);
@@ -7563,8 +7567,8 @@ RESULTS_HTML = '''
                 if (!isNaN(rn) && seenRoundNums[rn]) continue;
                 if (!isNaN(rn)) seenRoundNums[rn] = true;
                 const roundStr = h.round != null ? String(h.round) : '-';
-                const pickVal = h.predicted === '정' ? '정' : '꺽';
-                const pickClass = (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : 'pick-kkuk')));
+                const pickVal = (h.predicted === '정' || h.predicted === '꺽') ? h.predicted : '보류';
+                const pickClass = (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : (pickVal === '꺽' ? 'pick-kkuk' : 'skip'))));
                 const warningWinRateVal = (typeof h.warningWinRate === 'number' && !isNaN(h.warningWinRate)) ? h.warningWinRate.toFixed(1) + '%' : '-';
                 // 15회 승률: CALCULATOR_GUIDE — 표에는 회차별 저장값(rate15) 표시. 없으면 완료 행은 해당 시점 15회 승률 계산 후 저장(한 번만).
                 var rate15Val;
