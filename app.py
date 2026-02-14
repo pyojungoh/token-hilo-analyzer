@@ -3929,13 +3929,17 @@ RESULTS_HTML = '''
             var byRound = {};
             for (var i = 0; i < hist.length; i++) {
                 var h = hist[i];
-                if (!h || typeof h.predicted === 'undefined') continue;
+                if (!h) continue;
                 var rn = h.round != null ? Number(h.round) : NaN;
                 if (isNaN(rn)) continue;
                 var existing = byRound[rn];
                 var merged = existing ? Object.assign({}, existing, h) : Object.assign({}, h);
                 if ((!merged.pickColor || merged.pickColor === '') && existing && (existing.pickColor || existing.pick_color)) {
                     merged.pickColor = existing.pickColor || existing.pick_color;
+                }
+                if ((typeof merged.predicted === 'undefined' || merged.predicted === null || merged.predicted === '') && existing && (existing.predicted === '정' || existing.predicted === '꺽')) {
+                    merged.predicted = existing.predicted;
+                    if (existing.pickColor || existing.pick_color) merged.pickColor = existing.pickColor || existing.pick_color;
                 }
                 // 순익 뻥튀기 방지: 같은 회차에 실제 결과(정/꺽/조커)가 있으면 pending으로 덮어쓰지 않음
                 if (existing && existing.actual && existing.actual !== 'pending' && (!h.actual || h.actual === 'pending')) {
@@ -3985,6 +3989,9 @@ RESULTS_HTML = '''
                             if (loc && loc.no_bet === true) byRound[rn] = Object.assign({}, s, { no_bet: true, betAmount: 0 });
                             else if (loc && loc.actual === 'pending' && rn === currentPredRound) byRound[rn] = loc;
                             else if (loc && loc.actual !== 'pending' && loc.actual != null && (s.actual === 'pending' || !s.actual)) byRound[rn] = loc;
+                            else if (loc && s.actual !== 'pending' && s.actual != null && loc.no_bet === false && (loc.predicted === '정' || loc.predicted === '꺽')) {
+                                byRound[rn] = Object.assign({}, s, { predicted: loc.predicted, pickColor: loc.pickColor || loc.pick_color, no_bet: false, betAmount: loc.betAmount != null ? loc.betAmount : s.betAmount });
+                            }
                             else byRound[rn] = s;
                         });
                         localHist.forEach(function(loc) {
@@ -4008,12 +4015,13 @@ RESULTS_HTML = '''
                     } else {
                         calcState[id].history = serverDeduped;
                     }
-                    // 1열에 저장된 픽 그대로 유지: 서버 응답으로 predicted/pickColor 덮어쓰지 않음 → 승패만 actual 기준으로 일치
+                    // 1열에 저장된 픽 그대로 유지: 서버 응답으로 predicted/pickColor 덮어쓰지 않음 → 승패만 actual 기준으로 일치. 로컬에 정/꺽 있으면 no_bet도 false로 복원(모양 옵션 새로고침 후 보류로 바뀌는 현상 방지)
                     calcState[id].history.forEach(function(row) {
                         var rn = row.round != null ? Number(row.round) : NaN;
                         if (!isNaN(rn) && localPickByRound[rn]) {
                             row.predicted = localPickByRound[rn].predicted;
                             if (localPickByRound[rn].pickColor != null) row.pickColor = localPickByRound[rn].pickColor;
+                            row.no_bet = false;
                         }
                     });
                 } else {
