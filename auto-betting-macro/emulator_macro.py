@@ -63,7 +63,7 @@ BET_RETRY_DELAY = 0.8   # 재시도 전 대기(초)
 KEYCODE_DEL = 67  # Android KEYCODE_DEL (한 글자 삭제)
 # 배팅 직전 API 재조회: True면 _do_bet 직전 한 번 더 fetch하여 최신 픽/금액 사용 (엄격 모드)
 STRICT_PRE_BET_FETCH = True
-STRICT_PRE_BET_TIMEOUT = 0.5  # 0.5초 내 재조회 완료 — 초과 시 캐시(_pick_data)로 즉시 배팅
+STRICT_PRE_BET_TIMEOUT = 0.3  # 0.3초 내 재조회 — 초과 시 캐시로 즉시 배팅 (1초 단축)
 
 
 def _normalize_pick_color(raw):
@@ -1026,8 +1026,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._analyzer_url = url
         self._calculator_id = self.calc_combo.currentData()
         self._device_id = self._get_device_id() or "127.0.0.1:5555"
-        # 배팅 중: 0.1초(100ms) 간격 — 예측픽→배팅기 전송 속도 개선
-        self._poll_interval_sec = 0.1
+        # 배팅 중: 0.06초(60ms) 간격 — 1초 단축
+        self._poll_interval_sec = 0.06
         self._coords = load_coords()
         if not self._coords.get("bet_amount") or not self._coords.get("red") or not self._coords.get("black"):
             self._log("좌표를 먼저 설정하세요. coord_picker.py로 배팅금액/정정/레드/블랙 좌표를 잡으세요.")
@@ -1194,10 +1194,10 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._log("픽 수신: %s회 %s %s원 (금액 2~3회 확인 후 즉시 배팅)" % (round_num, pick_color, amount))
         self._pick_history.append((round_num, pick_color))
         if HAS_PYQT:
-            QTimer.singleShot(8, self._poll)
-            QTimer.singleShot(25, self._poll)
-            # 2회 못 받아도 55ms 후 1회 분 금액으로 배팅 (픽→배팅 2초 이내 목표)
-            QTimer.singleShot(55, self._on_amount_confirm_timeout)
+            QTimer.singleShot(5, self._poll)
+            QTimer.singleShot(20, self._poll)
+            # 2회 못 받아도 40ms 후 1회 분 금액으로 배팅 (1초 단축)
+            QTimer.singleShot(40, self._on_amount_confirm_timeout)
         # 2번째·3번째 응답에서 위 분기로 들어와 2회 이상 모이면 _run_bet 호출됨
         return
 
@@ -1249,7 +1249,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         """실제 배팅 실행. 성공 시 _last_bet_round 갱신. 배팅 직전 서버 데이터 재검증 (엄격 모드)."""
         pd = None
         if STRICT_PRE_BET_FETCH:
-            # 배팅 직전 API 재조회 — 최신 픽/금액 확보. 0.5초 초과 시 캐시로 즉시 배팅
+            # 배팅 직전 API 재조회 — 0.3초 초과 시 캐시로 즉시 배팅 (1초 단축)
             url = (self._analyzer_url or "").strip() or self._get_analyzer_url()
             calc_id = self._calculator_id if self._calculator_id is not None else self.calc_combo.currentData()
             if url and calc_id:

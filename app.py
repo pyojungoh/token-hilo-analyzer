@@ -3421,6 +3421,26 @@ def load_results_data(base_url=None):
     return []
 
 
+def _apply_results_and_push(results):
+    """results로 회차 반영 + current_pick 푸시. 락으로 동시 실행 방지."""
+    if not results or len(results) < 16:
+        return
+    if not _apply_results_lock.acquire(blocking=False):
+        return
+    try:
+        results = _sort_results_newest_first(list(results))
+        ensure_stored_prediction_for_current_round(results)
+        _apply_results_to_calcs(results)
+        _backfill_latest_round_to_prediction_history(results)
+    except Exception as e:
+        print(f"[푸시] 회차 반영 오류: {str(e)[:150]}")
+    finally:
+        try:
+            _apply_results_lock.release()
+        except Exception:
+            pass
+
+
 def _scheduler_fetch_results():
     """스케줄러에서 호출: results_cache 갱신 + DB 저장 + 현재 회차 예측 1회 저장(한 곳) + 계산기 회차 반영 + prediction_history 누락 보정."""
     try:
@@ -3430,24 +3450,20 @@ def _scheduler_fetch_results():
             results = (results_cache or {}).get('results') if results_cache else None
             if not results or len(results) < 16:
                 results = get_recent_results(hours=24)
-            if results:
-                results = _sort_results_newest_first(list(results))
             if results and len(results) >= 16:
-                ensure_stored_prediction_for_current_round(results)
-                _apply_results_to_calcs(results)
-                _backfill_latest_round_to_prediction_history(results)
+                _apply_results_and_push(results)
     except Exception as e:
         print(f"[스케줄러] 결과 수집/회차 반영 오류: {str(e)[:150]}")
 
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    # 배팅시간 확보: 0.15초마다. 예측픽→배팅기 전송 속도 개선 (OOM 방지 위해 50ms는 회피)
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.15, id='fetch_results', max_instances=1)
+    # 배팅시간 확보: 0.1초(100ms)마다. 1초 단축 목표
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.1, id='fetch_results', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (0.15초마다, 예측픽→배팅기 동기화)")
+        print("[✅] 결과 수집 스케줄러 시작 (0.1초마다)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:
@@ -8431,8 +8447,8 @@ RESULTS_HTML = '''
             if (predictionPollIntervalId) clearInterval(predictionPollIntervalId);
             
             // 탭 가시성에 따라 간격 조정. 과도한 폴링 시 ERR_INSUFFICIENT_RESOURCES 방지를 위해 완만한 간격 사용
-            var resultsInterval = isTabVisible ? 350 : 1200;     // OOM 방지: 350ms
-            var calcStatusInterval = isTabVisible ? 180 : 1200;  // 예측픽→배팅기 전송 (180ms)
+            var resultsInterval = isTabVisible ? 250 : 1200;     // 1초 단축: 250ms
+            var calcStatusInterval = isTabVisible ? 120 : 1200;  // 1초 단축: 120ms
             var calcStateInterval = isTabVisible ? 2200 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
             var timerInterval = isTabVisible ? 200 : 1000;
             
@@ -8862,6 +8878,7 @@ def _build_results_payload():
 
 _results_refresh_lock = threading.Lock()
 _results_refreshing = False
+_apply_results_lock = threading.Lock()  # _apply_results_to_calcs 동시 실행 방지
 
 def _refresh_results_background():
     """백그라운드에서 캐시 갱신. 서버가 항상 최신 결과를 송출하려면 유효한 페이로드가 오면 캐시를 덮어쓴다."""
@@ -8934,6 +8951,9 @@ def get_results():
             payload['results'] = _sort_results_newest_first(list(payload['results']))
             first_id = (payload['results'][0].get('gameID') if payload['results'] else None)
             print(f"[API] 응답 결과 수: {len(payload['results'])}개, 맨 앞(최신) gameID: {first_id}")
+            # loadResults 시 즉시 current_pick 푸시 (스케줄러 대기 없이 1초 단축)
+            if len(payload['results']) >= 16:
+                threading.Thread(target=_apply_results_and_push, args=(payload['results'],), daemon=True).start()
         
         resp = jsonify(payload)
         resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
