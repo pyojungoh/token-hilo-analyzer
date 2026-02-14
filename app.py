@@ -2395,8 +2395,21 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
     - 줄 구간: 한쪽으로 길게 이어짐 (line run >= 4, 5연속 이상).
     - 퐁당 구간: 2회 이상 바뀜이 이어짐 (pong run >= 2).
     - 덩어리 구간: 꺽줄-정-꺽줄-정 블록 반복, 줄1퐁당1, 또는 줄 2~4. debug에 chunk_shape(321/123/block_repeat) 추가.
+    - pong_pct/line_pct 기반 보정: run 판별 애매할 때 비율로 우선 판단.
     """
     debug = {'first_run_type': None, 'first_run_len': 0, 'pong_pct_short': pong_pct_short, 'pong_pct_prev': pong_pct_prev, 'segment_type': None, 'chunk_shape': None}
+    line_pct_short = 100.0 - (pong_pct_short or 50) if pong_pct_short is not None else 50.0
+    # 비율 기반 우선 판별: 최근 15개에서 퐁당/줄 비율이 명확하면 run 로직보다 신뢰 (모양 판별 보정)
+    if pong_pct_short is not None:
+        if pong_pct_short >= 60:
+            debug['segment_type'] = 'pong'
+            debug['phase_source'] = 'pong_pct'
+            return 'pong_phase', debug
+        if line_pct_short >= 60:
+            debug['segment_type'] = 'line'
+            debug['phase_source'] = 'line_pct'
+            debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, True) if line_runs else None
+            return 'line_phase', debug
     if not line_runs and not pong_runs:
         return None, debug
     first_is_line = True
@@ -2838,7 +2851,15 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     adj_same_n = adj_same / s
     adj_change_n = adj_change / s
     predict = ('정' if last is True else '꺽') if adj_same_n >= adj_change_n else ('꺽' if last is True else '정')
-    pred_prob = (adj_same_n if predict == ('정' if last is True else '꺽') else adj_change_n) * 100
+    # phase 확정 시 최종 예측 강제: 줄/덩어리→유지(올릴), 퐁당→바뀜(꺽) — 모양 오판 방지
+    if phase in ('line_phase', 'chunk_phase', 'chunk_start', 'pong_to_chunk'):
+        predict = ('정' if last is True else '꺽')
+        pred_prob = adj_same_n * 100
+    elif phase in ('pong_phase', 'chunk_to_pong'):
+        predict = ('꺽' if last is True else '정')
+        pred_prob = adj_change_n * 100
+    else:
+        pred_prob = (adj_same_n if predict == ('정' if last is True else '꺽') else adj_change_n) * 100
     is_15_red = get_card_color_from_result(results[14]) if len(results) >= 15 else None
     if is_15_red is True:
         color_to_pick = '빨강' if predict == '정' else '검정'
