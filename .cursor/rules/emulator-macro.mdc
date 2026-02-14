@@ -30,7 +30,14 @@ alwaysApply: false
 - 매크로용 Analyzer URL은 **루트만** 사용 (`https://...up.railway.app`). `/results`를 붙이지 않음.
 - 환경 설정: `.cursor/rules/environment-setup.mdc` 참고.
 
-## 5. 수정 시 체크
+## 5. 배팅 직전 검증 (엄격 모드)
+
+- `STRICT_PRE_BET_FETCH=True` 시 `_run_bet` 진입 시 API 한 번 더 조회하여 최신 픽/금액 사용.
+- `_run_bet`에서 서버 회차·픽·금액 검증: 불일치/없음이면 절대 배팅하지 않고 `[스킵]` 로그.
+- `_do_bet`에서 `pick_color`가 RED/BLACK이 아니면 즉시 스킵.
+- 금액 입력 전 DEL 20회로 기존 값 완전 삭제 (잘못된 금액 방지).
+
+## 6. 수정 시 체크
 
 | 수정 대상 | 확인 사항 |
 |-----------|-----------|
@@ -38,3 +45,4 @@ alwaysApply: false
 | 타임아웃 | `_on_amount_confirm_timeout`에서 최신 픽 재검증 |
 | 좌표 | `_do_bet` 시작 시 `load_coords()` 호출 |
 | 지연 상수 | `BET_DELAY_*`, `BET_*_SWIPE_MS` 상단에 주석으로 조정 가이드 |
+| 배팅 검증 | `_run_bet`에서 서버 데이터로만 픽/금액 사용, 전달값 무시 |
