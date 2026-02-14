@@ -72,6 +72,19 @@ OOM 방지 및 유지보수성을 위해 app.py(약 1만 줄)를 단계적으로
 
 ---
 
+## 6단계: 계산기 핸들러 분리 ✅ 완료
+
+**완료 내용**: `calc_handlers.py` 생성, 다음 함수 분리 완료  
+- `_merge_calc_histories`, `_get_all_calc_session_ids`, `api_calc_state`  
+- 라우트 등록은 `routes_api.py`에서 `from calc_handlers import api_calc_state` 후 등록.
+
+**상세**: **OOM을 피하기 위한 단계별 절차**는 별도 가이드 참고.  
+→ **[docs/CALC_MODULARIZATION_GUIDE.md](CALC_MODULARIZATION_GUIDE.md)** (계산기 옮기기 전용, 3.1~3.5 완료)
+
+**위험도**: 중간 (app.py 전체 읽기 금지, 라인 단위 스크립트만 사용)
+
+---
+
 ## 요약
 
 | 순서 | 대상 | 위험도 |
@@ -81,5 +94,6 @@ OOM 방지 및 유지보수성을 위해 app.py(약 1만 줄)를 단계적으로
 | 3 | DB 관련 함수 | 낮음 |
 | 4 | 계산·예측 로직 | 중간 |
 | 5 | 라우트·블루프린트 | 높음 |
+| 6 | 계산기 핸들러 | 중간 (OOM 주의) ✅ 완료 |
 
-**추천**: 1단계(상수)부터 시작하고, 문제 없으면 2단계(유틸)로 넘어가는 방식이 가장 안전합니다.
+**추천**: 1단계(상수)부터 시작하고, 문제 없으면 2단계(유틸)로 넘어가는 방식이 가장 안전합니다. 계산기 분리는 **CALC_MODULARIZATION_GUIDE.md**대로 단계별 스크립트로 진행합니다.

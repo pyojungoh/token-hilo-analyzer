@@ -10,10 +10,10 @@ api_bp = Blueprint('api', __name__, url_prefix='/api')
 
 def register_api_routes(app):
     """app 로드 완료 후 호출. app의 API 뷰 함수를 이 블루프린트에 등록."""
+    from calc_handlers import api_calc_state
     from app import (
         get_results,
         get_current_prediction,
-        api_calc_state,
         api_win_rate_buckets,
         api_dont_bet_ranges,
         api_losing_streaks,

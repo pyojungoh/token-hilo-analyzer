@@ -9,9 +9,10 @@ def _apply_results_to_calcs(results):
     """결과 수집 후 실행 중인 계산기 회차 반영: pending_round 결과 있으면 history 반영 후 다음 예측으로 갱신.
     안정화: pending_*는 저장된 예측(round_predictions)만 사용. 저장은 스케줄러 ensure_stored에서만.
     서버에서 계산기 수익, 마틴게일, 연승/연패 계산."""
+    from calc_handlers import _get_all_calc_session_ids
     from app import (
         get_calc_state, save_calc_state, get_stored_round_prediction,
-        _get_all_calc_session_ids, _get_actual_for_round,
+        _get_actual_for_round,
         ensure_stored_prediction_for_current_round, compute_prediction,
         save_prediction_record, _calculate_calc_profit_server,
         _update_calc_paused_after_round, _merge_calc_histories,
