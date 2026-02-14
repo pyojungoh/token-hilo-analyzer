@@ -101,6 +101,8 @@
         document.getElementById('btn-confirm').addEventListener('click', function() {
             var amt = betAmount.value.replace(/\D/g, '') || '0';
             addLog('정정 클릭 | 금액: ' + parseInt(amt, 10).toLocaleString() + '원', 'confirm');
+            betAmount.value = '';
+            betAmount.placeholder = '금액 입력';
         });
 
         var calcId = 1;

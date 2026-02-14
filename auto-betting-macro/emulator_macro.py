@@ -279,6 +279,11 @@ def adb_keyevent(device_id, keycode):
     _run_adb_raw(device_id, "shell", "input", "keyevent", str(keycode))
 
 
+def adb_open_url(device_id, url):
+    """에뮬레이터 기본 브라우저에서 URL 열기 (연습 페이지 등)."""
+    _run_adb_raw(device_id, "shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url)
+
+
 class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
     connect_result_ready = pyqtSignal(object, object) if HAS_PYQT else None  # (pick, results) 서브스레드 → 메인 스레드
     test_tap_done = pyqtSignal(object, str, str) if HAS_PYQT else None  # (버튼, 복원텍스트, 로그메시지)
@@ -351,7 +356,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
     def _on_adb_device_suggested(self, device_id):
         """연결 확인 시 동작하는 기기 ID로 ADB 기기 칸 자동 채움."""
         try:
-            self.device_edit.setText(device_id)
+            self.device_combo.setCurrentText(device_id)
             self._log("ADB 기기 칸을 [%s] 로 자동 채움." % device_id)
         except Exception:
             pass
@@ -364,20 +369,28 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         # 설정
         g_set = QGroupBox("설정")
         fl = QFormLayout()
-        # 닉네임 선택 시 해당 분석기 주소 자동 설정 (API는 루트 주소 사용)
-        self._analyzer_nick_urls = {
-            "표마왕": "https://web-production-3f4f0.up.railway.app",
-            "규지니": "https://web-production-28c2.up.railway.app",
-        }
-        self.analyzer_nick_combo = QComboBox()
-        self.analyzer_nick_combo.addItem("표마왕")
-        self.analyzer_nick_combo.addItem("규지니")
-        self.analyzer_nick_combo.currentTextChanged.connect(self._on_analyzer_nick_changed)
-        fl.addRow("분석기(닉네임):", self.analyzer_nick_combo)
-        self.analyzer_url_edit = QLineEdit()
-        self.analyzer_url_edit.setText(self._analyzer_nick_urls.get("표마왕", ""))
-        self.analyzer_url_edit.setPlaceholderText("닉네임 선택 또는 직접 입력")
-        fl.addRow("Analyzer URL:", self.analyzer_url_edit)
+        # Analyzer URL 드롭다운 (프리셋 + 직접 입력)
+        self._analyzer_presets = [
+            ("표마왕", "https://web-production-3f4f0.up.railway.app"),
+            ("규지니", "https://web-production-28c2.up.railway.app"),
+            ("로컬 (localhost:5000)", "http://localhost:5000"),
+            ("로컬 (localhost:8080)", "http://localhost:8080"),
+        ]
+        self.analyzer_url_combo = QComboBox()
+        self.analyzer_url_combo.setEditable(True)
+        self.analyzer_url_combo.setMinimumWidth(280)
+        self.analyzer_url_combo.setToolTip("드롭다운에서 선택하거나 직접 URL 입력. 연습 페이지는 (선택한 URL)/practice")
+        for nick, url in self._analyzer_presets:
+            self.analyzer_url_combo.addItem(nick, url)
+        self.analyzer_url_combo.setCurrentIndex(0)
+        fl.addRow("Analyzer URL:", self.analyzer_url_combo)
+
+        def _get_analyzer_url():
+            u = self.analyzer_url_combo.currentData()
+            if u:
+                return (u or "").strip()
+            return (self.analyzer_url_combo.currentText() or "").strip()
+        self._get_analyzer_url = _get_analyzer_url
 
         self.calc_combo = QComboBox()
         self.calc_combo.addItem("계산기 1", 1)
@@ -397,11 +410,51 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         fl.addRow("", connect_row)
         fl.addRow("", QLabel("※ 연결 후 픽/금액이 보이면 정상. 그다음 배팅 시작하세요."))
 
-        self.device_edit = QLineEdit()
-        self.device_edit.setText("127.0.0.1:5555")
-        self.device_edit.setPlaceholderText("예: 127.0.0.1:5555 또는 emulator-5554")
-        self.device_edit.setMaximumWidth(180)
-        fl.addRow("ADB 기기:", self.device_edit)
+        # 연습 페이지 (매크로 테스트) 드롭다운 — 에뮬 브라우저에서 열 주소
+        self._practice_page_presets = [
+            ("규지니", "https://web-production-28c2.up.railway.app/practice"),
+            ("표마왕", "https://web-production-3f4f0.up.railway.app/practice"),
+            ("로컬 5000", "http://localhost:5000/practice"),
+            ("로컬 8080", "http://localhost:8080/practice"),
+        ]
+        self.practice_page_combo = QComboBox()
+        self.practice_page_combo.setEditable(True)
+        self.practice_page_combo.setMinimumWidth(280)
+        self.practice_page_combo.setToolTip("매크로 테스트 시 에뮬레이터 브라우저에서 열 연습 페이지. Analyzer와 별도 선택 가능")
+        for nick, url in self._practice_page_presets:
+            self.practice_page_combo.addItem(nick, url)
+        self.practice_page_combo.setCurrentIndex(0)
+        practice_row = QHBoxLayout()
+        practice_row.addWidget(self.practice_page_combo)
+        self.practice_open_btn = QPushButton("에뮬에서 열기")
+        self.practice_open_btn.setMinimumHeight(28)
+        self.practice_open_btn.setToolTip("선택한 연습 페이지를 에뮬레이터 브라우저에서 엽니다")
+        self.practice_open_btn.clicked.connect(self._on_open_practice_page)
+        practice_row.addWidget(self.practice_open_btn)
+        fl.addRow("연습 페이지 (테스트):", practice_row)
+
+        # ADB 기기 드롭다운 (프리셋 + 직접 입력)
+        self._adb_device_presets = [
+            ("127.0.0.1:5555 (LDPlayer 기본)", "127.0.0.1:5555"),
+            ("127.0.0.1:5554", "127.0.0.1:5554"),
+            ("127.0.0.1:62001 (LDPlayer9)", "127.0.0.1:62001"),
+            ("emulator-5554", "emulator-5554"),
+        ]
+        self.device_combo = QComboBox()
+        self.device_combo.setEditable(True)
+        self.device_combo.setMinimumWidth(220)
+        self.device_combo.setToolTip("드롭다운에서 선택하거나 직접 입력. LDPlayer 버전에 따라 포트가 다를 수 있음")
+        for label, dev in self._adb_device_presets:
+            self.device_combo.addItem(label, dev)
+        self.device_combo.setCurrentIndex(0)
+        fl.addRow("ADB 기기:", self.device_combo)
+
+        def _get_device_id():
+            d = self.device_combo.currentData()
+            if d:
+                return (d or "").strip()
+            return (self.device_combo.currentText() or "").strip() or "127.0.0.1:5555"
+        self._get_device_id = _get_device_id
         adb_btn_row = QHBoxLayout()
         self.adb_test_btn = QPushButton("배팅금액 테스트 (5000원)")
         self.adb_test_btn.setMinimumHeight(28)
@@ -707,7 +760,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
 
     def _on_fetch_device_size(self):
         """ADB로 에뮬레이터 기기 해상도를 가져와 기기 W/H에 채움. 탭이 다른 곳에 눌릴 때 사용."""
-        device = self.device_edit.text().strip() or None
+        device = self._get_device_id() or None
         self.device_size_fetch_btn.setEnabled(False)
         self.device_size_fetch_btn.setText("가져오는 중...")
 
@@ -735,6 +788,24 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         else:
             self._log("기기 해상도 가져오기 실패. ADB 연결 확인 후 다시 시도하세요.")
 
+    def _on_open_practice_page(self):
+        """에뮬레이터 브라우저에서 연습 페이지 열기. 매크로 테스트용."""
+        u = self.practice_page_combo.currentData()
+        url = (u or "").strip() if u else (self.practice_page_combo.currentText() or "").strip()
+        if not url:
+            self._log("연습 페이지 URL을 선택하거나 입력하세요.")
+            return
+        url = url.rstrip("/")
+        if "/practice" not in url:
+            url = url + "/practice"
+        device = self._get_device_id() or None
+        self._log("연습 페이지 열기: %s (기기: %s)" % (url, device or "기본"))
+        try:
+            adb_open_url(device, url)
+            self._log("에뮬레이터 브라우저에서 연습 페이지 열림. 좌표 찾기로 배팅금액·RED·BLACK·정정 잡은 뒤 매크로 시작하세요.")
+        except Exception as e:
+            self._log("연습 페이지 열기 실패: %s (ADB 연결 확인)" % e)
+
     def _on_adb_devices(self):
         """CMD와 동일한 방식으로 adb 실행 후 기기 목록·실제 연결 테스트."""
         btn = self.adb_devices_btn
@@ -742,7 +813,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         btn.setEnabled(False)
         btn.setText("확인 중...")
         self._log("ADB 연결 확인 중... (CMD와 동일한 방식으로 실행)")
-        user_device = (self.device_edit.text().strip() or "").strip() or "127.0.0.1:5555"
+        user_device = self._get_device_id() or "127.0.0.1:5555"
         def run():
             msg = ""
             try:
@@ -819,7 +890,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         if not bet_xy or len(bet_xy) < 2:
             self._log("배팅금액 좌표를 먼저 잡아주세요.")
             return
-        device = self.device_edit.text().strip() or None
+        device = self._get_device_id() or None
         btn.setEnabled(False)
         btn.setText("테스트 중...")
         self._log("배팅금액 테스트 중... (탭 → 5000 입력 → BACK)")
@@ -870,7 +941,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         btn.setEnabled(False)
         btn.setText("탭 중...")
         self._log("%s 버튼 탭 실행 중..." % label)
-        device = self.device_edit.text().strip() or None
+        device = self._get_device_id() or None
         coords = dict(self._coords)
         xy_list = [int(xy[0]), int(xy[1])]
         def run():
@@ -886,16 +957,11 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 self.test_tap_done.emit(btn, restore, msg)
         threading.Thread(target=run, daemon=True).start()
 
-    def _on_analyzer_nick_changed(self, nick):
-        """닉네임 선택 시 Analyzer URL 입력란에 해당 주소 설정 (API용 루트 주소)."""
-        if nick and nick in self._analyzer_nick_urls:
-            self.analyzer_url_edit.setText(self._analyzer_nick_urls[nick])
-
     def _on_connect_analyzer(self):
         """Analyzer URL/계산기로 1회 조회 후 픽·금액 표시 — 배팅 정보가 자연스럽게 들어오는지 확인용."""
-        url = normalize_analyzer_url(self.analyzer_url_edit.text().strip())
+        url = normalize_analyzer_url(self._get_analyzer_url())
         if not url:
-            self._log("분석기(닉네임)를 선택하거나 Analyzer URL을 입력한 뒤 연결하세요.")
+            self._log("Analyzer URL을 선택하거나 직접 입력한 뒤 연결하세요.")
             return
         calc_id = self.calc_combo.currentData()
         self.connect_btn.setEnabled(False)
@@ -929,7 +995,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             self.connect_status_label.setText("연결됨")
             self.connect_status_label.setStyleSheet("color: #2e7d32; font-size: 11px;")
             self._connected = True
-            self._analyzer_url = self.analyzer_url_edit.text().strip()
+            self._analyzer_url = self._get_analyzer_url()
             self._calculator_id = self.calc_combo.currentData()
             if not self._timer.isActive():
                 self._timer.start(int(self._poll_interval_sec * 1000))
@@ -950,13 +1016,13 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             self.log_text.setText(line)
 
     def _on_start(self):
-        url = self.analyzer_url_edit.text().strip()
+        url = self._get_analyzer_url()
         if not url:
             self._log("Analyzer URL을 입력하세요.")
             return
         self._analyzer_url = url
         self._calculator_id = self.calc_combo.currentData()
-        self._device_id = self.device_edit.text().strip() or "127.0.0.1:5555"
+        self._device_id = self._get_device_id() or "127.0.0.1:5555"
         # 배팅 중: 0.15초 간격으로 픽 조회 (마틴 중 사이트 전송 지연 최소화. PC 부하 있으면 0.25로)
         self._poll_interval_sec = 0.15
         self._coords = load_coords()
@@ -989,7 +1055,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         """타이머에서 호출: 스레드에서 서버 요청 후 결과만 메인 스레드로 전달 (UI 멈춤 방지)."""
         if not self._running and not self._connected:
             return
-        url = (self._analyzer_url or "").strip() or self.analyzer_url_edit.text().strip()
+        url = (self._analyzer_url or "").strip() or self._get_analyzer_url()
         if not url:
             return
         self._analyzer_url = url
@@ -1170,7 +1236,27 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._run_bet(round_num, pick_color, final_amt)
 
     def _run_bet(self, round_num, pick_color, amount):
-        """실제 배팅 실행. 성공 시 _last_bet_round 갱신."""
+        """실제 배팅 실행. 성공 시 _last_bet_round 갱신. 배팅 직전 서버 데이터 재검증."""
+        with self._lock:
+            pd = dict(self._pick_data)
+        # 서버가 이미 다음 회차로 넘어갔으면 구 회차 배팅 스킵 (잘못된 금액/색 배팅 방지)
+        try:
+            srv_round = int(pd.get("round") or 0)
+        except (TypeError, ValueError):
+            srv_round = 0
+        if srv_round > 0 and srv_round != round_num:
+            self._log("[스킵] 서버 회차(%s)와 불일치 — %s회 배팅 취소 (다른 금액/색 방지)" % (srv_round, round_num))
+            return
+        # 서버 최신 픽/금액으로 덮어쓰기 (분석기에서 바뀐 경우 반영)
+        latest_color = _normalize_pick_color(pd.get("pick_color"))
+        if latest_color and pd.get("round") == round_num:
+            pick_color = latest_color
+        try:
+            latest_amt = int(pd.get("suggested_amount") or 0)
+            if latest_amt > 0 and pd.get("round") == round_num:
+                amount = latest_amt
+        except (TypeError, ValueError):
+            pass
         self._log("배팅 실행: %s회 %s %s원" % (round_num, pick_color, amount))
         ok = self._do_bet(round_num, pick_color, amount)
         if ok:
