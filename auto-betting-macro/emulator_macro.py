@@ -48,15 +48,15 @@ COORDS_PATH = os.path.join(SCRIPT_DIR, "emulator_coords.json")
 COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
-# 배팅 동작 간 지연(초). 픽 나오면 최대한 빠르게 쏘도록 짧게 둠. 입력/확정이 안 먹으면 값을 늘리세요.
-BET_DELAY_AFTER_AMOUNT_TAP = 0.025  # 배팅금 탭 후 키보드 포커스 대기. 금액 늦게 입력되면 0.04~0.06으로
-BET_DELAY_AFTER_INPUT = 0.04
-BET_DELAY_AFTER_BACK = 0.04
-BET_DELAY_AFTER_COLOR_TAP = 0.04
-BET_DELAY_BETWEEN_CONFIRM_TAPS = 0.04
-BET_DELAY_AFTER_CONFIRM = 0.04
-BET_AMOUNT_SWIPE_MS = 120   # 배팅금 칸 터치 지속(ms). 터치 안 먹으면 150~180으로
-BET_COLOR_SWIPE_MS = 100    # 레드/블랙/정정 터치 지속. 좌표 정확히 안 눌리면 120~150으로
+# 배팅 동작 간 지연(초). 마틴 중 사이트 전송 지연 방지 — 최대한 짧게. 입력/확정이 안 먹으면 값을 늘리세요.
+BET_DELAY_AFTER_AMOUNT_TAP = 0.015  # 배팅금 탭 후 포커스 대기 (기본 0.025→0.015)
+BET_DELAY_AFTER_INPUT = 0.02       # 금액 입력 후 (0.04→0.02)
+BET_DELAY_AFTER_BACK = 0.02        # BACK 후 (0.04→0.02)
+BET_DELAY_AFTER_COLOR_TAP = 0.025  # 레드/블랙 탭 후 (0.04→0.025)
+BET_DELAY_BETWEEN_CONFIRM_TAPS = 0.02
+BET_DELAY_AFTER_CONFIRM = 0.025    # 정정 탭 후
+BET_AMOUNT_SWIPE_MS = 90    # 배팅금 칸 터치 지속(ms). 터치 안 먹으면 120~150으로
+BET_COLOR_SWIPE_MS = 80     # 레드/블랙/정정 터치 지속
 BET_CONFIRM_TAP_COUNT = 1  # 정정 버튼 1번만
 BET_RETRY_ATTEMPTS = 2  # 실패 시 재시도 횟수
 BET_RETRY_DELAY = 0.8   # 재시도 전 대기(초)
@@ -311,11 +311,11 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._display_candidate = None
         self._display_confirm_count = 0
         self._display_confirm_needed = 2
-        # 배팅금액 2~3회만 받고 즉시 배팅 (계산기 표와 동일 금액 확정용)
+        # 배팅금액 2회 확인 후 즉시 배팅 (마틴 중 사이트 전송 지연 최소화)
         self._amount_confirm_round = None
         self._amount_confirm_pick = None
         self._amount_confirm_amounts = []
-        self._amount_confirm_want = 3
+        self._amount_confirm_want = 2
         # 좌표 찾기 (한곳에 통합)
         self._coord_listener = None
         self._coord_capture_key = None
@@ -957,8 +957,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._analyzer_url = url
         self._calculator_id = self.calc_combo.currentData()
         self._device_id = self.device_edit.text().strip() or "127.0.0.1:5555"
-        # 배팅 중: 0.25초 간격으로 픽 조회 (픽→LDPlayer 배팅 지연 최소화. PC 부하 있으면 0.4~0.5로 늘리세요)
-        self._poll_interval_sec = 0.25
+        # 배팅 중: 0.15초 간격으로 픽 조회 (마틴 중 사이트 전송 지연 최소화. PC 부하 있으면 0.25로)
+        self._poll_interval_sec = 0.15
         self._coords = load_coords()
         if not self._coords.get("bet_amount") or not self._coords.get("red") or not self._coords.get("black"):
             self._log("좌표를 먼저 설정하세요. coord_picker.py로 배팅금액/정정/레드/블랙 좌표를 잡으세요.")
@@ -1097,6 +1097,16 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 self._amount_confirm_amounts.append(amt_val)
             if len(self._amount_confirm_amounts) >= 2:
                 final_amt = self._amount_confirm_amounts[-1]
+                # 같은 회차면 API 최신 금액 우선 (승 후 마틴 초기화 반영)
+                with self._lock:
+                    pd = dict(self._pick_data)
+                if pd.get("round") == round_num:
+                    try:
+                        latest = int(pd.get("suggested_amount") or 0)
+                        if latest > 0:
+                            final_amt = latest
+                    except (TypeError, ValueError):
+                        pass
                 self._log("픽 수신: %s회 %s %s원 (2~3회 확인 후 배팅)" % (round_num, pick_color, final_amt))
                 self._pick_history.append((round_num, pick_color))
                 self._amount_confirm_round = None
@@ -1112,10 +1122,10 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._log("픽 수신: %s회 %s %s원 (금액 2~3회 확인 후 즉시 배팅)" % (round_num, pick_color, amount))
         self._pick_history.append((round_num, pick_color))
         if HAS_PYQT:
-            QTimer.singleShot(40, self._poll)
-            QTimer.singleShot(100, self._poll)
-            # 2~3회 못 받아도 180ms 후 1회 분 금액으로 배팅 (멈춤 방지)
-            QTimer.singleShot(180, self._on_amount_confirm_timeout)
+            QTimer.singleShot(25, self._poll)
+            QTimer.singleShot(60, self._poll)
+            # 2회 못 받아도 100ms 후 1회 분 금액으로 배팅 (마틴 지연 최소화)
+            QTimer.singleShot(100, self._on_amount_confirm_timeout)
         # 2번째·3번째 응답에서 위 분기로 들어와 2회 이상 모이면 _run_bet 호출됨
         return
 
@@ -1149,6 +1159,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         if amt <= 0:
             self._log("[멈춤] 현재 금액 없음 — 배팅 스킵")
             return
+        # 승 후 마틴 초기화: 같은 회차면 API 최신 금액 우선 (서버가 푸시한 초기화 금액 반영)
+        if pd.get("round") == round_num and amt > 0:
+            final_amt = amt
         with self._lock:
             if round_num in self._pending_bet_rounds or (self._last_bet_round is not None and round_num <= self._last_bet_round):
                 return
@@ -1163,8 +1176,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         if ok:
             self._last_bet_round = round_num
             if HAS_PYQT:
+                QTimer.singleShot(80, self._poll)
                 QTimer.singleShot(200, self._poll)
-                QTimer.singleShot(500, self._poll)
         else:
             pass
 
@@ -1222,8 +1235,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 time.sleep(BET_DELAY_AFTER_AMOUNT_TAP)
                 for _ in range(15):
                     adb_keyevent(device, KEYCODE_DEL)
-                    time.sleep(0.002)
-                time.sleep(0.015)
+                    time.sleep(0.001)
+                time.sleep(0.008)
                 adb_input_text(device, bet_amount)
                 time.sleep(BET_DELAY_AFTER_INPUT)
                 adb_keyevent(device, 4)  # BACK

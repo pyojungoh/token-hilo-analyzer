@@ -1831,20 +1831,21 @@ def _server_calc_effective_pick_and_amount(c):
 
 
 def _push_current_pick_from_calc(calculator_id, c):
-    """서버에서 계산기 픽을 current_pick에 즉시 반영 — 매크로가 클라이언트를 기다리지 않고 픽 수신.
-    금액(suggested_amount)은 건드리지 않음 — 오직 클라이언트(계산기 상단 배팅중)에서만 설정."""
+    """서버에서 계산기 픽·금액을 current_pick에 즉시 반영 — 매크로가 클라이언트를 기다리지 않고 픽·금액 수신.
+    승 후 마틴 초기화(5000원 등)가 제대로 반영되도록 suggested_amount도 함께 푸시."""
     if not bet_int or not DB_AVAILABLE or not DATABASE_URL:
         return
-    pick_color, _ = _server_calc_effective_pick_and_amount(c)
+    pick_color, amt = _server_calc_effective_pick_and_amount(c)
     if pick_color is None:
         return
+    suggested_amount = int(amt) if amt and int(amt) > 0 else None
     conn = get_db_connection(statement_timeout_sec=3)
     if not conn:
         return
     try:
         calc_id = int(calculator_id) if calculator_id in (1, 2, 3) else 1
-        ok = bet_int.set_current_pick_pick_only(conn, pick_color=pick_color, round_num=c.get('pending_round'),
-                                                calculator_id=calc_id)
+        ok = bet_int.set_current_pick(conn, pick_color=pick_color, round_num=c.get('pending_round'),
+                                       probability=None, suggested_amount=suggested_amount, calculator_id=calc_id)
         if ok:
             conn.commit()
     except Exception:
@@ -2391,7 +2392,7 @@ def _chunk_profile_similarity(profile_a, profile_b):
 def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_short, pong_pct_prev):
     """
     퐁당 / 덩어리 / 줄 세 가지 구간 판별. 시각화·예측픽 가중치에 사용.
-    - 줄 구간: 한쪽으로 길게 이어짐 (line run >= 5).
+    - 줄 구간: 한쪽으로 길게 이어짐 (line run >= 4, 5연속 이상).
     - 퐁당 구간: 2회 이상 바뀜이 이어짐 (pong run >= 2).
     - 덩어리 구간: 꺽줄-정-꺽줄-정 블록 반복, 줄1퐁당1, 또는 줄 2~4. debug에 chunk_shape(321/123/block_repeat) 추가.
     """
@@ -2413,13 +2414,11 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
         debug['first_run_len'] = current_run_len
     else:
         return None, debug
-    # 줄1 퐁당1 줄1 퐁당1 패턴 → 덩어리
+    # 줄1 퐁당1 줄1 퐁당1 패턴 → 덩어리 (맨 앞이 퐁당 run이어도 덩어리 중간이므로 chunk_phase)
     if _detect_line1_pong1_pattern(line_runs, pong_runs, first_is_line):
-        if first_is_line:
-            debug['segment_type'] = 'chunk'
-            debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, first_is_line)
-            return 'chunk_phase', debug
-        return None, debug
+        debug['segment_type'] = 'chunk'
+        debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, first_is_line)
+        return 'chunk_phase', debug
     # 전환 구간: 직전 15 vs 최근 15 퐁당%
     diff_prev_short = (pong_pct_prev - pong_pct_short) if pong_pct_prev is not None and pong_pct_short is not None else 0
     diff_short_prev = (pong_pct_short - pong_pct_prev) if pong_pct_short is not None and pong_pct_prev is not None else 0
@@ -2441,8 +2440,8 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
         debug['chunk_shape'] = 'pong_then_long_line'
         return 'pong_to_chunk', debug
     if first_is_line:
-        # 줄 구간: 긴 줄(5 이상) → 유지(줄) 가중치
-        if current_run_len >= 5:
+        # 줄 구간: 긴 줄(4 이상 = 5연속) → 유지(줄) 가중치 (기준 완화로 줄 오판 감소)
+        if current_run_len >= 4:
             debug['segment_type'] = 'line'
             return 'line_phase', debug
         # 덩어리: 줄 2~4 또는 1(막 시작)
@@ -2695,6 +2694,17 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         pong_w = min(1.0, pong_w + 0.25)
         line_w = max(0.0, 1.0 - pong_w)
 
+    # phase 선감지 → symmetry 보정 시 phase와 충돌하는 조정 축소
+    phase, pong_chunk_debug = _detect_pong_chunk_phase(
+        line_runs, pong_runs,
+        use_for_pattern[:2] if len(use_for_pattern) >= 2 else None,
+        pong_pct, pong_prev15
+    )
+    chunk_shape = (pong_chunk_debug or {}).get('chunk_shape')
+    phase_is_line = phase == 'line_phase'
+    phase_is_chunk = phase in ('chunk_start', 'chunk_phase', 'pong_to_chunk')
+    phase_is_pong = phase in ('pong_phase', 'chunk_to_pong')
+
     if symmetry_line_data:
         lc = symmetry_line_data['leftLineCount']
         rc = symmetry_line_data['rightLineCount']
@@ -2704,22 +2714,26 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         is_new_segment = (rc >= 5 and lc <= 3)
         is_new_segment_early = (prev_r and prev_r >= 5 and (prev_l is None or prev_l >= 4) and lc <= 3)
         if is_new_segment or is_new_segment_early:
-            line_w = min(1.0, line_w + 0.22)
-            pong_w = max(0.0, 1.0 - line_w)
+            if not phase_is_pong:
+                line_w = min(1.0, line_w + 0.22)
+                pong_w = max(0.0, 1.0 - line_w)
         elif sp >= 70 and rc <= 3:
-            line_w = min(1.0, line_w + 0.28)
-            pong_w = max(0.0, 1.0 - line_w)
+            if not phase_is_pong:
+                line_w = min(1.0, line_w + 0.28)
+                pong_w = max(0.0, 1.0 - line_w)
         else:
             if lc <= 3:
-                line_w = min(1.0, line_w + SYM_LINE_PONG_BOOST)
-                pong_w = max(0.0, 1.0 - line_w)
+                if not phase_is_pong:
+                    line_w = min(1.0, line_w + SYM_LINE_PONG_BOOST)
+                    pong_w = max(0.0, 1.0 - line_w)
             elif lc >= 5:
-                max_run = symmetry_line_data.get('maxLeftRunLength', 4)
-                recent_run = symmetry_line_data.get('recentRunLength', 0)
-                calm_or_run_start = (max_run <= 3) or (recent_run >= 2)
-                pong_boost = 0.06 if calm_or_run_start else SYM_LINE_PONG_BOOST
-                pong_w = min(1.0, pong_w + pong_boost)
-                line_w = max(0.0, 1.0 - pong_w)
+                if not (phase_is_line or phase_is_chunk):
+                    max_run = symmetry_line_data.get('maxLeftRunLength', 4)
+                    recent_run = symmetry_line_data.get('recentRunLength', 0)
+                    calm_or_run_start = (max_run <= 3) or (recent_run >= 2)
+                    pong_boost = 0.06 if calm_or_run_start else SYM_LINE_PONG_BOOST
+                    pong_w = min(1.0, pong_w + pong_boost)
+                    line_w = max(0.0, 1.0 - pong_w)
             if sp >= 70:
                 line_w = min(1.0, line_w + SYM_SAME_BOOST)
             elif sp <= 30:
@@ -2730,8 +2744,9 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     pong_w += scatter_idx * 0.2
     # V자 패턴(긴 줄→퐁당 1~2→짧은 줄→…) 구간에서는 연패가 많으므로 퐁당(바뀜) 쪽 가중치 보정
     if _detect_v_pattern(line_runs, pong_runs, use_for_pattern[:2] if len(use_for_pattern) >= 2 else None):
-        pong_w += 0.12
-        line_w = max(0.0, line_w - 0.06)
+        if not (phase_is_line or phase_is_chunk):
+            pong_w += 0.12
+            line_w = max(0.0, line_w - 0.06)
     # U자 + 줄 3~5 구간: 연패가 많으므로 줄(유지) 가산·반전(퐁당) 축소. 멈춤 권장.
     u35_detected = _detect_u_35_pattern(line_runs)
     if u35_detected:
@@ -2747,35 +2762,28 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
             else:
                 break
     if last is False and current_run_len >= 4:
-        pong_w += 0.14
-        line_w = max(0.0, line_w - 0.07)
-    # 퐁당 / 덩어리 / 줄 세 가지 구간 보정: phase·chunk_shape에 따라 line_w·pong_w 조정
+        if not (phase_is_line or phase_is_chunk):
+            pong_w += 0.14
+            line_w = max(0.0, line_w - 0.07)
+    # 퐁당 / 덩어리 / 줄 세 가지 구간 보정: phase 확정 시 가중치 강화 (symmetry 오판 상쇄)
     pong_chunk_phase = None
-    pong_chunk_debug = {}
-    phase, pong_chunk_debug = _detect_pong_chunk_phase(
-        line_runs, pong_runs,
-        use_for_pattern[:2] if len(use_for_pattern) >= 2 else None,
-        pong_pct, pong_prev15
-    )
-    chunk_shape = (pong_chunk_debug or {}).get('chunk_shape')
+    if phase:
+        pong_chunk_phase = phase
     # 줄 구간: 한쪽으로 길게 이어짐 → 유지(줄) 가중치 가산
     if phase == 'line_phase':
-        line_w += 0.12
-        pong_w = max(0.0, pong_w - 0.06)
-        pong_chunk_phase = phase
+        line_w += 0.18
+        pong_w = max(0.0, pong_w - 0.09)
     # 퐁당 구간: 번갈아 바뀜 → 바뀜 가중치 가산
     elif phase == 'pong_phase' or phase == 'chunk_to_pong':
-        pong_w += 0.10
-        line_w = max(0.0, line_w - 0.05)
-        pong_chunk_phase = phase
+        pong_w += 0.14
+        line_w = max(0.0, line_w - 0.07)
     # 덩어리 구간: 블록 반복·줄2~4 → 줄 가중치 우선. 321 끝이면 바뀜 소폭 가산
     elif phase in ('chunk_start', 'chunk_phase', 'pong_to_chunk'):
-        line_w += 0.10
-        pong_w = max(0.0, pong_w - 0.05)
+        line_w += 0.14
+        pong_w = max(0.0, pong_w - 0.07)
         if chunk_shape == '321':
             pong_w += 0.04
             line_w = max(0.0, line_w - 0.02)
-        pong_chunk_phase = phase
     # 밸런스 구간 전환점 보정: 서서히 올라갔다 최고점 후 내려가는 등 구간 전환 시 line_w/pong_w 소폭 반영
     balance_phase = _balance_segment_phase(graph_values)
     if balance_phase == 'transition_to_low':
