@@ -4980,7 +4980,8 @@ RESULTS_HTML = '''
                 if (oddsEl && typeof c.odds === 'number' && c.odds >= 1) oddsEl.value = String(c.odds);
             });
         }
-        /** 서버 적용 후 보유자산·순익·배팅중 깜빡임 방지: 실행 중인 계산기에 현재 회차 pending 행이 없으면 복원 */
+        /** 서버 적용 후 보유자산·순익·배팅중 깜빡임 방지: 실행 중인 계산기에 현재 회차 pending 행이 없으면 복원.
+         * lastBetPickForRound 없을 때 예측기 픽만 쓰면 반픽 등 미적용 → 배팅중과 1열 불일치. 최소한 반픽 적용. */
         function ensurePendingRowForRunningCalc(id) {
             try {
                 var state = calcState[id];
@@ -4993,6 +4994,10 @@ RESULTS_HTML = '''
                 var saved = (state.lastBetPickForRound && Number(state.lastBetPickForRound.round) === roundNum) ? state.lastBetPickForRound : null;
                 var bettingText = saved && (saved.value === '정' || saved.value === '꺽') ? saved.value : (lastPrediction.value || '정');
                 var bettingIsRed = saved ? !!saved.isRed : (normalizePickColor(lastPrediction.color) === '빨강');
+                if (!saved) {
+                    var rev = !!(state.reverse);
+                    if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                }
                 var betForThisRound = (typeof getBetForRound === 'function') ? getBetForRound(id, roundNum) : 0;
                 var isNoBet = typeof effectivePausedForRound === 'function' && effectivePausedForRound(id);
                 var amt = isNoBet ? 0 : betForThisRound;
@@ -5055,6 +5060,11 @@ RESULTS_HTML = '''
                 const data = await res.json().catch(function() { return {}; });
                 if (data.calcs && typeof data.calcs === 'object') {
                     applyCalcsToState(data.calcs, data.server_time || lastServerTimeSec, false, skipApplyForIds);
+                    // updateCalcStatus 먼저 → lastBetPickForRound 설정 후 ensurePendingRowForRunningCalc (배팅중·1열 일치)
+                    CALC_IDS.forEach(function(id) {
+                        if (skipApplyForIds.indexOf(id) >= 0) return;
+                        if (typeof updateCalcStatus === 'function') updateCalcStatus(id);
+                    });
                     CALC_IDS.forEach(function(id) {
                         if (skipApplyForIds.indexOf(id) >= 0) return;
                         ensurePendingRowForRunningCalc(id);
@@ -5063,7 +5073,6 @@ RESULTS_HTML = '''
                         if (skipApplyForIds.indexOf(id) >= 0) return;
                         if (typeof updateCalcDetail === 'function') updateCalcDetail(id);
                         if (typeof updateCalcSummary === 'function') updateCalcSummary(id);
-                        if (typeof updateCalcStatus === 'function') updateCalcStatus(id);
                     });
                 }
             } catch (e) { console.warn('계산기 상태 저장 실패:', e); }
