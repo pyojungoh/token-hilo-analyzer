@@ -243,6 +243,13 @@ def init_database():
                 created_at TIMESTAMPTZ DEFAULT NOW()
             )
         ''')
+        # segment_type: line|pong|chunk. 퐁당 구간 별도 매칭용. 없으면 chunk로 간주
+        try:
+            cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'chunk_profile_occurrences' AND column_name = 'segment_type'")
+            if cur.fetchone() is None:
+                cur.execute("ALTER TABLE chunk_profile_occurrences ADD COLUMN segment_type VARCHAR(20) DEFAULT 'chunk'")
+        except Exception:
+            pass
         cur.execute('''
             CREATE INDEX IF NOT EXISTS idx_chunk_profile_round
             ON chunk_profile_occurrences (round_num DESC)
@@ -534,32 +541,37 @@ def _get_shape_stats_for_results(results):
 
 
 def _get_chunk_profile_from_results(results):
-    """results로부터 현재 덩어리 프로필 추출. 없으면 None. 엄격 추출 실패 시 완화 추출 시도."""
+    """results로부터 현재 덩어리/퐁당 프로필 추출. (profile, segment_type) 또는 (None, None).
+    segment_type: 'pong'=퐁당 run길이, 'chunk'=줄 높이(덩어리/줄)."""
     if not results or len(results) < 16:
-        return None
+        return None, None
     graph_values = _build_graph_values(results)
     if len(graph_values) < 4:
-        return None
+        return None, None
     use = graph_values[:30]
     line_runs, pong_runs = _get_line_pong_runs(use)
     first_is_line = True
     if len(use) >= 2 and (use[0] is True or use[0] is False) and (use[1] is True or use[1] is False):
         first_is_line = (use[0] == use[1])
+    # 퐁당 구간: 맨 앞이 퐁당 run이고 2개 이상 퐁당 run이 있으면 퐁당 프로필
+    if not first_is_line and pong_runs and len(pong_runs) >= 2 and pong_runs[0] >= 1:
+        pong_profile = tuple(pong_runs[:5])
+        return pong_profile, 'pong'
+    # 덩어리/줄 구간: 줄 높이 프로필
     profiles = _extract_chunk_profiles(line_runs, pong_runs, first_is_line)
     if profiles:
-        return profiles[0]
-    # 완화: line_runs 중 2 이상인 것만 모아 2개 이상이면 프로필로 사용 (덩어리 구간 판별과 유사)
+        return profiles[0], 'chunk'
     heights = [r for r in line_runs if r >= 2]
     if len(heights) >= 2:
-        return tuple(heights[:8])
-    return None
+        return tuple(heights[:8]), 'chunk'
+    return None, None
 
 
 def _get_chunk_stats_for_results(results):
-    """현재 results 덩어리 프로필과 유사한 과거 덩어리의 '다음 결과' 가중 통계. 최근·유사할수록 가중치 높게."""
+    """현재 results 덩어리/퐁당 프로필과 유사한 과거의 '다음 결과' 가중 통계. 최근·유사할수록 가중치 높게."""
     if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
         return None
-    profile = _get_chunk_profile_from_results(results)
+    profile, segment_type = _get_chunk_profile_from_results(results)
     if not profile:
         return None
     try:
@@ -570,7 +582,7 @@ def _get_chunk_stats_for_results(results):
     if not conn:
         return None
     try:
-        return get_chunk_profile_stats(conn, profile, current_round=current_round)
+        return get_chunk_profile_stats(conn, profile, current_round=current_round, segment_type=segment_type)
     finally:
         try:
             conn.close()
@@ -579,10 +591,10 @@ def _get_chunk_stats_for_results(results):
 
 
 def _get_latest_next_pick_for_chunk(results):
-    """현재 results의 덩어리 프로필과 유사한 가장 최근 덩어리의 다음 결과(정/꺽)를 반환. (레거시, shape 옵션은 _get_chunk_pick_by_higher_stats 사용)"""
+    """현재 results의 덩어리/퐁당 프로필과 유사한 가장 최근의 다음 결과(정/꺽)를 반환. (레거시, shape 옵션은 _get_chunk_pick_by_higher_stats 사용)"""
     if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
         return None
-    profile = _get_chunk_profile_from_results(results)
+    profile, segment_type = _get_chunk_profile_from_results(results)
     if not profile:
         return None
     conn = get_db_connection(statement_timeout_sec=3)
@@ -591,15 +603,26 @@ def _get_latest_next_pick_for_chunk(results):
     try:
         import json
         cur = conn.cursor()
+        if segment_type == 'pong':
+            seg_filter = " AND segment_type = 'pong'"
+            params = ()
+        elif segment_type == 'chunk':
+            seg_filter = " AND (segment_type = 'chunk' OR segment_type IS NULL)"
+            params = ()
+        else:
+            seg_filter = ""
+            params = ()
         cur.execute('''
             SELECT profile_json, next_actual, round_num FROM chunk_profile_occurrences
+            WHERE 1=1 ''' + seg_filter + '''
             ORDER BY round_num DESC
             LIMIT 200
-        ''')
+        ''', params)
         rows = cur.fetchall()
         cur.close()
         CHUNK_SIM_THRESHOLD = 0.5
-        for profile_json, next_actual, rnd in rows:
+        for row in rows:
+            profile_json, next_actual, rnd = row[0], row[1], row[2]
             try:
                 other = tuple(json.loads(profile_json))
             except Exception:
@@ -618,11 +641,11 @@ def _get_latest_next_pick_for_chunk(results):
 
 
 def _get_chunk_pick_by_higher_stats(results):
-    """유사 덩어리들의 다음 결과 가중 합(jung_count, kkeok_count) 중 높은 쪽을 반환. shape_only 옵션용.
+    """유사 덩어리/퐁당들의 다음 결과 가중 합(jung_count, kkeok_count) 중 높은 쪽을 반환. shape_only 옵션용.
     긴줄(4+)일 때는 줄을 타도록 정/꺽에 10% 가산. 퐁당·짧은줄일 때는 기존대로(꺽 위주)."""
     if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
         return None
-    profile = _get_chunk_profile_from_results(results)
+    profile, segment_type = _get_chunk_profile_from_results(results)
     if not profile:
         return None
     # 맥락: 긴줄이면 줄을 타고, 퐁당/짧은줄이면 꺽 위주
@@ -643,7 +666,7 @@ def _get_chunk_pick_by_higher_stats(results):
     if not conn:
         return None
     try:
-        stats = get_chunk_profile_stats(conn, profile, current_round=current_round)
+        stats = get_chunk_profile_stats(conn, profile, current_round=current_round, segment_type=segment_type)
         if not stats:
             return None
         jc = stats.get('jung_count') or 0
@@ -702,10 +725,11 @@ def update_shape_win_stats(conn, signature, actual, round_num=None):
         print(f"[경고] shape_win_stats 갱신 실패: {str(e)[:150]}")
 
 
-def get_chunk_profile_stats(conn, profile, current_round=None):
+def get_chunk_profile_stats(conn, profile, current_round=None, segment_type=None):
     """
-    유사 덩어리 프로필의 '다음 결과' 가중 합계. 최근·유사할수록 가중치 높게.
-    profile: (h1, h2, ...) 튜플. 유사도 >= 0.5인 과거 기록만 사용.
+    유사 덩어리/퐁당 프로필의 '다음 결과' 가중 합계. 최근·유사할수록 가중치 높게.
+    profile: (h1, h2, ...) 튜플. segment_type: 'pong'|'chunk'|None(전체).
+    유사도 >= 0.5인 과거 기록만 사용. segment_type 지정 시 같은 구간만 매칭.
     반환: {jung_count, kkeok_count} 또는 None.
     """
     if not conn or not profile:
@@ -713,11 +737,21 @@ def get_chunk_profile_stats(conn, profile, current_round=None):
     try:
         import json
         cur = conn.cursor()
+        if segment_type == 'pong':
+            seg_filter = " WHERE segment_type = 'pong'"
+            params = ()
+        elif segment_type == 'chunk':
+            seg_filter = " WHERE (segment_type = 'chunk' OR segment_type IS NULL)"
+            params = ()
+        else:
+            seg_filter = ""
+            params = ()
         cur.execute('''
             SELECT profile_json, next_actual, round_num FROM chunk_profile_occurrences
+            ''' + seg_filter + '''
             ORDER BY round_num DESC
             LIMIT 500
-        ''')
+        ''', params)
         rows = cur.fetchall()
         cur.close()
         if not rows:
@@ -750,8 +784,8 @@ def get_chunk_profile_stats(conn, profile, current_round=None):
         return None
 
 
-def update_chunk_profile_occurrences(conn, profile, actual, round_num=None):
-    """덩어리 프로필 다음 결과 저장. 예측 기록 저장 시 호출."""
+def update_chunk_profile_occurrences(conn, profile, actual, round_num=None, segment_type='chunk'):
+    """덩어리/퐁당 프로필 다음 결과 저장. 예측 기록 저장 시 호출. segment_type: 'pong'|'chunk'."""
     if not conn or not profile or round_num is None:
         return
     try:
@@ -760,10 +794,20 @@ def update_chunk_profile_occurrences(conn, profile, actual, round_num=None):
         next_actual = '정' if is_jung else '꺽'
         profile_json = json.dumps(list(profile))
         cur = conn.cursor()
-        cur.execute('''
-            INSERT INTO chunk_profile_occurrences (profile_json, next_actual, round_num)
-            VALUES (%s, %s, %s)
-        ''', (profile_json, next_actual, int(round_num)))
+        seg = segment_type if segment_type in ('pong', 'chunk') else 'chunk'
+        try:
+            cur.execute('''
+                INSERT INTO chunk_profile_occurrences (profile_json, next_actual, round_num, segment_type)
+                VALUES (%s, %s, %s, %s)
+            ''', (profile_json, next_actual, int(round_num), seg))
+        except Exception as col_err:
+            if 'segment_type' in str(col_err) or 'column' in str(col_err).lower():
+                cur.execute('''
+                    INSERT INTO chunk_profile_occurrences (profile_json, next_actual, round_num)
+                    VALUES (%s, %s, %s)
+                ''', (profile_json, next_actual, int(round_num)))
+            else:
+                raise
         conn.commit()
         cur.close()
     except Exception as e:
@@ -1399,9 +1443,9 @@ def _apply_results_to_calcs(results):
                         if conn_shape:
                             try:
                                 update_shape_win_stats(conn_shape, sig, actual, round_num=pending_round)
-                                chunk_prof = _get_chunk_profile_from_results(results_for_shape)
+                                chunk_prof, chunk_seg = _get_chunk_profile_from_results(results_for_shape)
                                 if chunk_prof:
-                                    update_chunk_profile_occurrences(conn_shape, chunk_prof, actual, round_num=pending_round)
+                                    update_chunk_profile_occurrences(conn_shape, chunk_prof, actual, round_num=pending_round, segment_type=chunk_seg or 'chunk')
                             finally:
                                 try:
                                     conn_shape.close()
@@ -1870,9 +1914,9 @@ def _merge_round_predictions_into_history(round_actuals, results=None):
                     if conn2:
                         try:
                             update_shape_win_stats(conn2, sig, actual, round_num=rnd)
-                            chunk_prof = _get_chunk_profile_from_results(results[1:])
+                            chunk_prof, chunk_seg = _get_chunk_profile_from_results(results[1:])
                             if chunk_prof:
-                                update_chunk_profile_occurrences(conn2, chunk_prof, actual, round_num=rnd)
+                                update_chunk_profile_occurrences(conn2, chunk_prof, actual, round_num=rnd, segment_type=chunk_seg or 'chunk')
                         finally:
                             try:
                                 conn2.close()
@@ -1924,9 +1968,9 @@ def _backfill_latest_round_to_prediction_history(results):
             if conn:
                 try:
                     update_shape_win_stats(conn, sig, actual, round_num=latest_round)
-                    chunk_prof = _get_chunk_profile_from_results(results[1:])
+                    chunk_prof, chunk_seg = _get_chunk_profile_from_results(results[1:])
                     if chunk_prof:
-                        update_chunk_profile_occurrences(conn, chunk_prof, actual, round_num=latest_round)
+                        update_chunk_profile_occurrences(conn, chunk_prof, actual, round_num=latest_round, segment_type=chunk_seg or 'chunk')
                 finally:
                     try:
                         conn.close()
@@ -2806,9 +2850,12 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         if shape_win_stats:
             pong_chunk_debug['shape_jung_count'] = shape_win_stats.get('jung_count')
             pong_chunk_debug['shape_kkeok_count'] = shape_win_stats.get('kkeok_count')
-        chunk_profile = _get_chunk_profile_from_results(results)
+        chunk_profile, chunk_profile_segment_type = _get_chunk_profile_from_results(results)
         if chunk_profile:
             pong_chunk_debug['chunk_profile'] = list(chunk_profile)
+            pong_chunk_debug['chunk_profile_segment_type'] = chunk_profile_segment_type or 'chunk'
+            if chunk_profile_segment_type == 'pong':
+                pong_chunk_debug['chunk_profile_pong'] = list(chunk_profile)  # 퐁당 run 길이 (퐁2,퐁3,...)
         if chunk_profile_stats:
             pong_chunk_debug['chunk_profile_jung'] = chunk_profile_stats.get('jung_count')
             pong_chunk_debug['chunk_profile_kkeok'] = chunk_profile_stats.get('kkeok_count')
@@ -6481,14 +6528,24 @@ RESULTS_HTML = '''
                             if (d.chunk_profile_jung != null && d.chunk_profile_kkeok != null) {
                                 var cj = Number(d.chunk_profile_jung) || 0, ck = Number(d.chunk_profile_kkeok) || 0;
                                 if (cj + ck >= 2) {
-                                    chunkProfileStatsLabel = '다음 정 ' + cj.toFixed(1) + ', 꺽 ' + ck.toFixed(1) + ' (유사 덩어리 가중)';
+                                    var simLabel = (d.chunk_profile_segment_type === 'pong') ? '유사 퐁당 가중' : '유사 덩어리 가중';
+                                    chunkProfileStatsLabel = '다음 정 ' + cj.toFixed(1) + ', 꺽 ' + ck.toFixed(1) + ' (' + simLabel + ')';
                                 }
                             }
                             if (chunkProfileStatsLabel === '—' && d.chunk_profile && Array.isArray(d.chunk_profile) && d.chunk_profile.length >= 2) {
-                                chunkProfileStatsLabel = '수집 중 (덩어리: ' + d.chunk_profile.join(',') + ')';
+                                var profType = (d.chunk_profile_segment_type === 'pong') ? '퐁당' : '덩어리';
+                                chunkProfileStatsLabel = '수집 중 (' + profType + ': ' + d.chunk_profile.join(',') + ')';
                             }
                             if (chunkProfileStatsLabel === '—') {
-                                chunkProfileStatsLabel = '덩어리 구간 아님';
+                                chunkProfileStatsLabel = '덩어리/퐁당 구간 아님';
+                            }
+                            var profileSegmentLabel = '—';
+                            if (d.chunk_profile_segment_type) {
+                                profileSegmentLabel = (d.chunk_profile_segment_type === 'pong') ? '퐁당 (run길이)' : '덩어리 (줄높이)';
+                            }
+                            var pongProfileLabel = '—';
+                            if (d.chunk_profile_pong && Array.isArray(d.chunk_profile_pong) && d.chunk_profile_pong.length >= 1) {
+                                pongProfileLabel = '퐁' + d.chunk_profile_pong.join(', 퐁') + ' (바뀜 run 길이)';
                             }
                             var latestNextPickLabel = '—';
                             if (d.latest_next_pick && (d.latest_next_pick === '정' || d.latest_next_pick === '꺽')) {
@@ -6496,6 +6553,8 @@ RESULTS_HTML = '''
                             }
                             var rows = '<tr><td>판별 구간</td><td>' + phaseLabel + '</td></tr>' +
                                 '<tr><td>구간 유형</td><td>' + segmentLabel + '</td></tr>' +
+                                '<tr><td>프로필 구간</td><td>' + profileSegmentLabel + '</td><td>퐁당/덩어리 매칭 기준</td></tr>' +
+                                '<tr><td>퐁당 프로필</td><td>' + pongProfileLabel + '</td><td>퐁당 구간일 때 run 길이</td></tr>' +
                                 '<tr><td>덩어리 모양</td><td>' + chunkShapeLabel + '</td></tr>' +
                                 '<tr><td>U자 구간</td><td>' + uShapeLabel + '</td></tr>' +
                                 '<tr><td>유사 덩어리 다음 결과</td><td>' + chunkProfileStatsLabel + '</td></tr>' +

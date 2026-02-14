@@ -49,14 +49,14 @@ COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드"
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
 # 배팅 동작 간 지연(초). 픽 나오면 최대한 빠르게 쏘도록 짧게 둠. 입력/확정이 안 먹으면 값을 늘리세요.
-BET_DELAY_AFTER_AMOUNT_TAP = 0.04   # 배팅금 탭 후 키보드 포커스 대기 (LDPlayer 느리면 0.06~0.08로)
-BET_DELAY_AFTER_INPUT = 0.05
-BET_DELAY_AFTER_BACK = 0.05
-BET_DELAY_AFTER_COLOR_TAP = 0.05
-BET_DELAY_BETWEEN_CONFIRM_TAPS = 0.05
-BET_DELAY_AFTER_CONFIRM = 0.05
+BET_DELAY_AFTER_AMOUNT_TAP = 0.025  # 배팅금 탭 후 키보드 포커스 대기. 금액 늦게 입력되면 0.04~0.06으로
+BET_DELAY_AFTER_INPUT = 0.04
+BET_DELAY_AFTER_BACK = 0.04
+BET_DELAY_AFTER_COLOR_TAP = 0.04
+BET_DELAY_BETWEEN_CONFIRM_TAPS = 0.04
+BET_DELAY_AFTER_CONFIRM = 0.04
 BET_AMOUNT_SWIPE_MS = 120   # 배팅금 칸 터치 지속(ms). 터치 안 먹으면 150~180으로
-BET_COLOR_SWIPE_MS = 80     # 레드/블랙/정정 터치 지속. 안 먹으면 100~120으로
+BET_COLOR_SWIPE_MS = 100    # 레드/블랙/정정 터치 지속. 좌표 정확히 안 눌리면 120~150으로
 BET_CONFIRM_TAP_COUNT = 1  # 정정 버튼 1번만
 BET_RETRY_ATTEMPTS = 2  # 실패 시 재시도 횟수
 BET_RETRY_DELAY = 0.8   # 재시도 전 대기(초)
@@ -1040,9 +1040,15 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         # 매크로는 오는 픽만 따라감. 목표금액/중지 판단은 분석기 계산기에서만 함 — running=False 수신해도 여기서 자동 중지하지 않음.
 
         if not self._running:
+            self._amount_confirm_round = None
+            self._amount_confirm_pick = None
+            self._amount_confirm_amounts = []
             return
         # 계산기가 정지 상태면 픽이 있어도 배팅하지 않음 (서버가 픽을 비워도 레거시/타이밍으로 값이 올 수 있음)
         if self._pick_data.get("running") is False:
+            self._amount_confirm_round = None
+            self._amount_confirm_pick = None
+            self._amount_confirm_amounts = []
             return
         round_num = self._pick_data.get("round")
         raw_color = self._pick_data.get("pick_color")
@@ -1056,9 +1062,15 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             amt_val = 0
         if amount is None or amt_val <= 0:
             self._log("[멈춤] 계산기 멈춤 구간 (금액=%s) — 회차 %s 배팅 스킵" % (amount, round_num))
+            self._amount_confirm_round = None
+            self._amount_confirm_pick = None
+            self._amount_confirm_amounts = []
             return
         if round_num is None or pick_color is None:
-            self._log("서버 픽 없음 (회차=%s, 픽=%s, 금액=%s) — 분석기에서 해당 계산기 실행·픽 확인" % (round_num, raw_color or "(없음)", amount))
+            self._log("[보류] 서버 픽 없음 (회차=%s, 픽=%s) — 배팅 스킵" % (round_num, raw_color or "(없음)"))
+            self._amount_confirm_round = None
+            self._amount_confirm_pick = None
+            self._amount_confirm_amounts = []
             return
         try:
             round_num = int(round_num)
@@ -1108,7 +1120,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         return
 
     def _on_amount_confirm_timeout(self):
-        """금액 2~3회 수집 타임아웃: 1회 분이라도 있으면 그 금액으로 즉시 배팅."""
+        """금액 2~3회 수집 타임아웃: 1회 분이라도 있으면 그 금액으로 즉시 배팅. 보류/멈춤이면 스킵."""
         if not self._running or self._amount_confirm_round is None:
             return
         if not self._amount_confirm_amounts:
@@ -1121,6 +1133,22 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._amount_confirm_round = None
         self._amount_confirm_pick = None
         self._amount_confirm_amounts = []
+        # 최신 픽 재검증: 보류/멈춤이면 사이트에 배팅 보내지 않음 (규칙 emulator-macro.mdc §1)
+        with self._lock:
+            pd = dict(self._pick_data)
+        if pd.get("running") is False:
+            self._log("[보류] 계산기 정지 — 배팅 스킵")
+            return
+        if _normalize_pick_color(pd.get("pick_color")) is None:
+            self._log("[보류] 현재 픽 없음 — 배팅 스킵")
+            return
+        try:
+            amt = int(pd.get("suggested_amount") or 0)
+        except (TypeError, ValueError):
+            amt = 0
+        if amt <= 0:
+            self._log("[멈춤] 현재 금액 없음 — 배팅 스킵")
+            return
         with self._lock:
             if round_num in self._pending_bet_rounds or (self._last_bet_round is not None and round_num <= self._last_bet_round):
                 return
@@ -1155,7 +1183,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 return False
             self._pending_bet_rounds[round_num] = {"pick_color": pick_color, "amount": amt}
         bet_amount = str(amt)
-        coords = self._coords
+        # 창 이동 대응: 배팅 직전 최신 좌표·창 위치 로드 (emulator-macro.mdc §2)
+        coords = load_coords()
         device = self._device_id or None
 
         bet_xy = coords.get("bet_amount")
@@ -1194,7 +1223,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 for _ in range(15):
                     adb_keyevent(device, KEYCODE_DEL)
                     time.sleep(0.002)
-                time.sleep(0.02)
+                time.sleep(0.015)
                 adb_input_text(device, bet_amount)
                 time.sleep(BET_DELAY_AFTER_INPUT)
                 adb_keyevent(device, 4)  # BACK

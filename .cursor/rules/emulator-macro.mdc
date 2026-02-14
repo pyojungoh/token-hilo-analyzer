@@ -1,0 +1,40 @@
+---
+description: 에뮬레이터 자동배팅 매크로(emulator_macro.py) 수정 시 준수할 규칙
+globs: auto-betting-macro/emulator_macro.py, auto-betting-macro/*.py
+alwaysApply: false
+---
+
+# 에뮬레이터 매크로 규칙
+
+## 1. 보류·멈춤 시 배팅 전송 방지 (필수)
+
+- **보류**(pick_color=None) 또는 **멈춤**(suggested_amount=None 또는 0) 수신 시:
+  - `_amount_confirm_round`, `_amount_confirm_pick`, `_amount_confirm_amounts`를 **즉시 초기화**하여, 예약된 `_on_amount_confirm_timeout`이 과거 데이터로 배팅하지 않도록 함.
+- `_on_amount_confirm_timeout` 실행 시 **최신 픽 상태 재검증**: `_pick_data`가 보류/멈춤이면 배팅하지 않고 `[보류]`/`[멈춤] 배팅 스킵` 로그만 출력 후 return.
+- `running=False` 수신 시에도 `_amount_confirm_*` 즉시 초기화.
+
+## 2. 좌표 정확도
+
+- `_do_bet` 시작 시 `load_coords()`로 **최신 좌표·창 위치**를 다시 불러옴 (창 이동 대응).
+- 레드/블랙 터치 지속 시간(`BET_COLOR_SWIPE_MS`): 기본 100ms. 좌표가 정확히 안 눌리면 120~150ms로 상향.
+- `_apply_window_offset`: 창 상대 좌표·해상도 보정 적용. `coord_spaces`·`raw_coords` 설정에 따라 변환 방식이 달라짐.
+- 좌표 찾기 시 LDPlayer 창 **안에서만** 클릭. 창 이동 후에는 좌표 재설정 권장.
+
+## 3. 금액 입력 지연
+
+- `BET_DELAY_AFTER_AMOUNT_TAP`: 배팅금 칸 탭 후 키보드 포커스 대기. 기본 0.025초. 금액이 늦게 입력되면 0.04~0.06으로 상향.
+- DEL 반복·입력 전 대기: 최소화하되, 입력이 안 먹으면 상수 값을 늘릴 수 있도록 주석 유지.
+
+## 4. Analyzer URL
+
+- 매크로용 Analyzer URL은 **루트만** 사용 (`https://...up.railway.app`). `/results`를 붙이지 않음.
+- 환경 설정: `.cursor/rules/environment-setup.mdc` 참고.
+
+## 5. 수정 시 체크
+
+| 수정 대상 | 확인 사항 |
+|-----------|-----------|
+| 보류/멈춤 처리 | early return 시 `_amount_confirm_*` 초기화 여부 |
+| 타임아웃 | `_on_amount_confirm_timeout`에서 최신 픽 재검증 |
+| 좌표 | `_do_bet` 시작 시 `load_coords()` 호출 |
+| 지연 상수 | `BET_DELAY_*`, `BET_*_SWIPE_MS` 상단에 주석으로 조정 가이드 |
