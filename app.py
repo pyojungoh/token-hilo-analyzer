@@ -8325,6 +8325,16 @@ def _build_results_payload_db_only(hours=24):
                 print(f"[API] server_pred 조회 오류: {str(e)[:100]}")
         if server_pred is None:
             server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
+        # 모양 옵션: server_pred가 기본값이어도 latest_next_pick 항상 포함 — 계산기 최상단 보류만 표시 버그 방지
+        if len(results) >= 16 and (not server_pred.get('pong_chunk_debug') or 'latest_next_pick' not in (server_pred.get('pong_chunk_debug') or {})):
+            try:
+                latest_next_pick = _get_latest_next_pick_for_chunk(results)
+                if latest_next_pick:
+                    if not server_pred.get('pong_chunk_debug'):
+                        server_pred['pong_chunk_debug'] = {}
+                    server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
+            except Exception:
+                pass
         blended = _blended_win_rate(ph)
         return {
             'results': results,
@@ -8503,6 +8513,16 @@ def _build_results_payload():
                     print(f"[API] server_pred 조회 오류: {str(e)[:100]}")
             if server_pred is None:
                 server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
+            # 모양 옵션: latest_next_pick 항상 포함 (계산기 최상단 보류만 표시 버그 방지)
+            if len(results) >= 16 and (not server_pred.get('pong_chunk_debug') or 'latest_next_pick' not in (server_pred.get('pong_chunk_debug') or {})):
+                try:
+                    latest_next_pick = _get_latest_next_pick_for_chunk(results)
+                    if latest_next_pick:
+                        if not server_pred.get('pong_chunk_debug'):
+                            server_pred['pong_chunk_debug'] = {}
+                        server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
+                except Exception:
+                    pass
             blended = _blended_win_rate(ph)
             return {
                 'results': results,
@@ -8584,6 +8604,16 @@ def _build_results_payload():
                 shape_stats = _get_shape_stats_for_results(results) if len(results) >= 16 else None
                 chunk_stats = _get_chunk_stats_for_results(results) if len(results) >= 16 else None
                 server_pred = compute_prediction(results, ph, shape_win_stats=shape_stats, chunk_profile_stats=chunk_stats) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
+            # 모양 옵션: latest_next_pick 항상 포함 (계산기 최상단 보류만 표시 버그 방지)
+            if len(results) >= 16 and (not server_pred.get('pong_chunk_debug') or 'latest_next_pick' not in (server_pred.get('pong_chunk_debug') or {})):
+                try:
+                    latest_next_pick = _get_latest_next_pick_for_chunk(results)
+                    if latest_next_pick:
+                        if not server_pred.get('pong_chunk_debug'):
+                            server_pred['pong_chunk_debug'] = {}
+                        server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
+                except Exception:
+                    pass
             blended = _blended_win_rate(ph)
             round_actuals = _build_round_actuals(results)
             return {
