@@ -5156,7 +5156,9 @@ RESULTS_HTML = '''
                     } catch (e) { /* ignore */ }
                 }
                 applyCalcsToState(calcs, lastServerTimeSec, restoreUi);
+                CALC_IDS.forEach(function(id) { if (typeof updateCalcStatus === 'function') updateCalcStatus(id); });
                 CALC_IDS.forEach(function(id) { ensurePendingRowForRunningCalc(id); });
+                CALC_IDS.forEach(function(id) { if (typeof updateCalcStatus === 'function') updateCalcStatus(id); });
             } catch (e) { console.warn('계산기 상태 로드 실패:', e); }
             finally { window.__calcStateLoadInProgress = false; }
         }
@@ -7545,7 +7547,16 @@ RESULTS_HTML = '''
                         if (lastPrediction && lastPrediction.round != null) {
                             savedBetPickByRound[Number(lastPrediction.round)] = { value: bettingText, isRed: bettingIsRed };
                             var sbKeys = Object.keys(savedBetPickByRound).map(Number).filter(function(k) { return !isNaN(k); }).sort(function(a,b) { return a - b; });
-                            while (sbKeys.length > SAVED_BET_PICK_MAX) { delete savedBetPickByRound[sbKeys.shift()]; }
+                            var curRoundNum = lastPrediction && lastPrediction.round != null ? Number(lastPrediction.round) : null;
+                            var pendingRounds = {};
+                            CALC_IDS.forEach(function(cid) {
+                                (calcState[cid].history || []).forEach(function(h) { if (h && h.actual === 'pending' && h.round != null) pendingRounds[Number(h.round)] = true; });
+                            });
+                            var evictable = sbKeys.filter(function(k) { return k !== curRoundNum && !pendingRounds[k]; });
+                            var evictCount = Math.max(0, sbKeys.length - SAVED_BET_PICK_MAX);
+                            for (var ei = 0; ei < evictCount && ei < evictable.length; ei++) {
+                                delete savedBetPickByRound[evictable[ei]];
+                            }
                             // 표 1행(배팅중) 픽·no_bet 보정: ensurePendingRow 등에서 예측픽으로 채워진 행이 있으면 배팅중 픽으로 덮어씀
                             var pendingRow = (calcState[id].history || []).find(function(h) { return h && Number(h.round) === Number(lastPrediction.round) && h.actual === 'pending'; });
                             if (pendingRow && (bettingText === '정' || bettingText === '꺽')) {
@@ -7839,9 +7850,9 @@ RESULTS_HTML = '''
                 var pickClass;
                 if (pickVal === '보류') {
                     pickClass = 'pick-hold';
-                } else if (h.pickColor === '빨강') {
+                } else if ((h.pickColor || h.pick_color) === '빨강') {
                     pickClass = 'pick-jung';
-                } else if (h.pickColor === '검정') {
+                } else if ((h.pickColor || h.pick_color) === '검정') {
                     pickClass = 'pick-kkuk';
                 } else {
                     // pickColor 없을 때: 현재 회차 + 15번 카드 있으면 계산, 없으면 보류 스타일(잘못된 색상 표시 방지)
