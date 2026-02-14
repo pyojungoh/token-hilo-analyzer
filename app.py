@@ -64,6 +64,10 @@ TIMEOUT = int(os.getenv('TIMEOUT', '10'))
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))
 DATABASE_URL = os.getenv('DATABASE_URL', None)
 
+# 모양·덩어리 테이블 행 수 상한 (저장량·속도 저하 방지)
+SHAPE_MAX_OCCURRENCES = 5000
+CHUNK_MAX_OCCURRENCES = 3000
+
 # 반복 로그 억제용 (키 -> 마지막 출력 시각)
 _log_throttle_last = {}
 # 값이 바뀔 때만 로그 (키 -> 마지막 값)
@@ -579,36 +583,51 @@ def _get_chunk_stats_for_results(results):
 
 
 def _get_latest_next_pick_for_chunk(results):
-    """현재 results의 덩어리 프로필과 유사한 가장 최근 덩어리의 다음 결과(정/꺽)를 반환. 유사 덩어리 공식용."""
+    """현재 results의 덩어리 프로필과 유사한 가장 최근 덩어리의 다음 결과(정/꺽)를 반환. 없으면 모양 시그니처(동일)로 폴백."""
     if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
         return None
     profile = _get_chunk_profile_from_results(results)
-    if not profile:
-        return None
+    sig = _get_shape_signature(results)
     conn = get_db_connection(statement_timeout_sec=3)
     if not conn:
         return None
     try:
         import json
         cur = conn.cursor()
-        cur.execute('''
-            SELECT profile_json, next_actual, round_num FROM chunk_profile_occurrences
-            ORDER BY round_num DESC
-            LIMIT 200
-        ''')
-        rows = cur.fetchall()
-        cur.close()
-        CHUNK_SIM_THRESHOLD = 0.5
-        for profile_json, next_actual, rnd in rows:
-            try:
-                other = tuple(json.loads(profile_json))
-            except Exception:
-                continue
-            if _chunk_profile_similarity(profile, other) >= CHUNK_SIM_THRESHOLD:
-                return next_actual if next_actual in ('정', '꺽') else None
+        if profile:
+            cur.execute('''
+                SELECT profile_json, next_actual, round_num FROM chunk_profile_occurrences
+                ORDER BY round_num DESC
+                LIMIT 150
+            ''')
+            rows = cur.fetchall()
+            CHUNK_SIM_THRESHOLD = 0.5
+            for profile_json, next_actual, rnd in rows:
+                try:
+                    other = tuple(json.loads(profile_json))
+                except Exception:
+                    continue
+                if _chunk_profile_similarity(profile, other) >= CHUNK_SIM_THRESHOLD:
+                    if next_actual in ('정', '꺽'):
+                        cur.close()
+                        return next_actual
+                    break
+        if sig:
+            cur.execute('''
+                SELECT next_actual FROM shape_win_occurrences
+                WHERE signature = %s
+                ORDER BY round_num DESC
+                LIMIT 1
+            ''', (sig,))
+            row = cur.fetchone()
+            cur.close()
+            if row and row[0] in ('정', '꺽'):
+                return row[0]
+        else:
+            cur.close()
         return None
     except Exception as e:
-        print(f"[경고] 가장 최근 다음 픽(덩어리) 조회 실패: {str(e)[:150]}")
+        print(f"[경고] 가장 최근 다음 픽(덩어리/모양) 조회 실패: {str(e)[:150]}")
         return None
     finally:
         try:
@@ -718,6 +737,32 @@ def update_chunk_profile_occurrences(conn, profile, actual, round_num=None):
         cur.close()
     except Exception as e:
         print(f"[경고] chunk_profile_occurrences 저장 실패: {str(e)[:100]}")
+
+
+def _trim_shape_tables(conn):
+    """shape_win_occurrences, chunk_profile_occurrences 행 수가 상한 초과 시 가장 오래된 행 삭제. 속도 저하 방지."""
+    if not conn or not DB_AVAILABLE:
+        return
+    try:
+        cur = conn.cursor()
+        for table, max_rows in [
+            ('shape_win_occurrences', SHAPE_MAX_OCCURRENCES),
+            ('chunk_profile_occurrences', CHUNK_MAX_OCCURRENCES),
+        ]:
+            cur.execute(f'SELECT COUNT(*) FROM {table}')
+            cnt = cur.fetchone()[0] if cur.rowcount else 0
+            if cnt > max_rows:
+                to_del = min(cnt - max_rows, 2000)
+                cur.execute(f'''
+                    DELETE FROM {table} WHERE id IN (
+                        SELECT id FROM {table} ORDER BY round_num ASC LIMIT %s
+                    )
+                ''', (to_del,))
+                conn.commit()
+                _log_throttle(f'trim_{table}', 60, f"[모양정리] {table} {to_del}행 삭제 (상한 {max_rows})")
+        cur.close()
+    except Exception as e:
+        _log_throttle('trim_err', 60, f"[경고] 모양 테이블 정리 실패: {str(e)[:100]}")
 
 
 # DB 없을 때 계산기 상태 in-memory 저장 (새로고침 시 유지, 서버 재시작 시 초기화)
@@ -3277,10 +3322,26 @@ def _scheduler_fetch_results():
         print(f"[스케줄러] 결과 수집/회차 반영 오류: {str(e)[:150]}")
 
 
+def _scheduler_trim_shape_tables():
+    """5분마다 모양·덩어리 테이블 행 수 상한 초과 시 오래된 행 삭제."""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return
+    conn = get_db_connection(statement_timeout_sec=10)
+    if conn:
+        try:
+            _trim_shape_tables(conn)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
     # 배팅시간 확보: 0.2초마다 실행 → 픽/금액 DB 반영을 빠르게 해 매크로가 곧바로 가져가도록
     _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.2, id='fetch_results', max_instances=1)
+    _scheduler.add_job(_scheduler_trim_shape_tables, 'interval', seconds=300, id='trim_shape', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
         _scheduler.start()
@@ -4175,8 +4236,20 @@ RESULTS_HTML = '''
             </div>
             <div id="panel-pong-chunk" class="analysis-panel active">
                 <div id="pong-chunk-collapse-body" class="prob-bucket-collapse-body">
+                <div id="shape-visual-summary" class="shape-visual-summary" style="display:none;margin-bottom:12px;padding:12px;background:linear-gradient(135deg,#1e2a1e 0%,#1a1a1a 100%);border-radius:8px;border:1px solid #2d4a2d;">
+                    <div class="shape-visual-row" style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:10px;">
+                        <div id="shape-phase-badge" class="shape-phase-badge" style="padding:6px 12px;border-radius:6px;font-weight:bold;font-size:0.95em;">—</div>
+                        <div id="shape-latest-pick-card" class="shape-latest-pick-card" style="min-width:60px;height:44px;display:flex;align-items:center;justify-content:center;border-radius:6px;font-weight:bold;font-size:1.1em;">—</div>
+                        <div id="shape-signature-bars" class="shape-signature-bars" style="display:flex;align-items:flex-end;gap:4px;height:32px;">—</div>
+                    </div>
+                    <div class="shape-stats-bars" style="display:flex;flex-wrap:wrap;gap:16px;font-size:0.85em;">
+                        <div id="shape-stats-bar" style="flex:1;min-width:120px;"><span style="color:#888;">모양→다음</span><div class="shape-bar-track" style="height:6px;background:#333;border-radius:3px;overflow:hidden;margin-top:4px;"><div class="shape-bar-fill" style="height:100%;background:linear-gradient(90deg,#4caf50,#81c784);width:50%;transition:width 0.3s;"></div></div><span class="shape-bar-labels" style="font-size:0.9em;color:#aaa;">정 — / 꺽 —</span></div>
+                        <div id="chunk-stats-bar" style="flex:1;min-width:120px;"><span style="color:#888;">덩어리→다음</span><div class="shape-bar-track" style="height:6px;background:#333;border-radius:3px;overflow:hidden;margin-top:4px;"><div class="shape-bar-fill" style="height:100%;background:linear-gradient(90deg,#2196f3,#64b5f6);width:50%;transition:width 0.3s;"></div></div><span class="shape-bar-labels" style="font-size:0.9em;color:#aaa;">정 — / 꺽 —</span></div>
+                    </div>
+                    <div id="shape-u-warning" class="shape-u-warning" style="display:none;margin-top:8px;padding:6px 10px;background:rgba(255,152,0,0.15);border:1px solid rgba(255,152,0,0.4);border-radius:4px;color:#ffb74d;font-size:0.9em;">⚠ U자 구간 감지 — 유지 가중치 보정·멈춤 권장</div>
+                </div>
                 <div id="pong-chunk-section" style="margin-top:0;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
-                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">최근 그래프에서 <strong>줄(유지)</strong>·<strong>퐁당(바뀜)</strong>·<strong>덩어리(블록 반복)</strong>·<strong>U자 구간</strong>을 판별해 가중치에 반영합니다. U자 구간은 연패가 많아 유지 쪽 보정·멈춤 권장. <strong>유사 덩어리</strong>는 현재 덩어리와 높이 프로필이 비슷한 과거 덩어리의 다음 결과를 가중 합산해 반영하며, <strong>가장 최근 다음 픽</strong>은 유사 덩어리 중 가장 최근 것의 다음 결과입니다.</p>
+                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">최근 그래프에서 <strong>줄(유지)</strong>·<strong>퐁당(바뀜)</strong>·<strong>덩어리(블록 반복)</strong>·<strong>U자 구간</strong>을 판별해 가중치에 반영합니다. U자 구간은 연패가 많아 유지 쪽 보정·멈춤 권장. <strong>유사 덩어리</strong>는 현재 덩어리와 높이 프로필이 비슷한 과거 덩어리의 다음 결과를 가중 합산해 반영하며, <strong>가장 최근 다음 픽</strong>은 유사 덩어리·모양 시그니처 중 가장 최근 것의 다음 결과입니다.</p>
                     <div id="pong-chunk-data" style="font-size:0.9em;color:#ccc;"><table class="symmetry-line-table" style="width:100%;max-width:420px;"><tbody id="pong-chunk-tbody"><tr><td colspan="2" style="color:#888;">데이터 로딩 후 표시</td></tr></tbody></table></div>
                 </div>
                 </div>
@@ -6423,11 +6496,58 @@ RESULTS_HTML = '''
                                 '<tr><td>U자 구간</td><td>' + uShapeLabel + '</td></tr>' +
                                 '<tr><td>유사 덩어리 다음 결과</td><td>' + chunkProfileStatsLabel + '</td></tr>' +
                                 '<tr><td>가장 최근 다음 픽</td><td>' + latestNextPickLabel + '</td></tr>' +
+                                '<tr><td>모양 시그니처</td><td>' + (d.shape_signature || '—') + '</td></tr>' +
                                 '<tr><td>맨 앞 run 타입</td><td>' + (d.first_run_type || '—') + '</td></tr>' +
                                 '<tr><td>맨 앞 run 길이</td><td>' + (d.first_run_len != null ? d.first_run_len : '—') + '</td></tr>' +
                                 '<tr><td>최근 15개 퐁당%</td><td>' + (d.pong_pct_short != null ? d.pong_pct_short.toFixed(1) + '%' : '—') + '</td></tr>' +
                                 '<tr><td>직전 15개 퐁당%</td><td>' + (d.pong_pct_prev != null ? d.pong_pct_prev.toFixed(1) + '%' : '—') + '</td></tr>';
                             pongChunkTbody.innerHTML = rows;
+                        }
+                        var shapeVisual = document.getElementById('shape-visual-summary');
+                        if (shapeVisual) {
+                            var d2 = lastPongChunkDebug || {};
+                            var hasData = lastPongChunkPhase || d2.shape_signature || d2.latest_next_pick || (d2.shape_jung_count != null) || (d2.chunk_profile_jung != null);
+                            if (hasData) {
+                                shapeVisual.style.display = 'block';
+                                var phaseLabelsMap = { 'line_phase': '줄 구간', 'pong_phase': '퐁당 구간', 'chunk_start': '덩어리 막 시작', 'chunk_phase': '덩어리 만드는 중', 'pong_to_chunk': '퐁당→덩어리 전환', 'chunk_to_pong': '덩어리→퐁당 전환' };
+                                var phaseBadge = document.getElementById('shape-phase-badge');
+                                var phaseColors = { 'line_phase': 'background:#2d4a2d;color:#81c784', 'pong_phase': 'background:#1e3a4a;color:#64b5f6', 'chunk_start': 'background:#4a3d1e;color:#ffb74d', 'chunk_phase': 'background:#4a3d1e;color:#ffb74d', 'pong_to_chunk': 'background:#3d2e4a;color:#b39ddb', 'chunk_to_pong': 'background:#3d2e4a;color:#b39ddb' };
+                                var pLabel = (lastPongChunkPhase && phaseLabelsMap[lastPongChunkPhase]) ? phaseLabelsMap[lastPongChunkPhase] : (lastPongChunkPhase || '—');
+                                if (phaseBadge) { phaseBadge.textContent = pLabel; phaseBadge.style.cssText = phaseColors[lastPongChunkPhase] || 'background:#333;color:#aaa'; }
+                                var latestCard = document.getElementById('shape-latest-pick-card');
+                                if (latestCard) {
+                                    var lp = d2.latest_next_pick;
+                                    if (lp === '정') { latestCard.textContent = '정'; latestCard.style.background = 'linear-gradient(135deg,#2e7d32,#4caf50)'; latestCard.style.color = '#fff'; }
+                                    else if (lp === '꺽') { latestCard.textContent = '꺽'; latestCard.style.background = 'linear-gradient(135deg,#c62828,#e57373)'; latestCard.style.color = '#fff'; }
+                                    else { latestCard.textContent = '—'; latestCard.style.background = '#333'; latestCard.style.color = '#888'; }
+                                }
+                                var sigBars = document.getElementById('shape-signature-bars');
+                                if (sigBars && d2.shape_signature) {
+                                    var parts = String(d2.shape_signature).split(',').filter(Boolean);
+                                    var heights = { 'S': 10, 'M': 20, 'L': 28 };
+                                    sigBars.innerHTML = parts.map(function(p) { var h = heights[p.trim()] || 16; return '<div style="width:12px;height:' + h + 'px;background:linear-gradient(180deg,#4caf50,#2e7d32);border-radius:2px;" title="' + (p.trim()) + '"></div>'; }).join('');
+                                } else if (sigBars) { sigBars.innerHTML = '<span style="color:#666;font-size:0.9em">—</span>'; }
+                                var shapeStatsBar = document.getElementById('shape-stats-bar');
+                                if (shapeStatsBar) {
+                                    var sj = Number(d2.shape_jung_count) || 0, sk = Number(d2.shape_kkeok_count) || 0;
+                                    var stotal = sj + sk;
+                                    var spct = stotal > 0 ? (sj / stotal * 100) : 50;
+                                    shapeStatsBar.querySelector('.shape-bar-fill').style.width = spct + '%';
+                                    shapeStatsBar.querySelector('.shape-bar-labels').textContent = stotal > 0 ? ('정 ' + sj.toFixed(1) + ' / 꺽 ' + sk.toFixed(1)) : '정 — / 꺽 —';
+                                }
+                                var chunkStatsBar = document.getElementById('chunk-stats-bar');
+                                if (chunkStatsBar) {
+                                    var cj = Number(d2.chunk_profile_jung) || 0, ck = Number(d2.chunk_profile_kkeok) || 0;
+                                    var ctotal = cj + ck;
+                                    var cpct = ctotal > 0 ? (cj / ctotal * 100) : 50;
+                                    chunkStatsBar.querySelector('.shape-bar-fill').style.width = cpct + '%';
+                                    chunkStatsBar.querySelector('.shape-bar-labels').textContent = ctotal > 0 ? ('정 ' + cj.toFixed(1) + ' / 꺽 ' + ck.toFixed(1)) : '정 — / 꺽 —';
+                                }
+                                var uWarn = document.getElementById('shape-u-warning');
+                                if (uWarn) uWarn.style.display = (d2.u_shape === true) ? 'block' : 'none';
+                            } else {
+                                shapeVisual.style.display = 'none';
+                            }
                         }
                         var pongChunkHeader = document.getElementById('pong-chunk-collapse-header');
                         if (pongChunkHeader && !pongChunkHeader.getAttribute('data-bound')) {
