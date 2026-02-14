@@ -7614,18 +7614,17 @@ RESULTS_HTML = '''
                 // 계산기 표는 한 행 기준 통일: 픽·배팅금액·수익·승패 모두 이 행(h)의 predicted/actual만 사용 (예측기표 actual 혼합 시 행 내 불일치 방지)
                 var effectiveActual = h.actual;
                 if (effectiveActual === 'pending' || !effectiveActual || effectiveActual === '') {
-                    // 1열(대기)은 완료 행과 같은 시뮬레이션 직후 금액 사용 → 8만 차례에 1.6만 표기되는 버그 방지
-                    var isNextRoundAfterCompleted = (lastCompletedRound != null && !isNaN(rn) && Number(rn) === lastCompletedRound + 1);
+                    // 1열(배팅중) 배팅금액: 완료 행과 동일 시뮬레이션 출처 사용. getCalcResult.currentBet = 헤더 "배팅중"과 동일.
+                    // nextRoundBet/pending_bet_amount 대신 getCalcResult 사용 → 1행에 2행과 같은 금액 표시 버그 방지
                     var amt;
                     if (h.no_bet === true || (typeof effectivePausedForRound === 'function' && effectivePausedForRound(id))) {
                         amt = 0;
-                    } else if (isNextRoundAfterCompleted) {
-                        amt = nextRoundBet;
                     } else if (lastCompletedRound != null && !isNaN(rn) && rn > lastCompletedRound + 1) {
-                        // 회차 간격: 1행에 2행과 같은 금액 표시 버그 방지 — 간격 구간 패배 가정 시뮬레이션
+                        // 회차 간격: 간격 구간 패배 가정 시뮬레이션
                         amt = getBetForPendingRoundWithGap(rn);
                     } else {
-                        amt = (typeof getBetForRound === 'function' ? getBetForRound(id, rn) : (h.betAmount > 0 ? h.betAmount : 0));
+                        var simResult = (typeof getCalcResult === 'function') ? getCalcResult(id) : null;
+                        amt = (simResult && simResult.currentBet != null && simResult.currentBet > 0) ? Math.min(simResult.currentBet, Math.floor(simResult.cap || capIn)) : (lastCompletedRound != null && cap > 0 ? nextRoundBet : (typeof getBetForRound === 'function' ? getBetForRound(id, rn) : (h.betAmount > 0 ? h.betAmount : 0)));
                     }
                     if (h && typeof amt === 'number') h.betAmount = amt;
                     betStr = amt > 0 ? Number(amt).toLocaleString() : '-';
