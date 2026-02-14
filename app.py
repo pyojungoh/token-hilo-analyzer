@@ -28,6 +28,10 @@ from config import (
     CACHE_TTL, RESULTS_FETCH_TIMEOUT_PER_PATH, RESULTS_FETCH_OVERALL_TIMEOUT,
     RESULTS_FETCH_MAX_RETRIES, BETTING_SITE_URL,
 )
+from utils import (
+    sort_results_newest_first, normalize_pick_color_value, flip_pick_color,
+    round_eq, parse_card_color, get_card_color_from_result,
+)
 
 try:
     import psycopg2
@@ -1224,16 +1228,6 @@ def _update_calc_paused_after_round(c):
     # 옵션 꺼져 있으면 기존 paused 유지(서버가 강제로 False로 바꾸지 않음)
 
 
-def _round_eq(a, b):
-    """회차 비교: int/str 혼용 시에도 동일 회차면 True (표·매크로 금액 일치용)."""
-    if a is None or b is None:
-        return a == b
-    try:
-        return int(a) == int(b)
-    except (TypeError, ValueError):
-        return a == b
-
-
 def _calculate_calc_profit_server(calc_state, history_entry):
     """서버에서 계산기 수익, 마틴게일 단계, 연승/연패 계산. history_entry에 계산된 값 추가."""
     MARTIN_PYO_RATIOS = [1, 1.5, 2.5, 4, 7, 12, 20, 40, 40]
@@ -1248,7 +1242,7 @@ def _calculate_calc_profit_server(calc_state, history_entry):
     history = calc_state.get('history', [])
     entry_round = history_entry.get('round')
     # 현재 회차 이전의 완료된 회차만 계산 (회차별 1건만, int/str 혼용 시에도 pending 제외 — 매크로 금액 정확도)
-    completed_list = [h for h in history if h.get('actual') and h.get('actual') != 'pending' and not _round_eq(h.get('round'), entry_round)]
+    completed_list = [h for h in history if h.get('actual') and h.get('actual') != 'pending' and not round_eq(h.get('round'), entry_round)]
     by_round = {}
     for h in completed_list:
         rn = h.get('round')
@@ -1417,7 +1411,7 @@ def _apply_results_to_calcs(results):
                     continue
                 # prediction_history(예측기표)에는 항상 예측기 픽만 저장. 계산기(반픽/승률반픽)는 calc history에만 반영.
                 pred_for_record = pending_predicted
-                pick_color_for_record = _normalize_pick_color_value(c.get('pending_color'))
+                pick_color_for_record = normalize_pick_color_value(c.get('pending_color'))
                 if pick_color_for_record is None:
                     if pending_predicted == '정':
                         pick_color_for_record = '빨강'
@@ -1452,7 +1446,7 @@ def _apply_results_to_calcs(results):
                                     pass
                 # 계산기 히스토리·표시용: 배팅한 픽(반픽/승률반픽 적용)
                 pred_for_calc = pending_predicted
-                bet_color_for_history = _normalize_pick_color_value(c.get('pending_color'))
+                bet_color_for_history = normalize_pick_color_value(c.get('pending_color'))
                 if bet_color_for_history is None:
                     if pending_predicted == '정':
                         bet_color_for_history = '빨강'
@@ -1460,32 +1454,32 @@ def _apply_results_to_calcs(results):
                         bet_color_for_history = '검정'
                 if c.get('reverse'):
                     pred_for_calc = '꺽' if pending_predicted == '정' else '정'
-                    bet_color_for_history = _flip_pick_color(bet_color_for_history)
+                    bet_color_for_history = flip_pick_color(bet_color_for_history)
                 blended = _blended_win_rate(get_prediction_history(100))
                 thr = c.get('win_rate_threshold', 46)
                 if c.get('win_rate_reverse') and blended is not None and blended <= thr:
                     pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
-                    bet_color_for_history = _flip_pick_color(bet_color_for_history)
+                    bet_color_for_history = flip_pick_color(bet_color_for_history)
                 lose_streak = _get_lose_streak_from_history(c.get('history') or [])
                 lose_streak_thr = max(0, min(100, int(c.get('lose_streak_reverse_threshold') or 48)))
                 lose_streak_min = max(2, min(15, int(c.get('lose_streak_reverse_min_streak') or 3)))
                 if c.get('lose_streak_reverse') and lose_streak >= lose_streak_min and blended is not None and blended <= lose_streak_thr:
                     pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
-                    bet_color_for_history = _flip_pick_color(bet_color_for_history)
+                    bet_color_for_history = flip_pick_color(bet_color_for_history)
                 # 승률방향 옵션: 저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조
                 if c.get('win_rate_direction_reverse'):
                     ph = get_prediction_history(150)
                     zone = _effective_win_rate_direction_zone(ph, c, pending_round)
                     if zone == 'high_falling':
                         pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
-                        bet_color_for_history = _flip_pick_color(bet_color_for_history)
+                        bet_color_for_history = flip_pick_color(bet_color_for_history)
                         c['last_trend_direction'] = 'down'
                     elif zone == 'low_rising':
                         c['last_trend_direction'] = 'up'
                     elif zone == 'mid_flat':
                         if c.get('last_trend_direction') == 'down':
                             pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
-                            bet_color_for_history = _flip_pick_color(bet_color_for_history)
+                            bet_color_for_history = flip_pick_color(bet_color_for_history)
                 history_entry = {'round': pending_round, 'predicted': pred_for_calc, 'actual': actual}
                 if bet_color_for_history:
                     history_entry['pickColor'] = bet_color_for_history
@@ -1693,7 +1687,7 @@ def save_round_prediction(round_num, predicted, pick_color=None, probability=Non
         return False
     try:
         cur = conn.cursor()
-        pick_color = _normalize_pick_color_value(pick_color)
+        pick_color = normalize_pick_color_value(pick_color)
         # 안정화: 이미 저장된 회차는 덮어쓰지 않음. 첫 저장(스케줄러)만 유지.
         cur.execute('''
             INSERT INTO round_predictions (round_num, predicted, pick_color, probability)
@@ -1713,30 +1707,6 @@ def save_round_prediction(round_num, predicted, pick_color=None, probability=Non
         return False
 
 
-def _normalize_pick_color_value(color):
-    """RED/BLACK 또는 빨강/검정을 일관된 문자열로 통일."""
-    if color is None:
-        return None
-    s = str(color).strip()
-    if not s:
-        return None
-    upper = s.upper()
-    if upper in ('RED', '빨강'):
-        return '빨강'
-    if upper in ('BLACK', '검정'):
-        return '검정'
-    return s
-
-
-def _flip_pick_color(color):
-    """빨강/검정을 서로 반전. 기타 값은 그대로."""
-    if color == '빨강':
-        return '검정'
-    if color == '검정':
-        return '빨강'
-    return color
-
-
 def _server_calc_effective_pick_and_amount(c):
     """계산기 c의 pending_round 기준으로 배팅 픽(RED/BLACK)과 금액 계산. 매크로 current_pick 반영용."""
     if not c or not c.get('running'):
@@ -1745,7 +1715,7 @@ def _server_calc_effective_pick_and_amount(c):
     pred = c.get('pending_predicted')
     if pr is None or pred is None:
         return None, 0
-    color = _normalize_pick_color_value(c.get('pending_color'))
+    color = normalize_pick_color_value(c.get('pending_color'))
     if color is None:
         color = '빨강' if pred == '정' else '검정'
     ph = get_prediction_history(150)
@@ -1757,30 +1727,30 @@ def _server_calc_effective_pick_and_amount(c):
     # 반픽/승률반픽/연패반픽/승률방향 반픽 적용 (클라이언트와 동일). 메인 15경기 승률 좋으면(53% 이상) 반픽 억제.
     if c.get('reverse'):
         pred = '꺽' if pred == '정' else '정'
-        color = _flip_pick_color(color)
+        color = flip_pick_color(color)
     blended = _blended_win_rate(ph or get_prediction_history(100))
     thr = c.get('win_rate_threshold', 46)
     if c.get('win_rate_reverse') and blended is not None and blended <= thr and not no_reverse_in_streak and (main_rate15 is None or main_rate15 < 53):
         pred = '꺽' if pred == '정' else '정'
-        color = _flip_pick_color(color)
+        color = flip_pick_color(color)
     lose_streak = _get_lose_streak_from_history(c.get('history') or [])
     lose_streak_thr = max(0, min(100, int(c.get('lose_streak_reverse_threshold') or 48)))
     lose_streak_min = max(2, min(15, int(c.get('lose_streak_reverse_min_streak') or 3)))
     if c.get('lose_streak_reverse') and lose_streak >= lose_streak_min and blended is not None and blended <= lose_streak_thr and not no_reverse_in_streak and (main_rate15 is None or main_rate15 < 53):
         pred = '꺽' if pred == '정' else '정'
-        color = _flip_pick_color(color)
+        color = flip_pick_color(color)
     if c.get('win_rate_direction_reverse') and not no_reverse_in_streak:
         current_round = ph[-1]['round'] if ph else None
         zone = _effective_win_rate_direction_zone(ph, c, current_round)
         if zone == 'high_falling':
             pred = '꺽' if pred == '정' else '정'
-            color = _flip_pick_color(color)
+            color = flip_pick_color(color)
             c['last_trend_direction'] = 'down'
         elif zone == 'low_rising':
             c['last_trend_direction'] = 'up'
         elif zone == 'mid_flat' and c.get('last_trend_direction') == 'down':
             pred = '꺽' if pred == '정' else '정'
-            color = _flip_pick_color(color)
+            color = flip_pick_color(color)
     pick_color = 'RED' if color == '빨강' else ('BLACK' if color == '검정' else None)
     if pick_color is None:
         return None, 0
@@ -1792,7 +1762,7 @@ def _server_calc_effective_pick_and_amount(c):
             if not results or len(results) < 16:
                 results = get_recent_results(hours=24)
                 if results:
-                    results = _sort_results_newest_first(results)
+                    results = sort_results_newest_first(results)
         except Exception:
             results = None
         if not results or len(results) < 16:
@@ -2035,36 +2005,6 @@ def get_prediction_history(limit=30):
         except:
             pass
         return []
-
-
-def parse_card_color(result_str):
-    """카드 결과 문자열에서 색상 추출. H,D,♥,♦=빨강 / S,C,♠,♣=검정. 앞뒤 모두 확인."""
-    if not result_str:
-        return None
-    s = str(result_str).upper().strip()
-    for c in s:
-        if c in ('H', 'D') or c in ('♥', '♦'):
-            return True
-        if c in ('S', 'C') or c in ('♠', '♣'):
-            return False
-    if 'RED' in s or 'HEART' in s or 'DIAMOND' in s:
-        return True
-    if 'BLACK' in s or 'SPADE' in s or 'CLUB' in s:
-        return False
-    return None
-
-
-def get_card_color_from_result(r):
-    """프론트엔드 getCategory와 동일: result 객체에서 카드 색상 추출. True=RED, False=BLACK, None=미확인.
-    red/black 우선(게임 제공값), parse_card_color 보조, 정/꺽+비교카드 유도까지 적용."""
-    if not r or r.get('joker'):
-        return None
-    if r.get('red') and not r.get('black'):
-        return True
-    if r.get('black') and not r.get('red'):
-        return False
-    c = parse_card_color(r.get('result', ''))
-    return c
 
 
 def _build_graph_values(results):
@@ -3047,18 +2987,6 @@ def save_color_match(game_id, compare_game_id, match_result):
             pass
         return False
 
-def _sort_results_newest_first(results):
-    """결과를 gameID 기준 최신순(높은 ID 먼저)으로 정렬. 그래프/표시 순서 일관성 유지."""
-    if not results:
-        return results
-    def key_fn(r):
-        g = str(r.get('gameID') or '')
-        nums = re.findall(r'\d+', g)
-        n = int(nums[0]) if nums else 0
-        return (-n, g)  # 숫자 추출해서 높은 ID가 앞으로
-    return sorted(results, key=key_fn)
-
-
 def get_recent_results(hours=24):
     """최근 N시간 데이터 조회 (정/꺽 결과 포함). 규칙: 24h 구간으로 최신 회차 누락 방지. statement_timeout·LIMIT으로 먹통 방지."""
     if not DB_AVAILABLE or not DATABASE_URL:
@@ -3143,7 +3071,7 @@ def get_recent_results(hours=24):
         
         cur.close()
         conn.close()
-        return _sort_results_newest_first(results)
+        return sort_results_newest_first(results)
     except Exception as e:
         print(f"[❌ 오류] 게임 결과 조회 실패: {str(e)[:200]}")
         try:
@@ -3423,7 +3351,7 @@ def _apply_results_and_push(results):
     if not _apply_results_lock.acquire(blocking=False):
         return
     try:
-        results = _sort_results_newest_first(list(results))
+        results = sort_results_newest_first(list(results))
         ensure_stored_prediction_for_current_round(results)
         _apply_results_to_calcs(results)
         _backfill_latest_round_to_prediction_history(results)
@@ -8553,7 +8481,7 @@ def _build_results_payload_db_only(hours=24):
         if not DB_AVAILABLE or not DATABASE_URL:
             return None
         results = get_recent_results(hours=hours)
-        results = _sort_results_newest_first(results)
+        results = sort_results_newest_first(results)
         # 응답 크기·처리 시간 제한 (성능 최적화: 100건으로 축소)
         RESULTS_PAYLOAD_LIMIT = 100
         if len(results) > RESULTS_PAYLOAD_LIMIT:
@@ -8645,7 +8573,7 @@ def _build_results_payload():
                 
                 # 최신 데이터 + DB 데이터 (최신순) → gameID 기준 정렬로 순서 고정 (그래프 일관성)
                 results = latest_results + db_results_filtered
-                results = _sort_results_newest_first(results)
+                results = sort_results_newest_first(results)
                 # 성능 최적화: 응답 크기 제한 (100건으로 더 축소)
                 if len(results) > 100:
                     results = results[:100]
@@ -8737,7 +8665,7 @@ def _build_results_payload():
                 print(f"[API] 최신 데이터 없음, DB 데이터만 사용: {len(results)}개")
             
             # 그래프/표시 순서 일관성: 항상 gameID 기준 최신순으로 정렬
-            results = _sort_results_newest_first(results)
+            results = sort_results_newest_first(results)
             round_actuals = _build_round_actuals(results)
             _merge_round_predictions_into_history(round_actuals, results=results)
             ph = get_prediction_history(300)
@@ -8787,7 +8715,7 @@ def _build_results_payload():
         else:
             # 데이터베이스가 없으면 기존 방식 (result.json에서 가져오기)
             results = latest_results if latest_results else []
-            results = _sort_results_newest_first(results)
+            results = sort_results_newest_first(results)
             print(f"[API] DB 없음, 최신 데이터만 사용: {len(results)}개")
             ph = get_prediction_history(300)
             
@@ -8932,7 +8860,7 @@ def get_results():
                 base = f"{parsed.scheme or 'https'}://{parsed.netloc}" if parsed.netloc else result_source.rstrip('/')
                 results_from_source = load_results_data(base_url=base)
                 if results_from_source and len(results_from_source) >= 16:
-                    ra = _build_round_actuals(_sort_results_newest_first(results_from_source))
+                    ra = _build_round_actuals(sort_results_newest_first(results_from_source))
                     payload = dict(payload)
                     payload['round_actuals'] = ra
                     payload['result_source_used'] = base
@@ -8943,7 +8871,7 @@ def get_results():
         # 화면 맨 왼쪽 = 최신 회차 보장: 응답 직전에 game_id 기준 내림차순 강제 정렬 (캐시/병합 출처와 무관)
         if payload and payload.get('results'):
             payload = dict(payload)
-            payload['results'] = _sort_results_newest_first(list(payload['results']))
+            payload['results'] = sort_results_newest_first(list(payload['results']))
             first_id = (payload['results'][0].get('gameID') if payload['results'] else None)
             print(f"[API] 응답 결과 수: {len(payload['results'])}개, 맨 앞(최신) gameID: {first_id}")
             # loadResults 시 즉시 current_pick 푸시 (스케줄러 대기 없이 1초 단축)
