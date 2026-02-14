@@ -7559,6 +7559,25 @@ RESULTS_HTML = '''
             // 1열(대기) 배팅금액: 위 시뮬레이션 직후 currentBet 사용 → 2열(완료)과 동일 기준, getBetForRound 타이밍 꼬임 방지
             var lastCompletedRound = completedHist.length ? Math.max.apply(null, completedHist.map(function(he) { return Number(he.round) || 0; })) : null;
             var nextRoundBet = (lastCompletedRound != null && cap > 0) ? Math.min(currentBet, Math.floor(cap)) : 0;
+            /** pending 회차가 lastCompletedRound+1보다 클 때(회차 간격): getBetForRound는 완료 회차만 시뮬레이션해 직전 회차 금액을 반환함.
+             * 1행에 2행과 같은 금액이 표시되는 버그 방지: 간격 구간을 패배 가정으로 시뮬레이션해 해당 회차의 정확한 마틴금액 계산 */
+            function getBetForPendingRoundWithGap(rn) {
+                if (lastCompletedRound == null || cap <= 0 || isNaN(rn) || rn <= lastCompletedRound + 1) return nextRoundBet;
+                var gap = rn - lastCompletedRound - 1;
+                var simCap = cap, simCurrentBet = currentBet, simStep = martingaleStep;
+                for (var g = 0; g < gap && simCap > 0; g++) {
+                    var bet = Math.min(simCurrentBet, Math.floor(simCap));
+                    if (simCap < bet || simCap <= 0) break;
+                    simCap -= bet;
+                    if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) {
+                        simStep = Math.min(simStep + 1, martinTableDetail.length - 1);
+                        simCurrentBet = martinTableDetail[simStep];
+                    } else {
+                        simCurrentBet = Math.min(simCurrentBet * 2, Math.floor(simCap));
+                    }
+                }
+                return (simCap > 0) ? Math.min(simCurrentBet, Math.floor(simCap)) : 0;
+            }
             // 회차별 픽/결과/승패/배팅금액/수익 행 목록 (pending=대기, completed=결과·수익)
             let rows = [];
             var seenRoundNums = {};
@@ -7597,7 +7616,17 @@ RESULTS_HTML = '''
                 if (effectiveActual === 'pending' || !effectiveActual || effectiveActual === '') {
                     // 1열(대기)은 완료 행과 같은 시뮬레이션 직후 금액 사용 → 8만 차례에 1.6만 표기되는 버그 방지
                     var isNextRoundAfterCompleted = (lastCompletedRound != null && !isNaN(rn) && Number(rn) === lastCompletedRound + 1);
-                    var amt = (h.no_bet === true || (typeof effectivePausedForRound === 'function' && effectivePausedForRound(id))) ? 0 : (isNextRoundAfterCompleted ? nextRoundBet : (typeof getBetForRound === 'function' ? getBetForRound(id, rn) : (h.betAmount > 0 ? h.betAmount : 0)));
+                    var amt;
+                    if (h.no_bet === true || (typeof effectivePausedForRound === 'function' && effectivePausedForRound(id))) {
+                        amt = 0;
+                    } else if (isNextRoundAfterCompleted) {
+                        amt = nextRoundBet;
+                    } else if (lastCompletedRound != null && !isNaN(rn) && rn > lastCompletedRound + 1) {
+                        // 회차 간격: 1행에 2행과 같은 금액 표시 버그 방지 — 간격 구간 패배 가정 시뮬레이션
+                        amt = getBetForPendingRoundWithGap(rn);
+                    } else {
+                        amt = (typeof getBetForRound === 'function' ? getBetForRound(id, rn) : (h.betAmount > 0 ? h.betAmount : 0));
+                    }
                     if (h && typeof amt === 'number') h.betAmount = amt;
                     betStr = amt > 0 ? Number(amt).toLocaleString() : '-';
                     profitStr = '-';
