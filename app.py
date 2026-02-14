@@ -7666,7 +7666,7 @@ RESULTS_HTML = '''
             const hist = state.history || [];
             if (hist.length === 0) {
                 streakEl.textContent = '경기결과 (최근 30회): -';
-                statsEl.textContent = '최대연승: - | 최대연패: - | 승률: - | 15회승률: -';
+                statsEl.textContent = '최대연승: - | 최대연패: - | 승률: - | 표승률: - | 15회승률: -';
                 if (tableWrap) tableWrap.innerHTML = '';
                 return;
             }
@@ -7897,7 +7897,16 @@ RESULTS_HTML = '''
             streakEl.innerHTML = '경기결과 (최근 30회←): ' + streakStr;
             var rate15 = getCalcRecent15WinRate(id);
             var rate15Str = (completedHist.length < 1) ? '-' : (rate15.toFixed(1) + '%');
-            statsEl.textContent = '최대연승: ' + r.maxWinStreak + ' | 최대연패: ' + r.maxLoseStreak + ' | 승률: ' + r.winRate + '% | 15회승률: ' + rate15Str;
+            // 표시된 내역(최근 200회) 승률: 배팅한 완료 행만, 조커=패 (멈춤 행 제외)
+            var dispWins = 0, dispLosses = 0;
+            displayRows.forEach(function(row) {
+                if (row.betAmount === '-' || row.outcome === '멈춤' || row.outcome === '대기') return;
+                if (row.outcome === '승') dispWins++;
+                else if (row.outcome === '패' || row.outcome === '조') dispLosses++;
+            });
+            var dispTotal = dispWins + dispLosses;
+            var dispRateStr = (dispTotal < 1) ? '-' : (dispWins / dispTotal * 100).toFixed(1) + '%';
+            statsEl.textContent = '최대연승: ' + r.maxWinStreak + ' | 최대연패: ' + r.maxLoseStreak + ' | 승률: ' + r.winRate + '% | 표승률: ' + dispRateStr + ' | 15회승률: ' + rate15Str;
             } catch (e) { console.warn('updateCalcDetail', id, e); }
         }
         document.querySelectorAll('.calc-dropdown-header').forEach(h => {
