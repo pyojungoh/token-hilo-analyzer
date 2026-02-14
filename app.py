@@ -23,6 +23,12 @@ try:
 except ImportError:
     pass
 
+from config import (
+    BASE_URL, DATA_PATH, TIMEOUT, MAX_RETRIES, DATABASE_URL,
+    CACHE_TTL, RESULTS_FETCH_TIMEOUT_PER_PATH, RESULTS_FETCH_OVERALL_TIMEOUT,
+    RESULTS_FETCH_MAX_RETRIES, BETTING_SITE_URL,
+)
+
 try:
     import psycopg2
     from psycopg2.extras import RealDictCursor
@@ -56,13 +62,6 @@ def add_csp_allow_eval(response):
     if response.content_type and 'text/html' in response.content_type:
         response.headers['Content-Security-Policy'] = "script-src 'self' 'unsafe-inline' 'unsafe-eval'; object-src 'self'; base-uri 'self'"
     return response
-
-# 환경 변수
-BASE_URL = os.getenv('BASE_URL', 'http://tgame365.com')
-DATA_PATH = ''
-TIMEOUT = int(os.getenv('TIMEOUT', '10'))
-MAX_RETRIES = int(os.getenv('MAX_RETRIES', '2'))
-DATABASE_URL = os.getenv('DATABASE_URL', None)
 
 # 반복 로그 억제용 (키 -> 마지막 출력 시각)
 _log_throttle_last = {}
@@ -3190,7 +3189,6 @@ game_data_cache = None
 streaks_cache = None
 results_cache = None
 last_update_time = 0
-CACHE_TTL = 1000  # 결과 캐시 유효 시간 (ms). 1초 동안 동일 캐시 반환, 스케줄러가 1초마다 선제 갱신
 
 # 게임 상태 (Socket.IO 제거 후 기본값만 사용)
 current_status_data = {
@@ -3317,9 +3315,6 @@ def load_game_data():
     }
 
 # 외부 result.json 요청 시 타임아웃 (병렬: 경로당 4초, 전체 6초)
-RESULTS_FETCH_TIMEOUT_PER_PATH = 4
-RESULTS_FETCH_OVERALL_TIMEOUT = 6
-RESULTS_FETCH_MAX_RETRIES = 1
 
 
 def _parse_results_json(data):
@@ -9519,9 +9514,6 @@ def api_current_pick():
         print(f"[❌ 오류] current-pick 실패: {str(e)[:200]}")
         return jsonify(empty_pick if request.method == 'GET' else {'ok': False}), 200
 
-
-# 배팅 사이트 URL (토큰하이로우). 필요 시 환경변수로 오버라이드 가능
-BETTING_SITE_URL = os.getenv('BETTING_SITE_URL', 'https://nhs900.com')
 
 
 
