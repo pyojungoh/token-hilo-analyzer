@@ -8212,6 +8212,42 @@ RESULTS_HTML = '''
                 this.style.display = 'none';
             });
         });
+        /** 게임 중 옵션 변경 시 calcState 동기화 — 배팅중 픽 즉시 반영 */
+        function syncCalcOptionsFromUI(id) {
+            if (!calcState[id]) return;
+            const revEl = document.getElementById('calc-' + id + '-reverse');
+            calcState[id].reverse = !!(revEl && revEl.checked);
+            const winRateRevEl = document.getElementById('calc-' + id + '-win-rate-reverse');
+            calcState[id].win_rate_reverse = !!(winRateRevEl && winRateRevEl.checked);
+            const winRateThrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
+            calcState[id].win_rate_threshold = (winRateThrEl && !isNaN(parseFloat(winRateThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(winRateThrEl.value))) : 50;
+            const loseStreakRevEl = document.getElementById('calc-' + id + '-lose-streak-reverse');
+            calcState[id].lose_streak_reverse = !!(loseStreakRevEl && loseStreakRevEl.checked);
+            const loseStreakThrEl = document.getElementById('calc-' + id + '-lose-streak-reverse-threshold');
+            calcState[id].lose_streak_reverse_threshold = (loseStreakThrEl && !isNaN(parseFloat(loseStreakThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(loseStreakThrEl.value))) : 48;
+            const loseStreakMinEl = document.getElementById('calc-' + id + '-lose-streak-reverse-min');
+            calcState[id].lose_streak_reverse_min_streak = (loseStreakMinEl && !isNaN(parseInt(loseStreakMinEl.value, 10))) ? Math.max(2, Math.min(15, parseInt(loseStreakMinEl.value, 10))) : 3;
+            const winRateDirRevEl = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
+            calcState[id].win_rate_direction_reverse = !!(winRateDirRevEl && winRateDirRevEl.checked);
+            const streakSuppressEl = document.getElementById('calc-' + id + '-streak-suppress-reverse');
+            calcState[id].streak_suppress_reverse = !!(streakSuppressEl && streakSuppressEl.checked);
+            const lockDirEl = document.getElementById('calc-' + id + '-lock-direction-on-lose-streak');
+            calcState[id].lock_direction_on_lose_streak = !(lockDirEl && !lockDirEl.checked);
+            const shapeOnlyEl = document.getElementById('calc-' + id + '-shape-only-latest-next-pick');
+            calcState[id].shape_only_latest_next_pick = !!(shapeOnlyEl && shapeOnlyEl.checked);
+            const pauseLowEl = document.getElementById('calc-' + id + '-pause-low-win-rate');
+            calcState[id].pause_low_win_rate_enabled = !!(pauseLowEl && pauseLowEl.checked);
+            const pauseThrEl = document.getElementById('calc-' + id + '-pause-win-rate-threshold');
+            calcState[id].pause_win_rate_threshold = (pauseThrEl && !isNaN(parseFloat(pauseThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(pauseThrEl.value))) : 45;
+        }
+        function onCalcOptionChange(id) {
+            syncCalcOptionsFromUI(id);
+            calcState[id].lastBetPickForRound = null;  // 옵션 변경 시 저장된 픽 무효화 → 재계산
+            updateCalcStatus(id);
+            updateCalcDetail(id);
+            updateCalcSummary(id);
+            try { saveCalcStateToServer({ immediate: true }); } catch (e) {}
+        }
         CALC_IDS.forEach(id => {
             ['capital', 'base', 'odds', 'target-amount'].forEach(f => {
                 const el = document.getElementById('calc-' + id + '-' + f);
@@ -8225,6 +8261,11 @@ RESULTS_HTML = '''
             });
             const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
             if (targetEnabledEl) targetEnabledEl.addEventListener('change', () => { updateCalcSummary(id); });
+            // 게임 중 옵션(반픽/승률반픽/연패반픽 등) 변경 시 즉시 반영
+            ['reverse', 'win-rate-reverse', 'lose-streak-reverse', 'lose-streak-reverse-threshold', 'lose-streak-reverse-min', 'win-rate-direction-reverse', 'streak-suppress-reverse', 'lock-direction-on-lose-streak', 'shape-only-latest-next-pick', 'pause-low-win-rate', 'pause-win-rate-threshold'].forEach(f => {
+                const el = document.getElementById('calc-' + id + '-' + f);
+                if (el) el.addEventListener('change', function() { onCalcOptionChange(id); });
+            });
         });
         document.addEventListener('click', function(e) {
             var t = e.target && e.target.closest('.calc-bet-copy-amount');
