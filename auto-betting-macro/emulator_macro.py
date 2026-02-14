@@ -1026,8 +1026,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._analyzer_url = url
         self._calculator_id = self.calc_combo.currentData()
         self._device_id = self._get_device_id() or "127.0.0.1:5555"
-        # 배팅 중: 0.05초(50ms) 간격으로 픽 조회 (예측픽→배팅기 0.5초 내 목표)
-        self._poll_interval_sec = 0.05
+        # 배팅 중: 0.1초(100ms) 간격 — 예측픽→배팅기 전송 속도 개선
+        self._poll_interval_sec = 0.1
         self._coords = load_coords()
         if not self._coords.get("bet_amount") or not self._coords.get("red") or not self._coords.get("black"):
             self._log("좌표를 먼저 설정하세요. coord_picker.py로 배팅금액/정정/레드/블랙 좌표를 잡으세요.")

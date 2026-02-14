@@ -3426,7 +3426,12 @@ def _scheduler_fetch_results():
     try:
         _refresh_results_background()
         if DB_AVAILABLE and DATABASE_URL:
-            results = get_recent_results(hours=24)
+            # 예측픽과 동일한 results 사용 → current_pick이 예측픽과 동시에 갱신 (배팅기 지연 해소)
+            results = (results_cache or {}).get('results') if results_cache else None
+            if not results or len(results) < 16:
+                results = get_recent_results(hours=24)
+            if results:
+                results = _sort_results_newest_first(list(results))
             if results and len(results) >= 16:
                 ensure_stored_prediction_for_current_round(results)
                 _apply_results_to_calcs(results)
@@ -3437,12 +3442,12 @@ def _scheduler_fetch_results():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    # 배팅시간 확보: 0.05초(50ms)마다 실행 → 예측픽 뜨자마자 0.5초 내 배팅기 전달
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.05, id='fetch_results', max_instances=1)
+    # 배팅시간 확보: 0.15초마다. 예측픽→배팅기 전송 속도 개선 (OOM 방지 위해 50ms는 회피)
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.15, id='fetch_results', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (50ms마다, 픽/금액 빠른 반영)")
+        print("[✅] 결과 수집 스케줄러 시작 (0.15초마다, 예측픽→배팅기 동기화)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:
@@ -8426,8 +8431,8 @@ RESULTS_HTML = '''
             if (predictionPollIntervalId) clearInterval(predictionPollIntervalId);
             
             // 탭 가시성에 따라 간격 조정. 과도한 폴링 시 ERR_INSUFFICIENT_RESOURCES 방지를 위해 완만한 간격 사용
-            var resultsInterval = isTabVisible ? 150 : 1200;     // 결과·예측픽 갱신 (예측픽이 늦게 뜨는 현상 완화)
-            var calcStatusInterval = isTabVisible ? 80 : 1200;   // 픽 서버 전달(매크로용). 80ms로 예측픽→배팅기 0.5초 내
+            var resultsInterval = isTabVisible ? 350 : 1200;     // OOM 방지: 350ms
+            var calcStatusInterval = isTabVisible ? 180 : 1200;  // 예측픽→배팅기 전송 (180ms)
             var calcStateInterval = isTabVisible ? 2200 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
             var timerInterval = isTabVisible ? 200 : 1000;
             
@@ -8465,7 +8470,7 @@ RESULTS_HTML = '''
             // 백그라운드일 때는 1초 간격으로 조정 (브라우저 제한)
             timerUpdateIntervalId = setInterval(updateTimer, timerInterval);
             
-            // 예측픽만 경량 폴링: 캐시 기반으로 0.1초마다 받아서 카드만 먼저 갱신 (예측픽이 늦게 나오는 현상 완화)
+            // 예측픽만 경량 폴링: OOM 방지 위해 200ms 간격
             if (isTabVisible) {
                 predictionPollIntervalId = setInterval(function() {
                     fetch('/api/current-prediction?t=' + Date.now(), { cache: 'no-cache' }).then(function(r) { return r.json(); }).then(function(data) {
@@ -8479,7 +8484,7 @@ RESULTS_HTML = '''
                         lastWarningU35 = !!(sp.warning_u35);
                         refreshPredictionPickOnly();
                     }).catch(function() {});
-                }, 100);
+                }, 200);
             }
         }
         
