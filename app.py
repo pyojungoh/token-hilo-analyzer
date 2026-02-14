@@ -1318,10 +1318,14 @@ def _apply_results_to_calcs(results):
                 pred_for_record = pending_predicted
                 pick_color_for_record = _normalize_pick_color_value(c.get('pending_color'))
                 if pick_color_for_record is None:
-                    if pending_predicted == '정':
-                        pick_color_for_record = '빨강'
-                    elif pending_predicted == '꺽':
-                        pick_color_for_record = '검정'
+                    # pick-color-core-rule: 정/꺽→빨강/검정은 15번 카드 기준. 고정 매핑(정=빨강,꺽=검정) 금지.
+                    is_15_red = _get_card_15_color_for_round(results, pending_round)
+                    if is_15_red is True:
+                        pick_color_for_record = '빨강' if pending_predicted == '정' else '검정'
+                    elif is_15_red is False:
+                        pick_color_for_record = '검정' if pending_predicted == '정' else '빨강'
+                    else:
+                        pick_color_for_record = '빨강' if pending_predicted == '정' else '검정'  # 15번 미확인 시 최후 폴백
                 # 예측 시점의 shape_signature를 계산하기 위해 pending_round를 제외한 이전 결과 사용
                 results_for_shape = None
                 if results and len(results) >= 16:
@@ -1353,10 +1357,14 @@ def _apply_results_to_calcs(results):
                 pred_for_calc = pending_predicted
                 bet_color_for_history = _normalize_pick_color_value(c.get('pending_color'))
                 if bet_color_for_history is None:
-                    if pending_predicted == '정':
-                        bet_color_for_history = '빨강'
-                    elif pending_predicted == '꺽':
-                        bet_color_for_history = '검정'
+                    # pick-color-core-rule: 정/꺽→빨강/검정은 15번 카드 기준. 고정 매핑 금지.
+                    is_15_red = _get_card_15_color_for_round(results, pending_round)
+                    if is_15_red is True:
+                        bet_color_for_history = '빨강' if pending_predicted == '정' else '검정'
+                    elif is_15_red is False:
+                        bet_color_for_history = '검정' if pending_predicted == '정' else '빨강'
+                    else:
+                        bet_color_for_history = '빨강' if pending_predicted == '정' else '검정'  # 15번 미확인 시 최후 폴백
                 if c.get('reverse'):
                     pred_for_calc = '꺽' if pending_predicted == '정' else '정'
                     bet_color_for_history = _flip_pick_color(bet_color_for_history)
@@ -1610,6 +1618,18 @@ def _flip_pick_color(color):
     if color == '검정':
         return '빨강'
     return color
+
+
+def _get_card_15_color_for_round(results, round_id):
+    """해당 회차 게임의 15번째 카드 색상. True=빨강, False=검정, None=미확인.
+    pick-color-core-rule: 정/꺽→빨강/검정은 15번 카드 기준. 고정 매핑 금지."""
+    if not results or len(results) < 16 or round_id is None:
+        return None
+    rid = str(round_id)
+    for i in range(len(results) - 1):
+        if str(results[i].get('gameID')) == rid and i + 1 < len(results):
+            return get_card_color_from_result(results[i + 1])
+    return None
 
 
 def _server_calc_effective_pick_and_amount(c):
@@ -7589,7 +7609,27 @@ RESULTS_HTML = '''
                 if (!isNaN(rn)) seenRoundNums[rn] = true;
                 const roundStr = h.round != null ? String(h.round) : '-';
                 const pickVal = (h.predicted === '정' || h.predicted === '꺽') ? h.predicted : '보류';
-                const pickClass = (pickVal === '보류' ? 'pick-hold' : (h.pickColor === '빨강' ? 'pick-jung' : (h.pickColor === '검정' ? 'pick-kkuk' : (pickVal === '정' ? 'pick-jung' : 'pick-kkuk'))));
+                // pick-color-core-rule: 정/꺽→빨강/검정은 15번 카드 기준. 고정 매핑(정=빨강,꺽=검정) 금지.
+                var pickClass;
+                if (pickVal === '보류') {
+                    pickClass = 'pick-hold';
+                } else if (h.pickColor === '빨강') {
+                    pickClass = 'pick-jung';
+                } else if (h.pickColor === '검정') {
+                    pickClass = 'pick-kkuk';
+                } else {
+                    // pickColor 없을 때: 현재 회차 + 15번 카드 있으면 계산, 없으면 보류 스타일(잘못된 색상 표시 방지)
+                    var curRound = (typeof lastPrediction !== 'undefined' && lastPrediction && lastPrediction.round != null) ? Number(lastPrediction.round) : null;
+                    var disp = (typeof allResults !== 'undefined' && Array.isArray(allResults) && allResults.length >= 15) ? allResults.slice(0, 15) : [];
+                    var card15 = (disp.length >= 15 && !isNaN(rn) && curRound != null && rn === curRound && typeof parseCardValue === 'function') ? parseCardValue(disp[14].result || '') : null;
+                    var is15Red = card15 ? card15.isRed : null;
+                    if (is15Red === true || is15Red === false) {
+                        var colorFrom15 = (pickVal === '정') ? (is15Red ? '빨강' : '검정') : (is15Red ? '검정' : '빨강');
+                        pickClass = colorFrom15 === '빨강' ? 'pick-jung' : 'pick-kkuk';
+                    } else {
+                        pickClass = 'pick-hold';  // 15번 카드 미확인 시 회색(잘못된 색상보다 안전)
+                    }
+                }
                 const warningWinRateVal = (typeof h.warningWinRate === 'number' && !isNaN(h.warningWinRate)) ? h.warningWinRate.toFixed(1) + '%' : '-';
                 // 15회 승률: CALCULATOR_GUIDE — 표에는 회차별 저장값(rate15) 표시. 없으면 완료 행은 해당 시점 15회 승률 계산 후 저장(한 번만).
                 var rate15Val;
