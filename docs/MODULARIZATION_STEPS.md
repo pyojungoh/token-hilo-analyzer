@@ -23,44 +23,39 @@ OOM 방지 및 유지보수성을 위해 app.py(약 1만 줄)를 단계적으로
 
 ---
 
-## 2단계: 순수 유틸 함수
+## 2단계: 순수 유틸 함수 ✅ 완료
+
+**완료 내용**: `utils.py` 생성, 분리 완료  
+- sort_results_newest_first, normalize_pick_color_value, flip_pick_color, round_eq, parse_card_color, get_card_color_from_result
 
 **대상**: Flask/request를 쓰지 않는 함수들  
-예: `_normalize_pick_color`, `_sort_results_newest_first`, 날짜/숫자 포맷 함수 등
+**위험도**: 낮음
 
-**이유**:
-- 입력 → 출력만 하는 함수
-- Flask, DB, 전역 변수에 의존하지 않음
-- 테스트·이동이 쉬움
+---
+
+## 3단계: DB 관련 함수 ✅ 완료
+
+**완료 내용**: `db.py` 생성, app.py에서 중복 제거 완료  
+- init_database, get_db_connection, ensure_current_pick_table, save_game_result, get_calc_state, save_calc_state, _calc_state_memory, get_color_matches_batch, ensure_database_initialized, get_recent_results_raw, RealDictCursor
 
 **위험도**: 낮음
 
 ---
 
-## 3단계: DB 관련 함수
+## 4단계: 계산·예측 로직 (일부 완료 → 여기서 끊김)
 
-**대상**: `get_db_connection`, `get_recent_results`, `get_calc_state` 등 DB 접근 함수
+**완료**: `prediction_logic.py` 생성  
+- _blended_win_rate, _blended_win_rate_components → 분리·import 완료
 
-**이유**:
-- DB만 다루는 함수들
-- `betting_integration.py`처럼 이미 분리된 패턴이 있음
-- 라우트/비즈니스 로직과 경계가 비교적 명확
+**남은 작업 (아직 app.py에만 있음)**:
+| 함수 | app.py 라인 |
+|------|-------------|
+| _update_calc_paused_after_round | 902 |
+| _calculate_calc_profit_server | 934 |
+| _apply_results_to_calcs | 1074 |
+| _server_calc_effective_pick_and_amount | 1413 |
 
-**위험도**: 낮음
-
----
-
-## 4단계: 계산·예측 로직
-
-**대상**: `_server_calc_effective_pick_and_amount`, `_apply_results_to_calcs` 등  
-예측·승률·마틴 계산 관련 함수
-
-**이유**:
-- 비즈니스 로직이 모여 있음
-- Flask `request`를 직접 쓰지 않는 부분 위주
-- 3단계 DB 함수를 먼저 분리해 두면 의존성이 단순해짐
-
-**위험도**: 중간
+**위험도**: 중간 (OOM 주의: 제거 시 패치 파일 또는 한 함수씩 최소 편집)
 
 ---
 
