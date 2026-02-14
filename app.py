@@ -5061,7 +5061,7 @@ RESULTS_HTML = '''
             });
         }
         /** 서버 적용 후 보유자산·순익·배팅중 깜빡임 방지: 실행 중인 계산기에 현재 회차 pending 행이 없으면 복원.
-         * lastBetPickForRound 없을 때 예측기 픽만 쓰면 반픽 등 미적용 → 배팅중과 1열 불일치. 최소한 반픽 적용. */
+         * lastBetPickForRound/savedBetPickByRound 우선 사용 → 배팅중 픽과 1열 일치. */
         function ensurePendingRowForRunningCalc(id) {
             try {
                 var state = calcState[id];
@@ -5071,7 +5071,7 @@ RESULTS_HTML = '''
                 var hist = state.history || [];
                 var hasRound = hist.some(function(h) { return h && Number(h.round) === roundNum; });
                 if (hasRound) return;
-                var saved = (state.lastBetPickForRound && Number(state.lastBetPickForRound.round) === roundNum) ? state.lastBetPickForRound : null;
+                var saved = (state.lastBetPickForRound && Number(state.lastBetPickForRound.round) === roundNum) ? state.lastBetPickForRound : (typeof savedBetPickByRound !== 'undefined' && savedBetPickByRound[roundNum]) ? savedBetPickByRound[roundNum] : null;
                 var bettingText = saved && (saved.value === '정' || saved.value === '꺽') ? saved.value : (lastPrediction.value || '정');
                 var bettingIsRed = saved ? !!saved.isRed : (normalizePickColor(lastPrediction.color) === '빨강');
                 if (!saved) {
@@ -7484,6 +7484,15 @@ RESULTS_HTML = '''
                             savedBetPickByRound[Number(lastPrediction.round)] = { value: bettingText, isRed: bettingIsRed };
                             var sbKeys = Object.keys(savedBetPickByRound).map(Number).filter(function(k) { return !isNaN(k); }).sort(function(a,b) { return a - b; });
                             while (sbKeys.length > SAVED_BET_PICK_MAX) { delete savedBetPickByRound[sbKeys.shift()]; }
+                            // 표 1행(배팅중) 픽·no_bet 보정: ensurePendingRow 등에서 예측픽으로 채워진 행이 있으면 배팅중 픽으로 덮어씀
+                            var pendingRow = (calcState[id].history || []).find(function(h) { return h && Number(h.round) === Number(lastPrediction.round) && h.actual === 'pending'; });
+                            if (pendingRow && (bettingText === '정' || bettingText === '꺽')) {
+                                if (pendingRow.predicted !== bettingText) {
+                                    pendingRow.predicted = bettingText;
+                                    pendingRow.pickColor = bettingIsRed ? '빨강' : '검정';
+                                }
+                                if (pendingRow.no_bet === true && !effectivePausedForRound(id)) { pendingRow.no_bet = false; pendingRow.betAmount = (typeof getBetForRound === 'function' ? getBetForRound(id, Number(lastPrediction.round)) : 0); }
+                            }
                             // 배팅중 뜨자마자 표에 픽+배팅금액 행 추가 (결과 대기)
                             var firstBet = calcState[id].first_bet_round || 0;
                             var roundNum = Number(lastPrediction.round);
