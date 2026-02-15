@@ -6626,7 +6626,16 @@ RESULTS_HTML = '''
                             }).join('');
                             const rowShapePick = '<td>모양</td>' + rev.map(function(h) {
                                 const sp = h.shape_predicted;
-                                const c = (sp === '정' || sp === '꺽') ? pickColorToClass(sp === '정' ? '빨강' : '검정') : '';
+                                var c = '';
+                                if (sp === '정' || sp === '꺽') {
+                                    var mainColor = (h.pickColor || h.pick_color);
+                                    if (mainColor === '빨강' || mainColor === '검정') {
+                                        if (sp === (h.predicted || '')) c = pickColorToClass(mainColor);
+                                        else c = pickColorToClass(mainColor === '빨강' ? '검정' : '빨강');
+                                    } else {
+                                        c = pickColorToClass(sp === '정' ? '빨강' : '검정');
+                                    }
+                                }
                                 return '<td class="' + (c || '') + '">' + (sp || '-') + '</td>';
                             }).join('');
                             const rowShapeOutcome = '<td>모양</td>' + rev.map(function(h) {
