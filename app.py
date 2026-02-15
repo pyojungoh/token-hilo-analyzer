@@ -160,7 +160,7 @@ def init_database():
         cur.execute('''
             CREATE INDEX IF NOT EXISTS idx_prediction_history_created ON prediction_history(created_at DESC)
         ''')
-        for col, typ in [('probability', 'REAL'), ('pick_color', 'VARCHAR(10)'), ('blended_win_rate', 'REAL'), ('rate_15', 'REAL'), ('rate_30', 'REAL'), ('rate_100', 'REAL'), ('prediction_details', 'JSONB')]:
+        for col, typ in [('probability', 'REAL'), ('pick_color', 'VARCHAR(10)'), ('blended_win_rate', 'REAL'), ('rate_15', 'REAL'), ('rate_30', 'REAL'), ('rate_100', 'REAL'), ('prediction_details', 'JSONB'), ('shape_predicted', 'VARCHAR(10)')]:
             cur.execute(
                 "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'prediction_history' AND column_name = %s",
                 (col,)
@@ -374,28 +374,32 @@ def save_prediction_record(round_num, predicted, actual, probability=None, pick_
         if comp:
             r15_val, r30_val, r100_val, blended_val = comp
         
-        # shape_signature 계산 (results가 제공되고 충분한 길이일 때)
+        # shape_signature·shape_predicted 계산 (results가 제공되고 충분한 길이일 때)
         shape_sig = None
+        shape_pred = None
         prediction_details = None
         if results and len(results) >= 16:
-            # 현재 회차를 제외한 이전 결과들로 shape_signature 계산
+            # 현재 회차를 제외한 이전 결과들로 shape_signature·모양판별 픽 계산
             sig = _get_shape_signature(results)
             if sig:
                 shape_sig = sig
                 prediction_details = json.dumps({'shape_signature': shape_sig})
+            shape_pred = _get_latest_next_pick_for_chunk(results)
         
         cur = conn.cursor()
-        if prediction_details:
+        if prediction_details or shape_pred:
             cur.execute('''
-                INSERT INTO prediction_history (round_num, predicted, actual, probability, pick_color, blended_win_rate, rate_15, rate_30, rate_100, prediction_details)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                INSERT INTO prediction_history (round_num, predicted, actual, probability, pick_color, blended_win_rate, rate_15, rate_30, rate_100, prediction_details, shape_predicted)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
                 ON CONFLICT (round_num) DO UPDATE SET predicted = EXCLUDED.predicted, actual = EXCLUDED.actual,
                     probability = EXCLUDED.probability, pick_color = EXCLUDED.pick_color,
                     blended_win_rate = EXCLUDED.blended_win_rate, rate_15 = EXCLUDED.rate_15, rate_30 = EXCLUDED.rate_30, rate_100 = EXCLUDED.rate_100,
-                    prediction_details = EXCLUDED.prediction_details, created_at = DEFAULT
+                    prediction_details = COALESCE(EXCLUDED.prediction_details, prediction_history.prediction_details),
+                    shape_predicted = COALESCE(EXCLUDED.shape_predicted, prediction_history.shape_predicted),
+                    created_at = DEFAULT
             ''', (int(round_num), str(predicted), str(actual), float(probability) if probability is not None else None, str(pick_color) if pick_color else None,
                  round(blended_val, 1) if blended_val is not None else None, round(r15_val, 1) if r15_val is not None else None, round(r30_val, 1) if r30_val is not None else None, round(r100_val, 1) if r100_val is not None else None,
-                 prediction_details))
+                 prediction_details, str(shape_pred) if shape_pred in ('정', '꺽') else None))
         else:
             cur.execute('''
                 INSERT INTO prediction_history (round_num, predicted, actual, probability, pick_color, blended_win_rate, rate_15, rate_30, rate_100)
@@ -1525,8 +1529,12 @@ def _apply_results_to_calcs(results):
                     c['pending_predicted'] = stored_for_round['predicted']
                     c['pending_prob'] = stored_for_round.get('probability')
                     c['pending_color'] = stored_for_round.get('pick_color')
-                    _, next_amt, _ = _server_calc_effective_pick_and_amount(c)
+                    eff_pick, next_amt, eff_pred = _server_calc_effective_pick_and_amount(c)
                     c['pending_bet_amount'] = next_amt if next_amt is not None and next_amt > 0 else None
+                    # 모양옵션 체크 시: 실제 배팅 픽(shape 기준)으로 pending_color·pending_predicted 보정 → 1열과 배팅중 색 일치
+                    if c.get('shape_only_latest_next_pick') and eff_pick and eff_pred:
+                        c['pending_predicted'] = eff_pred
+                        c['pending_color'] = '빨강' if eff_pick == 'RED' else ('검정' if eff_pick == 'BLACK' else c.get('pending_color'))
                     updated = True
                     to_push.append((int(cid), c))
             if updated:
@@ -1965,7 +1973,7 @@ def get_prediction_history(limit=30):
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute('''
-            SELECT round_num as "round", predicted, actual, probability, pick_color, blended_win_rate, rate_15, rate_30, rate_100
+            SELECT round_num as "round", predicted, actual, probability, pick_color, blended_win_rate, rate_15, rate_30, rate_100, shape_predicted
             FROM prediction_history
             ORDER BY round_num DESC
             LIMIT %s
@@ -1977,6 +1985,8 @@ def get_prediction_history(limit=30):
         out = []
         for r in reversed(rows):
             o = {'round': r['round'], 'predicted': r['predicted'], 'actual': r['actual']}
+            if r.get('shape_predicted') in ('정', '꺽'):
+                o['shape_predicted'] = r['shape_predicted']
             if r.get('probability') is not None:
                 o['probability'] = float(r['probability'])
             if r.get('blended_win_rate') is not None:
@@ -2188,7 +2198,7 @@ def _detect_overall_pong_dominant(graph_values):
 
 
 def _get_column_heights(graph_values, max_cols=30):
-    """그래프 열 높이(세그먼트 길이) 리스트. 맨 앞=최신. 장줄/짧은줄 파악용."""
+    """그래프 열 높이(세그먼트 길이) 리스트. 맨 앞=최신. 퐁당(1)/짧은줄(2~3)/장줄(4+) 파악용."""
     if not graph_values or len(graph_values) < 2:
         return []
     filtered = [v for v in graph_values if v is True or v is False]
@@ -2871,8 +2881,9 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         col_heights = _get_column_heights(graph_values, 30)
         pong_chunk_debug['column_heights'] = col_heights  # 열 높이 (장줄/짧은줄 파악용)
         long_cols = sum(1 for h in col_heights if h >= 4)
-        short_cols = sum(1 for h in col_heights if h <= 2)
-        pong_chunk_debug['long_short_stats'] = {'long': long_cols, 'short': short_cols, 'total': len(col_heights)}  # 장줄(4+), 짧은줄(1~2)
+        short_cols = sum(1 for h in col_heights if 2 <= h <= 3)
+        pong_cols = sum(1 for h in col_heights if h == 1)
+        pong_chunk_debug['long_short_stats'] = {'long': long_cols, 'short': short_cols, 'pong': pong_cols, 'total': len(col_heights)}  # 장줄(4+), 짧은줄(2~3), 퐁당(1)
         pong_chunk_debug['symmetry_windows_used'] = symmetry_windows_used
         pong_chunk_debug['u_shape'] = u35_detected  # U자 구간(연패 많음): 유지 가중치 보정·멈춤 권장
         pong_chunk_debug['balance_phase'] = balance_phase  # 밸런스 구간 전환(transition_to_low/high)
@@ -3759,7 +3770,7 @@ RESULTS_HTML = '''
         .jung-kkuk-graph .graph-block.kkuk {
             background: #f44336;
         }
-        .jung-kkuk-graph .graph-column-num { font-size: 10px; color: #888; margin-top: 2px; }
+        .jung-kkuk-graph .graph-column-num { font-size: 12px; font-weight: 600; color: #bbb; margin-top: 3px; }
         .graph-stats {
             margin-top: 0;
             font-size: clamp(12px, 2vw, 14px);
@@ -4103,6 +4114,7 @@ RESULTS_HTML = '''
         .main-streak-table { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: clamp(0.65em, 1.5vw, 0.75em); }
         .main-streak-table th, .main-streak-table td { padding: 3px 5px; border: 1px solid #444; text-align: center; background: #2a2a2a; }
         .main-streak-table th { color: #81c784; background: #333; white-space: nowrap; }
+        .main-streak-table th:first-child, .main-streak-table td:first-child { background: #333; white-space: nowrap; min-width: 3em; }
         .main-streak-table td.pick-red { background: #b71c1c; color: #fff; }
         .main-streak-table td.pick-black { background: #111; color: #fff; }
         .main-streak-table td.streak-win { color: #ffeb3b; font-weight: 600; }
@@ -4269,7 +4281,7 @@ RESULTS_HTML = '''
         .calc-mini-graph-wrap .calc-mini-col {
             display: flex; flex-direction: column; gap: 1px; align-items: center; flex-shrink: 0;
         }
-        .calc-mini-graph-wrap .calc-mini-col-num { font-size: 7px; color: #888; margin-top: 2px; }
+        .calc-mini-graph-wrap .calc-mini-col-num { font-size: 9px; font-weight: 600; color: #aaa; margin-top: 2px; }
         .calc-mini-graph-wrap .calc-mini-block {
             font-size: 8px; font-weight: bold; padding: 1px 3px; min-width: 12px; min-height: 10px;
             box-sizing: border-box; border-radius: 2px; color: #fff; line-height: 1;
@@ -4997,6 +5009,9 @@ RESULTS_HTML = '''
                         var pr = calcState[id].running ? ((lastServerPrediction && lastServerPrediction.round) || calcState[id].pending_round) : null;
                         var bet = (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === pr && (calcState[id].lastBetPickForRound.value === '정' || calcState[id].lastBetPickForRound.value === '꺽')) ? calcState[id].lastBetPickForRound.value : null;
                         if (bet) return bet;
+                        // 모양옵션 시: 서버 calc state(실제 배팅 픽) 우선 — lastServerPrediction은 메인 예측기라 1열·배팅중과 다를 수 있음
+                        var shapeOn = !!(document.getElementById('calc-' + id + '-shape-only-latest-next-pick') && document.getElementById('calc-' + id + '-shape-only-latest-next-pick').checked);
+                        if (shapeOn && calcState[id].pending_predicted) return calcState[id].pending_predicted;
                         return calcState[id].running ? ((lastServerPrediction && lastServerPrediction.value) || calcState[id].pending_predicted) : null;
                     })(),
                     pending_prob: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.prob != null) ? lastServerPrediction.prob : calcState[id].pending_prob) : null,
@@ -5004,6 +5019,9 @@ RESULTS_HTML = '''
                         var pr = calcState[id].running ? ((lastServerPrediction && lastServerPrediction.round) || calcState[id].pending_round) : null;
                         var bet = (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === pr && (calcState[id].lastBetPickForRound.value === '정' || calcState[id].lastBetPickForRound.value === '꺽')) ? calcState[id].lastBetPickForRound : null;
                         if (bet) return bet.isRed ? '빨강' : '검정';
+                        // 모양옵션 시: 서버 calc state(실제 배팅 픽) 우선 — lastServerPrediction은 메인 예측기라 1열·배팅중과 다를 수 있음
+                        var shapeOn = !!(document.getElementById('calc-' + id + '-shape-only-latest-next-pick') && document.getElementById('calc-' + id + '-shape-only-latest-next-pick').checked);
+                        if (shapeOn && calcState[id].pending_color) return calcState[id].pending_color;
                         return calcState[id].running ? ((lastServerPrediction && lastServerPrediction.color) || calcState[id].pending_color) : null;
                     })(),
                     pending_bet_amount: (calcState[id].pending_bet_amount != null && calcState[id].pending_bet_amount > 0) ? calcState[id].pending_bet_amount : null,
@@ -5670,7 +5688,7 @@ RESULTS_HTML = '''
                         const numSpan = document.createElement('span');
                         numSpan.className = 'graph-column-num';
                         numSpan.textContent = seg.count;
-                        numSpan.title = seg.count >= 4 ? '장줄' : (seg.count <= 2 ? '짧은줄' : '중간');
+                        numSpan.title = seg.count >= 4 ? '장줄' : (seg.count == 1 ? '퐁당' : '짧은줄');
                         col.appendChild(numSpan);
                         graphDiv.appendChild(col);
                     });
@@ -6568,24 +6586,39 @@ RESULTS_HTML = '''
                         if (rev.length === 0) {
                             streakTableBlock = '<div class="prediction-streak-line">최근 100회 기준 · <span class="streak-now">' + streakLine100 + '</span></div>';
                         } else {
-                            const headerCells = rev.map(function(h) { return '<th>' + displayRound(h.round) + '</th>'; }).join('');
-                            const rowProb = rev.map(function(h) { return '<td>' + (h.probability != null ? Number(h.probability).toFixed(1) + '%' : '-') + '</td>'; }).join('');
-                            const rowPick = rev.map(function(h) {
+                            const headerCells = '<th>구분</th>' + rev.map(function(h) { return '<th>' + displayRound(h.round) + '</th>'; }).join('');
+                            const rowProb = '<td>메인</td>' + rev.map(function(h) { return '<td>' + (h.probability != null ? Number(h.probability).toFixed(1) + '%' : '-') + '</td>'; }).join('');
+                            const rowPick = '<td>메인</td>' + rev.map(function(h) {
                                 const c = pickColorToClass(h.pickColor || h.pick_color);
                                 return '<td class="' + c + '">' + (h.predicted != null ? h.predicted : '-') + '</td>';
                             }).join('');
-                            const rowOutcome = rev.map(function(h) {
+                            const rowOutcome = '<td>메인</td>' + rev.map(function(h) {
                                 var actualForDisplay = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
                                 var isJoker = (actualForDisplay === 'joker' || actualForDisplay === '조커');
                                 const out = isJoker ? '조커' : (h.predicted === actualForDisplay ? '승' : '패');
                                 const c = out === '승' ? 'streak-win' : out === '패' ? 'streak-lose' : 'streak-joker';
                                 return '<td class="' + c + '">' + out + '</td>';
                             }).join('');
+                            const rowShapePick = '<td>모양</td>' + rev.map(function(h) {
+                                const sp = h.shape_predicted;
+                                const c = (sp === '정' || sp === '꺽') ? pickColorToClass(sp === '정' ? '빨강' : '검정') : '';
+                                return '<td class="' + (c || '') + '">' + (sp || '-') + '</td>';
+                            }).join('');
+                            const rowShapeOutcome = '<td>모양</td>' + rev.map(function(h) {
+                                var actualForDisplay = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
+                                var isJoker = (actualForDisplay === 'joker' || actualForDisplay === '조커');
+                                const sp = h.shape_predicted;
+                                const out = isJoker ? '조커' : (sp && (sp === '정' || sp === '꺽') && sp === actualForDisplay ? '승' : (sp && (sp === '정' || sp === '꺽') ? '패' : '-'));
+                                const c = out === '승' ? 'streak-win' : out === '패' ? 'streak-lose' : out === '조커' ? 'streak-joker' : '';
+                                return '<td class="' + c + '">' + (out || '-') + '</td>';
+                            }).join('');
                             streakTableBlock = '<div class="main-streak-table-wrap" data-section="예측기표"><table class="main-streak-table" aria-label="예측기표">' +
                                 '<thead><tr>' + headerCells + '</tr></thead><tbody>' +
                                 '<tr>' + rowProb + '</tr>' +
                                 '<tr>' + rowPick + '</tr>' +
                                 '<tr>' + rowOutcome + '</tr>' +
+                                '<tr>' + rowShapePick + '</tr>' +
+                                '<tr>' + rowShapeOutcome + '</tr>' +
                                 '</tbody></table></div><div class="prediction-streak-line" style="margin-top:6px">최근 100회 기준 · <span class="streak-now">' + streakLine100 + '</span></div>';
                         }
                         } catch (streakErr) {
@@ -6679,7 +6712,7 @@ RESULTS_HTML = '''
                             var longShortLabel = '—';
                             if (d.long_short_stats && d.long_short_stats.total > 0) {
                                 var ls = d.long_short_stats;
-                                longShortLabel = '장줄(4+): ' + (ls.long || 0) + '개, 짧은줄(1~2): ' + (ls.short || 0) + '개 / ' + ls.total + '열';
+                                longShortLabel = '장줄(4+): ' + (ls.long || 0) + '개, 짧은줄(2~3): ' + (ls.short || 0) + '개, 퐁당(1): ' + (ls.pong || 0) + '개 / ' + ls.total + '열';
                             }
                             var rows = '<tr><td>판별 구간</td><td>' + phaseLabel + '</td></tr>' +
                                 '<tr><td>구간 유형</td><td>' + segmentLabel + '</td></tr>' +
@@ -6687,7 +6720,7 @@ RESULTS_HTML = '''
                                 '<tr><td>U자 구간</td><td>' + uShapeLabel + '</td></tr>' +
                                 '<tr><td>전체 퐁당 우세</td><td>' + overallPongLabel + '</td></tr>' +
                                 '<tr><td>열 높이 (최근)</td><td>' + colHeightsLabel + '</td></tr>' +
-                                '<tr><td>장줄/짧은줄</td><td>' + longShortLabel + '</td></tr>' +
+                                '<tr><td>장줄/짧은줄/퐁당</td><td>' + longShortLabel + '</td></tr>' +
                                 '<tr><td>유사 덩어리 다음 결과</td><td>' + chunkProfileStatsLabel + '</td></tr>' +
                                 '<tr><td>가장 최근 다음 픽</td><td>' + latestNextPickLabel + '</td></tr>' +
                                 '<tr><td>모양 시그니처</td><td>' + (d.shape_signature || '—') + '</td></tr>' +
