@@ -1366,8 +1366,12 @@ def _apply_results_to_calcs(results):
                         c['pending_predicted'] = stored_for_round['predicted']
                         c['pending_prob'] = stored_for_round.get('probability')
                         c['pending_color'] = stored_for_round.get('pick_color')
-                        _, amt = _server_calc_effective_pick_and_amount(c)
+                        eff_pick, amt, eff_pred = _server_calc_effective_pick_and_amount(c)
                         c['pending_bet_amount'] = amt if amt is not None and amt > 0 else None
+                        # 모양옵션 체크 시: 실제 배팅 픽(shape 기준)으로 pending_color·pending_predicted 보정 → 1열과 배팅중 색 일치
+                        if c.get('shape_only_latest_next_pick') and eff_pick and eff_pred:
+                            c['pending_predicted'] = eff_pred
+                            c['pending_color'] = '빨강' if eff_pick == 'RED' else ('검정' if eff_pick == 'BLACK' else c.get('pending_color'))
                         updated = True
                         to_push.append((int(cid), c))
                     continue
@@ -1521,7 +1525,7 @@ def _apply_results_to_calcs(results):
                     c['pending_predicted'] = stored_for_round['predicted']
                     c['pending_prob'] = stored_for_round.get('probability')
                     c['pending_color'] = stored_for_round.get('pick_color')
-                    _, next_amt = _server_calc_effective_pick_and_amount(c)
+                    _, next_amt, _ = _server_calc_effective_pick_and_amount(c)
                     c['pending_bet_amount'] = next_amt if next_amt is not None and next_amt > 0 else None
                     updated = True
                     to_push.append((int(cid), c))
@@ -1697,13 +1701,14 @@ def _get_card_15_color_for_round(results, round_id):
 
 
 def _server_calc_effective_pick_and_amount(c):
-    """계산기 c의 pending_round 기준으로 배팅 픽(RED/BLACK)과 금액 계산. 매크로 current_pick 반영용."""
+    """계산기 c의 pending_round 기준으로 배팅 픽(RED/BLACK)과 금액 계산. 매크로 current_pick 반영용.
+    반환: (pick_color, amt, pred) — pred는 모양옵션 시 1열·배팅중 일치용."""
     if not c or not c.get('running'):
-        return None, 0
+        return None, 0, None
     pr = c.get('pending_round')
     pred = c.get('pending_predicted')
     if pr is None or pred is None:
-        return None, 0
+        return None, 0, None
     color = _normalize_pick_color_value(c.get('pending_color'))
     if color is None:
         color = '빨강' if pred == '정' else '검정'
@@ -1743,7 +1748,7 @@ def _server_calc_effective_pick_and_amount(c):
             color = _flip_pick_color(color)
     pick_color = 'RED' if color == '빨강' else ('BLACK' if color == '검정' else None)
     if pick_color is None:
-        return None, 0
+        return None, 0, None
     # 모양: 가장 최근 다음 픽에만 배팅 — 값 있으면 그 픽을 기준으로 반픽/승률반픽 등 적용. 없으면 배팅 안 함
     if c.get('shape_only_latest_next_pick'):
         results = None
@@ -1756,10 +1761,10 @@ def _server_calc_effective_pick_and_amount(c):
         except Exception:
             results = None
         if not results or len(results) < 16:
-            return None, 0
+            return None, 0, None
         latest_next = _get_latest_next_pick_for_chunk(results)
         if not latest_next or latest_next not in ('정', '꺽'):
-            return None, 0
+            return None, 0, None
         pred = latest_next
         is_15_red = get_card_color_from_result(results[14]) if len(results) >= 15 else None
         if is_15_red is True:
@@ -1793,18 +1798,18 @@ def _server_calc_effective_pick_and_amount(c):
                 color = _flip_pick_color(color)
         pick_color = 'RED' if color == '빨강' else ('BLACK' if color == '검정' else None)
     if c.get('paused'):
-        return pick_color, 0
+        return pick_color, 0, pred
     dummy = {'round': pr, 'actual': 'pending'}
     _calculate_calc_profit_server(c, dummy)
     amt = int(dummy.get('betAmount') or 0)
-    return pick_color, amt
+    return pick_color, amt, pred
 
 
 def _push_current_pick_from_calc(calculator_id, c):
     """서버에서 계산기 픽을 current_pick에 즉시 반영 — 매크로가 클라이언트를 기다리지 않고 픽 수신."""
     if not bet_int or not DB_AVAILABLE or not DATABASE_URL:
         return
-    pick_color, suggested_amount = _server_calc_effective_pick_and_amount(c)
+    pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
     if pick_color is None:
         return
     conn = get_db_connection(statement_timeout_sec=3)
@@ -9553,7 +9558,7 @@ def api_current_pick():
                             except (TypeError, ValueError):
                                 stored_amt = None
                         if stored_amt is None:
-                            _, server_amt = _server_calc_effective_pick_and_amount(c)
+                            _, server_amt, _ = _server_calc_effective_pick_and_amount(c)
                             out['suggested_amount'] = int(server_amt) if server_amt is not None else None
                     elif c and c.get('paused') and out and isinstance(out, dict):
                         out = dict(out)
@@ -9579,7 +9584,7 @@ def api_current_pick():
             c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
             if c is not None and c.get('running') and c.get('pending_round') is not None:
                 try:
-                    srv_pick, server_amt = _server_calc_effective_pick_and_amount(c)
+                    srv_pick, server_amt, _ = _server_calc_effective_pick_and_amount(c)
                     pr = c.get('pending_round')
                     # 클라이언트 회차가 서버보다 크면 클라이언트 값 사용 — 1회차 느림 방지 (결과 반영 직후 클라이언트가 먼저 POST할 때)
                     try:
