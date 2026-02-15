@@ -4405,6 +4405,8 @@ RESULTS_HTML = '''
         .calc-card-item { display: inline-flex; align-items: center; gap: 4px; font-size: 0.8em; color: #888; }
         .calc-card-label { white-space: nowrap; }
         .calc-card-box { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; }
+        .calc-prediction-row { display: inline-flex; align-items: center; gap: 4px; }
+        .calc-shape-reverse-badge { font-size: 0.7em; color: #ff9800; font-weight: 600; }
         .calc-round-line { font-size: 0.95em; font-weight: 600; color: #ddd; min-height: 1.3em; line-height: 1.3; }
         .calc-round-line .calc-icon { font-size: 1.5em; display: inline-block; vertical-align: middle; line-height: 1; }
         .calc-round-line .calc-icon-star { color: #ffeb3b; }
@@ -4696,7 +4698,7 @@ RESULTS_HTML = '''
                             <span class="calc-status idle" id="calc-1-status">대기중</span>
                             <span class="calc-cards-wrap" id="calc-1-cards-wrap">
                                 <span class="calc-card-item"><span class="calc-card-label">배팅중</span><div class="calc-card-box"><div class="calc-round-line" id="calc-1-current-round"></div><span class="calc-current-card calc-card-betting" id="calc-1-current-card"></span></div></span>
-                                <span class="calc-card-item"><span class="calc-card-label">예측픽</span><div class="calc-card-box"><div class="calc-round-line" id="calc-1-prediction-round"></div><span class="calc-current-card calc-card-prediction" id="calc-1-prediction-card"></span></div></span>
+                                <span class="calc-card-item"><span class="calc-card-label">예측픽</span><div class="calc-card-box"><div class="calc-round-line" id="calc-1-prediction-round"></div><span class="calc-prediction-row"><span class="calc-current-card calc-card-prediction" id="calc-1-prediction-card"></span><span class="calc-shape-reverse-badge" id="calc-1-shape-reverse-badge"></span></span></div></span>
                             </span>
                             <div class="calc-summary" id="calc-1-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
@@ -4749,7 +4751,7 @@ RESULTS_HTML = '''
                             <span class="calc-status idle" id="calc-2-status">대기중</span>
                             <span class="calc-cards-wrap" id="calc-2-cards-wrap">
                                 <span class="calc-card-item"><span class="calc-card-label">배팅중</span><div class="calc-card-box"><div class="calc-round-line" id="calc-2-current-round"></div><span class="calc-current-card calc-card-betting" id="calc-2-current-card"></span></div></span>
-                                <span class="calc-card-item"><span class="calc-card-label">예측픽</span><div class="calc-card-box"><div class="calc-round-line" id="calc-2-prediction-round"></div><span class="calc-current-card calc-card-prediction" id="calc-2-prediction-card"></span></div></span>
+                                <span class="calc-card-item"><span class="calc-card-label">예측픽</span><div class="calc-card-box"><div class="calc-round-line" id="calc-2-prediction-round"></div><span class="calc-prediction-row"><span class="calc-current-card calc-card-prediction" id="calc-2-prediction-card"></span><span class="calc-shape-reverse-badge" id="calc-2-shape-reverse-badge"></span></span></div></span>
                             </span>
                             <div class="calc-summary" id="calc-2-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
@@ -4802,7 +4804,7 @@ RESULTS_HTML = '''
                             <span class="calc-status idle" id="calc-3-status">대기중</span>
                             <span class="calc-cards-wrap" id="calc-3-cards-wrap">
                                 <span class="calc-card-item"><span class="calc-card-label">배팅중</span><div class="calc-card-box"><div class="calc-round-line" id="calc-3-current-round"></div><span class="calc-current-card calc-card-betting" id="calc-3-current-card"></span></div></span>
-                                <span class="calc-card-item"><span class="calc-card-label">예측픽</span><div class="calc-card-box"><div class="calc-round-line" id="calc-3-prediction-round"></div><span class="calc-current-card calc-card-prediction" id="calc-3-prediction-card"></span></div></span>
+                                <span class="calc-card-item"><span class="calc-card-label">예측픽</span><div class="calc-card-box"><div class="calc-round-line" id="calc-3-prediction-round"></div><span class="calc-prediction-row"><span class="calc-current-card calc-card-prediction" id="calc-3-prediction-card"></span><span class="calc-shape-reverse-badge" id="calc-3-shape-reverse-badge"></span></span></div></span>
                             </span>
                             <div class="calc-summary" id="calc-3-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
@@ -7925,9 +7927,12 @@ RESULTS_HTML = '''
                         var predColorNorm = normalizePickColor(lastPrediction.color);
                         var predictionIsRed = (predColorNorm === '빨강' || predColorNorm === '검정') ? (predColorNorm === '빨강') : (predictionText === '정');
                         var bettingText, bettingIsRed;
+                        var shapeReversed = false, baseShapePick = null;
                         if (saved && (saved.value === '정' || saved.value === '꺽')) {
                             bettingText = saved.value;
                             bettingIsRed = !!saved.isRed;
+                            shapeReversed = !!saved.shapeReversed;
+                            baseShapePick = (saved.baseShapePick === '정' || saved.baseShapePick === '꺽') ? saved.baseShapePick : null;
                         } else {
                             bettingText = predictionText;
                             bettingIsRed = predictionIsRed;
@@ -7957,9 +7962,9 @@ RESULTS_HTML = '''
                             var shapePredRevThr = (shapePredRevThrEl && !isNaN(parseFloat(shapePredRevThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(shapePredRevThrEl.value))) : 50;
                             if (shapePredOn && shapePredRev && (typeof getShapePredictionWinRate10 === 'function')) {
                                 var sp10 = getShapePredictionWinRate10(id);
-                                if (sp10 != null && sp10 <= shapePredRevThr) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                                if (sp10 != null && sp10 <= shapePredRevThr) { baseShapePick = bettingText; bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; shapeReversed = true; }
                             }
-                            if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
+                            if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed, shapeReversed: shapeReversed, baseShapePick: baseShapePick }; }
                         }
                         // 모양: 가장 최근 다음 픽에만 배팅 — 값 있으면 그 픽을 기준으로, 반픽/승률반픽 등 적용 후 표시. 없으면 보류
                         var predBeforeShapeOnly = bettingText;
@@ -8004,6 +8009,16 @@ RESULTS_HTML = '''
                         predictionCardEl.textContent = predictionText;
                         predictionCardEl.className = 'calc-current-card calc-card-prediction card-' + (predictionIsRed ? 'jung' : 'kkuk');
                         predictionCardEl.title = '';
+                        var badgeEl = document.getElementById('calc-' + id + '-shape-reverse-badge');
+                        if (badgeEl) {
+                            if (shapeReversed && baseShapePick && shapePredOn && !shapeOnly) {
+                                badgeEl.textContent = baseShapePick + '픽 반픽';
+                                badgeEl.style.display = '';
+                            } else {
+                                badgeEl.textContent = '';
+                                badgeEl.style.display = 'none';
+                            }
+                        }
                         bettingCardEl.textContent = bettingText;
                         bettingCardEl.className = 'calc-current-card calc-card-betting' + (bettingText === '보류' ? ' card-hold' : ' card-' + (bettingIsRed ? 'jung' : 'kkuk'));
                         bettingCardEl.title = bettingText === '보류' ? '모양 옵션: 픽 불일치 또는 값 없음' : '';
@@ -8064,6 +8079,8 @@ RESULTS_HTML = '''
                         bettingCardEl.className = 'calc-current-card calc-card-betting';
                         predictionCardEl.textContent = '';
                         predictionCardEl.className = 'calc-current-card calc-card-prediction';
+                        var badgeEl = document.getElementById('calc-' + id + '-shape-reverse-badge');
+                        if (badgeEl) { badgeEl.textContent = ''; badgeEl.style.display = 'none'; }
                         calcState[id].lastBetPickForRound = null;
                     }
                 } catch (cardErr) { console.warn('updateCalcStatus card', id, cardErr); }
