@@ -1426,8 +1426,17 @@ def _apply_results_to_calcs(results):
                 if first_bet > 0 and pending_round < first_bet:
                     continue
                 # prediction_history(예측기표)에는 항상 예측기 픽만 저장. 계산기(반픽/승률반픽)는 calc history에만 반영.
+                # shape_prediction 사용 시 pending_predicted는 모양픽이므로, 예측기표용으로는 메인 픽을 별도 계산.
                 pred_for_record = pending_predicted
-                pick_color_for_record = _normalize_pick_color_value(c.get('pending_color'))
+                main_pred_for_record = None
+                if c.get('shape_prediction') and results and len(results) >= 16:
+                    filtered_for_main = [r for r in results if int(str(r.get('gameID') or '0'), 10) < pending_round]
+                    if len(filtered_for_main) >= 16:
+                        ph_rec = get_prediction_history(100)
+                        main_pred_for_record = compute_prediction(filtered_for_main, ph_rec)
+                        if main_pred_for_record and main_pred_for_record.get('value') in ('정', '꺽') and main_pred_for_record.get('round') == pending_round:
+                            pred_for_record = main_pred_for_record['value']
+                pick_color_for_record = _normalize_pick_color_value((main_pred_for_record.get('color') if main_pred_for_record else None) or c.get('pending_color'))
                 if pick_color_for_record is None:
                     # pick-color-core-rule: 정/꺽→빨강/검정은 15번 카드 기준. 고정 매핑(정=빨강,꺽=검정) 금지.
                     is_15_red = _get_card_15_color_for_round(results, pending_round)
@@ -2862,9 +2871,14 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
                 current_run_len += 1
             else:
                 break
-    if last is False and current_run_len >= 4:
-        pong_w += 0.14
-        line_w = max(0.0, line_w - 0.07)
+    if last is False and current_run_len >= 2:
+        # 꺽 스트릭 2~3: 소폭 보정. 4 이상: 기존 강한 보정. 뒤에 꺽 줄 오기 전 정 줄 만들 기회.
+        if current_run_len >= 4:
+            pong_w += 0.14
+            line_w = max(0.0, line_w - 0.07)
+        elif use_shape_adjustments:
+            pong_w += 0.06
+            line_w = max(0.0, line_w - 0.03)
     # 퐁당 / 덩어리 / 줄 세 가지 구간 보정: phase·chunk_shape에 따라 line_w·pong_w 조정
     pong_chunk_phase = None
     pong_chunk_debug = {}
@@ -2881,8 +2895,14 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         pong_chunk_phase = phase
     # 퐁당 구간: 번갈아 바뀜 → 바뀜 가중치 가산
     elif phase == 'pong_phase' or phase == 'chunk_to_pong':
-        pong_w += 0.10
-        line_w = max(0.0, line_w - 0.05)
+        # 정1 직후(줄 확장 기회): last=정이고 퐁당 1회만이면 꺽 과예측 완화. 정 줄을 만들 기회 반영.
+        soften_pong = (last is True and pong_runs and pong_runs[0] == 1)
+        if soften_pong and use_shape_adjustments:
+            pong_w += 0.05
+            line_w = max(0.0, line_w - 0.025)
+        else:
+            pong_w += 0.10
+            line_w = max(0.0, line_w - 0.05)
         pong_chunk_phase = phase
     # 덩어리 구간: 블록 반복·줄2~4 → 줄 가중치 우선. 321 끝이면 바뀜 소폭 가산
     elif phase in ('chunk_start', 'chunk_phase', 'pong_to_chunk'):
