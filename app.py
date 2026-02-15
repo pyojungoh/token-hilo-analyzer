@@ -5421,9 +5421,10 @@ RESULTS_HTML = '''
                     var rev = !!(state.reverse);
                     if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                 }
+                var isNoBet = (typeof effectivePausedForRound === 'function' && effectivePausedForRound(id)) || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker);
                 var betForThisRound = (typeof getBetForRound === 'function') ? getBetForRound(id, roundNum) : 0;
-                var isNoBet = typeof effectivePausedForRound === 'function' && effectivePausedForRound(id);
                 var amt = isNoBet ? 0 : betForThisRound;
+                if (typeof lastIs15Joker !== 'undefined' && lastIs15Joker) { bettingText = '보류'; bettingIsRed = false; amt = 0; }
                 state.history = state.history || [];
                 state.history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: amt, no_bet: isNoBet, actual: 'pending', warningWinRate: null });
                 state.history = dedupeCalcHistoryByRound(state.history);
@@ -7833,8 +7834,8 @@ RESULTS_HTML = '''
                             bettingCardEl.textContent = '보류';
                             bettingCardEl.className = 'calc-current-card calc-card-betting card-hold';
                             bettingCardEl.title = lastIs15Joker ? '15번 카드 조커 · 배팅하지 마세요' : '예측 대기 중';
-                            var betAmt = (lastPrediction && lastPrediction.round != null && typeof getBetForRound === 'function') ? getBetForRound(id, lastPrediction.round) : 0;
-                            postCurrentPickIfChanged(parseInt(id, 10) || 1, { pickColor: null, round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: null, suggested_amount: betAmt > 0 ? betAmt : null });
+                            var betAmt = lastIs15Joker ? 0 : ((lastPrediction && lastPrediction.round != null && typeof getBetForRound === 'function') ? getBetForRound(id, lastPrediction.round) : 0);
+                            postCurrentPickIfChanged(parseInt(id, 10) || 1, { pickColor: null, round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: null, suggested_amount: (lastIs15Joker || betAmt <= 0) ? null : betAmt });
                         } else {
                         // 배팅중인 회차는 이미 정한 계산기 픽만 유지 — lastPrediction이 잠깐 예측기로 바뀌어도 저장된 픽으로 POST/표시해 예측기 픽으로 배팅 나가는 것 방지
                         var curRound = lastPrediction && lastPrediction.round != null ? Number(lastPrediction.round) : null;
@@ -7938,9 +7939,9 @@ RESULTS_HTML = '''
                         bettingCardEl.textContent = bettingText;
                         bettingCardEl.className = 'calc-current-card calc-card-betting' + (bettingText === '보류' ? ' card-hold' : ' card-' + (bettingIsRed ? 'jung' : 'kkuk'));
                         bettingCardEl.title = bettingText === '보류' ? '모양 옵션: 픽 불일치 또는 값 없음' : '';
-                        // 매크로: 1행(배팅중 행)과 동일한 출처 — getBetForRound 사용 (getCalcResult 대신)
-                        var betAmt = (effectivePausedForRound(id) || (shapeOnly && bettingText === '보류') ? 0 : (curRound != null && typeof getBetForRound === 'function' ? getBetForRound(id, curRound) : 0));
-                        var suggestedAmt = (bettingText === '보류' && shapeOnly) ? null : (betAmt > 0 ? betAmt : null);
+                        // 매크로: 1행(배팅중 행)과 동일한 출처 — getBetForRound 사용 (getCalcResult 대신). 15번 카드 조커 시 금액 0
+                        var betAmt = (effectivePausedForRound(id) || (shapeOnly && bettingText === '보류') || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker)) ? 0 : (curRound != null && typeof getBetForRound === 'function' ? getBetForRound(id, curRound) : 0);
+                        var suggestedAmt = (bettingText === '보류' && shapeOnly) || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker) ? null : (betAmt > 0 ? betAmt : null);
                         var postPickColor = (bettingText === '보류' && shapeOnly) ? null : (bettingIsRed ? 'RED' : 'BLACK');
                         postCurrentPickIfChanged(parseInt(id, 10) || 1, { pickColor: postPickColor, round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: typeof predProb === 'number' && !isNaN(predProb) ? predProb : null, suggested_amount: suggestedAmt });
                         if (lastPrediction && lastPrediction.round != null) {
@@ -7958,7 +7959,7 @@ RESULTS_HTML = '''
                             }
                             // 표 1행(배팅중) 픽·no_bet 보정: ensurePendingRow 등에서 예측픽으로 채워진 행이 있으면 배팅중 픽으로 덮어씀
                             var pendingRow = (calcState[id].history || []).find(function(h) { return h && Number(h.round) === Number(lastPrediction.round) && h.actual === 'pending'; });
-                            if (pendingRow && (bettingText === '정' || bettingText === '꺽')) {
+                            if (pendingRow && (bettingText === '정' || bettingText === '꺽') && !(typeof lastIs15Joker !== 'undefined' && lastIs15Joker)) {
                                 var targetColor = bettingIsRed ? '빨강' : '검정';
                                 if (pendingRow.predicted !== bettingText || (pendingRow.pickColor || pendingRow.pick_color) !== targetColor) {
                                     pendingRow.predicted = bettingText;
@@ -7974,11 +7975,12 @@ RESULTS_HTML = '''
                             var hasRound = calcState[id].history.some(function(h) { return h && Number(h.round) === roundNum; });
                             var betForThisRound = getBetForRound(id, roundNum);
                             var shapeOnlyNoBet = !!(shapeOnly && bettingText === '보류');
-                            if (!hasRound && (betForThisRound > 0 || effectivePausedForRound(id) || shapeOnlyNoBet)) {
-                                var isNoBet = !!effectivePausedForRound(id) || shapeOnlyNoBet;
+                            var joker15NoBet = !!(typeof lastIs15Joker !== 'undefined' && lastIs15Joker);
+                            if (!hasRound && (betForThisRound > 0 || effectivePausedForRound(id) || shapeOnlyNoBet || joker15NoBet)) {
+                                var isNoBet = !!effectivePausedForRound(id) || shapeOnlyNoBet || joker15NoBet;
                                 var amt = isNoBet ? 0 : betForThisRound;
-                                var predForHistory = (shapeOnlyNoBet && (predBeforeShapeOnly === '정' || predBeforeShapeOnly === '꺽')) ? predBeforeShapeOnly : bettingText;
-                                var pickColorForHistory = (shapeOnlyNoBet && (predBeforeShapeOnly === '정' || predBeforeShapeOnly === '꺽')) ? (predBeforeShapeOnlyIsRed ? '빨강' : '검정') : (bettingIsRed ? '빨강' : '검정');
+                                var predForHistory = joker15NoBet ? '보류' : ((shapeOnlyNoBet && (predBeforeShapeOnly === '정' || predBeforeShapeOnly === '꺽')) ? predBeforeShapeOnly : bettingText);
+                                var pickColorForHistory = joker15NoBet ? null : ((shapeOnlyNoBet && (predBeforeShapeOnly === '정' || predBeforeShapeOnly === '꺽')) ? (predBeforeShapeOnlyIsRed ? '빨강' : '검정') : (bettingIsRed ? '빨강' : '검정'));
                                 calcState[id].history.push({ round: roundNum, predicted: predForHistory, pickColor: pickColorForHistory, betAmount: amt, no_bet: isNoBet, actual: 'pending', warningWinRate: typeof blended === 'number' ? blended : null });
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 saveCalcStateToServer();
@@ -8041,7 +8043,7 @@ RESULTS_HTML = '''
             const r = getCalcResult(id);
             const profitStr = (r.profit >= 0 ? '+' : '') + r.profit.toLocaleString() + '원';
             const profitClass = r.profit > 0 ? 'profit-plus' : (r.profit < 0 ? 'profit-minus' : '');
-            var betDisplay = (effectivePausedForRound(id) ? '-' : (r.currentBet.toLocaleString() + '원'));
+            var betDisplay = (effectivePausedForRound(id) || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker) ? '-' : (r.currentBet.toLocaleString() + '원'));
             // 보유자산·순익·배팅중이 그대로면 그리드 전체를 다시 쓰지 않고 경과만 갱신 (깜빡임 방지)
             try {
                 var cache = window.__calcSummaryCache = window.__calcSummaryCache || {};
@@ -8071,7 +8073,7 @@ RESULTS_HTML = '''
                 '<span class="label">순익</span><span class="value ' + profitClass + '">' + profitStr + '</span>' +
                 '<span class="label">배팅중</span><span class="value">' + betDisplay + '</span>' +
                 '<span class="label">경과</span><span class="value">' + elapsedStr + '</span></div>';
-            updateCalcBetCopyLine(id, effectivePausedForRound(id) ? 0 : r.currentBet);
+            updateCalcBetCopyLine(id, (effectivePausedForRound(id) || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker)) ? 0 : r.currentBet);
             updateCalcStatus(id);
             } catch (e) { console.warn('updateCalcSummary', id, e); }
         }
@@ -8257,11 +8259,11 @@ RESULTS_HTML = '''
                 if (!isNaN(rn) && seenRoundNums[rn]) continue;
                 if (!isNaN(rn)) seenRoundNums[rn] = true;
                 const roundStr = h.round != null ? String(h.round) : '-';
-                const pickVal = (h.predicted === '정' || h.predicted === '꺽') ? h.predicted : '보류';
-                // pick-color-core-rule: 정/꺽→빨강/검정은 15번 카드 기준. 고정 매핑(정=빨강,꺽=검정) 금지.
-                var pickClass;
                 var curRound = (typeof lastPrediction !== 'undefined' && lastPrediction && lastPrediction.round != null) ? Number(lastPrediction.round) : null;
                 var isPendingRow = !isNaN(rn) && curRound != null && rn === curRound && (h.actual === 'pending' || !h.actual || h.actual === '');
+                const pickVal = (isPendingRow && typeof lastIs15Joker !== 'undefined' && lastIs15Joker) ? '보류' : ((h.predicted === '정' || h.predicted === '꺽') ? h.predicted : '보류');
+                // pick-color-core-rule: 정/꺽→빨강/검정은 15번 카드 기준. 고정 매핑(정=빨강,꺽=검정) 금지.
+                var pickClass;
                 var pendingColorFromState = (isPendingRow && state && (state.pending_color === '빨강' || state.pending_color === '검정')) ? state.pending_color : null;
                 if (!pendingColorFromState && isPendingRow && state && state.lastBetPickForRound && Number(state.lastBetPickForRound.round) === rn && (state.lastBetPickForRound.value === '정' || state.lastBetPickForRound.value === '꺽')) {
                     pendingColorFromState = state.lastBetPickForRound.isRed ? '빨강' : '검정';
@@ -8312,8 +8314,9 @@ RESULTS_HTML = '''
                 if (effectiveActual === 'pending' || !effectiveActual || effectiveActual === '') {
                     // 1열(배팅중) 배팅금액: 완료 행과 동일 시뮬레이션 출처 사용. getCalcResult.currentBet = 헤더 "배팅중"과 동일.
                     // nextRoundBet/pending_bet_amount 대신 getCalcResult 사용 → 1행에 2행과 같은 금액 표시 버그 방지
+                    // 15번 카드 조커 시 배팅 안 함 → 금액 표시 안 함
                     var amt;
-                    if (h.no_bet === true || (typeof effectivePausedForRound === 'function' && effectivePausedForRound(id))) {
+                    if (h.no_bet === true || (typeof effectivePausedForRound === 'function' && effectivePausedForRound(id)) || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker)) {
                         amt = 0;
                     } else if (lastCompletedRound != null && !isNaN(rn) && rn > lastCompletedRound + 1) {
                         // 회차 간격: 간격 구간 패배 가정 시뮬레이션
