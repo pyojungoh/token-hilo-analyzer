@@ -4555,7 +4555,7 @@ RESULTS_HTML = '''
                                 <div class="calc-round-table-wrap" id="calc-1-round-table-wrap"></div>
                                 <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="1">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-1-streak">경기결과 (최근 30회): -</div>
-                                <div class="calc-stats" id="calc-1-stats">최대연승: - | 최대연패: - | 승률: - | 표승률: - | 15회승률: -</div>
+                                <div class="calc-stats" id="calc-1-stats">최대연승: - | 최대연패: - | 모양승률: - | 표승률: - | 15회승률: -</div>
                             </div>
                         </div>
                     </div>
@@ -4606,7 +4606,7 @@ RESULTS_HTML = '''
                                 <div class="calc-round-table-wrap" id="calc-2-round-table-wrap"></div>
                                 <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="2">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-2-streak">경기결과 (최근 30회): -</div>
-                                <div class="calc-stats" id="calc-2-stats">최대연승: - | 최대연패: - | 승률: - | 표승률: - | 15회승률: -</div>
+                                <div class="calc-stats" id="calc-2-stats">최대연승: - | 최대연패: - | 모양승률: - | 표승률: - | 15회승률: -</div>
                             </div>
                         </div>
                     </div>
@@ -4657,7 +4657,7 @@ RESULTS_HTML = '''
                                 <div class="calc-round-table-wrap" id="calc-3-round-table-wrap"></div>
                                 <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="3">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-3-streak">경기결과 (최근 30회): -</div>
-                                <div class="calc-stats" id="calc-3-stats">최대연승: - | 최대연패: - | 승률: - | 표승률: - | 15회승률: -</div>
+                                <div class="calc-stats" id="calc-3-stats">최대연승: - | 최대연패: - | 모양승률: - | 표승률: - | 15회승률: -</div>
                             </div>
                         </div>
                     </div>
@@ -7174,6 +7174,15 @@ RESULTS_HTML = '''
             var total = wins + losses;
             return total < 1 ? null : 100 * wins / total;
         }
+        /** 메인 예측기 모양 픽 최근 50회 승률. prediction_history의 shape_predicted vs actual, 조커 제외. */
+        function getShape50WinRate() {
+            var vh = Array.isArray(predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
+            var last50 = vh.slice(-50).filter(function(h) { return h.actual === '정' || h.actual === '꺽'; });
+            if (last50.length < 1) return null;
+            var sp = last50.filter(function(h) { return (h.shape_predicted === '정' || h.shape_predicted === '꺽') && h.shape_predicted === h.actual; }).length;
+            var total = last50.filter(function(h) { return h.shape_predicted === '정' || h.shape_predicted === '꺽'; }).length;
+            return total < 1 ? null : 100 * sp / total;
+        }
         /** 경고 표와 동일한 합산승률(blended). 멈춤은 계산기 표 15회 승률 기준으로 변경됨. */
         function getBlendedWinRate() {
             var vh = Array.isArray(predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object' && h.actual !== 'joker'; }) : [];
@@ -7958,7 +7967,7 @@ RESULTS_HTML = '''
             const hist = state.history || [];
             if (hist.length === 0) {
                 streakEl.textContent = '경기결과 (최근 30회): -';
-                statsEl.textContent = '최대연승: - | 최대연패: - | 승률: - | 표승률: - | 15회승률: -';
+                statsEl.textContent = '최대연승: - | 최대연패: - | 모양승률: - | 표승률: - | 15회승률: -';
                 if (tableWrap) tableWrap.innerHTML = '';
                 return;
             }
@@ -8205,7 +8214,9 @@ RESULTS_HTML = '''
             });
             var dispTotal = dispWins + dispLosses;
             var dispRateStr = (dispTotal < 1) ? '-' : (dispWins / dispTotal * 100).toFixed(1) + '%';
-            statsEl.textContent = '최대연승: ' + r.maxWinStreak + ' | 최대연패: ' + r.maxLoseStreak + ' | 승률: ' + r.winRate + '% | 표승률: ' + dispRateStr + ' | 15회승률: ' + rate15Str;
+            var shape50 = (typeof getShape50WinRate === 'function') ? getShape50WinRate() : null;
+            var shape50Str = (shape50 != null && !isNaN(shape50)) ? shape50.toFixed(1) + '%' : '-';
+            statsEl.textContent = '최대연승: ' + r.maxWinStreak + ' | 최대연패: ' + r.maxLoseStreak + ' | 모양승률: ' + shape50Str + ' | 표승률: ' + dispRateStr + ' | 15회승률: ' + rate15Str;
             } catch (e) { console.warn('updateCalcDetail', id, e); }
         }
         document.querySelectorAll('.calc-dropdown-header').forEach(h => {
