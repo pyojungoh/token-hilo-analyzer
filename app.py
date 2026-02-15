@@ -2862,7 +2862,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     if u35_detected:
         line_w += 0.14
         pong_w = max(0.0, pong_w - 0.07)
-    # 연패 길이 보정: 현재 꺽(연패) run이 길면 퐁당(바뀜) 가중치를 올려 다음에 정이 나올 가능성 반영
+    # 줄 길이 보정: 정/꺽 동일. 같은 결과가 4개 이상 이어지면 퐁당(바뀜) 가중치를 올려 전환 가능성 반영
     current_run_len = 1
     for ri in range(1, len(use_for_pattern)):
         v = use_for_pattern[ri]
@@ -2871,14 +2871,9 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
                 current_run_len += 1
             else:
                 break
-    if last is False and current_run_len >= 2:
-        # 꺽 스트릭 2~3: 소폭 보정. 4 이상: 기존 강한 보정. 뒤에 꺽 줄 오기 전 정 줄 만들 기회.
-        if current_run_len >= 4:
-            pong_w += 0.14
-            line_w = max(0.0, line_w - 0.07)
-        elif use_shape_adjustments:
-            pong_w += 0.06
-            line_w = max(0.0, line_w - 0.03)
+    if current_run_len >= 4:
+        pong_w += 0.14
+        line_w = max(0.0, line_w - 0.07)
     # 퐁당 / 덩어리 / 줄 세 가지 구간 보정: phase·chunk_shape에 따라 line_w·pong_w 조정
     pong_chunk_phase = None
     pong_chunk_debug = {}
@@ -2895,14 +2890,8 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         pong_chunk_phase = phase
     # 퐁당 구간: 번갈아 바뀜 → 바뀜 가중치 가산
     elif phase == 'pong_phase' or phase == 'chunk_to_pong':
-        # 정1 직후(줄 확장 기회): last=정이고 퐁당 1회만이면 꺽 과예측 완화. 정 줄을 만들 기회 반영.
-        soften_pong = (last is True and pong_runs and pong_runs[0] == 1)
-        if soften_pong and use_shape_adjustments:
-            pong_w += 0.05
-            line_w = max(0.0, line_w - 0.025)
-        else:
-            pong_w += 0.10
-            line_w = max(0.0, line_w - 0.05)
+        pong_w += 0.10
+        line_w = max(0.0, line_w - 0.05)
         pong_chunk_phase = phase
     # 덩어리 구간: 블록 반복·줄2~4 → 줄 가중치 우선. 321 끝이면 바뀜 소폭 가산
     elif phase in ('chunk_start', 'chunk_phase', 'pong_to_chunk'):
