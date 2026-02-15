@@ -375,16 +375,20 @@ def save_prediction_record(round_num, predicted, actual, probability=None, pick_
             r15_val, r30_val, r100_val, blended_val = comp
         
         # shape_signature·shape_predicted 계산 (results가 제공되고 충분한 길이일 때)
+        # shape_predicted = 모양판별 알고리즘(get_shape_prediction_hint) 결과. 모양판별반픽 도구로 사용.
         shape_sig = None
         shape_pred = None
         prediction_details = None
         if results and len(results) >= 16:
-            # 현재 회차를 제외한 이전 결과들로 shape_signature·모양판별 픽 계산
             sig = _get_shape_signature(results)
             if sig:
                 shape_sig = sig
                 prediction_details = json.dumps({'shape_signature': shape_sig})
-            shape_pred = _get_latest_next_pick_for_chunk(results, exclude_round=round_num)
+            try:
+                hint = get_shape_prediction_hint(results, history_before)
+                shape_pred = hint.get('value') if hint and hint.get('value') in ('정', '꺽') else None
+            except Exception:
+                shape_pred = None
         
         cur = conn.cursor()
         if prediction_details or shape_pred:
@@ -1042,27 +1046,21 @@ def _get_shape_50_win_rate():
 
 
 def _get_shape_prediction_win_rate_10(c):
-    """모양판별승률: 계산기 옵션 모양판별 픽 최신 10개 결과. calc history의 predicted(옵션 적용 후 배팅 픽) vs actual, 조커=패. shape_prediction OFF면 None."""
-    if not c.get('shape_prediction'):
+    """모양판별승률: 메인 예측기표 모양판별 픽(shape_predicted) 최신 10개 결과. prediction_history 기준, 조커=패. 모양판별반픽 판단용."""
+    ph = get_prediction_history(200)
+    with_shape = [h for h in ph if h and h.get('shape_predicted') in ('정', '꺽') and h.get('actual') in ('정', '꺽', 'joker', '조커')]
+    if not with_shape:
         return None
-    history = c.get('history') or []
-    completed = [h for h in history if h.get('actual') and h.get('actual') != 'pending']
-    if not completed:
-        return None
-    last10 = completed[-10:]
+    last10 = with_shape[-10:]
     wins, total = 0, 0
     for h in last10:
-        pred = h.get('predicted')
+        sp = h.get('shape_predicted')
         act = h.get('actual')
-        if pred not in ('정', '꺽'):
-            continue
         if act in ('joker', '조커'):
             total += 1
             continue
-        if act not in ('정', '꺽'):
-            continue
         total += 1
-        if pred == act:
+        if sp == act:
             wins += 1
     return (100.0 * wins / total) if total > 0 else None
 
@@ -7398,23 +7396,19 @@ RESULTS_HTML = '''
             var total = last50.filter(function(h) { return h.shape_predicted === '정' || h.shape_predicted === '꺽'; }).length;
             return total < 1 ? null : 100 * sp / total;
         }
-        /** 모양판별승률: 계산기 옵션 모양판별 픽 최신 10개 결과. calc history의 predicted(옵션 적용 후 배팅 픽) vs actual, 조커=패. shape_prediction OFF면 null. */
+        /** 모양판별승률: 메인 예측기표 모양판별 픽(shape_predicted) 최신 10개 결과. prediction_history 기준, 조커=패. 모양판별반픽 판단용. */
         function getShapePredictionWinRate10(id) {
-            if (!calcState[id] || !calcState[id].shape_prediction) return null;
-            var hist = calcState[id].history;
-            if (!Array.isArray(hist)) return null;
-            var completed = hist.filter(function(h) { return h && h.actual && h.actual !== 'pending' && h.actual !== ''; });
-            if (completed.length < 1) return null;
-            var last10 = completed.slice(-10);
+            var vh = Array.isArray(predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
+            var withShape = vh.filter(function(h) { return (h.shape_predicted === '정' || h.shape_predicted === '꺽') && (h.actual === '정' || h.actual === '꺽' || h.actual === 'joker' || h.actual === '조커'); });
+            if (withShape.length < 1) return null;
+            var last10 = withShape.slice(-10);
             var wins = 0, total = 0;
             last10.forEach(function(h) {
-                var pred = h.predicted;
+                var sp = h.shape_predicted;
                 var act = h.actual;
-                if (pred !== '정' && pred !== '꺽') return;
                 if (act === 'joker' || act === '조커') { total++; return; }
-                if (act !== '정' && act !== '꺽') return;
                 total++;
-                if (pred === act) wins++;
+                if (sp === act) wins++;
             });
             return total < 1 ? null : 100 * wins / total;
         }
