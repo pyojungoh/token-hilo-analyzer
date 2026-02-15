@@ -1042,30 +1042,27 @@ def _get_shape_50_win_rate():
 
 
 def _get_shape_prediction_win_rate_10(c):
-    """모양판별승률: 계산기표 2~11행(10행) 기준. prediction_history의 shape_predicted vs actual, 조커=패."""
+    """모양판별승률: 계산기 옵션 모양판별 픽 최신 10개 결과. calc history의 predicted(옵션 적용 후 배팅 픽) vs actual, 조커=패. shape_prediction OFF면 None."""
+    if not c.get('shape_prediction'):
+        return None
     history = c.get('history') or []
     completed = [h for h in history if h.get('actual') and h.get('actual') != 'pending']
-    if len(completed) < 2:
+    if not completed:
         return None
-    last10 = completed[:-1][-10:]
-    ph = get_prediction_history(200)
-    ph_by_round = {int(h.get('round')): h for h in ph if h and h.get('round') is not None}
+    last10 = completed[-10:]
     wins, total = 0, 0
     for h in last10:
-        rn = h.get('round')
-        if rn is None:
-            continue
-        sp = (ph_by_round.get(int(rn)) or {}).get('shape_predicted')
-        if sp not in ('정', '꺽'):
-            continue
+        pred = h.get('predicted')
         act = h.get('actual')
+        if pred not in ('정', '꺽'):
+            continue
         if act in ('joker', '조커'):
             total += 1
             continue
         if act not in ('정', '꺽'):
             continue
         total += 1
-        if sp == act:
+        if pred == act:
             wins += 1
     return (100.0 * wins / total) if total > 0 else None
 
@@ -7401,23 +7398,23 @@ RESULTS_HTML = '''
             var total = last50.filter(function(h) { return h.shape_predicted === '정' || h.shape_predicted === '꺽'; }).length;
             return total < 1 ? null : 100 * sp / total;
         }
-        /** 모양판별승률: 계산기표 2~11행(10행) 기준. prediction_history의 shape_predicted vs actual, 조커=패. */
+        /** 모양판별승률: 계산기 옵션 모양판별 픽 최신 10개 결과. calc history의 predicted(옵션 적용 후 배팅 픽) vs actual, 조커=패. shape_prediction OFF면 null. */
         function getShapePredictionWinRate10(id) {
-            var hist = calcState[id] && calcState[id].history;
+            if (!calcState[id] || !calcState[id].shape_prediction) return null;
+            var hist = calcState[id].history;
             if (!Array.isArray(hist)) return null;
             var completed = hist.filter(function(h) { return h && h.actual && h.actual !== 'pending' && h.actual !== ''; });
-            if (completed.length < 2) return null;
-            var last10 = completed.slice(0, -1).slice(-10);
-            var phByRound = {};
-            (predictionHistory || []).forEach(function(p) { if (p && p.round != null) phByRound[Number(p.round)] = p; });
+            if (completed.length < 1) return null;
+            var last10 = completed.slice(-10);
             var wins = 0, total = 0;
             last10.forEach(function(h) {
-                var sp = (phByRound[Number(h.round)] || {}).shape_predicted;
-                if (sp !== '정' && sp !== '꺽') return;
-                var act = (h.actual === 'joker' || h.actual === '조커') ? null : h.actual;
-                if (act !== '정' && act !== '꺽') { total++; return; }
+                var pred = h.predicted;
+                var act = h.actual;
+                if (pred !== '정' && pred !== '꺽') return;
+                if (act === 'joker' || act === '조커') { total++; return; }
+                if (act !== '정' && act !== '꺽') return;
                 total++;
-                if (sp === act) wins++;
+                if (pred === act) wins++;
             });
             return total < 1 ? null : 100 * wins / total;
         }
