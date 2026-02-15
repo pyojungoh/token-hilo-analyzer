@@ -4196,6 +4196,28 @@ RESULTS_HTML = '''
         .calc-buttons button.calc-reset { background: #455a64; }
         .calc-buttons button.calc-save { background: #1565c0; border-color: #1976d2; }
         .calc-detail { font-size: 0.85em; color: #bbb; flex: 1 1 280px; min-width: 0; }
+        /* 계산기 내 미니 그래프: 최근 25열, 작은 블록, 접기 가능 */
+        .calc-mini-graph-collapse { margin-bottom: 6px; border: 1px solid #444; border-radius: 4px; overflow: hidden; background: rgba(255,255,255,0.02); }
+        .calc-mini-graph-header { padding: 4px 8px; font-size: 0.8em; color: #888; cursor: pointer; user-select: none; }
+        .calc-mini-graph-header:hover { background: rgba(255,255,255,0.06); color: #aaa; }
+        .calc-mini-graph-collapse.collapsed .calc-mini-graph-header::before { content: '▶ '; }
+        .calc-mini-graph-collapse:not(.collapsed) .calc-mini-graph-header::before { content: '▼ '; }
+        .calc-mini-graph-collapse .calc-mini-graph-body { display: block; padding: 4px 8px 6px; border-top: 1px solid #333; }
+        .calc-mini-graph-collapse.collapsed .calc-mini-graph-body { display: none; }
+        .calc-mini-graph-wrap {
+            display: flex; flex-direction: row; justify-content: flex-start; align-items: flex-end;
+            gap: 2px; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+            max-height: 48px; padding: 0; -webkit-overflow-scrolling: touch;
+        }
+        .calc-mini-graph-wrap .calc-mini-col {
+            display: flex; flex-direction: column; gap: 1px; align-items: center;
+        }
+        .calc-mini-graph-wrap .calc-mini-block {
+            font-size: 8px; font-weight: bold; padding: 1px 3px; min-width: 12px; min-height: 10px;
+            box-sizing: border-box; border-radius: 2px; color: #fff; line-height: 1;
+        }
+        .calc-mini-graph-wrap .calc-mini-block.jung { background: #4caf50; }
+        .calc-mini-graph-wrap .calc-mini-block.kkuk { background: #f44336; }
         .calc-round-table-wrap { margin-bottom: 6px; overflow-x: auto; max-height: 32em; overflow-y: auto; }
         .calc-round-table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
         .calc-round-table th, .calc-round-table td { padding: 4px 6px; border: 1px solid #444; text-align: center; }
@@ -4439,6 +4461,10 @@ RESULTS_HTML = '''
             </div>
                             </div>
                             <div class="calc-detail" id="calc-1-detail">
+                                <div class="calc-mini-graph-collapse" id="calc-1-mini-graph-collapse" data-calc="1">
+                                    <div class="calc-mini-graph-header">그래프</div>
+                                    <div class="calc-mini-graph-body"><div class="calc-mini-graph-wrap" id="calc-1-mini-graph" title="최근 정/꺽 그래프 (좌=최신)"></div></div>
+                                </div>
                                 <div class="calc-round-table-wrap" id="calc-1-round-table-wrap"></div>
                                 <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="1">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-1-streak">경기결과 (최근 30회): -</div>
@@ -4486,6 +4512,10 @@ RESULTS_HTML = '''
                                 </div>
                             </div>
                             <div class="calc-detail" id="calc-2-detail">
+                                <div class="calc-mini-graph-collapse" id="calc-2-mini-graph-collapse" data-calc="2">
+                                    <div class="calc-mini-graph-header">그래프</div>
+                                    <div class="calc-mini-graph-body"><div class="calc-mini-graph-wrap" id="calc-2-mini-graph" title="최근 정/꺽 그래프 (좌=최신)"></div></div>
+                                </div>
                                 <div class="calc-round-table-wrap" id="calc-2-round-table-wrap"></div>
                                 <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="2">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-2-streak">경기결과 (최근 30회): -</div>
@@ -4533,6 +4563,10 @@ RESULTS_HTML = '''
                                 </div>
                             </div>
                             <div class="calc-detail" id="calc-3-detail">
+                                <div class="calc-mini-graph-collapse" id="calc-3-mini-graph-collapse" data-calc="3">
+                                    <div class="calc-mini-graph-header">그래프</div>
+                                    <div class="calc-mini-graph-body"><div class="calc-mini-graph-wrap" id="calc-3-mini-graph" title="최근 정/꺽 그래프 (좌=최신)"></div></div>
+                                </div>
                                 <div class="calc-round-table-wrap" id="calc-3-round-table-wrap"></div>
                                 <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="3">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-3-streak">경기결과 (최근 30회): -</div>
@@ -5578,6 +5612,36 @@ RESULTS_HTML = '''
                         graphDiv.appendChild(col);
                     });
                 }
+                // 계산기 내 미니 그래프: 최근 25열, 작은 블록 (메인과 동일 데이터)
+                [1, 2, 3].forEach(function(id) {
+                    var miniEl = document.getElementById('calc-' + id + '-mini-graph');
+                    if (miniEl && graphValues && Array.isArray(graphValues) && graphValues.length >= 2) {
+                        var filtered = graphValues.filter(function(v) { return v === true || v === false; });
+                        var segments = [];
+                        var current = null, count = 0;
+                        filtered.forEach(function(v) {
+                            if (v === current) { count++; } else {
+                                if (current !== null) segments.push({ type: current, count: count });
+                                current = v; count = 1;
+                            }
+                        });
+                        if (current !== null) segments.push({ type: current, count: count });
+                        var take = Math.min(25, segments.length);
+                        var show = segments.slice(0, take);
+                        miniEl.innerHTML = '';
+                        show.forEach(function(seg) {
+                            var col = document.createElement('div');
+                            col.className = 'calc-mini-col';
+                            for (var i = 0; i < seg.count; i++) {
+                                var block = document.createElement('div');
+                                block.className = 'calc-mini-block ' + (seg.type === true ? 'jung' : 'kkuk');
+                                block.textContent = seg.type === true ? '정' : '꺽';
+                                col.appendChild(block);
+                            }
+                            miniEl.appendChild(col);
+                        });
+                    } else if (miniEl) { miniEl.innerHTML = ''; }
+                });
                 
                 // 전이 확률 표: 전체 / 최근 30회 (연속된 비-null 쌍만 사용)
                 function calcTransitions(arr) {
@@ -7997,6 +8061,12 @@ RESULTS_HTML = '''
             t.addEventListener('click', function(e) {
                 e.stopPropagation();
                 const wrap = this.closest('.calc-options-wrap');
+                if (wrap) wrap.classList.toggle('collapsed');
+            });
+        });
+        document.querySelectorAll('.calc-mini-graph-header').forEach(h => {
+            h.addEventListener('click', function() {
+                const wrap = this.closest('.calc-mini-graph-collapse');
                 if (wrap) wrap.classList.toggle('collapsed');
             });
         });
