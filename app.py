@@ -733,7 +733,7 @@ def get_chunk_profile_stats(conn, profile, current_round=None):
             else:
                 kkeok_weighted += w
         total = jung_weighted + kkeok_weighted
-        if total < 2:
+        if total < 0.5:
             return None
         return {'jung_count': jung_weighted, 'kkeok_count': kkeok_weighted}
     except Exception:
@@ -2419,7 +2419,7 @@ def _extract_chunk_profiles(line_runs, pong_runs, first_is_line):
     덩어리 = 2개 이상의 줄들이 이어진 구간. 줄 = 같은 결과 연속(정정/꺽꺽).
     연속 줄 패턴: 2+줄, 1퐁당, 2+줄, 1퐁당. 퐁당 = 1개씩 정꺽정꺽.
     반환: [profile_tuple, ...] - 추출된 덩어리 프로필들. 맨 앞이 최신 덩어리.
-    프로필 = (h1, h2, ...) 줄들의 높이(블록 개수).
+    프로필 = (h1, h2, ...) 줄들의 높이(블록 개수). 줄1(꺽꺽정꺽꺽 등) 포함해 (2,1,2)·(1,1) 등 추출.
     """
     if not line_runs and not pong_runs:
         return []
@@ -2444,23 +2444,22 @@ def _extract_chunk_profiles(line_runs, pong_runs, first_is_line):
         if is_line:
             if run_val >= 5:
                 if len(chunk_heights) >= 2:
-                    profiles.append(tuple(chunk_heights))
+                    profiles.append(tuple(chunk_heights[:8]))
                 chunk_heights = []
             elif run_val == 1:
-                if len(chunk_heights) >= 2:
-                    profiles.append(tuple(chunk_heights))
-                chunk_heights = []
+                # 줄1 포함: 꺽꺽정꺽꺽 등 (2,1,2)·(1,1) 패턴 추출. 덩어리에 1 추가.
+                chunk_heights.append(1)
             elif run_val >= 2:
                 chunk_heights.append(run_val)
         else:
             if run_val >= 2:
                 if len(chunk_heights) >= 2:
-                    profiles.append(tuple(chunk_heights))
+                    profiles.append(tuple(chunk_heights[:8]))
                 chunk_heights = []
             elif run_val == 1:
                 pass
     if len(chunk_heights) >= 2:
-        profiles.append(tuple(chunk_heights))
+        profiles.append(tuple(chunk_heights[:8]))
     return profiles
 
 
@@ -2941,20 +2940,32 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
                 pong_w += w
                 line_w = max(0.0, line_w - w * 0.5)
     # 유사 덩어리 가중치: 최근·비슷한 덩어리일수록 가중치 높게. 덩어리 높이 프로필 기반.
+    # 연속 비율 반영: 0.52~0.55 구간에서도 소폭 보정, 0.6 이상이면 가중치 강화.
     if chunk_profile_stats:
         jc = chunk_profile_stats.get('jung_count') or 0
         kc = chunk_profile_stats.get('kkeok_count') or 0
         total = jc + kc
-        if total >= 2:
+        if total >= 1:
             jr = jc / total if total else 0
             kr = kc / total if total else 0
-            w = 0.08 if total >= 15 else 0.05
+            if total >= 15:
+                w = 0.10 if (jr >= 0.6 or kr >= 0.6) else 0.08
+            elif total >= 5:
+                w = 0.07
+            else:
+                w = 0.04
             if jr >= 0.55:
                 line_w += w
                 pong_w = max(0.0, pong_w - w * 0.5)
             elif kr >= 0.55:
                 pong_w += w
                 line_w = max(0.0, line_w - w * 0.5)
+            elif jr >= 0.52 and jr < 0.55:
+                line_w += w * 0.4
+                pong_w = max(0.0, pong_w - w * 0.2)
+            elif kr >= 0.52 and kr < 0.55:
+                pong_w += w * 0.4
+                line_w = max(0.0, line_w - w * 0.2)
     total_w = line_w + pong_w
     if total_w > 0:
         line_w /= total_w
