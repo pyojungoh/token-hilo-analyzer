@@ -1893,10 +1893,12 @@ def _push_current_pick_from_calc(calculator_id, c):
         return
     try:
         calc_id = int(calculator_id) if calculator_id in (1, 2, 3) else 1
-        ok = bet_int.set_current_pick(conn, pick_color=pick_color, round_num=c.get('pending_round'),
+        pr = c.get('pending_round')
+        ok = bet_int.set_current_pick(conn, pick_color=pick_color, round_num=pr,
                                        suggested_amount=suggested_amount, calculator_id=calc_id)
         if ok:
             conn.commit()
+            _update_current_pick_relay_cache(calc_id, pr, pick_color, suggested_amount, c.get('running', True))
     except Exception:
         pass
     finally:
@@ -1904,6 +1906,25 @@ def _push_current_pick_from_calc(calculator_id, c):
             conn.close()
         except Exception:
             pass
+
+
+# Relay 캐시: 매크로 폴링 시 DB 없이 즉시 반환. 계산기 POST·스케줄러 푸시 시 갱신.
+_current_pick_relay_cache = {1: None, 2: None, 3: None}
+
+
+def _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running=True, probability=None):
+    """회차·배팅중 픽·금액을 relay 캐시에 즉시 반영. 매크로 GET 시 DB 없이 반환."""
+    try:
+        cid = int(calculator_id) if calculator_id in (1, 2, 3) else 1
+        _current_pick_relay_cache[cid] = {
+            'round': round_num,
+            'pick_color': pick_color,
+            'suggested_amount': suggested_amount,
+            'running': running,
+            'probability': probability,
+        }
+    except (TypeError, ValueError):
+        pass
 
 
 # 머지 캐시: 이미 머지한 회차 집합. 새 결과 회차가 생길 때만 머지해서 폴링 시 속도 향상
@@ -5021,7 +5042,7 @@ RESULTS_HTML = '''
             var last = lastPostedCurrentPick[id];
             if (last && last.round === key.round && last.pickColor === key.pickColor && last.suggested_amount === key.suggested_amount && last.running === key.running) return;
             lastPostedCurrentPick[id] = key;
-            try { fetch('/api/current-pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: payload.pickColor ?? null, round: payload.round ?? null, probability: payload.probability ?? null, suggested_amount: payload.suggested_amount ?? null, running: payload.running }) }).catch(function() {}); } catch (e) {}
+            try { fetch('/api/current-pick-relay', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: payload.pickColor ?? null, round: payload.round ?? null, suggested_amount: payload.suggested_amount ?? null, running: payload.running }) }).catch(function() {}); } catch (e) {}
         }
         function setRoundPrediction(round, pred) {
             if (round == null || !pred) return;
@@ -10033,10 +10054,14 @@ def api_current_pick():
         ok = bet_int.set_current_pick(conn, pick_color=pick_color, round_num=round_num, probability=probability, suggested_amount=suggested_amount, calculator_id=calculator_id)
         if ok:
             conn.commit()
+            _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running if running is not None else True, probability)
             _log_when_changed('current_pick', (calculator_id, pick_color, round_num), lambda v: f"[배팅연동] 계산기{v[0]} 픽 저장: {v[1]} round {v[2]}")
         if running is not None:
             if bet_int.set_calculator_running(conn, calculator_id, bool(running)):
                 conn.commit()
+                c = _current_pick_relay_cache.get(calculator_id)
+                if c and isinstance(c, dict):
+                    c['running'] = bool(running)
         elif pick_color is not None:
             # 픽 저장 시 자동으로 running=True — 실행 중인 계산기로 복원
             if bet_int.set_calculator_running(conn, calculator_id, True):
@@ -10046,6 +10071,91 @@ def api_current_pick():
     except Exception as e:
         print(f"[❌ 오류] current-pick 실패: {str(e)[:200]}")
         return jsonify(empty_pick if request.method == 'GET' else {'ok': False}), 200
+
+
+def _relay_db_write_background(calculator_id, pick_color, round_num, suggested_amount, running):
+    """relay POST 시 DB 쓰기를 백그라운드로 수행. 응답 지연 없음."""
+    if not bet_int or not DB_AVAILABLE or not DATABASE_URL:
+        return
+    try:
+        conn = get_db_connection(statement_timeout_sec=3)
+        if conn:
+            try:
+                ensure_current_pick_table(conn)
+                bet_int.set_current_pick(conn, pick_color=pick_color, round_num=round_num,
+                                         suggested_amount=suggested_amount, calculator_id=calculator_id)
+                if running is not None:
+                    bet_int.set_calculator_running(conn, calculator_id, bool(running))
+                conn.commit()
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"[경고] relay DB 백그라운드 저장 실패: {str(e)[:80]}")
+
+
+@app.route('/api/current-pick-relay', methods=['GET', 'POST'])
+def api_current_pick_relay():
+    """매크로 전용: DB 없이 메모리 캐시에서 즉시 반환. POST: 회차·픽·금액만 받아 캐시 즉시 갱신 후 응답."""
+    empty_pick = {'pick_color': None, 'round': None, 'probability': None, 'suggested_amount': None, 'running': True}
+    try:
+        if request.method == 'POST':
+            data = request.get_json(silent=True) or {}
+            calculator_id = data.get('calculator', 1)
+            try:
+                calculator_id = int(calculator_id) if calculator_id in (1, 2, 3) else 1
+            except (TypeError, ValueError):
+                calculator_id = 1
+            pick_color = data.get('pickColor') or data.get('pick_color')
+            round_num = data.get('round')
+            suggested_amount = data.get('suggested_amount')
+            running = data.get('running')
+            _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount,
+                                            running if running is not None else True, data.get('probability'))
+            threading.Thread(target=_relay_db_write_background, daemon=True,
+                             args=(calculator_id, pick_color, round_num, suggested_amount, running)).start()
+            return jsonify({'ok': True}), 200
+        calculator_id = request.args.get('calculator', '1').strip()
+        try:
+            calculator_id = int(calculator_id) if calculator_id in ('1', '2', '3') else 1
+        except (TypeError, ValueError):
+            calculator_id = 1
+        cached = _current_pick_relay_cache.get(calculator_id)
+        if cached and isinstance(cached, dict):
+            out = dict(empty_pick)
+            for k in ('round', 'pick_color', 'probability', 'suggested_amount', 'running'):
+                if k in cached:
+                    out[k] = cached[k]
+            if out.get('running') is False:
+                out['pick_color'] = None
+                out['round'] = None
+                out['suggested_amount'] = None
+            return jsonify(out), 200
+        if bet_int and DB_AVAILABLE and DATABASE_URL:
+            conn = get_db_connection(statement_timeout_sec=3)
+            if conn:
+                try:
+                    ensure_current_pick_table(conn)
+                    conn.commit()
+                    out = bet_int.get_current_pick(conn, calculator_id=calculator_id)
+                    if out:
+                        _update_current_pick_relay_cache(calculator_id, out.get('round'), out.get('pick_color'),
+                                                         out.get('suggested_amount'), out.get('running', True), out.get('probability'))
+                        if out.get('running') is False:
+                            out = dict(out)
+                            out['pick_color'] = out['round'] = out['suggested_amount'] = None
+                        return jsonify(out if out else empty_pick), 200
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+        return jsonify(empty_pick), 200
+    except Exception as e:
+        print(f"[경고] current-pick-relay 실패: {str(e)[:100]}")
+        return jsonify(empty_pick), 200
 
 
 # 배팅 사이트 URL (토큰하이로우). 필요 시 환경변수로 오버라이드 가능

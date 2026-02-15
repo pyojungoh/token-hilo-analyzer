@@ -160,14 +160,14 @@ def get_window_rect_at(screen_x, screen_y):
 
 
 def fetch_pick(url, calc_id=1, timeout=4):
-    """GET /api/current-pick → round, pick_color, suggested_amount"""
+    """GET /api/current-pick-relay → round, pick_color, suggested_amount (DB 없이 캐시에서 즉시 반환)"""
     url = (url or "").strip().rstrip("/")
     if not url:
         return None
     if "://" not in url:
         url = "https://" + url
     try:
-        r = requests.get(url + "/api/current-pick", params={"calculator": calc_id}, timeout=timeout)
+        r = requests.get(url + "/api/current-pick-relay", params={"calculator": calc_id}, timeout=timeout)
         r.raise_for_status()
         return r.json()
     except Exception:
