@@ -2181,7 +2181,7 @@ def _pong_line_pct(arr):
 def _balance_raw_series(graph_values, window=10):
     """
     구간별 '같은 게 나온 비율' 리스트. docs/BALANCE_SEGMENT_SPEC.md 참고.
-    graph_values[i]가 True면 정(줄), False면 꺽(퐁당). 인덱스 0이 최신.
+    graph_values[i]가 True면 정(빨강), False면 꺽(검정). 줄/퐁당은 연속·교차 패턴(정정/꺽꺽=줄, 정꺽=퐁당).
     반환: [balance_0, balance_1, ...] 각 항목 0.0~1.0 또는 None.
     """
     if not graph_values or len(graph_values) < window:
@@ -2861,7 +2861,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     if u35_detected:
         line_w += 0.14
         pong_w = max(0.0, pong_w - 0.07)
-    # 줄 길이 보정: 정/꺽 동일. 같은 결과가 4개 이상 이어지면 퐁당(바뀜) 가중치를 올려 전환 가능성 반영
+    # 줄 길이 보정: 같은 결과가 4개 이상 이어질 때. 줄=유지(정/꺽 구분 없음) → 줄 따라감.
     current_run_len = 1
     for ri in range(1, len(use_for_pattern)):
         v = use_for_pattern[ri]
@@ -2871,8 +2871,8 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
             else:
                 break
     if current_run_len >= 4:
-        pong_w += 0.14
-        line_w = max(0.0, line_w - 0.07)
+        line_w += 0.12
+        pong_w = max(0.0, pong_w - 0.06)
     # 퐁당 / 덩어리 / 줄 세 가지 구간 보정: phase·chunk_shape에 따라 line_w·pong_w 조정
     pong_chunk_phase = None
     pong_chunk_debug = {}
@@ -2918,8 +2918,8 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     elif balance_phase == 'transition_to_high':
         line_w += 0.06
         pong_w = max(0.0, pong_w - 0.03)
-    # 저장된 모양 가중치: 그 모양 다음에 정이 많았으면 줄 쪽, 꺽이 많았으면 퐁당 쪽 가산 (예측값 무관).
-    # 문턱 10회 이상, 샘플 수에 따라 가중치 단계 적용 (10~19: 0.04, 20~49: 0.07, 50+: 0.10).
+    # 저장된 모양 가중치: 그 모양 다음에 정/꺽이 많았으면 해당 예측 쪽 가산. 줄/퐁당은 last에 따라 결정.
+    # 정 많음→정 예측: last 정이면 줄(유지), last 꺽이면 퐁당(바뀜). 꺽 많음→꺽 예측: last 꺽이면 줄, last 정이면 퐁당.
     if shape_win_stats:
         jc = shape_win_stats.get('jung_count') or 0
         kc = shape_win_stats.get('kkeok_count') or 0
@@ -2934,13 +2934,20 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
             else:
                 w = 0.04
             if jr >= 0.55:
-                line_w += w
-                pong_w = max(0.0, pong_w - w * 0.5)
+                if last is True:
+                    line_w += w
+                    pong_w = max(0.0, pong_w - w * 0.5)
+                else:
+                    pong_w += w
+                    line_w = max(0.0, line_w - w * 0.5)
             elif kr >= 0.55:
-                pong_w += w
-                line_w = max(0.0, line_w - w * 0.5)
-    # 유사 덩어리 가중치: 최근·비슷한 덩어리일수록 가중치 높게. 덩어리 높이 프로필 기반.
-    # 연속 비율 반영: 0.52~0.55 구간에서도 소폭 보정, 0.6 이상이면 가중치 강화.
+                if last is False:
+                    line_w += w
+                    pong_w = max(0.0, pong_w - w * 0.5)
+                else:
+                    pong_w += w
+                    line_w = max(0.0, line_w - w * 0.5)
+    # 유사 덩어리 가중치: 정/꺽→줄/퐁당 매핑은 last 반영 (위 shape_win_stats와 동일).
     if chunk_profile_stats:
         jc = chunk_profile_stats.get('jung_count') or 0
         kc = chunk_profile_stats.get('kkeok_count') or 0
@@ -2955,17 +2962,35 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
             else:
                 w = 0.04
             if jr >= 0.55:
-                line_w += w
-                pong_w = max(0.0, pong_w - w * 0.5)
+                if last is True:
+                    line_w += w
+                    pong_w = max(0.0, pong_w - w * 0.5)
+                else:
+                    pong_w += w
+                    line_w = max(0.0, line_w - w * 0.5)
             elif kr >= 0.55:
-                pong_w += w
-                line_w = max(0.0, line_w - w * 0.5)
+                if last is False:
+                    line_w += w
+                    pong_w = max(0.0, pong_w - w * 0.5)
+                else:
+                    pong_w += w
+                    line_w = max(0.0, line_w - w * 0.5)
             elif jr >= 0.52 and jr < 0.55:
-                line_w += w * 0.4
-                pong_w = max(0.0, pong_w - w * 0.2)
+                w2 = w * 0.4
+                if last is True:
+                    line_w += w2
+                    pong_w = max(0.0, pong_w - w2 * 0.5)
+                else:
+                    pong_w += w2
+                    line_w = max(0.0, line_w - w2 * 0.5)
             elif kr >= 0.52 and kr < 0.55:
-                pong_w += w * 0.4
-                line_w = max(0.0, line_w - w * 0.2)
+                w2 = w * 0.4
+                if last is False:
+                    line_w += w2
+                    pong_w = max(0.0, pong_w - w2 * 0.5)
+                else:
+                    pong_w += w2
+                    line_w = max(0.0, line_w - w2 * 0.5)
     total_w = line_w + pong_w
     if total_w > 0:
         line_w /= total_w
