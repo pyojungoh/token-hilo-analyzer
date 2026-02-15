@@ -1400,6 +1400,16 @@ def _apply_results_to_calcs(results):
                         c['pending_predicted'] = stored_for_round['predicted']
                         c['pending_prob'] = stored_for_round.get('probability')
                         c['pending_color'] = stored_for_round.get('pick_color')
+                        # 모양판별 옵션: shape_only와 별도. 덩어리/퐁당 개선 픽 사용 (기존 공식 변경 없음)
+                        if c.get('shape_prediction') and not c.get('shape_only_latest_next_pick'):
+                            try:
+                                hint = get_shape_prediction_hint(results, get_prediction_history(100))
+                                if hint and hint.get('value') in ('정', '꺽'):
+                                    c['pending_predicted'] = hint['value']
+                                    c['pending_color'] = hint.get('color') or c.get('pending_color')
+                                    c['pending_shape_debug'] = hint.get('debug') or {}
+                            except Exception:
+                                pass
                         eff_pick, amt, eff_pred = _server_calc_effective_pick_and_amount(c)
                         c['pending_bet_amount'] = amt if amt is not None and amt > 0 else None
                         # 모양옵션 체크 시: 실제 배팅 픽(shape 기준)으로 pending_color·pending_predicted 보정 → 1열과 배팅중 색 일치
@@ -1566,6 +1576,16 @@ def _apply_results_to_calcs(results):
                     c['pending_predicted'] = stored_for_round['predicted']
                     c['pending_prob'] = stored_for_round.get('probability')
                     c['pending_color'] = stored_for_round.get('pick_color')
+                    # 모양판별 옵션: shape_only와 별도
+                    if c.get('shape_prediction') and not c.get('shape_only_latest_next_pick'):
+                        try:
+                            hint = get_shape_prediction_hint(results, get_prediction_history(100))
+                            if hint and hint.get('value') in ('정', '꺽'):
+                                c['pending_predicted'] = hint['value']
+                                c['pending_color'] = hint.get('color') or c.get('pending_color')
+                                c['pending_shape_debug'] = hint.get('debug') or {}
+                        except Exception:
+                            pass
                     eff_pick, next_amt, eff_pred = _server_calc_effective_pick_and_amount(c)
                     c['pending_bet_amount'] = next_amt if next_amt is not None and next_amt > 0 else None
                     # 모양옵션 체크 시: 실제 배팅 픽(shape 기준)으로 pending_color·pending_predicted 보정 → 1열과 배팅중 색 일치
@@ -2616,7 +2636,28 @@ def _symmetry_line_for_n(graph_values, n):
     }
 
 
-def compute_prediction(results, prediction_history, prev_symmetry_counts=None, shape_win_stats=None, chunk_profile_stats=None):
+def get_shape_prediction_hint(results, prediction_history=None):
+    """모양판별 옵션용: 덩어리 끝 변형·퐁당 가중치 개선된 예측. 기존 compute_prediction 공식 변경 없음.
+    반환: {'value': '정'|'꺽'|None, 'color': '빨강'|'검정'|None, 'debug': {...}} 또는 None(15번 조커 등)."""
+    if not results or len(results) < 16:
+        return None
+    ph = prediction_history or []
+    shape_win_stats = _get_shape_stats_for_results(results)
+    chunk_profile_stats = _get_chunk_stats_for_results(results)
+    debug = {}
+    out = compute_prediction(
+        results, ph,
+        shape_win_stats=shape_win_stats,
+        chunk_profile_stats=chunk_profile_stats,
+        use_shape_adjustments=True,
+        shape_debug_out=debug
+    )
+    if not out or out.get('value') is None:
+        return None
+    return {'value': out['value'], 'color': out.get('color', '빨강'), 'debug': debug}
+
+
+def compute_prediction(results, prediction_history, prev_symmetry_counts=None, shape_win_stats=None, chunk_profile_stats=None, use_shape_adjustments=False, shape_debug_out=None):
     """
     서버 측 예측 공식. JS와 동일한 입력·출력.
     results: 최신순 결과 리스트, 각 항목 dict(result, joker, gameID 등)
@@ -2624,6 +2665,8 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     prev_symmetry_counts: {left, right} 이전 좌우 줄 개수(선택)
     shape_win_stats: {jung_count, kkeok_count} 저장된 모양별 '그 다음 실제 결과' 누적(선택). 있으면 해당 모양 가중치 반영.
     chunk_profile_stats: {jung_count, kkeok_count} 유사 덩어리 프로필의 '다음 결과' 가중 통계(선택). 최근·유사 덩어리일수록 가중치 높게 반영.
+    use_shape_adjustments: True면 모양판별 개선(덩어리 321/줄1퐁당1 퐁당 가산, 덩어리 기본 가중치 축소) 적용.
+    shape_debug_out: dict 전달 시 use_shape_adjustments일 때 phase·chunk_shape 등 로그용 정보 채움.
     반환: {'value': '정'|'꺽'|None, 'round': int, 'prob': float, 'color': '빨강'|'검정'|None}
     15번 카드가 조커면 value=None, color=None (픽 보류).
     좌우 대칭·줄 유사도는 15·20·30열 가중 평균으로 반영(데이터 있으면).
@@ -2843,11 +2886,21 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         pong_chunk_phase = phase
     # 덩어리 구간: 블록 반복·줄2~4 → 줄 가중치 우선. 321 끝이면 바뀜 소폭 가산
     elif phase in ('chunk_start', 'chunk_phase', 'pong_to_chunk'):
-        line_w += 0.10
-        pong_w = max(0.0, pong_w - 0.05)
-        if chunk_shape == '321':
-            pong_w += 0.04
-            line_w = max(0.0, line_w - 0.02)
+        if use_shape_adjustments:
+            line_w += 0.05  # 덩어리 기본 가중치 축소 (위로만 쏠림 완화)
+            pong_w = max(0.0, pong_w - 0.025)
+            if chunk_shape == '321':
+                pong_w += 0.08  # 321(줄어듦) 구간 퐁당 가산
+                line_w = max(0.0, line_w - 0.04)
+            elif _detect_line1_pong1_pattern(line_runs, pong_runs, (use_for_pattern[0] == use_for_pattern[1]) if len(use_for_pattern) >= 2 else True):
+                pong_w += 0.05  # 줄1퐁당1 패턴 퐁당 반영
+                line_w = max(0.0, line_w - 0.025)
+        else:
+            line_w += 0.10
+            pong_w = max(0.0, pong_w - 0.05)
+            if chunk_shape == '321':
+                pong_w += 0.04
+                line_w = max(0.0, line_w - 0.02)
         pong_chunk_phase = phase
     # 밸런스 구간 전환점 보정: 서서히 올라갔다 최고점 후 내려가는 등 구간 전환 시 line_w/pong_w 소폭 반영
     balance_phase = _balance_segment_phase(graph_values)
@@ -2936,6 +2989,11 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         if chunk_profile_stats:
             pong_chunk_debug['chunk_profile_jung'] = chunk_profile_stats.get('jung_count')
             pong_chunk_debug['chunk_profile_kkeok'] = chunk_profile_stats.get('kkeok_count')
+    if use_shape_adjustments and shape_debug_out is not None and isinstance(shape_debug_out, dict):
+        shape_debug_out['phase'] = pong_chunk_phase
+        shape_debug_out['chunk_shape'] = chunk_shape
+        shape_debug_out['pred'] = predict
+        shape_debug_out['prob'] = round(pred_prob, 1)
     return {
         'value': predict, 'round': predicted_round_full, 'prob': round(pred_prob, 1), 'color': color_to_pick,
         'warning_u35': u35_detected,
@@ -4554,6 +4612,8 @@ RESULTS_HTML = '''
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-1-lose-streak-reverse"> 연패≥<input type="number" id="calc-1-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-1-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-1-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-1-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-1-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
+                                            <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-1-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label></td></tr>
+                                            <tr><td>모양판별 로그</td><td><div id="calc-1-shape-prediction-log" class="shape-prediction-log" style="font-size:0.8em;color:#888;max-height:80px;overflow-y:auto;white-space:pre-wrap;">—</div></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-1-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-1-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
                                             <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
@@ -4605,6 +4665,8 @@ RESULTS_HTML = '''
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-2-lose-streak-reverse"> 연패≥<input type="number" id="calc-2-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-2-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-2-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-2-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-2-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
+                                            <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-2-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label></td></tr>
+                                            <tr><td>모양판별 로그</td><td><div id="calc-2-shape-prediction-log" class="shape-prediction-log" style="font-size:0.8em;color:#888;max-height:80px;overflow-y:auto;white-space:pre-wrap;">—</div></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-2-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-2-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
                                             <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
@@ -4656,6 +4718,8 @@ RESULTS_HTML = '''
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-3-lose-streak-reverse"> 연패≥<input type="number" id="calc-3-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-3-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-3-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-3-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-3-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
+                                            <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-3-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label></td></tr>
+                                            <tr><td>모양판별 로그</td><td><div id="calc-3-shape-prediction-log" class="shape-prediction-log" style="font-size:0.8em;color:#888;max-height:80px;overflow-y:auto;white-space:pre-wrap;">—</div></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-3-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-3-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
                                             <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
@@ -4961,6 +5025,7 @@ RESULTS_HTML = '''
                 streak_suppress_reverse: false,
                 lock_direction_on_lose_streak: true,
                 shape_only_latest_next_pick: false,
+                shape_prediction: false,
                 last_trend_direction: null,
                 martingale: false,
                 martingale_type: 'pyo',
@@ -5030,6 +5095,7 @@ RESULTS_HTML = '''
                     streak_suppress_reverse: !!(document.getElementById('calc-' + id + '-streak-suppress-reverse') && document.getElementById('calc-' + id + '-streak-suppress-reverse').checked),
                     lock_direction_on_lose_streak: !!(document.getElementById('calc-' + id + '-lock-direction-on-lose-streak') && document.getElementById('calc-' + id + '-lock-direction-on-lose-streak').checked),
                     shape_only_latest_next_pick: !!(document.getElementById('calc-' + id + '-shape-only-latest-next-pick') && document.getElementById('calc-' + id + '-shape-only-latest-next-pick').checked),
+                    shape_prediction: !!(document.getElementById('calc-' + id + '-shape-prediction') && document.getElementById('calc-' + id + '-shape-prediction').checked),
                     last_trend_direction: (calcState[id].last_trend_direction === 'up' || calcState[id].last_trend_direction === 'down') ? calcState[id].last_trend_direction : null,
                     martingale: !!(martingaleEl && martingaleEl.checked),
                     martingale_type: (martingaleTypeEl && martingaleTypeEl.value) || 'pyo',
@@ -5048,9 +5114,10 @@ RESULTS_HTML = '''
                         var pr = calcState[id].running ? ((lastServerPrediction && lastServerPrediction.round) || calcState[id].pending_round) : null;
                         var bet = (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === pr && (calcState[id].lastBetPickForRound.value === '정' || calcState[id].lastBetPickForRound.value === '꺽')) ? calcState[id].lastBetPickForRound.value : null;
                         if (bet) return bet;
-                        // 모양옵션 시: 서버 calc state(실제 배팅 픽) 우선 — lastServerPrediction은 메인 예측기라 1열·배팅중과 다를 수 있음
+                        // 모양옵션/모양판별 시: 서버 calc state(실제 배팅 픽) 우선 — lastServerPrediction은 메인 예측기라 1열·배팅중과 다를 수 있음
                         var shapeOn = !!(document.getElementById('calc-' + id + '-shape-only-latest-next-pick') && document.getElementById('calc-' + id + '-shape-only-latest-next-pick').checked);
-                        if (shapeOn && calcState[id].pending_predicted) return calcState[id].pending_predicted;
+                        var shapePredOn = !!(document.getElementById('calc-' + id + '-shape-prediction') && document.getElementById('calc-' + id + '-shape-prediction').checked);
+                        if ((shapeOn || shapePredOn) && calcState[id].pending_predicted) return calcState[id].pending_predicted;
                         return calcState[id].running ? ((lastServerPrediction && lastServerPrediction.value) || calcState[id].pending_predicted) : null;
                     })(),
                     pending_prob: calcState[id].running ? ((lastServerPrediction && lastServerPrediction.prob != null) ? lastServerPrediction.prob : calcState[id].pending_prob) : null,
@@ -5058,9 +5125,10 @@ RESULTS_HTML = '''
                         var pr = calcState[id].running ? ((lastServerPrediction && lastServerPrediction.round) || calcState[id].pending_round) : null;
                         var bet = (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === pr && (calcState[id].lastBetPickForRound.value === '정' || calcState[id].lastBetPickForRound.value === '꺽')) ? calcState[id].lastBetPickForRound : null;
                         if (bet) return bet.isRed ? '빨강' : '검정';
-                        // 모양옵션 시: 서버 calc state(실제 배팅 픽) 우선 — lastServerPrediction은 메인 예측기라 1열·배팅중과 다를 수 있음
+                        // 모양옵션/모양판별 시: 서버 calc state(실제 배팅 픽) 우선 — lastServerPrediction은 메인 예측기라 1열·배팅중과 다를 수 있음
                         var shapeOn = !!(document.getElementById('calc-' + id + '-shape-only-latest-next-pick') && document.getElementById('calc-' + id + '-shape-only-latest-next-pick').checked);
-                        if (shapeOn && calcState[id].pending_color) return calcState[id].pending_color;
+                        var shapePredOn = !!(document.getElementById('calc-' + id + '-shape-prediction') && document.getElementById('calc-' + id + '-shape-prediction').checked);
+                        if ((shapeOn || shapePredOn) && calcState[id].pending_color) return calcState[id].pending_color;
                         return calcState[id].running ? ((lastServerPrediction && lastServerPrediction.color) || calcState[id].pending_color) : null;
                     })(),
                     pending_bet_amount: (calcState[id].pending_bet_amount != null && calcState[id].pending_bet_amount > 0) ? calcState[id].pending_bet_amount : null,
@@ -5186,6 +5254,7 @@ RESULTS_HTML = '''
                 calcState[id].pending_prob = c.pending_prob != null ? c.pending_prob : null;
                 calcState[id].pending_color = c.pending_color || null;
                 calcState[id].pending_bet_amount = (c.pending_bet_amount != null && !isNaN(Number(c.pending_bet_amount)) && Number(c.pending_bet_amount) > 0) ? Number(c.pending_bet_amount) : null;
+                calcState[id].pending_shape_debug = (c.pending_shape_debug && typeof c.pending_shape_debug === 'object') ? c.pending_shape_debug : null;
                 var pauseThrRestore = (typeof c.pause_win_rate_threshold === 'number' && c.pause_win_rate_threshold >= 0 && c.pause_win_rate_threshold <= 100) ? c.pause_win_rate_threshold : 45;
                 calcState[id].pause_low_win_rate_enabled = !!c.pause_low_win_rate_enabled;
                 calcState[id].pause_win_rate_threshold = pauseThrRestore;
@@ -5200,6 +5269,7 @@ RESULTS_HTML = '''
                 calcState[id].streak_suppress_reverse = !!c.streak_suppress_reverse;
                 calcState[id].lock_direction_on_lose_streak = c.lock_direction_on_lose_streak !== false;
                 calcState[id].shape_only_latest_next_pick = !!c.shape_only_latest_next_pick;
+                calcState[id].shape_prediction = !!c.shape_prediction;
                 calcState[id].last_trend_direction = (c.last_trend_direction === 'up' || c.last_trend_direction === 'down') ? c.last_trend_direction : null;
                 calcState[id].last_win_rate_zone = (c.last_win_rate_zone === 'high_falling' || c.last_win_rate_zone === 'low_rising' || c.last_win_rate_zone === 'mid_flat') ? c.last_win_rate_zone : null;
                 calcState[id].last_win_rate_zone_change_round = (c.last_win_rate_zone_change_round != null && !isNaN(Number(c.last_win_rate_zone_change_round))) ? Number(c.last_win_rate_zone_change_round) : null;
@@ -5237,6 +5307,8 @@ RESULTS_HTML = '''
                 if (lockDirEl) lockDirEl.checked = calcState[id].lock_direction_on_lose_streak !== false;
                 var shapeOnlyEl = document.getElementById('calc-' + id + '-shape-only-latest-next-pick');
                 if (shapeOnlyEl) shapeOnlyEl.checked = !!calcState[id].shape_only_latest_next_pick;
+                var shapePredEl = document.getElementById('calc-' + id + '-shape-prediction');
+                if (shapePredEl) shapePredEl.checked = !!calcState[id].shape_prediction;
                 const martingaleEl = document.getElementById('calc-' + id + '-martingale');
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 if (martingaleEl) martingaleEl.checked = !!calcState[id].martingale;
@@ -7859,6 +7931,18 @@ RESULTS_HTML = '''
                         calcState[id].lastBetPickForRound = null;
                     }
                 } catch (cardErr) { console.warn('updateCalcStatus card', id, cardErr); }
+            var logEl = document.getElementById('calc-' + id + '-shape-prediction-log');
+            if (logEl && calcState[id] && calcState[id].shape_prediction) {
+                var dbg = calcState[id].pending_shape_debug;
+                if (dbg && typeof dbg === 'object') {
+                    var parts = ['phase: ' + (dbg.phase || '-'), 'chunk_shape: ' + (dbg.chunk_shape || '-'), 'pred: ' + (dbg.pred || '-'), 'prob: ' + (dbg.prob != null ? dbg.prob : '-')];
+                    logEl.textContent = parts.join(' | ');
+                } else {
+                    logEl.textContent = '—';
+                }
+            } else if (logEl) {
+                logEl.textContent = '—';
+            }
             } catch (e) { console.warn('updateCalcStatus', id, e); }
         }
         function updateCalcSummary(id) {
@@ -9363,7 +9447,7 @@ def api_calc_state():
             if state is None:
                 state = {}
             # 계산기 1,2,3만 반환 (레거시 defense 제거 후 클라이언트 호환)
-            _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'shape_only_latest_next_pick': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None}
+            _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'shape_only_latest_next_pick': False, 'shape_prediction': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None}
             calcs = {}
             for cid in ('1', '2', '3'):
                 calcs[cid] = state[cid] if (cid in state and isinstance(state.get(cid), dict)) else dict(_default)
@@ -9446,6 +9530,7 @@ def api_calc_state():
                     'streak_suppress_reverse': bool(c.get('streak_suppress_reverse')),
                     'lock_direction_on_lose_streak': bool(c.get('lock_direction_on_lose_streak', True)),
                     'shape_only_latest_next_pick': bool(c.get('shape_only_latest_next_pick')),
+                    'shape_prediction': bool(c.get('shape_prediction')),
                     'last_trend_direction': c.get('last_trend_direction') if c.get('last_trend_direction') in ('up', 'down') else None,
                     'martingale': bool(c.get('martingale')),
                     'martingale_type': str(c.get('martingale_type') or 'pyo'),
@@ -9466,8 +9551,10 @@ def api_calc_state():
                     'last_win_rate_zone_change_round': c.get('last_win_rate_zone_change_round') if c.get('last_win_rate_zone_change_round') is not None else current_c.get('last_win_rate_zone_change_round'),
                     'last_win_rate_zone_on_win': c.get('last_win_rate_zone_on_win') or current_c.get('last_win_rate_zone_on_win'),
                 }
+                if current_c.get('pending_shape_debug') and c.get('pending_round') == current_c.get('pending_round'):
+                    out[cid]['pending_shape_debug'] = current_c['pending_shape_debug']
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'lock_direction_on_lose_streak': True, 'shape_only_latest_next_pick': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None, 'last_win_rate_zone_on_win': None}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'lock_direction_on_lose_streak': True, 'shape_only_latest_next_pick': False, 'shape_prediction': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None, 'last_win_rate_zone_on_win': None}
         save_calc_state(session_id, out)
         # 계산기 running 상태를 current_pick에 반영 → 에뮬레이터 매크로가 목표 달성 시 자동 중지
         if bet_int:
@@ -9489,7 +9576,7 @@ def api_calc_state():
         session_id = ((request.get_json(force=True, silent=True) or {}).get('session_id') or '').strip() or 'default'
         calcs = (request.get_json(force=True, silent=True) or {}).get('calcs') or {}
         out_fallback = {}
-        _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'shape_only_latest_next_pick': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None}
+        _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'shape_only_latest_next_pick': False, 'shape_prediction': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None}
         for cid in ('1', '2', '3'):
             c = calcs.get(cid) or {}
             if isinstance(c, dict):
