@@ -1041,6 +1041,35 @@ def _get_shape_50_win_rate():
     return 100.0 * wins / len(valid)
 
 
+def _get_shape_prediction_win_rate_10(c):
+    """모양판별승률: 계산기표 2~11행(10행) 기준. prediction_history의 shape_predicted vs actual, 조커=패."""
+    history = c.get('history') or []
+    completed = [h for h in history if h.get('actual') and h.get('actual') != 'pending']
+    if len(completed) < 2:
+        return None
+    last10 = completed[:-1][-10:]
+    ph = get_prediction_history(200)
+    ph_by_round = {int(h.get('round')): h for h in ph if h and h.get('round') is not None}
+    wins, total = 0, 0
+    for h in last10:
+        rn = h.get('round')
+        if rn is None:
+            continue
+        sp = (ph_by_round.get(int(rn)) or {}).get('shape_predicted')
+        if sp not in ('정', '꺽'):
+            continue
+        act = h.get('actual')
+        if act in ('joker', '조커'):
+            total += 1
+            continue
+        if act not in ('정', '꺽'):
+            continue
+        total += 1
+        if sp == act:
+            wins += 1
+    return (100.0 * wins / total) if total > 0 else None
+
+
 def _get_display_win_rate(history, max_rows=200):
     """계산기 표승률: 최근 max_rows개 중 배팅한 완료 행만, 조커=패. 승률 = 승/(승+패)*100. 표본 없으면 None."""
     if not history:
@@ -1515,6 +1544,12 @@ def _apply_results_to_calcs(results):
                         if c.get('last_trend_direction') == 'down':
                             pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
                             bet_color_for_history = _flip_pick_color(bet_color_for_history)
+                if c.get('shape_prediction') and c.get('shape_prediction_reverse'):
+                    sp10 = _get_shape_prediction_win_rate_10(c)
+                    thr = max(0, min(100, int(c.get('shape_prediction_reverse_threshold') or 50)))
+                    if sp10 is not None and sp10 <= thr:
+                        pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
+                        bet_color_for_history = _flip_pick_color(bet_color_for_history)
                 history_entry = {'round': pending_round, 'predicted': pred_for_calc, 'actual': actual}
                 if bet_color_for_history:
                     history_entry['pickColor'] = bet_color_for_history
@@ -1819,6 +1854,12 @@ def _server_calc_effective_pick_and_amount(c):
         elif zone == 'low_rising':
             c['last_trend_direction'] = 'up'
         elif zone == 'mid_flat' and c.get('last_trend_direction') == 'down':
+            pred = '꺽' if pred == '정' else '정'
+            color = _flip_pick_color(color)
+    if c.get('shape_prediction') and c.get('shape_prediction_reverse'):
+        sp10 = _get_shape_prediction_win_rate_10(c)
+        thr = max(0, min(100, int(c.get('shape_prediction_reverse_threshold') or 50)))
+        if sp10 is not None and sp10 <= thr:
             pred = '꺽' if pred == '정' else '정'
             color = _flip_pick_color(color)
     pick_color = 'RED' if color == '빨강' else ('BLACK' if color == '검정' else None)
@@ -4678,7 +4719,7 @@ RESULTS_HTML = '''
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-1-lose-streak-reverse"> 연패≥<input type="number" id="calc-1-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-1-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-1-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-1-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-1-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
-                                            <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-1-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label></td></tr>
+                                            <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-1-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-1-shape-prediction-reverse"> 모양판별반픽</label> <label title="계산기표 2~11행 모양판별승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-1-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label></td></tr>
                                             <tr><td>모양판별 로그</td><td><div id="calc-1-shape-prediction-log" class="shape-prediction-log" style="font-size:0.8em;color:#888;max-height:80px;overflow-y:auto;white-space:pre-wrap;">—</div></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-1-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-1-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
@@ -4703,7 +4744,7 @@ RESULTS_HTML = '''
                                 <div class="calc-round-table-wrap" id="calc-1-round-table-wrap"></div>
                                 <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="1">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-1-streak">경기결과 (최근 30회): -</div>
-                                <div class="calc-stats" id="calc-1-stats">최대연승: - | 최대연패: - | 모양승률: - | 표승률: - | 15회승률: -</div>
+                                <div class="calc-stats" id="calc-1-stats">최대연승: - | 최대연패: - | 모양승률: - | 표승률: - | 15회승률: - | 모양판별승률: -</div>
                             </div>
                         </div>
                     </div>
@@ -4731,7 +4772,7 @@ RESULTS_HTML = '''
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-2-lose-streak-reverse"> 연패≥<input type="number" id="calc-2-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-2-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-2-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-2-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-2-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
-                                            <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-2-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label></td></tr>
+                                            <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-2-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-2-shape-prediction-reverse"> 모양판별반픽</label> <label title="계산기표 2~11행 모양판별승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-2-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label></td></tr>
                                             <tr><td>모양판별 로그</td><td><div id="calc-2-shape-prediction-log" class="shape-prediction-log" style="font-size:0.8em;color:#888;max-height:80px;overflow-y:auto;white-space:pre-wrap;">—</div></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-2-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-2-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
@@ -4756,7 +4797,7 @@ RESULTS_HTML = '''
                                 <div class="calc-round-table-wrap" id="calc-2-round-table-wrap"></div>
                                 <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="2">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-2-streak">경기결과 (최근 30회): -</div>
-                                <div class="calc-stats" id="calc-2-stats">최대연승: - | 최대연패: - | 모양승률: - | 표승률: - | 15회승률: -</div>
+                                <div class="calc-stats" id="calc-2-stats">최대연승: - | 최대연패: - | 모양승률: - | 표승률: - | 15회승률: - | 모양판별승률: -</div>
                             </div>
                         </div>
                     </div>
@@ -4784,7 +4825,7 @@ RESULTS_HTML = '''
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-3-lose-streak-reverse"> 연패≥<input type="number" id="calc-3-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-3-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-3-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-3-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-3-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
-                                            <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-3-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label></td></tr>
+                                            <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-3-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-3-shape-prediction-reverse"> 모양판별반픽</label> <label title="계산기표 2~11행 모양판별승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-3-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label></td></tr>
                                             <tr><td>모양판별 로그</td><td><div id="calc-3-shape-prediction-log" class="shape-prediction-log" style="font-size:0.8em;color:#888;max-height:80px;overflow-y:auto;white-space:pre-wrap;">—</div></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-3-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-3-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
@@ -4809,7 +4850,7 @@ RESULTS_HTML = '''
                                 <div class="calc-round-table-wrap" id="calc-3-round-table-wrap"></div>
                                 <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="3">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-3-streak">경기결과 (최근 30회): -</div>
-                                <div class="calc-stats" id="calc-3-stats">최대연승: - | 최대연패: - | 모양승률: - | 표승률: - | 15회승률: -</div>
+                                <div class="calc-stats" id="calc-3-stats">최대연승: - | 최대연패: - | 모양승률: - | 표승률: - | 15회승률: - | 모양판별승률: -</div>
                             </div>
                         </div>
                     </div>
@@ -5162,6 +5203,8 @@ RESULTS_HTML = '''
                     lock_direction_on_lose_streak: !!(document.getElementById('calc-' + id + '-lock-direction-on-lose-streak') && document.getElementById('calc-' + id + '-lock-direction-on-lose-streak').checked),
                     shape_only_latest_next_pick: !!(document.getElementById('calc-' + id + '-shape-only-latest-next-pick') && document.getElementById('calc-' + id + '-shape-only-latest-next-pick').checked),
                     shape_prediction: !!(document.getElementById('calc-' + id + '-shape-prediction') && document.getElementById('calc-' + id + '-shape-prediction').checked),
+                    shape_prediction_reverse: !!(document.getElementById('calc-' + id + '-shape-prediction-reverse') && document.getElementById('calc-' + id + '-shape-prediction-reverse').checked),
+                    shape_prediction_reverse_threshold: (function() { var el = document.getElementById('calc-' + id + '-shape-prediction-reverse-threshold'); return (el && !isNaN(parseFloat(el.value))) ? Math.max(0, Math.min(100, parseFloat(el.value))) : 50; })(),
                     last_trend_direction: (calcState[id].last_trend_direction === 'up' || calcState[id].last_trend_direction === 'down') ? calcState[id].last_trend_direction : null,
                     martingale: !!(martingaleEl && martingaleEl.checked),
                     martingale_type: (martingaleTypeEl && martingaleTypeEl.value) || 'pyo',
@@ -5336,6 +5379,8 @@ RESULTS_HTML = '''
                 calcState[id].lock_direction_on_lose_streak = c.lock_direction_on_lose_streak !== false;
                 calcState[id].shape_only_latest_next_pick = !!c.shape_only_latest_next_pick;
                 calcState[id].shape_prediction = !!c.shape_prediction;
+                calcState[id].shape_prediction_reverse = !!c.shape_prediction_reverse;
+                calcState[id].shape_prediction_reverse_threshold = (typeof c.shape_prediction_reverse_threshold === 'number' && c.shape_prediction_reverse_threshold >= 0 && c.shape_prediction_reverse_threshold <= 100) ? c.shape_prediction_reverse_threshold : 50;
                 calcState[id].last_trend_direction = (c.last_trend_direction === 'up' || c.last_trend_direction === 'down') ? c.last_trend_direction : null;
                 calcState[id].last_win_rate_zone = (c.last_win_rate_zone === 'high_falling' || c.last_win_rate_zone === 'low_rising' || c.last_win_rate_zone === 'mid_flat') ? c.last_win_rate_zone : null;
                 calcState[id].last_win_rate_zone_change_round = (c.last_win_rate_zone_change_round != null && !isNaN(Number(c.last_win_rate_zone_change_round))) ? Number(c.last_win_rate_zone_change_round) : null;
@@ -5375,6 +5420,10 @@ RESULTS_HTML = '''
                 if (shapeOnlyEl) shapeOnlyEl.checked = !!calcState[id].shape_only_latest_next_pick;
                 var shapePredEl = document.getElementById('calc-' + id + '-shape-prediction');
                 if (shapePredEl) shapePredEl.checked = !!calcState[id].shape_prediction;
+                var shapePredRevEl = document.getElementById('calc-' + id + '-shape-prediction-reverse');
+                var shapePredRevThrEl = document.getElementById('calc-' + id + '-shape-prediction-reverse-threshold');
+                if (shapePredRevEl) shapePredRevEl.checked = !!calcState[id].shape_prediction_reverse;
+                if (shapePredRevThrEl) shapePredRevThrEl.value = String(Math.round(calcState[id].shape_prediction_reverse_threshold || 50));
                 const martingaleEl = document.getElementById('calc-' + id + '-martingale');
                 const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
                 if (martingaleEl) martingaleEl.checked = !!calcState[id].martingale;
@@ -6793,7 +6842,7 @@ RESULTS_HTML = '''
                                 const c = out === '승' ? 'streak-win' : out === '패' ? 'streak-lose' : 'streak-joker';
                                 return '<td class="' + c + '">' + out + '</td>';
                             }).join('');
-                            const rowShapePick = '<td>모양</td>' + rev.map(function(h) {
+                            const rowShapePick = '<td>모양판별</td>' + rev.map(function(h) {
                                 const sp = h.shape_predicted;
                                 var c = '';
                                 if (sp === '정' || sp === '꺽') {
@@ -6807,7 +6856,7 @@ RESULTS_HTML = '''
                                 }
                                 return '<td class="' + (c || '') + '">' + (sp || '-') + '</td>';
                             }).join('');
-                            const rowShapeOutcome = '<td>모양</td>' + rev.map(function(h) {
+                            const rowShapeOutcome = '<td>모양판별</td>' + rev.map(function(h) {
                                 var actualForDisplay = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
                                 if (typeof actualForDisplay === 'string') actualForDisplay = actualForDisplay.trim();
                                 var isJoker = (actualForDisplay === 'joker' || actualForDisplay === '조커');
@@ -7352,6 +7401,26 @@ RESULTS_HTML = '''
             var total = last50.filter(function(h) { return h.shape_predicted === '정' || h.shape_predicted === '꺽'; }).length;
             return total < 1 ? null : 100 * sp / total;
         }
+        /** 모양판별승률: 계산기표 2~11행(10행) 기준. prediction_history의 shape_predicted vs actual, 조커=패. */
+        function getShapePredictionWinRate10(id) {
+            var hist = calcState[id] && calcState[id].history;
+            if (!Array.isArray(hist)) return null;
+            var completed = hist.filter(function(h) { return h && h.actual && h.actual !== 'pending' && h.actual !== ''; });
+            if (completed.length < 2) return null;
+            var last10 = completed.slice(0, -1).slice(-10);
+            var phByRound = {};
+            (predictionHistory || []).forEach(function(p) { if (p && p.round != null) phByRound[Number(p.round)] = p; });
+            var wins = 0, total = 0;
+            last10.forEach(function(h) {
+                var sp = (phByRound[Number(h.round)] || {}).shape_predicted;
+                if (sp !== '정' && sp !== '꺽') return;
+                var act = (h.actual === 'joker' || h.actual === '조커') ? null : h.actual;
+                if (act !== '정' && act !== '꺽') { total++; return; }
+                total++;
+                if (sp === act) wins++;
+            });
+            return total < 1 ? null : 100 * wins / total;
+        }
         /** 경고 표와 동일한 합산승률(blended). 멈춤은 계산기 표 15회 승률 기준으로 변경됨. */
         function getBlendedWinRate() {
             var vh = Array.isArray(predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object' && h.actual !== 'joker'; }) : [];
@@ -7859,6 +7928,7 @@ RESULTS_HTML = '''
                         var runLenCard = getCurrentResultRunLength(typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory) ? predictionHistory : []);
                         var noRevByMain15Card = (r15Card == null || r15Card < 53);
                         var noRevByStreak5Card = !(calcState[id].streak_suppress_reverse && runLenCard >= 5);
+                        var shapePredOn = !!(document.getElementById('calc-' + id + '-shape-prediction') && document.getElementById('calc-' + id + '-shape-prediction').checked);
                         // 상단 예측픽: lastPrediction.value 사용
                         var predictionText = lastPrediction.value;
                         var predColorNorm = normalizePickColor(lastPrediction.color);
@@ -7890,6 +7960,13 @@ RESULTS_HTML = '''
                                 if (zoneCard === 'high_falling') { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; calcState[id].last_trend_direction = 'down'; }
                                 else if (zoneCard === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
                                 else if (zoneCard === 'mid_flat' && calcState[id].last_trend_direction === 'down') { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                            }
+                            var shapePredRev = !!(document.getElementById('calc-' + id + '-shape-prediction-reverse') && document.getElementById('calc-' + id + '-shape-prediction-reverse').checked);
+                            var shapePredRevThrEl = document.getElementById('calc-' + id + '-shape-prediction-reverse-threshold');
+                            var shapePredRevThr = (shapePredRevThrEl && !isNaN(parseFloat(shapePredRevThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(shapePredRevThrEl.value))) : 50;
+                            if (shapePredOn && shapePredRev && (typeof getShapePredictionWinRate10 === 'function')) {
+                                var sp10 = getShapePredictionWinRate10(id);
+                                if (sp10 != null && sp10 <= shapePredRevThr) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                             }
                             if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
                         }
@@ -8153,7 +8230,7 @@ RESULTS_HTML = '''
             const hist = state.history || [];
             if (hist.length === 0) {
                 streakEl.textContent = '경기결과 (최근 30회): -';
-                statsEl.textContent = '최대연승: - | 최대연패: - | 모양승률: - | 표승률: - | 15회승률: -';
+                statsEl.textContent = '최대연승: - | 최대연패: - | 모양승률: - | 표승률: - | 15회승률: - | 모양판별승률: -';
                 if (tableWrap) tableWrap.innerHTML = '';
                 return;
             }
@@ -8403,7 +8480,9 @@ RESULTS_HTML = '''
             var dispRateStr = (dispTotal < 1) ? '-' : (dispWins / dispTotal * 100).toFixed(1) + '%';
             var shape50 = (typeof getShape50WinRate === 'function') ? getShape50WinRate() : null;
             var shape50Str = (shape50 != null && !isNaN(shape50)) ? shape50.toFixed(1) + '%' : '-';
-            statsEl.textContent = '최대연승: ' + r.maxWinStreak + ' | 최대연패: ' + r.maxLoseStreak + ' | 모양승률: ' + shape50Str + ' | 표승률: ' + dispRateStr + ' | 15회승률: ' + rate15Str;
+            var shapePred10 = (typeof getShapePredictionWinRate10 === 'function') ? getShapePredictionWinRate10(id) : null;
+            var shapePred10Str = (shapePred10 != null && !isNaN(shapePred10)) ? shapePred10.toFixed(1) + '%' : '-';
+            statsEl.textContent = '최대연승: ' + r.maxWinStreak + ' | 최대연패: ' + r.maxLoseStreak + ' | 모양승률: ' + shape50Str + ' | 표승률: ' + dispRateStr + ' | 15회승률: ' + rate15Str + ' | 모양판별승률: ' + shapePred10Str;
             } catch (e) { console.warn('updateCalcDetail', id, e); }
         }
         document.querySelectorAll('.calc-dropdown-header').forEach(h => {
@@ -8717,6 +8796,12 @@ RESULTS_HTML = '''
             calcState[id].lock_direction_on_lose_streak = !(lockDirEl && !lockDirEl.checked);
             const shapeOnlyEl = document.getElementById('calc-' + id + '-shape-only-latest-next-pick');
             calcState[id].shape_only_latest_next_pick = !!(shapeOnlyEl && shapeOnlyEl.checked);
+            const shapePredEl = document.getElementById('calc-' + id + '-shape-prediction');
+            calcState[id].shape_prediction = !!(shapePredEl && shapePredEl.checked);
+            const shapePredRevEl = document.getElementById('calc-' + id + '-shape-prediction-reverse');
+            calcState[id].shape_prediction_reverse = !!(shapePredRevEl && shapePredRevEl.checked);
+            const shapePredRevThrEl = document.getElementById('calc-' + id + '-shape-prediction-reverse-threshold');
+            calcState[id].shape_prediction_reverse_threshold = (shapePredRevThrEl && !isNaN(parseFloat(shapePredRevThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(shapePredRevThrEl.value))) : 50;
             const pauseLowEl = document.getElementById('calc-' + id + '-pause-low-win-rate');
             calcState[id].pause_low_win_rate_enabled = !!(pauseLowEl && pauseLowEl.checked);
             const pauseThrEl = document.getElementById('calc-' + id + '-pause-win-rate-threshold');
@@ -8747,7 +8832,7 @@ RESULTS_HTML = '''
             const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
             if (targetEnabledEl) targetEnabledEl.addEventListener('change', () => { updateCalcSummary(id); });
             // 게임 중 옵션(반픽/승률반픽/연패반픽 등) 변경 시 즉시 반영
-            ['reverse', 'win-rate-reverse', 'win-rate-threshold', 'lose-streak-reverse', 'lose-streak-reverse-threshold', 'lose-streak-reverse-min', 'win-rate-direction-reverse', 'streak-suppress-reverse', 'lock-direction-on-lose-streak', 'shape-only-latest-next-pick', 'pause-low-win-rate', 'pause-win-rate-threshold'].forEach(f => {
+            ['reverse', 'win-rate-reverse', 'win-rate-threshold', 'lose-streak-reverse', 'lose-streak-reverse-threshold', 'lose-streak-reverse-min', 'win-rate-direction-reverse', 'streak-suppress-reverse', 'lock-direction-on-lose-streak', 'shape-only-latest-next-pick', 'shape-prediction', 'shape-prediction-reverse', 'shape-prediction-reverse-threshold', 'pause-low-win-rate', 'pause-win-rate-threshold'].forEach(f => {
                 const el = document.getElementById('calc-' + id + '-' + f);
                 if (el) el.addEventListener('change', function() { onCalcOptionChange(id); });
             });
@@ -9600,6 +9685,8 @@ def api_calc_state():
                     'lock_direction_on_lose_streak': bool(c.get('lock_direction_on_lose_streak', True)),
                     'shape_only_latest_next_pick': bool(c.get('shape_only_latest_next_pick')),
                     'shape_prediction': bool(c.get('shape_prediction')),
+                    'shape_prediction_reverse': bool(c.get('shape_prediction_reverse')),
+                    'shape_prediction_reverse_threshold': max(0, min(100, int(c.get('shape_prediction_reverse_threshold') or 50))),
                     'last_trend_direction': c.get('last_trend_direction') if c.get('last_trend_direction') in ('up', 'down') else None,
                     'martingale': bool(c.get('martingale')),
                     'martingale_type': str(c.get('martingale_type') or 'pyo'),
