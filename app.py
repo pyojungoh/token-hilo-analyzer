@@ -384,7 +384,7 @@ def save_prediction_record(round_num, predicted, actual, probability=None, pick_
             if sig:
                 shape_sig = sig
                 prediction_details = json.dumps({'shape_signature': shape_sig})
-            shape_pred = _get_latest_next_pick_for_chunk(results)
+            shape_pred = _get_latest_next_pick_for_chunk(results, exclude_round=round_num)
         
         cur = conn.cursor()
         if prediction_details or shape_pred:
@@ -586,8 +586,9 @@ def _get_chunk_stats_for_results(results):
             pass
 
 
-def _get_latest_next_pick_for_chunk(results):
-    """현재 results의 덩어리 프로필과 유사한 가장 최근 덩어리의 다음 결과(정/꺽)를 반환. 없으면 모양 시그니처(동일)로 폴백."""
+def _get_latest_next_pick_for_chunk(results, exclude_round=None):
+    """현재 results의 덩어리 프로필과 유사한 가장 최근 덩어리의 다음 결과(정/꺽)를 반환. 없으면 모양 시그니처(동일)로 폴백.
+    exclude_round: 해당 회차 이상의 데이터는 제외(현재 예측 중인 회차의 actual 누수 방지)."""
     if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
         return None
     profile = _get_chunk_profile_from_results(results)
@@ -599,11 +600,19 @@ def _get_latest_next_pick_for_chunk(results):
         import json
         cur = conn.cursor()
         if profile:
-            cur.execute('''
-                SELECT profile_json, next_actual, round_num FROM chunk_profile_occurrences
-                ORDER BY round_num DESC
-                LIMIT 150
-            ''')
+            if exclude_round is not None:
+                cur.execute('''
+                    SELECT profile_json, next_actual, round_num FROM chunk_profile_occurrences
+                    WHERE round_num < %s
+                    ORDER BY round_num DESC
+                    LIMIT 150
+                ''', (int(exclude_round),))
+            else:
+                cur.execute('''
+                    SELECT profile_json, next_actual, round_num FROM chunk_profile_occurrences
+                    ORDER BY round_num DESC
+                    LIMIT 150
+                ''')
             rows = cur.fetchall()
             CHUNK_SIM_THRESHOLD = 0.5
             for profile_json, next_actual, rnd in rows:
@@ -617,12 +626,20 @@ def _get_latest_next_pick_for_chunk(results):
                         return next_actual
                     break
         if sig:
-            cur.execute('''
-                SELECT next_actual FROM shape_win_occurrences
-                WHERE signature = %s
-                ORDER BY round_num DESC
-                LIMIT 1
-            ''', (sig,))
+            if exclude_round is not None:
+                cur.execute('''
+                    SELECT next_actual FROM shape_win_occurrences
+                    WHERE signature = %s AND round_num < %s
+                    ORDER BY round_num DESC
+                    LIMIT 1
+                ''', (sig, int(exclude_round)))
+            else:
+                cur.execute('''
+                    SELECT next_actual FROM shape_win_occurrences
+                    WHERE signature = %s
+                    ORDER BY round_num DESC
+                    LIMIT 1
+                ''', (sig,))
             row = cur.fetchone()
             cur.close()
             if row and row[0] in ('정', '꺽'):
@@ -1473,7 +1490,7 @@ def _apply_results_to_calcs(results):
                     history_entry['warningWinRate'] = blended
                 # 모양: 가장 최근 다음 픽에만 배팅 — 값 없거나 픽 불일치면 no_bet
                 if c.get('shape_only_latest_next_pick') and results_for_shape and len(results_for_shape) >= 16:
-                    latest_next = _get_latest_next_pick_for_chunk(results_for_shape)
+                    latest_next = _get_latest_next_pick_for_chunk(results_for_shape, exclude_round=pending_round)
                     if not latest_next or latest_next not in ('정', '꺽') or pred_for_calc != latest_next:
                         history_entry['no_bet'] = True
                         history_entry['betAmount'] = 0
@@ -5230,9 +5247,17 @@ RESULTS_HTML = '''
                 var hasRound = hist.some(function(h) { return h && Number(h.round) === roundNum; });
                 if (hasRound) return;
                 var saved = (state.lastBetPickForRound && Number(state.lastBetPickForRound.round) === roundNum) ? state.lastBetPickForRound : (typeof savedBetPickByRound !== 'undefined' && savedBetPickByRound[roundNum]) ? savedBetPickByRound[roundNum] : null;
-                var bettingText = saved && (saved.value === '정' || saved.value === '꺽') ? saved.value : (lastPrediction.value || '정');
-                var bettingIsRed = saved ? !!saved.isRed : (normalizePickColor(lastPrediction.color) === '빨강');
-                if (!saved) {
+                var bettingText, bettingIsRed;
+                var shapeOn = !!(state.shape_only_latest_next_pick);
+                if (shapeOn && (state.pending_predicted === '정' || state.pending_predicted === '꺽') && (state.pending_color === '빨강' || state.pending_color === '검정')) {
+                    bettingText = state.pending_predicted;
+                    bettingIsRed = (state.pending_color === '빨강');
+                } else if (saved && (saved.value === '정' || saved.value === '꺽')) {
+                    bettingText = saved.value;
+                    bettingIsRed = !!saved.isRed;
+                } else {
+                    bettingText = lastPrediction.value || '정';
+                    bettingIsRed = (normalizePickColor(lastPrediction.color) === '빨강');
                     var rev = !!(state.reverse);
                     if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                 }
@@ -6606,9 +6631,10 @@ RESULTS_HTML = '''
                             }).join('');
                             const rowShapeOutcome = '<td>모양</td>' + rev.map(function(h) {
                                 var actualForDisplay = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
+                                if (typeof actualForDisplay === 'string') actualForDisplay = actualForDisplay.trim();
                                 var isJoker = (actualForDisplay === 'joker' || actualForDisplay === '조커');
-                                const sp = h.shape_predicted;
-                                const out = isJoker ? '조커' : (sp && (sp === '정' || sp === '꺽') && sp === actualForDisplay ? '승' : (sp && (sp === '정' || sp === '꺽') ? '패' : '-'));
+                                const sp = (h.shape_predicted && typeof h.shape_predicted === 'string') ? h.shape_predicted.trim() : null;
+                                const out = isJoker ? '조커' : (sp && (sp === '정' || sp === '꺽') && (actualForDisplay === '정' || actualForDisplay === '꺽') && sp === actualForDisplay ? '승' : (sp && (sp === '정' || sp === '꺽') && (actualForDisplay === '정' || actualForDisplay === '꺽') ? '패' : '-'));
                                 const c = out === '승' ? 'streak-win' : out === '패' ? 'streak-lose' : out === '조커' ? 'streak-joker' : '';
                                 return '<td class="' + c + '">' + (out || '-') + '</td>';
                             }).join('');
@@ -7743,9 +7769,10 @@ RESULTS_HTML = '''
                             // 표 1행(배팅중) 픽·no_bet 보정: ensurePendingRow 등에서 예측픽으로 채워진 행이 있으면 배팅중 픽으로 덮어씀
                             var pendingRow = (calcState[id].history || []).find(function(h) { return h && Number(h.round) === Number(lastPrediction.round) && h.actual === 'pending'; });
                             if (pendingRow && (bettingText === '정' || bettingText === '꺽')) {
-                                if (pendingRow.predicted !== bettingText) {
+                                var targetColor = bettingIsRed ? '빨강' : '검정';
+                                if (pendingRow.predicted !== bettingText || (pendingRow.pickColor || pendingRow.pick_color) !== targetColor) {
                                     pendingRow.predicted = bettingText;
-                                    pendingRow.pickColor = bettingIsRed ? '빨강' : '검정';
+                                    pendingRow.pickColor = targetColor;
                                 }
                                 if (pendingRow.no_bet === true && !effectivePausedForRound(id)) { pendingRow.no_bet = false; pendingRow.betAmount = (typeof getBetForRound === 'function' ? getBetForRound(id, Number(lastPrediction.round)) : 0); }
                             }
@@ -8031,15 +8058,22 @@ RESULTS_HTML = '''
                 const pickVal = (h.predicted === '정' || h.predicted === '꺽') ? h.predicted : '보류';
                 // pick-color-core-rule: 정/꺽→빨강/검정은 15번 카드 기준. 고정 매핑(정=빨강,꺽=검정) 금지.
                 var pickClass;
+                var curRound = (typeof lastPrediction !== 'undefined' && lastPrediction && lastPrediction.round != null) ? Number(lastPrediction.round) : null;
+                var isPendingRow = !isNaN(rn) && curRound != null && rn === curRound && (h.actual === 'pending' || !h.actual || h.actual === '');
+                var pendingColorFromState = (isPendingRow && state && (state.pending_color === '빨강' || state.pending_color === '검정')) ? state.pending_color : null;
+                if (!pendingColorFromState && isPendingRow && state && state.lastBetPickForRound && Number(state.lastBetPickForRound.round) === rn && (state.lastBetPickForRound.value === '정' || state.lastBetPickForRound.value === '꺽')) {
+                    pendingColorFromState = state.lastBetPickForRound.isRed ? '빨강' : '검정';
+                }
                 if (pickVal === '보류') {
                     pickClass = 'pick-hold';
                 } else if ((h.pickColor || h.pick_color) === '빨강') {
                     pickClass = 'pick-jung';
                 } else if ((h.pickColor || h.pick_color) === '검정') {
                     pickClass = 'pick-kkuk';
+                } else if (pendingColorFromState) {
+                    pickClass = pendingColorFromState === '빨강' ? 'pick-jung' : 'pick-kkuk';
                 } else {
                     // pickColor 없을 때: 현재 회차 + 15번 카드 있으면 계산, 없으면 보류 스타일(잘못된 색상 표시 방지)
-                    var curRound = (typeof lastPrediction !== 'undefined' && lastPrediction && lastPrediction.round != null) ? Number(lastPrediction.round) : null;
                     var disp = (typeof allResults !== 'undefined' && Array.isArray(allResults) && allResults.length >= 15) ? allResults.slice(0, 15) : [];
                     var card15 = (disp.length >= 15 && !isNaN(rn) && curRound != null && rn === curRound && typeof parseCardValue === 'function') ? parseCardValue(disp[14].result || '') : null;
                     var is15Red = card15 ? card15.isRed : null;
@@ -8268,7 +8302,7 @@ RESULTS_HTML = '''
             });
             }, 1000);
         function updateAllCalcs() {
-            CALC_IDS.forEach(id => { updateCalcDetail(id); updateCalcStatus(id); updateCalcSummary(id); });
+            CALC_IDS.forEach(id => { updateCalcStatus(id); updateCalcDetail(id); updateCalcSummary(id); });
         }
         try { updateAllCalcs(); } catch (e) { console.warn('초기 계산기 상태:', e); }
         document.querySelectorAll('.calc-run').forEach(btn => {
@@ -8349,8 +8383,8 @@ RESULTS_HTML = '''
                 } catch (e) { console.warn('계산기 실행 저장 실패:', e); if (calcState[id].running && !calcState[id].started_at) calcState[id].started_at = Math.floor(Date.now() / 1000); }
                 lastResetOrRunAt = Date.now();
                 updateCalcSummary(id);
-                updateCalcDetail(id);
                 updateCalcStatus(id);
+                updateCalcDetail(id);
                 // 시작 시 픽/금액은 배팅중 표시될 때 타이머가 전달. running=true로 DB 반영해 다음 픽 POST 시 매크로가 픽 수신
                 postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null, running: true });
                 var saveBtnEl = document.querySelector('.calc-save[data-calc="' + id + '"]');
@@ -8363,8 +8397,8 @@ RESULTS_HTML = '''
                     }
                     lastResetOrRunAt = Date.now();
                     updateCalcSummary(id);
-                    updateCalcDetail(id);
                     updateCalcStatus(id);
+                    updateCalcDetail(id);
                 }
             });
         });
@@ -8386,8 +8420,8 @@ RESULTS_HTML = '''
                 state.pending_bet_amount = null;
                 lastResetOrRunAt = Date.now();
                 updateCalcSummary(id);
-                updateCalcDetail(id);
                 updateCalcStatus(id);
+                updateCalcDetail(id);
                 postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null, running: false });
                 await saveCalcStateToServer({ skipApplyForIds: [id], immediate: true });
             });
@@ -8416,8 +8450,8 @@ RESULTS_HTML = '''
                 state.paused = false;
                 lastResetOrRunAt = Date.now();
                 updateCalcSummary(id);
-                updateCalcDetail(id);
                 updateCalcStatus(id);
+                updateCalcDetail(id);
                 updateCalcBetCopyLine(id);
                 const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
                 if (saveBtn) saveBtn.style.display = 'none';
