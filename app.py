@@ -2187,6 +2187,25 @@ def _detect_overall_pong_dominant(graph_values):
     )
 
 
+def _get_column_heights(graph_values, max_cols=30):
+    """그래프 열 높이(세그먼트 길이) 리스트. 맨 앞=최신. 장줄/짧은줄 파악용."""
+    if not graph_values or len(graph_values) < 2:
+        return []
+    filtered = [v for v in graph_values if v is True or v is False]
+    if len(filtered) < 2:
+        return []
+    segments = []
+    current, count = filtered[0], 1
+    for v in filtered[1:]:
+        if v == current:
+            count += 1
+        else:
+            segments.append(count)
+            current, count = v, 1
+    segments.append(count)
+    return segments[:max_cols]
+
+
 def _get_line_pong_runs(arr):
     """줄(1)/퐁당(0) 쌍으로 run 길이 리스트."""
     pairs = []
@@ -2849,6 +2868,11 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     if isinstance(pong_chunk_debug, dict):
         pong_chunk_debug = dict(pong_chunk_debug)
         pong_chunk_debug['overall_pong_dominant'] = overall_pong  # 전체 퐁당 우세·줄 낮음·덩어리 적음 (위에서 계산됨)
+        col_heights = _get_column_heights(graph_values, 30)
+        pong_chunk_debug['column_heights'] = col_heights  # 열 높이 (장줄/짧은줄 파악용)
+        long_cols = sum(1 for h in col_heights if h >= 4)
+        short_cols = sum(1 for h in col_heights if h <= 2)
+        pong_chunk_debug['long_short_stats'] = {'long': long_cols, 'short': short_cols, 'total': len(col_heights)}  # 장줄(4+), 짧은줄(1~2)
         pong_chunk_debug['symmetry_windows_used'] = symmetry_windows_used
         pong_chunk_debug['u_shape'] = u35_detected  # U자 구간(연패 많음): 유지 가중치 보정·멈춤 권장
         pong_chunk_debug['balance_phase'] = balance_phase  # 밸런스 구간 전환(transition_to_low/high)
@@ -3735,6 +3759,7 @@ RESULTS_HTML = '''
         .jung-kkuk-graph .graph-block.kkuk {
             background: #f44336;
         }
+        .jung-kkuk-graph .graph-column-num { font-size: 10px; color: #888; margin-top: 2px; }
         .graph-stats {
             margin-top: 0;
             font-size: clamp(12px, 2vw, 14px);
@@ -5642,6 +5667,11 @@ RESULTS_HTML = '''
                             block.textContent = seg.type === true ? '정' : '꺽';
                             col.appendChild(block);
                         }
+                        const numSpan = document.createElement('span');
+                        numSpan.className = 'graph-column-num';
+                        numSpan.textContent = seg.count;
+                        numSpan.title = seg.count >= 4 ? '장줄' : (seg.count <= 2 ? '짧은줄' : '중간');
+                        col.appendChild(numSpan);
                         graphDiv.appendChild(col);
                     });
                 }
@@ -6641,11 +6671,23 @@ RESULTS_HTML = '''
                                 latestNextPickLabel = d.latest_next_pick;
                             }
                             var overallPongLabel = (d.overall_pong_dominant === true) ? '감지됨 (퐁당 우세·줄 낮음·덩어리 적음 → 퐁당 가중치↑)' : '—';
+                            var colHeightsLabel = '—';
+                            if (d.column_heights && Array.isArray(d.column_heights) && d.column_heights.length) {
+                                var ch = d.column_heights.slice(0, 15);
+                                colHeightsLabel = ch.join(',') + (d.column_heights.length > 15 ? '…' : '');
+                            }
+                            var longShortLabel = '—';
+                            if (d.long_short_stats && d.long_short_stats.total > 0) {
+                                var ls = d.long_short_stats;
+                                longShortLabel = '장줄(4+): ' + (ls.long || 0) + '개, 짧은줄(1~2): ' + (ls.short || 0) + '개 / ' + ls.total + '열';
+                            }
                             var rows = '<tr><td>판별 구간</td><td>' + phaseLabel + '</td></tr>' +
                                 '<tr><td>구간 유형</td><td>' + segmentLabel + '</td></tr>' +
                                 '<tr><td>덩어리 모양</td><td>' + chunkShapeLabel + '</td></tr>' +
                                 '<tr><td>U자 구간</td><td>' + uShapeLabel + '</td></tr>' +
                                 '<tr><td>전체 퐁당 우세</td><td>' + overallPongLabel + '</td></tr>' +
+                                '<tr><td>열 높이 (최근)</td><td>' + colHeightsLabel + '</td></tr>' +
+                                '<tr><td>장줄/짧은줄</td><td>' + longShortLabel + '</td></tr>' +
                                 '<tr><td>유사 덩어리 다음 결과</td><td>' + chunkProfileStatsLabel + '</td></tr>' +
                                 '<tr><td>가장 최근 다음 픽</td><td>' + latestNextPickLabel + '</td></tr>' +
                                 '<tr><td>모양 시그니처</td><td>' + (d.shape_signature || '—') + '</td></tr>' +
@@ -6658,7 +6700,7 @@ RESULTS_HTML = '''
                         var shapeVisual = document.getElementById('shape-visual-summary');
                         if (shapeVisual) {
                             var d2 = lastPongChunkDebug || {};
-                            var hasData = lastPongChunkPhase || d2.shape_signature || d2.latest_next_pick || (d2.shape_jung_count != null) || (d2.chunk_profile_jung != null) || d2.overall_pong_dominant;
+                            var hasData = lastPongChunkPhase || d2.shape_signature || d2.latest_next_pick || (d2.shape_jung_count != null) || (d2.chunk_profile_jung != null) || d2.overall_pong_dominant || (d2.column_heights && d2.column_heights.length);
                             if (hasData) {
                                 shapeVisual.style.display = 'block';
                                 var phaseLabelsMap = { 'line_phase': '줄 구간', 'pong_phase': '퐁당 구간', 'chunk_start': '덩어리 막 시작', 'chunk_phase': '덩어리 만드는 중', 'pong_to_chunk': '퐁당→덩어리 전환', 'chunk_to_pong': '덩어리→퐁당 전환' };
