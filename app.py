@@ -4206,12 +4206,13 @@ RESULTS_HTML = '''
         .calc-mini-graph-collapse.collapsed .calc-mini-graph-body { display: none; }
         .calc-mini-graph-wrap {
             display: flex; flex-direction: row; justify-content: flex-start; align-items: flex-end;
-            gap: 2px; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
-            max-height: 48px; padding: 0; -webkit-overflow-scrolling: touch;
+            gap: 2px; flex-wrap: nowrap; overflow-x: auto; overflow-y: auto;
+            max-height: 80px; padding: 0; -webkit-overflow-scrolling: touch;
         }
         .calc-mini-graph-wrap .calc-mini-col {
-            display: flex; flex-direction: column; gap: 1px; align-items: center;
+            display: flex; flex-direction: column; gap: 1px; align-items: center; flex-shrink: 0;
         }
+        .calc-mini-graph-wrap .calc-mini-col-num { font-size: 7px; color: #888; margin-top: 2px; }
         .calc-mini-graph-wrap .calc-mini-block {
             font-size: 8px; font-weight: bold; padding: 1px 3px; min-width: 12px; min-height: 10px;
             box-sizing: border-box; border-radius: 2px; color: #fff; line-height: 1;
@@ -5638,6 +5639,10 @@ RESULTS_HTML = '''
                                 block.textContent = seg.type === true ? '정' : '꺽';
                                 col.appendChild(block);
                             }
+                            var numSpan = document.createElement('span');
+                            numSpan.className = 'calc-mini-col-num';
+                            numSpan.textContent = seg.count;
+                            col.appendChild(numSpan);
                             miniEl.appendChild(col);
                         });
                     } else if (miniEl) { miniEl.innerHTML = ''; }
