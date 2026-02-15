@@ -1520,6 +1520,12 @@ def _apply_results_to_calcs(results):
                 if paused:
                     history_entry['no_bet'] = True
                     history_entry['betAmount'] = 0
+                # 15번 카드 조커 시 배팅 안 함 → no_bet. 조커 끝나면 마틴 이어감
+                if actual == 'joker':
+                    is_15_joker_at_pred = len(results) >= 16 and bool(results[15].get('joker'))
+                    if is_15_joker_at_pred:
+                        history_entry['no_bet'] = True
+                        history_entry['betAmount'] = 0
                 # 같은 회차가 이미 히스토리에 있으면 추가하지 않음 (스케줄러 중복 실행 시 마틴 단계·금액 꼬임 방지)
                 existing_rounds = {h.get('round') for h in (c.get('history') or []) if h.get('round') is not None}
                 if pending_round in existing_rounds:
@@ -5935,13 +5941,13 @@ RESULTS_HTML = '''
                                     rowJ.actual = 'joker';
                                     if (saved && (saved.value === '정' || saved.value === '꺽')) { rowJ.predicted = saved.value; rowJ.pickColor = saved.isRed ? '빨강' : '검정'; }
                                     else if ((rowJ.predicted !== '정' && rowJ.predicted !== '꺽') || rowJ.pickColor == null || rowJ.pickColor === '') { rowJ.predicted = pred; rowJ.pickColor = betColor || null; }
-                                    var isNoBetJ = !!(effectivePausedForRound(id) || (rowJ.no_bet && !isMartingaleLossStreak(id)));
+                                    var isNoBetJ = !!(is15Joker || effectivePausedForRound(id) || (rowJ.no_bet && !isMartingaleLossStreak(id)));
                                     rowJ.no_bet = isNoBetJ;
                                     rowJ.betAmount = isNoBetJ ? 0 : (rowJ.betAmount != null ? rowJ.betAmount : undefined);
                                     if (rowJ.warningWinRate == null && typeof blended === 'number') rowJ.warningWinRate = blended;
                                     if (typeof getCalcRecent15WinRate === 'function') rowJ.rate15 = getCalcRecent15WinRate(id);
                                 } else {
-                                    var noBetJoker = !!effectivePausedForRound(id);
+                                    var noBetJoker = !!(is15Joker || effectivePausedForRound(id));
                                     calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null, betAmount: noBetJoker ? 0 : undefined, no_bet: noBetJoker, warningWinRate: typeof blended === 'number' ? blended : null });
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
@@ -6094,13 +6100,13 @@ RESULTS_HTML = '''
                                     rowJ2.actual = 'joker';
                                     rowJ2.predicted = pred;
                                     rowJ2.pickColor = betColor || null;
-                                    var isNoBetJ2 = !!(effectivePausedForRound(id) || (rowJ2.no_bet && !isMartingaleLossStreak(id)));
+                                    var isNoBetJ2 = !!(is15Joker || effectivePausedForRound(id) || (rowJ2.no_bet && !isMartingaleLossStreak(id)));
                                     rowJ2.no_bet = isNoBetJ2;
                                     rowJ2.betAmount = isNoBetJ2 ? 0 : (rowJ2.betAmount != null ? rowJ2.betAmount : undefined);
                                     if (rowJ2.warningWinRate == null && typeof blended === 'number') rowJ2.warningWinRate = blended;
                                     if (typeof getCalcRecent15WinRate === 'function') rowJ2.rate15 = getCalcRecent15WinRate(id);
                                 } else if (!calcState[id].history.some(function(h) { return h && Number(h.round) === currentRoundNum; })) {
-                                    var noBetJoker2 = !!effectivePausedForRound(id);
+                                    var noBetJoker2 = !!(is15Joker || effectivePausedForRound(id));
                                     calcState[id].history.push({ predicted: pred, actual: 'joker', round: currentRoundFull, pickColor: betColor || null, betAmount: noBetJoker2 ? 0 : undefined, no_bet: noBetJoker2, warningWinRate: typeof blended === 'number' ? blended : null });
                                 }
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
