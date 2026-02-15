@@ -1426,10 +1426,10 @@ def _apply_results_to_calcs(results):
                 if first_bet > 0 and pending_round < first_bet:
                     continue
                 # prediction_history(예측기표)에는 항상 예측기 픽만 저장. 계산기(반픽/승률반픽)는 calc history에만 반영.
-                # shape_prediction 사용 시 pending_predicted는 모양픽이므로, 예측기표용으로는 메인 픽을 별도 계산.
+                # shape_prediction·shape_only_latest_next_pick 사용 시 pending_predicted는 모양픽이므로, 예측기표용으로는 메인 픽을 별도 계산.
                 pred_for_record = pending_predicted
                 main_pred_for_record = None
-                if c.get('shape_prediction') and results and len(results) >= 16:
+                if (c.get('shape_prediction') or c.get('shape_only_latest_next_pick')) and results and len(results) >= 16:
                     filtered_for_main = [r for r in results if int(str(r.get('gameID') or '0'), 10) < pending_round]
                     if len(filtered_for_main) >= 16:
                         ph_rec = get_prediction_history(100)
