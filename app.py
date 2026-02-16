@@ -2142,8 +2142,34 @@ def _backfill_latest_round_to_prediction_history(results):
         print(f"[경고] prediction_history 보정 실패: {str(e)[:150]}")
 
 
-def _backfill_shape_predicted_in_ph(ph, results, max_backfill=50):
-    """prediction_history 중 shape_predicted가 null인 회차에 대해 results로 보정. 표시용(DB 미수정)."""
+def _update_shape_predicted_in_db(round_num, shape_predicted):
+    """해당 회차의 shape_predicted를 DB에 저장. 보정 시 영구 반영용."""
+    if not DB_AVAILABLE or not DATABASE_URL or round_num is None or shape_predicted not in ('정', '꺽'):
+        return False
+    conn = get_db_connection(statement_timeout_sec=3)
+    if not conn:
+        return False
+    try:
+        cur = conn.cursor()
+        cur.execute('UPDATE prediction_history SET shape_predicted = %s WHERE round_num = %s', (str(shape_predicted), int(round_num)))
+        conn.commit()
+        cur.close()
+        return True
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _backfill_shape_predicted_in_ph(ph, results, max_backfill=50, persist_to_db=True):
+    """prediction_history 중 shape_predicted가 null인 회차에 대해 results로 보정. persist_to_db=True면 DB에도 저장."""
     if not ph or not results or len(results) < 16:
         return ph
     to_fill = [h for h in ph if h and isinstance(h, dict) and h.get('shape_predicted') not in ('정', '꺽')]
@@ -2165,6 +2191,8 @@ def _backfill_shape_predicted_in_ph(ph, results, max_backfill=50):
             hint = get_shape_prediction_hint(filtered, history_before)
             if hint and hint.get('value') in ('정', '꺽'):
                 h['shape_predicted'] = hint['value']
+                if persist_to_db:
+                    _update_shape_predicted_in_db(rnd, hint['value'])
                 filled += 1
         except Exception:
             pass
