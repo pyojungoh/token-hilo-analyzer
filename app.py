@@ -2142,6 +2142,35 @@ def _backfill_latest_round_to_prediction_history(results):
         print(f"[경고] prediction_history 보정 실패: {str(e)[:150]}")
 
 
+def _backfill_shape_predicted_in_ph(ph, results, max_backfill=50):
+    """prediction_history 중 shape_predicted가 null인 회차에 대해 results로 보정. 표시용(DB 미수정)."""
+    if not ph or not results or len(results) < 16:
+        return ph
+    to_fill = [h for h in ph if h and isinstance(h, dict) and h.get('shape_predicted') not in ('정', '꺽')]
+    if not to_fill:
+        return ph
+    ph_by_round = {h['round']: h for h in ph if h and h.get('round') is not None}
+    filled = 0
+    for h in to_fill:
+        if filled >= max_backfill:
+            break
+        rnd = h.get('round')
+        if rnd is None:
+            continue
+        filtered = [r for r in results if int(str(r.get('gameID') or '0'), 10) < rnd]
+        if len(filtered) < 16:
+            continue
+        history_before = [ph_by_round[r] for r in sorted(ph_by_round.keys()) if r < rnd][-100:]
+        try:
+            hint = get_shape_prediction_hint(filtered, history_before)
+            if hint and hint.get('value') in ('정', '꺽'):
+                h['shape_predicted'] = hint['value']
+                filled += 1
+        except Exception:
+            pass
+    return ph
+
+
 def get_prediction_history(limit=30):
     """시스템 예측 기록 조회 (최신 N건, round 오름차순 = 과거→현재). statement_timeout으로 먹통 방지."""
     if not DB_AVAILABLE or not DATABASE_URL:
@@ -7244,7 +7273,11 @@ RESULTS_HTML = '''
                             noticeBlock = '<div class="prediction-notice' + (lowWinRate && !flowAdvice ? ' danger' : '') + '">' + notices.join(' &nbsp; · &nbsp; ') + '</div>';
                         }
                         const extraLine = '<div class="flow-type" style="margin-top:6px;font-size:clamp(0.75em,1.8vw,0.85em)">' + flowStr + (linePatternStr ? ' &nbsp;|&nbsp; ' + linePatternStr : '') + '</div>';
+                        var wrapEl = predDiv.querySelector('.main-streak-table-wrap');
+                        var savedScroll = wrapEl ? wrapEl.scrollLeft : 0;
                         predDiv.innerHTML = noticeBlock + statsBlock + streakTableBlock + extraLine;
+                        var newWrap = predDiv.querySelector('.main-streak-table-wrap');
+                        if (newWrap && savedScroll > 0) newWrap.scrollLeft = savedScroll;
                     }
                     
                     // 가상 배팅 계산기: history 변경된 것만 갱신 (배팅픽 표시 속도 개선)
@@ -9263,6 +9296,7 @@ def _build_results_payload_db_only(hours=24):
             except Exception:
                 pass
         blended = _blended_win_rate(ph)
+        ph = _backfill_shape_predicted_in_ph(ph, results)
         return {
             'results': results,
             'count': len(results),
@@ -9448,6 +9482,7 @@ def _build_results_payload():
                 except Exception:
                     pass
             blended = _blended_win_rate(ph)
+            ph = _backfill_shape_predicted_in_ph(ph, results)
             return {
                 'results': results,
                 'count': len(results),
@@ -9537,6 +9572,7 @@ def _build_results_payload():
                     pass
             blended = _blended_win_rate(ph)
             round_actuals = _build_round_actuals(results)
+            ph = _backfill_shape_predicted_in_ph(ph, results)
             return {
                 'results': results,
                 'count': len(results),
@@ -10478,6 +10514,7 @@ def refresh_data():
         else:
             # 폴백: 최소 구조 + blended_win_rate + round_actuals (100회 승률방향용 300건)
             ph = get_prediction_history(300)
+            ph = _backfill_shape_predicted_in_ph(ph, results_data or [])
             blended = _blended_win_rate(ph)
             round_actuals = _build_round_actuals(results_data) if results_data else {}
             results_cache = {
