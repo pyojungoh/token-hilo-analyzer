@@ -3752,6 +3752,31 @@ def load_results_data(base_url=None):
     return []
 
 
+def _update_relay_cache_for_running_calcs():
+    """실행 중인 계산기 relay 캐시 갱신. 결과 유무와 관계없이 0.2초마다 호출 → 전회차 금액 송출·20000 고정 방지."""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return
+    try:
+        session_ids = _get_all_calc_session_ids()
+        for session_id in session_ids:
+            state = get_calc_state(session_id)
+            if not state or not isinstance(state, dict):
+                continue
+            for cid in ('1', '2', '3'):
+                c = state.get(cid)
+                if not c or not isinstance(c, dict) or not c.get('running'):
+                    continue
+                try:
+                    pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
+                    if pick_color is not None:
+                        pr = c.get('pending_round')
+                        _update_current_pick_relay_cache(int(cid), pr, pick_color, suggested_amount, c.get('running', True))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
 def _scheduler_fetch_results():
     """스케줄러에서 호출: results_cache 갱신 + DB 저장 + 현재 회차 예측 1회 저장(한 곳) + 계산기 회차 반영 + prediction_history 누락 보정."""
     try:
@@ -3762,6 +3787,8 @@ def _scheduler_fetch_results():
                 ensure_stored_prediction_for_current_round(results)
                 _apply_results_to_calcs(results)
                 _backfill_latest_round_to_prediction_history(results)
+            # relay 캐시: 결과 유무와 관계없이 항상 갱신 (전회차 금액 송출·20000 고정 방지)
+            _update_relay_cache_for_running_calcs()
     except Exception as e:
         print(f"[스케줄러] 결과 수집/회차 반영 오류: {str(e)[:150]}")
 
@@ -10373,6 +10400,27 @@ def api_current_pick_relay():
             calculator_id = int(calculator_id) if calculator_id in ('1', '2', '3') else 1
         except (TypeError, ValueError):
             calculator_id = 1
+        # 실행 중인 계산기가 있으면 캐시 무시하고 서버에서 항상 재계산 (20000 고정 방지)
+        try:
+            for sid in _get_all_calc_session_ids():
+                state = get_calc_state(sid)
+                if not state or not isinstance(state, dict):
+                    continue
+                c = state.get(str(calculator_id))
+                if c and isinstance(c, dict) and c.get('running') and c.get('pending_round') is not None:
+                    srv_pick, server_amt, _ = _server_calc_effective_pick_and_amount(c)
+                    if srv_pick is not None:
+                        out = dict(empty_pick)
+                        out['round'] = c.get('pending_round')
+                        out['pick_color'] = srv_pick
+                        out['suggested_amount'] = int(server_amt) if server_amt and server_amt > 0 else None
+                        out['running'] = c.get('running', True)
+                        out['probability'] = c.get('pending_prob')
+                        if out.get('running') is False:
+                            out['pick_color'] = out['round'] = out['suggested_amount'] = None
+                        return jsonify(out), 200
+        except Exception:
+            pass
         cached = _current_pick_relay_cache.get(calculator_id)
         if cached and isinstance(cached, dict):
             out = dict(empty_pick)
@@ -10392,6 +10440,20 @@ def api_current_pick_relay():
                     conn.commit()
                     out = bet_int.get_current_pick(conn, calculator_id=calculator_id)
                     if out:
+                        # DB 폴백 시에도 서버 calc 상태로 금액·픽 재계산 (20000 고정·전회차 금액 방지)
+                        try:
+                            state = get_calc_state('default') or {}
+                            c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
+                            if c and c.get('running') and c.get('pending_round') is not None:
+                                srv_pick, server_amt, _ = _server_calc_effective_pick_and_amount(c)
+                                if srv_pick is not None:
+                                    out = dict(out)
+                                    out['round'] = c.get('pending_round')
+                                    out['pick_color'] = srv_pick
+                                    if server_amt is not None and server_amt > 0:
+                                        out['suggested_amount'] = int(server_amt)
+                        except Exception:
+                            pass
                         _update_current_pick_relay_cache(calculator_id, out.get('round'), out.get('pick_color'),
                                                          out.get('suggested_amount'), out.get('running', True), out.get('probability'))
                         if out.get('running') is False:

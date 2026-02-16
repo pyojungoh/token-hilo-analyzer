@@ -307,7 +307,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._display_stable = None  # (round_num, pick_color, amount)
         self._display_candidate = None
         self._display_confirm_count = 0
-        self._display_confirm_needed = 2
+        self._display_confirm_needed = 1  # 1회 수신 시 즉시 갱신 (20000 고정 방지, 서버 안정화로 깜빡임 완화)
         # 배팅금액 2~3회만 받고 즉시 배팅 (계산기 표와 동일 금액 확정용)
         self._amount_confirm_round = None
         self._amount_confirm_pick = None
@@ -1015,7 +1015,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         with self._lock:
             self._pick_data = pick if isinstance(pick, dict) else {}
             self._results_data = results if isinstance(results, dict) else {}
-        # 표시 깜빡임 방지: 같은 (회차, 픽, 금액)이 2회 연속 올 때만 카드/금액 갱신
+        # 표시: 회차·픽·금액 — 최신 값 즉시 반영 (20000 고정 방지, 서버 relay 0.2초 갱신으로 안정화)
         round_num = self._pick_data.get("round")
         raw_color = self._pick_data.get("pick_color")
         pick_color = _normalize_pick_color(raw_color)
@@ -1025,17 +1025,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         except (TypeError, ValueError):
             amt_val = None
         key = (round_num, pick_color, amt_val)
-        if self._display_stable is None:
-            self._display_stable = key
-            self._display_candidate = key
-            self._display_confirm_count = 1
-        elif key == self._display_candidate:
-            self._display_confirm_count += 1
-            if self._display_confirm_count >= self._display_confirm_needed:
-                self._display_stable = key
-        else:
-            self._display_candidate = key
-            self._display_confirm_count = 1
+        self._display_stable = key
         self._update_display()
 
         # 매크로는 오는 픽만 따라감. 목표금액/중지 판단은 분석기 계산기에서만 함 — running=False 수신해도 여기서 자동 중지하지 않음.
@@ -1200,7 +1190,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         with self._lock:
             pick = self._pick_data.copy()
             results = self._results_data.copy()
-        # 깜빡임 방지: 2회 연속 같은 (회차,픽,금액)일 때만 갱신, 아니면 이전 표시 유지
+        # 표시: _display_stable(폴링 시 설정) 또는 pick(연결 시 등)
         if self._display_stable is not None and len(self._display_stable) >= 3:
             stable_round, stable_color, stable_amt = self._display_stable[0], self._display_stable[1], self._display_stable[2]
             round_num, pick_color = stable_round, stable_color
