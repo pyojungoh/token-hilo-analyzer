@@ -109,11 +109,11 @@ def normalize_analyzer_url(analyzer_url):
 
 
 def fetch_current_pick(analyzer_url, calculator_id=1, timeout=5):
-    """GET {analyzer_url}/api/current-pick?calculator=1|2|3 (서버 재계산 우선, 20000 고정 방지)"""
+    """GET {analyzer_url}/api/current-pick-relay?calculator=1|2|3 (계산기 상단 배팅중 금액 = DB 클라이언트 POST 값)"""
     base = normalize_analyzer_url(analyzer_url)
     if not base:
         return {"pick_color": None, "round": None, "probability": None, "error": "URL 없음"}
-    url = base + "/api/current-pick"
+    url = base + "/api/current-pick-relay"
     params = {"calculator": calculator_id}
     try:
         r = requests.get(url, params=params, timeout=timeout)

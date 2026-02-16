@@ -10220,35 +10220,14 @@ def api_current_pick():
                 out['pick_color'] = None
                 out['round'] = None
                 out['suggested_amount'] = None
-            # GET 시 금액: 실행 중인 계산기가 있으면 서버 재계산 우선 (20000 고정 방지). 없을 때만 DB 값 사용
+            # GET 시: 계산기 상단 "배팅중" 금액만 사용 (클라이언트 POST 값 = DB 그대로 반환, 서버 재계산으로 덮어쓰지 않음)
             try:
                 state = get_calc_state('default') or {}
                 c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
-                if c and c.get('running') and c.get('pending_round') is not None:
-                    if out is None:
-                        out = dict(empty_pick)
-                    if not isinstance(out, dict):
-                        out = dict(out) if out else dict(empty_pick)
-                    out = dict(out)
-                    srv_pick, server_amt, _ = _server_calc_effective_pick_and_amount(c)
-                    out['suggested_amount'] = int(server_amt) if server_amt and server_amt > 0 else None
-                    out['round'] = c.get('pending_round')
-                    if srv_pick:
-                        out['pick_color'] = srv_pick
-                elif c and c.get('paused') and out and isinstance(out, dict):
+                if c and c.get('paused') and out and isinstance(out, dict):
                     out = dict(out)
                     out['suggested_amount'] = None
-                elif out:
-                    db_amt = out.get('suggested_amount')
-                    try:
-                        db_amt_val = int(db_amt) if db_amt is not None else 0
-                    except (TypeError, ValueError):
-                        db_amt_val = 0
-                    if db_amt_val > 0:
-                        if not isinstance(out, dict):
-                            out = dict(out) if out else dict(empty_pick)
-                        out = dict(out)
-                        out['suggested_amount'] = db_amt_val
+                # DB에 클라이언트(계산기 상단)가 POST한 값이 있으면 그대로 사용 — 충돌 방지
             except Exception:
                 pass
             return jsonify(out if out else empty_pick), 200
@@ -10391,39 +10370,7 @@ def api_current_pick_relay():
             calculator_id = int(calculator_id) if calculator_id in ('1', '2', '3') else 1
         except (TypeError, ValueError):
             calculator_id = 1
-        # 실행 중인 계산기가 있으면 캐시/DB 무시하고 서버에서 항상 재계산 (20000 고정 방지)
-        try:
-            session_ids = ['default'] + [s for s in _get_all_calc_session_ids() if s != 'default']
-            for sid in session_ids:
-                state = get_calc_state(sid)
-                if not state or not isinstance(state, dict):
-                    continue
-                c = state.get(str(calculator_id))
-                if c and isinstance(c, dict) and c.get('running') and c.get('pending_round') is not None:
-                    srv_pick, server_amt, _ = _server_calc_effective_pick_and_amount(c)
-                    if srv_pick is not None:
-                        out = dict(empty_pick)
-                        out['round'] = c.get('pending_round')
-                        out['pick_color'] = srv_pick
-                        out['suggested_amount'] = int(server_amt) if server_amt and server_amt > 0 else None
-                        out['running'] = c.get('running', True)
-                        out['probability'] = c.get('pending_prob')
-                        if out.get('running') is False:
-                            out['pick_color'] = out['round'] = out['suggested_amount'] = None
-                        return jsonify(out), 200
-        except Exception:
-            pass
-        cached = _current_pick_relay_cache.get(calculator_id)
-        if cached and isinstance(cached, dict):
-            out = dict(empty_pick)
-            for k in ('round', 'pick_color', 'probability', 'suggested_amount', 'running'):
-                if k in cached:
-                    out[k] = cached[k]
-            if out.get('running') is False:
-                out['pick_color'] = None
-                out['round'] = None
-                out['suggested_amount'] = None
-            return jsonify(out), 200
+        # 계산기 상단 "배팅중" 금액만 사용 — DB(클라이언트 POST) 우선, 캐시는 DB 없을 때만
         if bet_int and DB_AVAILABLE and DATABASE_URL:
             conn = get_db_connection(statement_timeout_sec=3)
             if conn:
@@ -10432,20 +10379,7 @@ def api_current_pick_relay():
                     conn.commit()
                     out = bet_int.get_current_pick(conn, calculator_id=calculator_id)
                     if out:
-                        # DB 폴백 시에도 서버 calc 상태로 금액·픽 재계산 (20000 고정·전회차 금액 방지)
-                        try:
-                            state = get_calc_state('default') or {}
-                            c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
-                            if c and c.get('running') and c.get('pending_round') is not None:
-                                srv_pick, server_amt, _ = _server_calc_effective_pick_and_amount(c)
-                                if srv_pick is not None:
-                                    out = dict(out)
-                                    out['round'] = c.get('pending_round')
-                                    out['pick_color'] = srv_pick
-                                    if server_amt is not None and server_amt > 0:
-                                        out['suggested_amount'] = int(server_amt)
-                        except Exception:
-                            pass
+                        # DB = 클라이언트(계산기 상단) POST 값 그대로 사용
                         _update_current_pick_relay_cache(calculator_id, out.get('round'), out.get('pick_color'),
                                                          out.get('suggested_amount'), out.get('running', True), out.get('probability'))
                         if out.get('running') is False:
@@ -10457,6 +10391,17 @@ def api_current_pick_relay():
                         conn.close()
                     except Exception:
                         pass
+        cached = _current_pick_relay_cache.get(calculator_id)
+        if cached and isinstance(cached, dict):
+            out = dict(empty_pick)
+            for k in ('round', 'pick_color', 'probability', 'suggested_amount', 'running'):
+                if k in cached:
+                    out[k] = cached[k]
+            if out.get('running') is False:
+                out['pick_color'] = None
+                out['round'] = None
+                out['suggested_amount'] = None
+            return jsonify(out), 200
         return jsonify(empty_pick), 200
     except Exception as e:
         print(f"[경고] current-pick-relay 실패: {str(e)[:100]}")
