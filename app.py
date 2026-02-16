@@ -627,6 +627,7 @@ def _get_latest_next_pick_for_chunk(results, exclude_round=None):
     if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
         return None
     profile = _get_chunk_profile_from_results(results)
+    rev_profile = _reverse_chunk_profile(profile) if profile else None
     sig = _get_shape_signature(results)
     conn = get_db_connection(statement_timeout_sec=3)
     if not conn:
@@ -650,7 +651,9 @@ def _get_latest_next_pick_for_chunk(results, exclude_round=None):
                 ''')
             rows = cur.fetchall()
             CHUNK_SIM_THRESHOLD = 0.65
+            EXACT_SIM_THRESHOLD = 0.98
             matches = []
+            exact_matches = []
             for profile_json, next_actual, rnd in rows:
                 try:
                     other = tuple(json.loads(profile_json))
@@ -659,17 +662,23 @@ def _get_latest_next_pick_for_chunk(results, exclude_round=None):
                 if next_actual not in ('정', '꺽'):
                     continue
                 sim = _chunk_profile_similarity(profile, other)
+                if rev_profile:
+                    sim = max(sim, _chunk_profile_similarity(rev_profile, other))
                 if sim >= CHUNK_SIM_THRESHOLD:
-                    matches.append((sim, rnd, next_actual))
+                    m = (sim, rnd, next_actual)
+                    matches.append(m)
+                    if sim >= EXACT_SIM_THRESHOLD:
+                        exact_matches.append(m)
                     if len(matches) >= 5:
                         break
-            if matches:
-                if len(matches) >= 2:
-                    jung_cnt = sum(1 for m in matches if m[2] == '정')
-                    kkeok_cnt = len(matches) - jung_cnt
-                    pick = '정' if jung_cnt > kkeok_cnt else ('꺽' if kkeok_cnt > jung_cnt else matches[0][2])
+            use = exact_matches if len(exact_matches) >= 2 else matches
+            if use:
+                if len(use) >= 2:
+                    jung_cnt = sum(1 for m in use if m[2] == '정')
+                    kkeok_cnt = len(use) - jung_cnt
+                    pick = '정' if jung_cnt > kkeok_cnt else ('꺽' if kkeok_cnt > jung_cnt else use[0][2])
                 else:
-                    pick = matches[0][2]
+                    pick = use[0][2]
                 cur.close()
                 return pick
         if sig:
@@ -678,19 +687,24 @@ def _get_latest_next_pick_for_chunk(results, exclude_round=None):
                     SELECT next_actual FROM shape_win_occurrences
                     WHERE signature = %s AND round_num < %s
                     ORDER BY round_num DESC
-                    LIMIT 1
+                    LIMIT 5
                 ''', (sig, int(exclude_round)))
             else:
                 cur.execute('''
                     SELECT next_actual FROM shape_win_occurrences
                     WHERE signature = %s
                     ORDER BY round_num DESC
-                    LIMIT 1
+                    LIMIT 5
                 ''', (sig,))
-            row = cur.fetchone()
+            shape_rows = cur.fetchall()
             cur.close()
-            if row and row[0] in ('정', '꺽'):
-                return row[0]
+            valid = [r[0] for r in shape_rows if r and r[0] in ('정', '꺽')]
+            if valid:
+                if len(valid) >= 2:
+                    jung_cnt = sum(1 for v in valid if v == '정')
+                    kkeok_cnt = len(valid) - jung_cnt
+                    return '정' if jung_cnt > kkeok_cnt else ('꺽' if kkeok_cnt > jung_cnt else valid[0])
+                return valid[0]
         else:
             cur.close()
         return None
@@ -764,8 +778,11 @@ def get_chunk_profile_stats(conn, profile, current_round=None):
         CHUNK_DECAY_BASE = 0.95
         CHUNK_DECAY_STEP = 15
         CHUNK_SIM_THRESHOLD = 0.65
+        EXACT_SIM_THRESHOLD = 0.98
         jung_weighted = 0.0
         kkeok_weighted = 0.0
+        exact_jung = 0.0
+        exact_kkeok = 0.0
         for profile_json, next_actual, rnd in rows:
             try:
                 other = tuple(json.loads(profile_json))
@@ -780,9 +797,16 @@ def get_chunk_profile_stats(conn, profile, current_round=None):
             w = (CHUNK_DECAY_BASE ** (age / CHUNK_DECAY_STEP)) * sim
             if next_actual == '정':
                 jung_weighted += w
+                if sim >= EXACT_SIM_THRESHOLD:
+                    exact_jung += w
             else:
                 kkeok_weighted += w
+                if sim >= EXACT_SIM_THRESHOLD:
+                    exact_kkeok += w
+        exact_total = exact_jung + exact_kkeok
         total = jung_weighted + kkeok_weighted
+        if exact_total >= 0.5:
+            return {'jung_count': exact_jung, 'kkeok_count': exact_kkeok}
         if total < 0.5:
             return None
         return {'jung_count': jung_weighted, 'kkeok_count': kkeok_weighted}
