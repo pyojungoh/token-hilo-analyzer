@@ -303,8 +303,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._pick_data = {}
         self._results_data = {}
         self._lock = threading.Lock()
-        # 표시 깜빡임 방지: 같은 (회차, 픽)이 2회 연속 올 때만 카드/회차 문구 갱신
-        self._display_stable = None  # (round_num, pick_color) 표시용
+        # 표시 깜빡임 방지: 같은 (회차, 픽, 금액)이 2회 연속 올 때만 카드/회차/금액 갱신 (웹·서버 교차 덮어쓰기로 5천↔1만 깜빡임 방지)
+        self._display_stable = None  # (round_num, pick_color, amount)
         self._display_candidate = None
         self._display_confirm_count = 0
         self._display_confirm_needed = 2
@@ -1015,11 +1015,16 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         with self._lock:
             self._pick_data = pick if isinstance(pick, dict) else {}
             self._results_data = results if isinstance(results, dict) else {}
-        # 표시 깜빡임 방지: 같은 (회차, 픽)이 2회 연속 올 때만 카드 문구 갱신
+        # 표시 깜빡임 방지: 같은 (회차, 픽, 금액)이 2회 연속 올 때만 카드/금액 갱신
         round_num = self._pick_data.get("round")
         raw_color = self._pick_data.get("pick_color")
         pick_color = _normalize_pick_color(raw_color)
-        key = (round_num, pick_color)
+        try:
+            amt = self._pick_data.get("suggested_amount")
+            amt_val = int(amt) if amt is not None else None
+        except (TypeError, ValueError):
+            amt_val = None
+        key = (round_num, pick_color, amt_val)
         if self._display_stable is None:
             self._display_stable = key
             self._display_candidate = key
@@ -1031,7 +1036,6 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         else:
             self._display_candidate = key
             self._display_confirm_count = 1
-            # _display_stable 유지 — 새 값이 2회 연속 올 때만 바꿈
         self._update_display()
 
         # 매크로는 오는 픽만 따라감. 목표금액/중지 판단은 분석기 계산기에서만 함 — running=False 수신해도 여기서 자동 중지하지 않음.
@@ -1196,24 +1200,24 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         with self._lock:
             pick = self._pick_data.copy()
             results = self._results_data.copy()
-        # 깜빡임 방지: 2회 연속 같은 값일 때만 바뀐 _display_stable 사용, 아니면 이전 표시 유지
-        if self._display_stable is not None:
-            stable_round, stable_color = self._display_stable
-            round_num = stable_round
-            pick_color = stable_color
+        # 깜빡임 방지: 2회 연속 같은 (회차,픽,금액)일 때만 갱신, 아니면 이전 표시 유지
+        if self._display_stable is not None and len(self._display_stable) >= 3:
+            stable_round, stable_color, stable_amt = self._display_stable[0], self._display_stable[1], self._display_stable[2]
+            round_num, pick_color = stable_round, stable_color
+            amount_str = str(stable_amt) if stable_amt is not None and stable_amt > 0 else "-"
         else:
             round_num = pick.get("round")
             raw_color = pick.get("pick_color")
             pick_color = _normalize_pick_color(raw_color)
+            suggested = pick.get("suggested_amount")
+            if suggested is not None and int(suggested) > 0:
+                amount_str = str(int(suggested))
+            else:
+                amount_str = "-"
         prob = pick.get("probability")
         icon_ch, _ = get_round_icon(round_num)
         round_str = f"{round_num}회 {icon_ch}" if round_num is not None else "-"
         self.round_label.setText(f"회차: {round_str}")
-        suggested = pick.get("suggested_amount")
-        if suggested is not None and int(suggested) > 0:
-            amount_str = str(int(suggested))
-        else:
-            amount_str = "-"
         self.amount_label.setText(f"금액: {amount_str} (계산기에서 전달)")
 
         # 정/꺽 + 색깔 카드 (RED=정·빨강, BLACK=꺽·검정)

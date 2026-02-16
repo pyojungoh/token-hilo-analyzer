@@ -10208,6 +10208,14 @@ def api_current_pick_relay():
             running = data.get('running')
             # relay 캐시는 POST에서 갱신하지 않음 — 스케줄러가 0.2초마다 서버 금액으로 덮어써서 5천↔1만 깜빡임 방지
             # DB(current_pick)만 저장. 매크로 GET 시 relay 캐시(스케줄러가 채움) 또는 DB 폴백 사용
+            # 금액 깜빡임 방지: 서버 calc 상태의 pending_bet_amount 우선 (웹·스케줄러 교차 시 5천↔1만 방지)
+            try:
+                state = get_calc_state('default') or {}
+                c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
+                if c and c.get('running') and c.get('pending_round') == round_num and (c.get('pending_bet_amount') or 0) > 0:
+                    suggested_amount = int(c.get('pending_bet_amount'))
+            except Exception:
+                pass
             threading.Thread(target=_relay_db_write_background, daemon=True,
                              args=(calculator_id, pick_color, round_num, suggested_amount, running)).start()
             return jsonify({'ok': True}), 200
