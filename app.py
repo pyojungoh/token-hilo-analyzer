@@ -1637,6 +1637,18 @@ def _apply_results_to_calcs(results):
                 save_calc_state(session_id, state)  # 먼저 저장 → POST /api/current-pick 시 get_calc_state가 새 상태를 읽어 금액 보정 가능
                 for calc_id, calc_c in to_push:
                     _push_current_pick_from_calc(calc_id, calc_c)
+            # relay 캐시: 실행 중인 계산기는 회차 반영 여부와 관계없이 항상 서버 금액으로 갱신 (웹·서버 교차 덮어쓰기로 5천↔1만 깜빡임 방지)
+            for cid in ('1', '2', '3'):
+                c = state.get(cid)
+                if not c or not isinstance(c, dict) or not c.get('running'):
+                    continue
+                try:
+                    pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
+                    if pick_color is not None:
+                        pr = c.get('pending_round')
+                        _update_current_pick_relay_cache(int(cid), pr, pick_color, suggested_amount, c.get('running', True))
+                except Exception:
+                    pass
     except Exception as e:
         print(f"[스케줄러] 회차 반영 오류: {str(e)[:200]}")
 
@@ -10180,7 +10192,7 @@ def _relay_db_write_background(calculator_id, pick_color, round_num, suggested_a
 
 @app.route('/api/current-pick-relay', methods=['GET', 'POST'])
 def api_current_pick_relay():
-    """매크로 전용: DB 없이 메모리 캐시에서 즉시 반환. POST: 회차·픽·금액만 받아 캐시 즉시 갱신 후 응답."""
+    """매크로 전용: DB 없이 메모리 캐시에서 즉시 반환. POST: DB에만 저장(relay 캐시는 스케줄러가 서버 금액으로 갱신)."""
     empty_pick = {'pick_color': None, 'round': None, 'probability': None, 'suggested_amount': None, 'running': True}
     try:
         if request.method == 'POST':
@@ -10194,8 +10206,8 @@ def api_current_pick_relay():
             round_num = data.get('round')
             suggested_amount = data.get('suggested_amount')
             running = data.get('running')
-            _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount,
-                                            running if running is not None else True, data.get('probability'))
+            # relay 캐시는 POST에서 갱신하지 않음 — 스케줄러가 0.2초마다 서버 금액으로 덮어써서 5천↔1만 깜빡임 방지
+            # DB(current_pick)만 저장. 매크로 GET 시 relay 캐시(스케줄러가 채움) 또는 DB 폴백 사용
             threading.Thread(target=_relay_db_write_background, daemon=True,
                              args=(calculator_id, pick_color, round_num, suggested_amount, running)).start()
             return jsonify({'ok': True}), 200

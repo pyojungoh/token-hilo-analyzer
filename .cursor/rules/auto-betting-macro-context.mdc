@@ -1,0 +1,34 @@
+---
+description: 자동배팅 매크로 작업 맥락. 새 채팅에서 매크로 이어서 작업할 때 참고.
+globs: auto-betting-macro/**/*.py, app.py
+alwaysApply: false
+---
+
+# 자동배팅 매크로 작업 맥락
+
+## 구조 요약
+
+- **Relay 캐시**: `_current_pick_relay_cache` — DB 없이 메모리에서 즉시 반환
+- **GET** `/api/current-pick-relay?calculator=N` → 매크로 폴링
+- **POST** `/api/current-pick-relay` → 웹 계산기가 픽/금액 갱신
+- **서버 스케줄러**: `_push_current_pick_from_calc` → `_update_current_pick_relay_cache` 직접 호출
+
+## 금액 깜빡임(5천↔1만) — 해결됨
+
+- **원인**: 웹 POST와 서버 스케줄러가 relay 캐시를 번갈아 덮어써서, 타이밍·히스토리 차이로 마틴 단계가 달라짐 (5000 vs 10000)
+- **해결**: relay 캐시를 **서버 단일 소스**로 통일
+  - 스케줄러: 0.2초마다 실행 중인 계산기마다 `_server_calc_effective_pick_and_amount` → `_update_current_pick_relay_cache` 호출
+  - 웹 POST: relay 캐시 갱신 안 함. DB(current_pick)만 저장. 매크로 GET 시 relay 캐시(스케줄러가 채움) 또는 DB 폴백
+
+## 완료된 작업
+
+- 매크로 표시 안정화: `(회차, 픽, 금액)`이 2회 연속 동일할 때만 UI 갱신 (`emulator_macro.py`)
+- relay 캐시 단일 소스: 서버 스케줄러만 갱신, 웹 POST는 relay 갱신 제외
+
+## 관련 파일
+
+| 파일 | 역할 |
+|------|------|
+| `app.py` | relay API, `_update_current_pick_relay_cache`, `_push_current_pick_from_calc` |
+| `emulator_macro.py` | 풀 매크로 UI, 폴링, 표시 안정화 |
+| `emulator_macro_light.py` | 경량 매크로 |
