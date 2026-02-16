@@ -2168,9 +2168,11 @@ def _update_shape_predicted_in_db(round_num, shape_predicted):
             pass
 
 
-def _backfill_shape_predicted_in_ph(ph, results, max_backfill=50, persist_to_db=True):
-    """prediction_history 중 shape_predicted가 null인 회차에 대해 results로 보정. persist_to_db=True면 DB에도 저장."""
-    if not ph or not results or len(results) < 16:
+def _backfill_shape_predicted_in_ph(ph, results, max_backfill=0, persist_to_db=False):
+    """prediction_history 중 shape_predicted가 null인 회차에 대해 results로 보정.
+    기본 비활성화(max_backfill=0): 매 요청마다 50회×(DB 2회+저장 1회)=150회 DB 작업으로 API 지연 발생.
+    필요 시 ?backfill=1 로 호출하거나 별도 배치에서 실행."""
+    if not ph or not results or len(results) < 16 or max_backfill <= 0:
         return ph
     to_fill = [h for h in ph if h and isinstance(h, dict) and h.get('shape_predicted') not in ('정', '꺽')]
     if not to_fill:
@@ -9267,13 +9269,14 @@ def results_page():
     """경기 결과 웹페이지"""
     return render_template_string(RESULTS_HTML)
 
-def _build_results_payload_db_only(hours=24):
+def _build_results_payload_db_only(hours=24, backfill=False):
     """DB만으로 페이로드 생성 (네트워크 없음). 규칙: 24h 구간. 캐시 비어 있을 때 첫 화면 빠르게 표시용."""
     try:
         if not DB_AVAILABLE or not DATABASE_URL:
             return None
         results = get_recent_results(hours=hours)
         results = _sort_results_newest_first(results)
+        results_full = results  # 모양판별 보정용 전체 (슬라이스 전)
         # 응답 크기·처리 시간 제한 (성능 최적화: 100건으로 축소)
         RESULTS_PAYLOAD_LIMIT = 100
         if len(results) > RESULTS_PAYLOAD_LIMIT:
@@ -9324,7 +9327,8 @@ def _build_results_payload_db_only(hours=24):
             except Exception:
                 pass
         blended = _blended_win_rate(ph)
-        ph = _backfill_shape_predicted_in_ph(ph, results)
+        if backfill:
+            ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=10, persist_to_db=True)
         return {
             'results': results,
             'count': len(results),
@@ -9375,6 +9379,7 @@ def _build_results_payload():
                 # 최신 데이터 + DB 데이터 (최신순) → gameID 기준 정렬로 순서 고정 (그래프 일관성)
                 results = latest_results + db_results_filtered
                 results = _sort_results_newest_first(results)
+                results_full = results  # 모양판별 보정용 전체 (슬라이스 전)
                 # 성능 최적화: 응답 크기 제한 (100건으로 더 축소)
                 if len(results) > 100:
                     results = results[:100]
@@ -9463,10 +9468,13 @@ def _build_results_payload():
             else:
                 # 최신 데이터가 없으면 DB 데이터만 사용
                 results = db_results
+                results_full = results
                 print(f"[API] 최신 데이터 없음, DB 데이터만 사용: {len(results)}개")
             
             # 그래프/표시 순서 일관성: 항상 gameID 기준 최신순으로 정렬
             results = _sort_results_newest_first(results)
+            if not latest_results:
+                results_full = results
             round_actuals = _build_round_actuals(results)
             _merge_round_predictions_into_history(round_actuals, results=results)
             ph = get_prediction_history(300)
@@ -9510,7 +9518,7 @@ def _build_results_payload():
                 except Exception:
                     pass
             blended = _blended_win_rate(ph)
-            ph = _backfill_shape_predicted_in_ph(ph, results)
+            ph = _backfill_shape_predicted_in_ph(ph, results_full)
             return {
                 'results': results,
                 'count': len(results),
@@ -9645,14 +9653,15 @@ def get_results():
     try:
         global results_cache, last_update_time
         result_source = request.args.get('result_source', '').strip()
+        do_backfill = request.args.get('backfill') == '1'
 
         # 매 요청마다 DB에서 응답 생성. 24h 구간으로 타임존/커밋 타이밍에 따른 최신 회차 누락 방지 (규칙 준수)
-        payload = _build_results_payload_db_only(hours=24)
+        payload = _build_results_payload_db_only(hours=24, backfill=do_backfill)
         if payload and payload.get('results'):
             results_cache = payload
             last_update_time = time.time() * 1000
         if not payload or not payload.get('results'):
-            payload = _build_results_payload_db_only(hours=72) or payload
+            payload = _build_results_payload_db_only(hours=72, backfill=do_backfill) or payload
             if payload and payload.get('results'):
                 results_cache = payload
                 last_update_time = time.time() * 1000
