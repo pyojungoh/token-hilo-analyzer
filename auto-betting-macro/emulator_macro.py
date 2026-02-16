@@ -109,11 +109,11 @@ def normalize_analyzer_url(analyzer_url):
 
 
 def fetch_current_pick(analyzer_url, calculator_id=1, timeout=5):
-    """GET {analyzer_url}/api/current-pick-relay?calculator=1|2|3 (DB 없이 캐시에서 즉시 반환)"""
+    """GET {analyzer_url}/api/current-pick?calculator=1|2|3 (서버 재계산 우선, 20000 고정 방지)"""
     base = normalize_analyzer_url(analyzer_url)
     if not base:
         return {"pick_color": None, "round": None, "probability": None, "error": "URL 없음"}
-    url = base + "/api/current-pick-relay"
+    url = base + "/api/current-pick"
     params = {"calculator": calculator_id}
     try:
         r = requests.get(url, params=params, timeout=timeout)
@@ -1020,7 +1020,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         raw_color = self._pick_data.get("pick_color")
         pick_color = _normalize_pick_color(raw_color)
         try:
-            amt = self._pick_data.get("suggested_amount")
+            amt = self._pick_data.get("suggested_amount") or self._pick_data.get("suggestedAmount")
             amt_val = int(amt) if amt is not None else None
         except (TypeError, ValueError):
             amt_val = None
@@ -1039,7 +1039,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         raw_color = self._pick_data.get("pick_color")
         # 서버는 RED/BLACK 또는 빨강/검정 올 수 있음 → 항상 RED/BLACK으로 통일
         pick_color = _normalize_pick_color(raw_color)
-        amount = self._pick_data.get("suggested_amount")
+        amount = self._pick_data.get("suggested_amount") or self._pick_data.get("suggestedAmount")
         # 계산기 멈춤 연동: suggested_amount 없거나 0이면 이 회차 배팅 스킵 (macro.py와 동일)
         try:
             amt_val = int(amount) if amount is not None else 0

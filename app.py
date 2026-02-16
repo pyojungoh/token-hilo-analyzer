@@ -10220,44 +10220,35 @@ def api_current_pick():
                 out['pick_color'] = None
                 out['round'] = None
                 out['suggested_amount'] = None
-            # GET 시 금액: 선택한 계산기 상단 "배팅중" 금액 = 클라이언트가 POST한 값(DB) 우선. 없을 때만 서버 재계산
+            # GET 시 금액: 실행 중인 계산기가 있으면 서버 재계산 우선 (20000 고정 방지). 없을 때만 DB 값 사용
             try:
-                db_amt = out.get('suggested_amount') if out else None
-                try:
-                    db_amt_val = int(db_amt) if db_amt is not None else 0
-                except (TypeError, ValueError):
-                    db_amt_val = 0
-                if out and db_amt_val > 0:
-                    # 계산기 상단에서 POST한 배팅중 금액이 있으면 그대로 반환 (매크로가 이 값 사용)
+                state = get_calc_state('default') or {}
+                c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
+                if c and c.get('running') and c.get('pending_round') is not None:
+                    if out is None:
+                        out = dict(empty_pick)
                     if not isinstance(out, dict):
                         out = dict(out) if out else dict(empty_pick)
                     out = dict(out)
-                    out['suggested_amount'] = db_amt_val
-                else:
-                    state = get_calc_state('default') or {}
-                    c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
-                    if c and c.get('running') and c.get('pending_round') is not None:
-                        if out is None:
-                            out = dict(empty_pick)
+                    srv_pick, server_amt, _ = _server_calc_effective_pick_and_amount(c)
+                    out['suggested_amount'] = int(server_amt) if server_amt and server_amt > 0 else None
+                    out['round'] = c.get('pending_round')
+                    if srv_pick:
+                        out['pick_color'] = srv_pick
+                elif c and c.get('paused') and out and isinstance(out, dict):
+                    out = dict(out)
+                    out['suggested_amount'] = None
+                elif out:
+                    db_amt = out.get('suggested_amount')
+                    try:
+                        db_amt_val = int(db_amt) if db_amt is not None else 0
+                    except (TypeError, ValueError):
+                        db_amt_val = 0
+                    if db_amt_val > 0:
                         if not isinstance(out, dict):
                             out = dict(out) if out else dict(empty_pick)
                         out = dict(out)
-                        stored_amt = c.get('pending_bet_amount')
-                        if stored_amt is not None:
-                            try:
-                                amt_val = int(stored_amt)
-                                if amt_val > 0:
-                                    out['suggested_amount'] = amt_val
-                                else:
-                                    out['suggested_amount'] = None
-                            except (TypeError, ValueError):
-                                stored_amt = None
-                        if stored_amt is None:
-                            _, server_amt, _ = _server_calc_effective_pick_and_amount(c)
-                            out['suggested_amount'] = int(server_amt) if server_amt is not None else None
-                    elif c and c.get('paused') and out and isinstance(out, dict):
-                        out = dict(out)
-                        out['suggested_amount'] = None
+                        out['suggested_amount'] = db_amt_val
             except Exception:
                 pass
             return jsonify(out if out else empty_pick), 200
@@ -10400,9 +10391,10 @@ def api_current_pick_relay():
             calculator_id = int(calculator_id) if calculator_id in ('1', '2', '3') else 1
         except (TypeError, ValueError):
             calculator_id = 1
-        # 실행 중인 계산기가 있으면 캐시 무시하고 서버에서 항상 재계산 (20000 고정 방지)
+        # 실행 중인 계산기가 있으면 캐시/DB 무시하고 서버에서 항상 재계산 (20000 고정 방지)
         try:
-            for sid in _get_all_calc_session_ids():
+            session_ids = ['default'] + [s for s in _get_all_calc_session_ids() if s != 'default']
+            for sid in session_ids:
                 state = get_calc_state(sid)
                 if not state or not isinstance(state, dict):
                     continue
