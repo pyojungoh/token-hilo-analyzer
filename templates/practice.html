@@ -90,7 +90,10 @@
             if (this.value !== v) this.value = v;
             if (v.length > 0) addLog('금액 입력: ' + (v ? parseInt(v, 10).toLocaleString() + '원' : '(비움)'), 'amount');
         });
-        betAmount.addEventListener('focus', function() { addLog('배팅금액 포커스', 'amount'); });
+        betAmount.addEventListener('focus', function() {
+            this.value = '';
+            addLog('배팅금액 포커스 (내용 비움)', 'amount');
+        });
 
         document.getElementById('btn-red').addEventListener('click', function() {
             addLog('RED 클릭', 'red');
