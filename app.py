@@ -385,7 +385,9 @@ def save_prediction_record(round_num, predicted, actual, probability=None, pick_
                 shape_sig = sig
                 prediction_details = json.dumps({'shape_signature': shape_sig})
             try:
-                hint = get_shape_prediction_hint(results, history_before)
+                lose_streak = _get_recent_lose_streak(history_before)
+                mul = 0.6 if lose_streak >= 2 else 1.0
+                hint = get_shape_prediction_hint(results, history_before, shape_weight=mul, chunk_weight=mul, pong_weight=mul, symmetry_weight=mul)
                 shape_pred = hint.get('value') if hint and hint.get('value') in ('정', '꺽') else None
             except Exception:
                 shape_pred = None
@@ -1497,11 +1499,14 @@ def _apply_results_to_calcs(results):
                         # 모양판별 옵션: shape_only와 별도. 덩어리/퐁당 개선 픽 사용 (기존 공식 변경 없음)
                         if c.get('shape_prediction') and not c.get('shape_only_latest_next_pick'):
                             try:
-                                sw = max(0, min(3, float(c.get('shape_weight', 1)) or 1))
-                                cw = max(0, min(3, float(c.get('chunk_weight', 1)) or 1))
-                                pw = max(0, min(3, float(c.get('pong_weight', 1)) or 1))
-                                symw = max(0, min(3, float(c.get('symmetry_weight', 1)) or 1))
-                                hint = get_shape_prediction_hint(results, get_prediction_history(100), shape_weight=sw, chunk_weight=cw, pong_weight=pw, symmetry_weight=symw)
+                                ph_hint = get_prediction_history(100)
+                                lose_streak = _get_recent_lose_streak(ph_hint)
+                                mul = 0.6 if lose_streak >= 2 else 1.0
+                                sw = max(0, min(3, (float(c.get('shape_weight', 1)) or 1) * mul))
+                                cw = max(0, min(3, (float(c.get('chunk_weight', 1)) or 1) * mul))
+                                pw = max(0, min(3, (float(c.get('pong_weight', 1)) or 1) * mul))
+                                symw = max(0, min(3, (float(c.get('symmetry_weight', 1)) or 1) * mul))
+                                hint = get_shape_prediction_hint(results, ph_hint, shape_weight=sw, chunk_weight=cw, pong_weight=pw, symmetry_weight=symw)
                                 if hint and hint.get('value') in ('정', '꺽'):
                                     c['pending_predicted'] = hint['value']
                                     c['pending_color'] = hint.get('color') or c.get('pending_color')
@@ -1692,11 +1697,14 @@ def _apply_results_to_calcs(results):
                     # 모양판별 옵션: shape_only와 별도
                     if c.get('shape_prediction') and not c.get('shape_only_latest_next_pick'):
                         try:
-                            sw = max(0, min(3, float(c.get('shape_weight', 1)) or 1))
-                            cw = max(0, min(3, float(c.get('chunk_weight', 1)) or 1))
-                            pw = max(0, min(3, float(c.get('pong_weight', 1)) or 1))
-                            symw = max(0, min(3, float(c.get('symmetry_weight', 1)) or 1))
-                            hint = get_shape_prediction_hint(results, get_prediction_history(100), shape_weight=sw, chunk_weight=cw, pong_weight=pw, symmetry_weight=symw)
+                            ph_hint = get_prediction_history(100)
+                            lose_streak = _get_recent_lose_streak(ph_hint)
+                            mul = 0.6 if lose_streak >= 2 else 1.0
+                            sw = max(0, min(3, (float(c.get('shape_weight', 1)) or 1) * mul))
+                            cw = max(0, min(3, (float(c.get('chunk_weight', 1)) or 1) * mul))
+                            pw = max(0, min(3, (float(c.get('pong_weight', 1)) or 1) * mul))
+                            symw = max(0, min(3, (float(c.get('symmetry_weight', 1)) or 1) * mul))
+                            hint = get_shape_prediction_hint(results, ph_hint, shape_weight=sw, chunk_weight=cw, pong_weight=pw, symmetry_weight=symw)
                             if hint and hint.get('value') in ('정', '꺽'):
                                 c['pending_predicted'] = hint['value']
                                 c['pending_color'] = hint.get('color') or c.get('pending_color')
@@ -2202,6 +2210,29 @@ def _update_shape_predicted_in_db(round_num, shape_predicted):
             conn.close()
         except Exception:
             pass
+
+
+def _get_recent_lose_streak(ph):
+    """prediction_history에서 최근 연패 횟수. 조커 제외. ph는 과거→현재 순(round 오름차순)."""
+    if not ph or not isinstance(ph, list):
+        return 0
+    rev = list(reversed(ph))
+    streak = 0
+    for h in rev:
+        if not h or not isinstance(h, dict):
+            continue
+        actual = h.get('actual')
+        if actual in ('joker', '조커'):
+            continue
+        if actual not in ('정', '꺽'):
+            continue
+        pred = h.get('predicted')
+        if pred not in ('정', '꺽'):
+            continue
+        if pred == actual:
+            break
+        streak += 1
+    return streak
 
 
 def _backfill_shape_predicted_in_ph(ph, results, max_backfill=0, persist_to_db=False):
