@@ -649,17 +649,29 @@ def _get_latest_next_pick_for_chunk(results, exclude_round=None):
                     LIMIT 150
                 ''')
             rows = cur.fetchall()
-            CHUNK_SIM_THRESHOLD = 0.5
+            CHUNK_SIM_THRESHOLD = 0.65
+            matches = []
             for profile_json, next_actual, rnd in rows:
                 try:
                     other = tuple(json.loads(profile_json))
                 except Exception:
                     continue
-                if _chunk_profile_similarity(profile, other) >= CHUNK_SIM_THRESHOLD:
-                    if next_actual in ('정', '꺽'):
-                        cur.close()
-                        return next_actual
-                    break
+                if next_actual not in ('정', '꺽'):
+                    continue
+                sim = _chunk_profile_similarity(profile, other)
+                if sim >= CHUNK_SIM_THRESHOLD:
+                    matches.append((sim, rnd, next_actual))
+                    if len(matches) >= 5:
+                        break
+            if matches:
+                if len(matches) >= 2:
+                    jung_cnt = sum(1 for m in matches if m[2] == '정')
+                    kkeok_cnt = len(matches) - jung_cnt
+                    pick = '정' if jung_cnt > kkeok_cnt else ('꺽' if kkeok_cnt > jung_cnt else matches[0][2])
+                else:
+                    pick = matches[0][2]
+                cur.close()
+                return pick
         if sig:
             if exclude_round is not None:
                 cur.execute('''
@@ -731,7 +743,7 @@ def update_shape_win_stats(conn, signature, actual, round_num=None):
 def get_chunk_profile_stats(conn, profile, current_round=None):
     """
     유사 덩어리 프로필의 '다음 결과' 가중 합계. 원본+좌우반전 프로필 통계 합산.
-    profile: (h1, h2, ...) 튜플. 유사도 >= 0.5인 과거 기록만 사용.
+    profile: (h1, h2, ...) 튜플. 유사도 >= 0.65인 과거 기록만 사용.
     반환: {jung_count, kkeok_count} 또는 None.
     """
     if not conn or not profile:
@@ -751,7 +763,7 @@ def get_chunk_profile_stats(conn, profile, current_round=None):
             return None
         CHUNK_DECAY_BASE = 0.95
         CHUNK_DECAY_STEP = 15
-        CHUNK_SIM_THRESHOLD = 0.5
+        CHUNK_SIM_THRESHOLD = 0.65
         jung_weighted = 0.0
         kkeok_weighted = 0.0
         for profile_json, next_actual, rnd in rows:
