@@ -473,9 +473,23 @@ def _get_shape_signature(results):
     return ",".join(parts) if parts else ""
 
 
-def get_shape_win_stats(conn, signature, current_round=None):
-    """모양 시그니처별 '그 다음 실제 결과' 누적. 반환: {jung_count, kkeok_count} (이 모양 다음에 정/꺽 나온 횟수) 또는 None.
-    current_round가 있으면 shape_win_occurrences에서 최근 100건만 조회해 회차 기반 감쇠(0.95^(age/15)) 적용. 가중 합이 10 미만이면 shape_win_stats 폴백."""
+def _reverse_shape_signature(sig):
+    """좌우 반전: 시그니처 'L,S,M' → 'M,S,L'. 그래프 좌우 대칭 시 동일 패턴 매칭용."""
+    if not sig:
+        return ""
+    parts = sig.split(",")
+    return ",".join(reversed(parts)) if parts else ""
+
+
+def _reverse_chunk_profile(profile):
+    """좌우 반전: 프로필 (h1,h2,h3) → (h3,h2,h1). 덩어리 좌우 대칭 시 동일 패턴 매칭용."""
+    if not profile:
+        return None
+    return tuple(reversed(profile))
+
+
+def _fetch_shape_win_stats_single(conn, signature, current_round=None):
+    """단일 시그니처에 대한 shape win stats. None 또는 {jung_count, kkeok_count}."""
     if not conn or not signature:
         return None
     try:
@@ -519,6 +533,23 @@ def get_shape_win_stats(conn, signature, current_round=None):
         return {'jung_count': row[0] or 0, 'kkeok_count': row[1] or 0}
     except Exception:
         return None
+
+
+def get_shape_win_stats(conn, signature, current_round=None):
+    """모양 시그니처별 '그 다음 실제 결과' 누적. 원본+좌우반전 시그니처 통계 합산.
+    반환: {jung_count, kkeok_count} 또는 None."""
+    if not conn or not signature:
+        return None
+    a = _fetch_shape_win_stats_single(conn, signature, current_round)
+    rev_sig = _reverse_shape_signature(signature)
+    b = _fetch_shape_win_stats_single(conn, rev_sig, current_round) if rev_sig and rev_sig != signature else None
+    if not a and not b:
+        return None
+    j = (a.get('jung_count') or 0) + (b.get('jung_count') or 0)
+    k = (a.get('kkeok_count') or 0) + (b.get('kkeok_count') or 0)
+    if j + k < 0.5:
+        return None
+    return {'jung_count': j, 'kkeok_count': k}
 
 
 def _get_shape_stats_for_results(results):
@@ -699,12 +730,13 @@ def update_shape_win_stats(conn, signature, actual, round_num=None):
 
 def get_chunk_profile_stats(conn, profile, current_round=None):
     """
-    유사 덩어리 프로필의 '다음 결과' 가중 합계. 최근·유사할수록 가중치 높게.
+    유사 덩어리 프로필의 '다음 결과' 가중 합계. 원본+좌우반전 프로필 통계 합산.
     profile: (h1, h2, ...) 튜플. 유사도 >= 0.5인 과거 기록만 사용.
     반환: {jung_count, kkeok_count} 또는 None.
     """
     if not conn or not profile:
         return None
+    rev_profile = _reverse_chunk_profile(profile)
     try:
         import json
         cur = conn.cursor()
@@ -728,6 +760,8 @@ def get_chunk_profile_stats(conn, profile, current_round=None):
             except Exception:
                 continue
             sim = _chunk_profile_similarity(profile, other)
+            if rev_profile:
+                sim = max(sim, _chunk_profile_similarity(rev_profile, other))
             if sim < CHUNK_SIM_THRESHOLD:
                 continue
             age = max(0, (current_round or 0) - rnd)
@@ -9156,11 +9190,9 @@ def _build_results_payload_db_only(hours=24):
                             'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
                             'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {},
                         }
-                        # 퐁당/덩어리 판별 메뉴용: 저장 픽은 유지하되 현재 그래프 기준 phase/debug만 계산해 병합. 모양별 승률 보정 반영.
+                        # 퐁당/덩어리 판별 메뉴용: 저장 픽은 유지하되 phase/debug만 계산. API 응답 속도 위해 shape/chunk DB 조회 생략.
                         try:
-                            shape_stats = _get_shape_stats_for_results(results)
-                            chunk_stats = _get_chunk_stats_for_results(results)
-                            computed = compute_prediction(results, ph, shape_win_stats=shape_stats, chunk_profile_stats=chunk_stats)
+                            computed = compute_prediction(results, ph, shape_win_stats=None, chunk_profile_stats=None)
                             if computed:
                                 server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                 server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
@@ -9346,13 +9378,10 @@ def _build_results_payload():
                                 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {},
                             }
                             try:
-                                shape_stats = _get_shape_stats_for_results(results)
-                                chunk_stats = _get_chunk_stats_for_results(results)
-                                computed = compute_prediction(results, ph, shape_win_stats=shape_stats, chunk_profile_stats=chunk_stats)
+                                computed = compute_prediction(results, ph, shape_win_stats=None, chunk_profile_stats=None)
                                 if computed:
                                     server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                     server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
-                                    # 가장 최근 다음 픽 추가
                                     latest_next_pick = _get_latest_next_pick_for_chunk(results)
                                     if latest_next_pick:
                                         server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
@@ -9435,13 +9464,10 @@ def _build_results_payload():
                                 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {},
                             }
                             try:
-                                shape_stats = _get_shape_stats_for_results(results)
-                                chunk_stats = _get_chunk_stats_for_results(results)
-                                computed = compute_prediction(results, ph, shape_win_stats=shape_stats, chunk_profile_stats=chunk_stats)
+                                computed = compute_prediction(results, ph, shape_win_stats=None, chunk_profile_stats=None)
                                 if computed:
                                     server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                     server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
-                                    # 가장 최근 다음 픽 추가
                                     latest_next_pick = _get_latest_next_pick_for_chunk(results)
                                     if latest_next_pick:
                                         server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
