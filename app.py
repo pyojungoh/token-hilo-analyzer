@@ -440,7 +440,7 @@ def _shape_run_bucket(n):
 def _get_shape_signature(results):
     """
     결과 리스트(최신순)로부터 '그래프 모양' 시그니처 문자열 생성.
-    굵은 시그니처: 최근 30개에서 줄/퐁당 run을 앞에서부터 3개만 쓰고, 길이는 S(1~2)/M(3~5)/L(6+)로 구간화.
+    굵은 시그니처: 최근 30개에서 줄/퐁당 run을 앞에서부터 4개까지 쓰고, 길이는 S(1~2)/M(3~5)/L(6+)로 구간화.
     예: L6,P1,L2 → L,S,S. 같은 모양 클래스가 자주 쌓여서 모양별 다음 결과 통계가 반영되기 쉽게 함.
     """
     if not results or len(results) < 16:
@@ -457,7 +457,7 @@ def _get_shape_signature(results):
         first_is_line = (use[0] == use[1])
     parts = []
     li, pi = 0, 0
-    for _ in range(3):
+    for _ in range(4):
         if first_is_line:
             if li < len(line_runs):
                 parts.append(_shape_run_bucket(line_runs[li]))
