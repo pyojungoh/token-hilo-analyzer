@@ -4744,6 +4744,13 @@ RESULTS_HTML = '''
         }
         .calc-mini-graph-wrap .calc-mini-block.jung { background: #4caf50; }
         .calc-mini-graph-wrap .calc-mini-block.kkuk { background: #f44336; }
+        /* 계산기 15개 결과 카드 (그래프 위) */
+        .calc-result-cards-wrap { display: flex; flex-direction: row; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; align-items: center; }
+        .calc-result-cards-wrap .calc-result-card { width: 28px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; border-radius: 4px; flex-shrink: 0; }
+        .calc-result-cards-wrap .calc-result-card.win { background: #2e7d32; color: #ffeb3b; border: 1px solid #4caf50; }
+        .calc-result-cards-wrap .calc-result-card.lose { background: #b71c1c; color: #fff; border: 1px solid #e57373; }
+        .calc-result-cards-wrap .calc-result-card.joker { background: #1565c0; color: #90caf9; border: 1px solid #64b5f6; }
+        .calc-result-cards-wrap .calc-result-card.empty { background: #333; color: #666; border: 1px dashed #555; }
         .calc-round-table-wrap { margin-bottom: 6px; overflow-x: auto; max-height: 32em; overflow-y: auto; }
         .calc-round-table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
         .calc-round-table th, .calc-round-table td { padding: 4px 6px; border: 1px solid #444; text-align: center; }
@@ -4990,6 +4997,7 @@ RESULTS_HTML = '''
             </div>
                             </div>
                             <div class="calc-detail" id="calc-1-detail">
+                                <div class="calc-result-cards-wrap" id="calc-1-result-cards" title="최근 15회 결과 (좌=최신)"></div>
                                 <div class="calc-mini-graph-collapse" id="calc-1-mini-graph-collapse" data-calc="1">
                                     <div class="calc-mini-graph-header">그래프</div>
                                     <div class="calc-mini-graph-body"><div class="calc-mini-graph-wrap" id="calc-1-mini-graph" title="최근 정/꺽 그래프 (좌=최신)"></div></div>
@@ -5044,6 +5052,7 @@ RESULTS_HTML = '''
                                 </div>
                             </div>
                             <div class="calc-detail" id="calc-2-detail">
+                                <div class="calc-result-cards-wrap" id="calc-2-result-cards" title="최근 15회 결과 (좌=최신)"></div>
                                 <div class="calc-mini-graph-collapse" id="calc-2-mini-graph-collapse" data-calc="2">
                                     <div class="calc-mini-graph-header">그래프</div>
                                     <div class="calc-mini-graph-body"><div class="calc-mini-graph-wrap" id="calc-2-mini-graph" title="최근 정/꺽 그래프 (좌=최신)"></div></div>
@@ -5098,6 +5107,7 @@ RESULTS_HTML = '''
                                 </div>
                             </div>
                             <div class="calc-detail" id="calc-3-detail">
+                                <div class="calc-result-cards-wrap" id="calc-3-result-cards" title="최근 15회 결과 (좌=최신)"></div>
                                 <div class="calc-mini-graph-collapse" id="calc-3-mini-graph-collapse" data-calc="3">
                                     <div class="calc-mini-graph-header">그래프</div>
                                     <div class="calc-mini-graph-body"><div class="calc-mini-graph-wrap" id="calc-3-mini-graph" title="최근 정/꺽 그래프 (좌=최신)"></div></div>
@@ -8535,6 +8545,8 @@ RESULTS_HTML = '''
                 streakEl.textContent = '경기결과 (최근 30회): -';
                 statsEl.textContent = '최대연승: - | 최대연패: - | 모양적중률: - | 표승률: - | 15회승률: - | 모양판별승률: -';
                 if (tableWrap) tableWrap.innerHTML = '';
+                const cardsElEmpty = document.getElementById('calc-' + id + '-result-cards');
+                if (cardsElEmpty) cardsElEmpty.innerHTML = Array(15).fill('<span class="calc-result-card empty">—</span>').join('');
                 return;
             }
             const r = getCalcResult(id);
@@ -8772,6 +8784,20 @@ RESULTS_HTML = '''
                 return '<span class="' + (a === 'w' ? 'w' : a === 'l' ? 'l' : 'j') + '">' + (a === 'w' ? '승' : a === 'l' ? '패' : '조') + '</span>';
             }).join(' ');
             streakEl.innerHTML = '경기결과 (최근 30회←): ' + streakStr;
+            // 15개 결과 카드 (그래프 위, 좌=최신)
+            const cardsEl = document.getElementById('calc-' + id + '-result-cards');
+            if (cardsEl) {
+                const cardMax = 15;
+                const cardArr = arrRev.slice(0, cardMax);
+                let cardsHtml = '';
+                for (let i = 0; i < cardMax; i++) {
+                    const a = cardArr[i];
+                    const cls = a === 'w' ? 'win' : a === 'l' ? 'lose' : a === 'j' ? 'joker' : 'empty';
+                    const txt = a === 'w' ? '승' : a === 'l' ? '패' : a === 'j' ? '조' : '—';
+                    cardsHtml += '<span class="calc-result-card ' + cls + '">' + txt + '</span>';
+                }
+                cardsEl.innerHTML = cardsHtml;
+            }
             var rate15 = getCalcRecent15WinRate(id);
             var rate15Str = (completedHist.length < 1) ? '-' : (rate15.toFixed(1) + '%');
             // 표시된 내역(최근 200회) 승률: 배팅한 완료 행만, 조커=패 (멈춤 행 제외)
