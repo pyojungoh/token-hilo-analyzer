@@ -4744,11 +4744,11 @@ RESULTS_HTML = '''
         }
         .calc-mini-graph-wrap .calc-mini-block.jung { background: #4caf50; }
         .calc-mini-graph-wrap .calc-mini-block.kkuk { background: #f44336; }
-        /* 계산기 15개 결과 카드 (그래프 위) */
-        .calc-result-cards-wrap { display: flex; flex-direction: row; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; align-items: center; }
-        .calc-result-cards-wrap .calc-result-card { width: 28px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; border-radius: 4px; flex-shrink: 0; }
-        .calc-result-cards-wrap .calc-result-card.win { background: #2e7d32; color: #ffeb3b; border: 1px solid #4caf50; }
-        .calc-result-cards-wrap .calc-result-card.lose { background: #b71c1c; color: #fff; border: 1px solid #e57373; }
+        /* 계산기 15개 결과 카드 (그래프 위, 뱉365 게임 결과 정/꺽/조) — 항상 15개 1열 반응형 */
+        .calc-result-cards-wrap { display: flex; flex-direction: row; gap: 2px; margin-bottom: 8px; flex-wrap: nowrap; align-items: stretch; width: 100%; min-width: 0; }
+        .calc-result-cards-wrap .calc-result-card { flex: 1 1 0; min-width: 0; min-height: 28px; display: flex; align-items: center; justify-content: center; font-size: clamp(8px, 2vw, 11px); font-weight: 600; border-radius: 3px; }
+        .calc-result-cards-wrap .calc-result-card.jung { background: #2e7d32; color: #ffeb3b; border: 1px solid #4caf50; }
+        .calc-result-cards-wrap .calc-result-card.kkuk { background: #b71c1c; color: #fff; border: 1px solid #e57373; }
         .calc-result-cards-wrap .calc-result-card.joker { background: #1565c0; color: #90caf9; border: 1px solid #64b5f6; }
         .calc-result-cards-wrap .calc-result-card.empty { background: #333; color: #666; border: 1px dashed #555; }
         .calc-round-table-wrap { margin-bottom: 6px; overflow-x: auto; max-height: 32em; overflow-y: auto; }
@@ -6126,6 +6126,23 @@ RESULTS_HTML = '''
                         delete colorMatchCache[key];
                     }
                 }
+                
+                // 계산기 15개 결과 카드 (뱉365 게임 정/꺽/조, 그래프 위, 좌=최신)
+                [1, 2, 3].forEach(function(cid) {
+                    var el = document.getElementById('calc-' + cid + '-result-cards');
+                    if (!el) return;
+                    var cardMax = 15;
+                    var html = '';
+                    for (var i = 0; i < cardMax; i++) {
+                        var v = (colorMatchResults && colorMatchResults[i]);
+                        var cls = v === true ? 'jung' : (v === false ? 'kkuk' : 'joker');
+                        var txt = v === true ? '정' : (v === false ? '꺽' : '조');
+                        if (v !== true && v !== false) cls = 'empty';
+                        if (v !== true && v !== false) txt = '—';
+                        html += '<span class="calc-result-card ' + cls + '">' + txt + '</span>';
+                    }
+                    el.innerHTML = html;
+                });
                 
                 // 헤더에 기준 색상 표시 (15번째 카드, 조커면 표시)
                 if (displayResults.length >= 15) {
@@ -8545,8 +8562,6 @@ RESULTS_HTML = '''
                 streakEl.textContent = '경기결과 (최근 30회): -';
                 statsEl.textContent = '최대연승: - | 최대연패: - | 모양적중률: - | 표승률: - | 15회승률: - | 모양판별승률: -';
                 if (tableWrap) tableWrap.innerHTML = '';
-                const cardsElEmpty = document.getElementById('calc-' + id + '-result-cards');
-                if (cardsElEmpty) cardsElEmpty.innerHTML = Array(15).fill('<span class="calc-result-card empty">—</span>').join('');
                 return;
             }
             const r = getCalcResult(id);
@@ -8784,20 +8799,6 @@ RESULTS_HTML = '''
                 return '<span class="' + (a === 'w' ? 'w' : a === 'l' ? 'l' : 'j') + '">' + (a === 'w' ? '승' : a === 'l' ? '패' : '조') + '</span>';
             }).join(' ');
             streakEl.innerHTML = '경기결과 (최근 30회←): ' + streakStr;
-            // 15개 결과 카드 (그래프 위, 좌=최신)
-            const cardsEl = document.getElementById('calc-' + id + '-result-cards');
-            if (cardsEl) {
-                const cardMax = 15;
-                const cardArr = arrRev.slice(0, cardMax);
-                let cardsHtml = '';
-                for (let i = 0; i < cardMax; i++) {
-                    const a = cardArr[i];
-                    const cls = a === 'w' ? 'win' : a === 'l' ? 'lose' : a === 'j' ? 'joker' : 'empty';
-                    const txt = a === 'w' ? '승' : a === 'l' ? '패' : a === 'j' ? '조' : '—';
-                    cardsHtml += '<span class="calc-result-card ' + cls + '">' + txt + '</span>';
-                }
-                cardsEl.innerHTML = cardsHtml;
-            }
             var rate15 = getCalcRecent15WinRate(id);
             var rate15Str = (completedHist.length < 1) ? '-' : (rate15.toFixed(1) + '%');
             // 표시된 내역(최근 200회) 승률: 배팅한 완료 행만, 조커=패 (멈춤 행 제외)
