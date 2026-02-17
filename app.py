@@ -4961,7 +4961,7 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-1-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label></td></tr>
-                                    <tr id="calc-1-shape-rate-row" class="calc-shape-rate-row" style="display:none"><td>모양승률</td><td><span id="calc-1-shape-rate-val" class="calc-shape-rate-val">—</span></td></tr>
+                                    <tr id="calc-1-shape-rate-row" class="calc-shape-rate-row" style="display:none"><td>모양적중률</td><td><span id="calc-1-shape-rate-val" class="calc-shape-rate-val">—</span></td></tr>
                                 </table>
                                 <div class="calc-options-wrap collapsed" data-calc="1">
                                     <div class="calc-options-toggle"><span class="calc-options-label">옵션</span><span class="calc-options-icon">▼</span></div>
@@ -4996,7 +4996,7 @@ RESULTS_HTML = '''
                                 <div class="calc-round-table-wrap" id="calc-1-round-table-wrap"></div>
                                 <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="1">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-1-streak">경기결과 (최근 30회): -</div>
-                                <div class="calc-stats" id="calc-1-stats">최대연승: - | 최대연패: - | 모양승률: - | 표승률: - | 15회승률: - | 모양판별승률: -</div>
+                                <div class="calc-stats" id="calc-1-stats">최대연승: - | 최대연패: - | 모양적중률: - | 표승률: - | 15회승률: - | 모양판별승률: -</div>
                             </div>
                         </div>
                     </div>
@@ -5015,7 +5015,7 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-2-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label></td></tr>
-                                    <tr id="calc-2-shape-rate-row" class="calc-shape-rate-row" style="display:none"><td>모양승률</td><td><span id="calc-2-shape-rate-val" class="calc-shape-rate-val">—</span></td></tr>
+                                    <tr id="calc-2-shape-rate-row" class="calc-shape-rate-row" style="display:none"><td>모양적중률</td><td><span id="calc-2-shape-rate-val" class="calc-shape-rate-val">—</span></td></tr>
                                 </table>
                                 <div class="calc-options-wrap collapsed" data-calc="2">
                                     <div class="calc-options-toggle"><span class="calc-options-label">옵션</span><span class="calc-options-icon">▼</span></div>
@@ -5050,7 +5050,7 @@ RESULTS_HTML = '''
                                 <div class="calc-round-table-wrap" id="calc-2-round-table-wrap"></div>
                                 <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="2">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-2-streak">경기결과 (최근 30회): -</div>
-                                <div class="calc-stats" id="calc-2-stats">최대연승: - | 최대연패: - | 모양승률: - | 표승률: - | 15회승률: - | 모양판별승률: -</div>
+                                <div class="calc-stats" id="calc-2-stats">최대연승: - | 최대연패: - | 모양적중률: - | 표승률: - | 15회승률: - | 모양판별승률: -</div>
                             </div>
                         </div>
                     </div>
@@ -5069,7 +5069,7 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-3-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label></td></tr>
-                                    <tr id="calc-3-shape-rate-row" class="calc-shape-rate-row" style="display:none"><td>모양승률</td><td><span id="calc-3-shape-rate-val" class="calc-shape-rate-val">—</span></td></tr>
+                                    <tr id="calc-3-shape-rate-row" class="calc-shape-rate-row" style="display:none"><td>모양적중률</td><td><span id="calc-3-shape-rate-val" class="calc-shape-rate-val">—</span></td></tr>
                                 </table>
                                 <div class="calc-options-wrap collapsed" data-calc="3">
                                     <div class="calc-options-toggle"><span class="calc-options-label">옵션</span><span class="calc-options-icon">▼</span></div>
@@ -5104,7 +5104,7 @@ RESULTS_HTML = '''
                                 <div class="calc-round-table-wrap" id="calc-3-round-table-wrap"></div>
                                 <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="3">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-3-streak">경기결과 (최근 30회): -</div>
-                                <div class="calc-stats" id="calc-3-stats">최대연승: - | 최대연패: - | 모양승률: - | 표승률: - | 15회승률: - | 모양판별승률: -</div>
+                                <div class="calc-stats" id="calc-3-stats">최대연승: - | 최대연패: - | 모양적중률: - | 표승률: - | 15회승률: - | 모양판별승률: -</div>
                             </div>
                         </div>
                     </div>
@@ -8533,7 +8533,7 @@ RESULTS_HTML = '''
             const hist = state.history || [];
             if (hist.length === 0) {
                 streakEl.textContent = '경기결과 (최근 30회): -';
-                statsEl.textContent = '최대연승: - | 최대연패: - | 모양승률: - | 표승률: - | 15회승률: - | 모양판별승률: -';
+                statsEl.textContent = '최대연승: - | 최대연패: - | 모양적중률: - | 표승률: - | 15회승률: - | 모양판별승률: -';
                 if (tableWrap) tableWrap.innerHTML = '';
                 return;
             }
@@ -8733,7 +8733,8 @@ RESULTS_HTML = '''
                     resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
                     outClass = outcome === '승' ? 'win' : outcome === '패' ? 'lose' : outcome === '조' ? 'joker' : 'skip';
                 }
-                const shapeWinRateVal = (typeof h.shapeWinRate === 'number' && !isNaN(h.shapeWinRate)) ? h.shapeWinRate.toFixed(1) + '%' : (isPendingRow && typeof getShape50WinRateExcludingRound === 'function' && !isNaN(rn)) ? ((function() { var sw = getShape50WinRateExcludingRound(rn); return sw != null ? sw.toFixed(1) + '%' : '-'; })()) : '-';
+                // h.shapeWinRate 없으면 클라이언트에서 해당 회차 기준 계산 (서버 미저장·기존 데이터 보정)
+                const shapeWinRateVal = (typeof h.shapeWinRate === 'number' && !isNaN(h.shapeWinRate)) ? h.shapeWinRate.toFixed(1) + '%' : (typeof getShape50WinRateExcludingRound === 'function' && !isNaN(rn)) ? ((function() { var sw = getShape50WinRateExcludingRound(rn); return sw != null ? sw.toFixed(1) + '%' : '-'; })()) : '-';
                 rows.push({ roundStr: roundStr, roundNum: !isNaN(rn) ? rn : null, pick: pickVal, pickClass: pickClass, warningWinRate: warningWinRateVal, shapeWinRate: shapeWinRateVal, rate15: rate15Val, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr, outClass: outClass });
             }
             try { window.__calcDetailRows = window.__calcDetailRows || {}; window.__calcDetailRows[id] = rows; } catch (e) {}
@@ -8743,7 +8744,7 @@ RESULTS_HTML = '''
                 if (displayRows.length === 0) {
                     tableWrap.innerHTML = '';
                 } else {
-                    let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽</th><th>경고 승률</th><th>모양승률</th><th>15회승률</th><th>배팅금액</th><th>수익</th><th>승패</th></tr></thead><tbody>';
+                    let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽</th><th>경고 승률</th><th>모양적중률</th><th>15회승률</th><th>배팅금액</th><th>수익</th><th>승패</th></tr></thead><tbody>';
                     displayRows.forEach(function(row) {
                         const outClass = row.outClass || (row.outcome === '승' ? 'win' : row.outcome === '패' ? 'lose' : row.outcome === '조' ? 'joker' : 'skip');
                         const profitClass = (typeof row.profit === 'number' && row.profit > 0) || (typeof row.profit === 'string' && row.profit.indexOf('+') === 0) ? 'profit-plus' : (typeof row.profit === 'number' && row.profit < 0) || (typeof row.profit === 'string' && row.profit.indexOf('-') === 0 && row.profit !== '-') ? 'profit-minus' : '';
@@ -8786,7 +8787,7 @@ RESULTS_HTML = '''
             var shape50Str = (shape50 != null && !isNaN(shape50)) ? shape50.toFixed(1) + '%' : '-';
             var shapePred10 = (typeof getShapePredictionWinRate10 === 'function') ? getShapePredictionWinRate10(id) : null;
             var shapePred10Str = (shapePred10 != null && !isNaN(shapePred10)) ? shapePred10.toFixed(1) + '%' : '-';
-            statsEl.textContent = '최대연승: ' + r.maxWinStreak + ' | 최대연패: ' + r.maxLoseStreak + ' | 모양승률: ' + shape50Str + ' | 표승률: ' + dispRateStr + ' | 15회승률: ' + rate15Str + ' | 모양판별승률: ' + shapePred10Str;
+            statsEl.textContent = '최대연승: ' + r.maxWinStreak + ' | 최대연패: ' + r.maxLoseStreak + ' | 모양적중률: ' + shape50Str + ' | 표승률: ' + dispRateStr + ' | 15회승률: ' + rate15Str + ' | 모양판별승률: ' + shapePred10Str;
             } catch (e) { console.warn('updateCalcDetail', id, e); }
         }
         document.querySelectorAll('.calc-dropdown-header').forEach(h => {
@@ -9053,7 +9054,7 @@ RESULTS_HTML = '''
                 var rows = (window.__calcDetailRows && window.__calcDetailRows[id]) ? window.__calcDetailRows[id] : [];
                 if (!rows || rows.length === 0) { alert('내보낼 내역이 없습니다. 표를 한 번 갱신한 뒤 시도해 주세요.'); return; }
                 var esc = function(s) { var t = String(s == null ? '' : s); if (t.indexOf(',') >= 0 || t.indexOf('"') >= 0 || t.indexOf('\\n') >= 0) return '"' + t.replace(/"/g, '""') + '"'; return t; };
-                var header = '회차,픽,경고승률,모양승률,15회승률,배팅금액,수익,승패';
+                var header = '회차,픽,경고승률,모양적중률,15회승률,배팅금액,수익,승패';
                 var lines = [header].concat(rows.map(function(r) { return esc(r.roundStr) + ',' + esc(r.pick) + ',' + esc(r.warningWinRate) + ',' + esc(r.shapeWinRate || '-') + ',' + esc(r.rate15 || '-') + ',' + esc(r.betAmount) + ',' + esc(r.profit) + ',' + esc(r.outcome); }));
                 var csv = lines.join('\\n');
                 var blob = new Blob(['\\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
