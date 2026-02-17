@@ -10469,7 +10469,7 @@ def api_current_pick_relay():
             for k in ('round', 'pick_color', 'probability', 'suggested_amount', 'running'):
                 if k in cached:
                     cached_out[k] = cached[k]
-        # 회차 비교: 둘 다 있으면 더 높은(최신) 회차 우선
+        # 회차·금액 우선: 둘 다 있으면 (1) 더 높은 회차 우선, (2) 회차 같으면 캐시(스케줄러) 우선 — DB는 웹 POST로 금액 지연 가능
         def _round_val(o):
             r = o.get('round') if o else None
             try:
@@ -10477,10 +10477,13 @@ def api_current_pick_relay():
             except (TypeError, ValueError):
                 return 0
         if db_out and cached_out:
-            if _round_val(cached_out) > _round_val(db_out):
+            rd, rc = _round_val(db_out), _round_val(cached_out)
+            if rc > rd:
                 out = cached_out
-            else:
+            elif rc < rd:
                 out = db_out
+            else:
+                out = cached_out  # 회차 같으면 캐시 우선 (서버 calc 금액이 더 정확)
         elif db_out:
             out = db_out
         elif cached_out:

@@ -36,6 +36,7 @@ COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드"
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
 # 배팅 지연 — 픽 수신 즉시 ADB 전송용 최소화 (입력 안 먹으면 늘리세요)
+D_BEFORE_EXECUTE = 1.0  # 배팅 실행 전 대기(초) — 픽이 화면에 반영될 시간 확보
 D_AMOUNT_TAP = 0.01
 D_INPUT = 0.015
 D_BACK = 0.015
@@ -189,7 +190,8 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
         self._coords = {}
         self._running = False
         self._last_bet_round = None
-        self._bet_confirm_last = None  # 회차 2회 확인용
+        self._bet_confirm_last = None  # 회차 3회 확인용
+        self._bet_confirm_count = 0
         self._last_seen_round = None  # 회차 역행 방지
         self._coord_listener = None
         self._coord_capture_key = None
@@ -362,7 +364,8 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
             return
         self._running = True
         self._last_bet_round = None
-        self._bet_confirm_last = None  # 회차 2회 확인 상태 초기화
+        self._bet_confirm_last = None  # 회차 3회 확인 상태 초기화
+        self._bet_confirm_count = 0
         self._last_seen_round = None  # 회차 역행 방지 초기화
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
@@ -433,18 +436,34 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
             return
         self._last_seen_round = max(self._last_seen_round or 0, round_num)
 
-        # 회차 2회 확인: 같은 (회차, 픽, 금액)이 2회 연속 수신될 때만 배팅
+        # 회차 3회 확인: 같은 (회차, 픽, 금액)이 3회 연속 수신될 때만 배팅
         key = (round_num, pick_color, amt_val)
         if self._bet_confirm_last != key:
             self._bet_confirm_last = key
+            self._bet_confirm_count = 1
+            return
+        self._bet_confirm_count = (self._bet_confirm_count or 0) + 1
+        if self._bet_confirm_count < 3:
             return
 
-        self._bet_confirm_last = None  # 배팅 후 초기화
-        self._log("%s회 %s %s원 배팅 (2회 확인)" % (round_num, pick_color, amt_val))
-        ok = self._do_bet(round_num, pick_color, amt_val)
-        if ok:
-            self._last_bet_round = round_num
-            QTimer.singleShot(60, self._poll)
+        self._bet_confirm_last = None
+        self._bet_confirm_count = 0
+        self._log("%s회 %s %s원 배팅 (3회 확인, %s초 후 실행)" % (round_num, pick_color, amt_val, D_BEFORE_EXECUTE))
+        def _execute():
+            if not self._running:
+                return
+            if self._last_bet_round is not None and round_num <= self._last_bet_round:
+                return
+            self._log("%s회 %s %s원 실행" % (round_num, pick_color, amt_val))
+            ok = self._do_bet(round_num, pick_color, amt_val)
+            if ok:
+                self._last_bet_round = round_num
+                QTimer.singleShot(60, self._poll)
+        delay_ms = int(D_BEFORE_EXECUTE * 1000)
+        if HAS_PYQT and delay_ms > 0:
+            QTimer.singleShot(delay_ms, _execute)
+        else:
+            _execute()
 
     def _do_bet(self, round_num, pick_color, amount):
         coords = load_coords()
