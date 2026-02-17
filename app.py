@@ -1117,6 +1117,21 @@ def _get_shape_50_win_rate():
     return 100.0 * wins / len(valid)
 
 
+def _get_shape_50_win_rate_excluding_round(exclude_round):
+    """해당 회차(배팅 시점)의 모양승률. exclude_round 미만 회차만 사용 — 배팅 중인 회차 결과 제외."""
+    if exclude_round is None:
+        return _get_shape_50_win_rate()
+    ph = get_prediction_history(80)
+    if not ph:
+        return None
+    filtered = [h for h in ph if h.get('round') is not None and h.get('round') < exclude_round and h.get('actual') in ('정', '꺽')]
+    valid = [h for h in filtered[-50:] if h.get('shape_predicted') in ('정', '꺽')]
+    if not valid:
+        return None
+    wins = sum(1 for h in valid if h.get('shape_predicted') == h.get('actual'))
+    return round(100.0 * wins / len(valid), 1)
+
+
 def _get_shape_prediction_win_rate_10(c):
     """모양판별승률: 메인 예측기표 모양판별 픽(shape_predicted) 최신 10개 결과. prediction_history 기준, 조커=패. 모양판별반픽 판단용."""
     ph = get_prediction_history(200)
@@ -1630,6 +1645,10 @@ def _apply_results_to_calcs(results):
                 # 경고 합산승률 저장
                 if blended is not None:
                     history_entry['warningWinRate'] = blended
+                # 모양승률 저장 (해당 회차 배팅 시점의 shape_predicted 최근 50회 승률)
+                shape_wr_at_round = _get_shape_50_win_rate_excluding_round(pending_round)
+                if shape_wr_at_round is not None:
+                    history_entry['shapeWinRate'] = shape_wr_at_round
                 # 모양: 가장 최근 다음 픽에만 배팅 — 값 없거나 픽 불일치면 no_bet
                 if c.get('shape_only_latest_next_pick') and results_for_shape and len(results_for_shape) >= 16:
                     latest_next = _get_latest_next_pick_for_chunk(results_for_shape, exclude_round=pending_round)
@@ -4674,6 +4693,8 @@ RESULTS_HTML = '''
         .calc-settings-table input[type="checkbox"] { margin: 0; }
         .calc-settings-table select { padding: 4px 6px; border-radius: 4px; border: 1px solid #555; background: #1a1a1a; color: #fff; }
         .calc-target-hint { margin-left: 4px; }
+        .calc-shape-rate-row td:first-child { color: #8ab4f8; }
+        .calc-shape-rate-val { font-weight: 500; color: #a5d6a7; }
         .calc-bet-copy-line { font-size: 0.95em; color: #bbb; }
         .calc-bet-copy-amount { cursor: pointer; padding: 2px 6px; border-radius: 4px; background: #37474f; color: #81c784; font-weight: 600; margin-left: 4px; }
         .calc-bet-copy-amount:hover { background: #455a64; color: #a5d6a7; }
@@ -4940,6 +4961,7 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-1-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-1-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-1-odds" min="1" step="0.01" value="1.97"></label></td></tr>
+                                    <tr id="calc-1-shape-rate-row" class="calc-shape-rate-row" style="display:none"><td>모양승률</td><td><span id="calc-1-shape-rate-val" class="calc-shape-rate-val">—</span></td></tr>
                                 </table>
                                 <div class="calc-options-wrap collapsed" data-calc="1">
                                     <div class="calc-options-toggle"><span class="calc-options-label">옵션</span><span class="calc-options-icon">▼</span></div>
@@ -4993,6 +5015,7 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-2-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-2-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-2-odds" min="1" step="0.01" value="1.97"></label></td></tr>
+                                    <tr id="calc-2-shape-rate-row" class="calc-shape-rate-row" style="display:none"><td>모양승률</td><td><span id="calc-2-shape-rate-val" class="calc-shape-rate-val">—</span></td></tr>
                                 </table>
                                 <div class="calc-options-wrap collapsed" data-calc="2">
                                     <div class="calc-options-toggle"><span class="calc-options-label">옵션</span><span class="calc-options-icon">▼</span></div>
@@ -5046,6 +5069,7 @@ RESULTS_HTML = '''
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
                                     <tr><td>자본/배팅</td><td><label>자본금 <input type="number" id="calc-3-capital" min="0" value="1000000"></label> <label>배팅금액 <input type="number" id="calc-3-base" min="1" value="10000"></label> <label>배당 <input type="number" id="calc-3-odds" min="1" step="0.01" value="1.97"></label></td></tr>
+                                    <tr id="calc-3-shape-rate-row" class="calc-shape-rate-row" style="display:none"><td>모양승률</td><td><span id="calc-3-shape-rate-val" class="calc-shape-rate-val">—</span></td></tr>
                                 </table>
                                 <div class="calc-options-wrap collapsed" data-calc="3">
                                     <div class="calc-options-toggle"><span class="calc-options-label">옵션</span><span class="calc-options-icon">▼</span></div>
@@ -7655,6 +7679,16 @@ RESULTS_HTML = '''
             var total = last50.filter(function(h) { return h.shape_predicted === '정' || h.shape_predicted === '꺽'; }).length;
             return total < 1 ? null : 100 * sp / total;
         }
+        /** 배팅 중인 회차의 모양승률. excludeRound 미만 회차만 사용 (해당 회차 결과 제외). */
+        function getShape50WinRateExcludingRound(excludeRound) {
+            if (excludeRound == null || isNaN(excludeRound)) return getShape50WinRate();
+            var vh = Array.isArray(predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
+            var filtered = vh.filter(function(h) { var r = Number(h.round); return !isNaN(r) && r < excludeRound && (h.actual === '정' || h.actual === '꺽'); });
+            var last50 = filtered.slice(-50).filter(function(h) { return h.shape_predicted === '정' || h.shape_predicted === '꺽'; });
+            if (last50.length < 1) return null;
+            var sp = last50.filter(function(h) { return h.shape_predicted === h.actual; }).length;
+            return Math.round(1000 * sp / last50.length) / 10;
+        }
         /** 모양판별승률: 메인 예측기표 모양판별 픽(shape_predicted) 최신 10개 결과. prediction_history 기준, 조커=패. 모양판별반픽 판단용. */
         function getShapePredictionWinRate10(id) {
             var vh = Array.isArray(predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
@@ -8365,6 +8399,7 @@ RESULTS_HTML = '''
                     '<span class="label">배팅중</span><span class="value">-</span>' +
                     '<span class="label">경과</span><span class="value">' + elapsedStr + '</span></div>';
                 updateCalcBetCopyLine(id);
+                updateCalcShapeRateRow(id);
                 updateCalcStatus(id);
                 return;
             }
@@ -8381,6 +8416,7 @@ RESULTS_HTML = '''
                         var valueSpans = grid.querySelectorAll('span.value');
                         if (valueSpans.length >= 4) valueSpans[3].textContent = elapsedStr;
                     }
+                    updateCalcShapeRateRow(id);
                     updateCalcStatus(id);
                     return;
                 }
@@ -8402,8 +8438,24 @@ RESULTS_HTML = '''
                 '<span class="label">배팅중</span><span class="value">' + betDisplay + '</span>' +
                 '<span class="label">경과</span><span class="value">' + elapsedStr + '</span></div>';
             updateCalcBetCopyLine(id, (effectivePausedForRound(id) || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker)) ? 0 : r.currentBet);
+            updateCalcShapeRateRow(id);
             updateCalcStatus(id);
             } catch (e) { console.warn('updateCalcSummary', id, e); }
+        }
+        function updateCalcShapeRateRow(id) {
+            try {
+                var rowEl = document.getElementById('calc-' + id + '-shape-rate-row');
+                var valEl = document.getElementById('calc-' + id + '-shape-rate-val');
+                var shapePredEl = document.getElementById('calc-' + id + '-shape-prediction');
+                if (!rowEl || !valEl || !shapePredEl) return;
+                if (!shapePredEl.checked) { rowEl.style.display = 'none'; return; }
+                var state = calcState[id];
+                var pendingRound = (state && state.pending_round) ? Number(state.pending_round) : (typeof lastPrediction !== 'undefined' && lastPrediction && lastPrediction.round != null ? Number(lastPrediction.round) : null);
+                if (pendingRound == null || isNaN(pendingRound)) { rowEl.style.display = 'none'; return; }
+                var sw = (typeof getShape50WinRateExcludingRound === 'function') ? getShape50WinRateExcludingRound(pendingRound) : null;
+                valEl.textContent = (sw != null && !isNaN(sw)) ? (sw.toFixed(1) + '%') : '—';
+                rowEl.style.display = '';
+            } catch (e) { console.warn('updateCalcShapeRateRow', id, e); }
         }
         function updateCalcBetCopyLine(id, currentBetVal) {
             try {
@@ -8681,7 +8733,8 @@ RESULTS_HTML = '''
                     resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
                     outClass = outcome === '승' ? 'win' : outcome === '패' ? 'lose' : outcome === '조' ? 'joker' : 'skip';
                 }
-                rows.push({ roundStr: roundStr, roundNum: !isNaN(rn) ? rn : null, pick: pickVal, pickClass: pickClass, warningWinRate: warningWinRateVal, rate15: rate15Val, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr, outClass: outClass });
+                const shapeWinRateVal = (typeof h.shapeWinRate === 'number' && !isNaN(h.shapeWinRate)) ? h.shapeWinRate.toFixed(1) + '%' : (isPendingRow && typeof getShape50WinRateExcludingRound === 'function' && !isNaN(rn)) ? ((function() { var sw = getShape50WinRateExcludingRound(rn); return sw != null ? sw.toFixed(1) + '%' : '-'; })()) : '-';
+                rows.push({ roundStr: roundStr, roundNum: !isNaN(rn) ? rn : null, pick: pickVal, pickClass: pickClass, warningWinRate: warningWinRateVal, shapeWinRate: shapeWinRateVal, rate15: rate15Val, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr, outClass: outClass });
             }
             try { window.__calcDetailRows = window.__calcDetailRows || {}; window.__calcDetailRows[id] = rows; } catch (e) {}
             const CALC_TABLE_DISPLAY_MAX = 200;
@@ -8690,13 +8743,13 @@ RESULTS_HTML = '''
                 if (displayRows.length === 0) {
                     tableWrap.innerHTML = '';
                 } else {
-                    let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽</th><th>경고 승률</th><th>15회승률</th><th>배팅금액</th><th>수익</th><th>승패</th></tr></thead><tbody>';
+                    let tbl = '<table class="calc-round-table"><thead><tr><th>회차</th><th>픽</th><th>경고 승률</th><th>모양승률</th><th>15회승률</th><th>배팅금액</th><th>수익</th><th>승패</th></tr></thead><tbody>';
                     displayRows.forEach(function(row) {
                         const outClass = row.outClass || (row.outcome === '승' ? 'win' : row.outcome === '패' ? 'lose' : row.outcome === '조' ? 'joker' : 'skip');
                         const profitClass = (typeof row.profit === 'number' && row.profit > 0) || (typeof row.profit === 'string' && row.profit.indexOf('+') === 0) ? 'profit-plus' : (typeof row.profit === 'number' && row.profit < 0) || (typeof row.profit === 'string' && row.profit.indexOf('-') === 0 && row.profit !== '-') ? 'profit-minus' : '';
                         var roundTdClass = (row.roundNum != null) ? 'calc-td-round-' + getRoundIconType(row.roundNum) : '';
                         var roundCellHtml = (row.roundNum != null) ? (String(row.roundNum) + getRoundIconHtml(row.roundNum)) : row.roundStr;
-                        tbl += '<tr><td class="' + roundTdClass + '">' + roundCellHtml + '</td><td class="' + row.pickClass + '">' + row.pick + '</td><td class="calc-td-warning-rate">' + (row.warningWinRate || '-') + '</td><td class="calc-td-rate15">' + (row.rate15 || '-') + '</td><td class="calc-td-bet">' + row.betAmount + '</td><td class="calc-td-profit ' + profitClass + '">' + row.profit + '</td><td class="' + outClass + '">' + row.outcome + '</td></tr>';
+                        tbl += '<tr><td class="' + roundTdClass + '">' + roundCellHtml + '</td><td class="' + row.pickClass + '">' + row.pick + '</td><td class="calc-td-warning-rate">' + (row.warningWinRate || '-') + '</td><td class="calc-td-shape-rate">' + (row.shapeWinRate || '-') + '</td><td class="calc-td-rate15">' + (row.rate15 || '-') + '</td><td class="calc-td-bet">' + row.betAmount + '</td><td class="calc-td-profit ' + profitClass + '">' + row.profit + '</td><td class="' + outClass + '">' + row.outcome + '</td></tr>';
                     });
                     tbl += '</tbody></table>';
                     tableWrap.innerHTML = tbl;
@@ -9000,8 +9053,8 @@ RESULTS_HTML = '''
                 var rows = (window.__calcDetailRows && window.__calcDetailRows[id]) ? window.__calcDetailRows[id] : [];
                 if (!rows || rows.length === 0) { alert('내보낼 내역이 없습니다. 표를 한 번 갱신한 뒤 시도해 주세요.'); return; }
                 var esc = function(s) { var t = String(s == null ? '' : s); if (t.indexOf(',') >= 0 || t.indexOf('"') >= 0 || t.indexOf('\\n') >= 0) return '"' + t.replace(/"/g, '""') + '"'; return t; };
-                var header = '회차,픽,경고승률,15회승률,배팅금액,수익,승패';
-                var lines = [header].concat(rows.map(function(r) { return esc(r.roundStr) + ',' + esc(r.pick) + ',' + esc(r.warningWinRate) + ',' + esc(r.rate15 || '-') + ',' + esc(r.betAmount) + ',' + esc(r.profit) + ',' + esc(r.outcome); }));
+                var header = '회차,픽,경고승률,모양승률,15회승률,배팅금액,수익,승패';
+                var lines = [header].concat(rows.map(function(r) { return esc(r.roundStr) + ',' + esc(r.pick) + ',' + esc(r.warningWinRate) + ',' + esc(r.shapeWinRate || '-') + ',' + esc(r.rate15 || '-') + ',' + esc(r.betAmount) + ',' + esc(r.profit) + ',' + esc(r.outcome); }));
                 var csv = lines.join('\\n');
                 var blob = new Blob(['\\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
                 var url = URL.createObjectURL(blob);
