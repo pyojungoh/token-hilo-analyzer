@@ -36,14 +36,17 @@ COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드"
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
 # 배팅 지연 — 픽 수신 즉시 ADB 전송용 최소화 (입력 안 먹으면 늘리세요)
-D_BEFORE_EXECUTE = 1.0  # 배팅 실행 전 대기(초) — 픽이 화면에 반영될 시간 확보
-D_AMOUNT_TAP = 0.01
-D_INPUT = 0.015
-D_BACK = 0.015
+D_BEFORE_EXECUTE = 2.0  # 배팅 실행 전 대기(초) — 픽이 화면에 반영될 시간 확보 (너무 빠르면 픽 미반영)
+D_AMOUNT_TAP = 0.03  # 금액 칸 탭 후 대기 (입력 안정)
+D_INPUT = 0.05  # 금액 입력 후 대기 (키보드 반영)
+D_BACK = 0.5  # 금액 입력·키보드 닫기 후 레드/블랙 탭 전 대기
 D_COLOR = 0.01
 D_CONFIRM = 0.01
 SWIPE_AMOUNT_MS = 50
 SWIPE_COLOR_MS = 50
+D_AMOUNT_CONFIRM_COUNT = 7  # 같은 (회차, 픽, 금액) 7회 연속 수신 시에만 배팅 (금액 오탐 방지)
+D_DEL_COUNT = 15  # 기존 값 삭제용 DEL 키 반복 횟수
+D_AMOUNT_DOUBLE_INPUT = True  # 금액 이중 입력 — 오입력 방지
 
 
 def load_coords():
@@ -59,6 +62,17 @@ def load_coords():
 def save_coords(data):
     with open(COORDS_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def _validate_bet_amount(amt):
+    """금액 유효성 검증. 1~99,999,999 범위, 정수만 허용."""
+    if amt is None:
+        return False
+    try:
+        v = int(amt)
+        return 1 <= v <= 99999999
+    except (TypeError, ValueError):
+        return False
 
 
 def _normalize_pick_color(raw):
@@ -190,6 +204,7 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
         self._coords = {}
         self._running = False
         self._last_bet_round = None
+        self._pending_bet_rounds = {}  # round_num -> {} (두 번 배팅 방지)
         self._bet_confirm_last = None  # 회차 3회 확인용
         self._bet_confirm_count = 0
         self._last_seen_round = None  # 회차 역행 방지
@@ -364,13 +379,14 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
             return
         self._running = True
         self._last_bet_round = None
+        self._pending_bet_rounds = {}  # 시작 시 초기화
         self._bet_confirm_last = None  # 회차 3회 확인 상태 초기화
         self._bet_confirm_count = 0
         self._last_seen_round = None  # 회차 역행 방지 초기화
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self._timer.start(80)
-        self._log("시작 — 회차·픽·금액 2회 연속 일치 시 배팅")
+        self._log("시작 — 회차·픽·금액 %s회 연속 일치 시 배팅" % D_AMOUNT_CONFIRM_COUNT)
         QTimer.singleShot(50, self._poll)
 
     def _on_stop(self):
@@ -422,7 +438,7 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
             amt_val = int(amt) if amt is not None else 0
         except (TypeError, ValueError):
             amt_val = 0
-        if round_num is None or pick_color is None or amt_val <= 0:
+        if round_num is None or pick_color is None or not _validate_bet_amount(amt_val):
             return
         try:
             round_num = int(round_num)
@@ -430,35 +446,41 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
             return
         if self._last_bet_round is not None and round_num <= self._last_bet_round:
             return
+        if round_num in self._pending_bet_rounds:
+            return
 
         # 회차 역행 방지: 이미 더 높은 회차를 본 적 있으면 전회차 데이터 거부
         if self._last_seen_round is not None and round_num < self._last_seen_round:
             return
         self._last_seen_round = max(self._last_seen_round or 0, round_num)
 
-        # 회차 3회 확인: 같은 (회차, 픽, 금액)이 3회 연속 수신될 때만 배팅
+        # 회차 N회 확인: 같은 (회차, 픽, 금액)이 N회 연속 수신될 때만 배팅 (금액 오탐 방지)
         key = (round_num, pick_color, amt_val)
         if self._bet_confirm_last != key:
             self._bet_confirm_last = key
             self._bet_confirm_count = 1
             return
         self._bet_confirm_count = (self._bet_confirm_count or 0) + 1
-        if self._bet_confirm_count < 3:
+        if self._bet_confirm_count < D_AMOUNT_CONFIRM_COUNT:
             return
 
         self._bet_confirm_last = None
         self._bet_confirm_count = 0
-        self._log("%s회 %s %s원 배팅 (3회 확인, %s초 후 실행)" % (round_num, pick_color, amt_val, D_BEFORE_EXECUTE))
+        self._pending_bet_rounds[round_num] = {}  # 즉시 등록 — 두 번 배팅 방지
+        self._log("%s회 %s %s원 배팅 (%s회 확인, %s초 후 실행)" % (round_num, pick_color, amt_val, D_AMOUNT_CONFIRM_COUNT, D_BEFORE_EXECUTE))
         def _execute():
             if not self._running:
                 return
             if self._last_bet_round is not None and round_num <= self._last_bet_round:
+                self._pending_bet_rounds.pop(round_num, None)
                 return
             self._log("%s회 %s %s원 실행" % (round_num, pick_color, amt_val))
             ok = self._do_bet(round_num, pick_color, amt_val)
             if ok:
                 self._last_bet_round = round_num
                 QTimer.singleShot(60, self._poll)
+            else:
+                self._pending_bet_rounds.pop(round_num, None)
         delay_ms = int(D_BEFORE_EXECUTE * 1000)
         if HAS_PYQT and delay_ms > 0:
             QTimer.singleShot(delay_ms, _execute)
@@ -466,6 +488,9 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
             _execute()
 
     def _do_bet(self, round_num, pick_color, amount):
+        if not _validate_bet_amount(amount):
+            self._log("배팅금액 오류: %s (1~99,999,999 범위)" % amount)
+            return False
         coords = load_coords()
         device = self._device_id or None
         bet_xy = coords.get("bet_amount")
@@ -480,15 +505,24 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
             self._log("%s 좌표 없음" % ("레드" if pick_color == "RED" else "블랙"))
             return False
 
-        bet_amount = str(amount)
+        bet_amount = str(int(amount))
+        self._log("[금액확인] %s회 %s원 입력 예정" % (round_num, bet_amount))
         try:
-            tx, ty = _apply_window_offset(coords, bet_xy[0], bet_xy[1], key="bet_amount")
-            adb_swipe(device, tx, ty, SWIPE_AMOUNT_MS)
-            time.sleep(D_AMOUNT_TAP)
-            adb_input_text(device, bet_amount)
-            time.sleep(D_INPUT)
-            adb_keyevent(device, 4)
-            time.sleep(D_BACK)
+            def _input_amount_once():
+                tx, ty = _apply_window_offset(coords, bet_xy[0], bet_xy[1], key="bet_amount")
+                adb_swipe(device, tx, ty, SWIPE_AMOUNT_MS)
+                time.sleep(D_AMOUNT_TAP)
+                for _ in range(D_DEL_COUNT):
+                    adb_keyevent(device, 67)  # KEYCODE_DEL — 기존 값 삭제
+                    time.sleep(0.01)
+                adb_input_text(device, bet_amount)
+                time.sleep(D_INPUT)
+                adb_keyevent(device, 4)
+                time.sleep(D_BACK)
+            _input_amount_once()
+            if D_AMOUNT_DOUBLE_INPUT:
+                time.sleep(0.15)
+                _input_amount_once()  # 이중 입력 — 오입력 방지
 
             cx, cy = _apply_window_offset(coords, color_xy[0], color_xy[1], key="red" if pick_color == "RED" else "black")
             adb_swipe(device, cx, cy, SWIPE_COLOR_MS)

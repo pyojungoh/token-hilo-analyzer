@@ -1345,7 +1345,8 @@ def _round_eq(a, b):
 
 def _calculate_calc_profit_server(calc_state, history_entry):
     """서버에서 계산기 수익, 마틴게일 단계, 연승/연패 계산. history_entry에 계산된 값 추가."""
-    MARTIN_PYO_RATIOS = [1, 1.5, 2.5, 4, 7, 12, 20, 40, 40]
+    # 표마틴: 9단계 고정 금액 [5000, 10000, 15000, 30000, 55000, 105000, 200000, 380000, 600000]
+    MARTIN_PYO_TABLE = [5000, 10000, 15000, 30000, 55000, 105000, 200000, 380000, 600000]
     
     capital = float(calc_state.get('capital', 1000000))
     base = float(calc_state.get('base', 10000))
@@ -1377,8 +1378,8 @@ def _calculate_calc_profit_server(calc_state, history_entry):
     cap = capital
     current_bet = base
     
-    # 마틴게일 테이블 생성
-    martin_table = [round(base * r) for r in MARTIN_PYO_RATIOS]
+    # 마틴게일 테이블 (표마틴: 고정 9단계)
+    martin_table = list(MARTIN_PYO_TABLE)
     if martingale_type == 'pyo_half':
         martin_table = [round(x / 2) for x in martin_table]
     
@@ -5361,11 +5362,10 @@ RESULTS_HTML = '''
         const CALC_SESSION_KEY = 'tokenHiloCalcSessionId';
         const CALC_STATE_BACKUP_KEY = 'tokenHiloCalcStateBackup';
         const calcState = {};
-        // 표마틴: 기준금액(배팅금액)에 맞게 9단계. 비율 [1, 1.5, 2.5, 4, 7, 12, 20, 40, 40]
-        var MARTIN_PYO_RATIOS = [1, 1.5, 2.5, 4, 7, 12, 20, 40, 40];
+        // 표마틴: 9단계 고정 금액 [5000, 10000, 15000, 30000, 55000, 105000, 200000, 380000, 600000]
+        var MARTIN_PYO_TABLE = [5000, 10000, 15000, 30000, 55000, 105000, 200000, 380000, 600000];
         function getMartinTable(type, baseAmount) {
-            var base = (baseAmount != null && !isNaN(Number(baseAmount)) && Number(baseAmount) > 0) ? Number(baseAmount) : 10000;
-            var table = MARTIN_PYO_RATIOS.map(function(r) { return Math.round(base * r); });
+            var table = MARTIN_PYO_TABLE.slice();
             return (type === 'pyo_half') ? table.map(function(x) { return Math.floor(x / 2); }) : table;
         }
         CALC_IDS.forEach(id => {

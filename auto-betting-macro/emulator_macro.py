@@ -49,16 +49,30 @@ COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드"
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
 # 배팅 동작 간 지연(초). 픽 수신 즉시 ADB 전송·빠른 입력을 위해 최소화. 입력/확정이 안 먹으면 값을 늘리세요.
-BET_DELAY_BEFORE_EXECUTE = 1.0  # 배팅 실행 전 대기(초) — 픽이 화면에 반영될 시간 확보
-BET_DELAY_AFTER_AMOUNT_TAP = 0.02
-BET_DELAY_AFTER_INPUT = 0.02
-BET_DELAY_AFTER_BACK = 0.02
+BET_DELAY_BEFORE_EXECUTE = 2.0  # 배팅 실행 전 대기(초) — 픽이 화면에 반영될 시간 확보 (너무 빠르면 픽 미반영)
+BET_DELAY_AFTER_AMOUNT_TAP = 0.03  # 금액 칸 탭 후 대기 (입력 안정)
+BET_DELAY_AFTER_INPUT = 0.05  # 금액 입력 후 대기 (키보드 반영)
+BET_DELAY_AFTER_BACK = 0.5  # 금액 입력·키보드 닫기 후 레드/블랙 탭 전 대기
+BET_AMOUNT_CONFIRM_COUNT = 7  # 같은 (회차, 픽, 금액) 7회 연속 수신 시에만 배팅 (금액 오탐 방지)
+BET_DEL_COUNT = 15  # 기존 값 삭제용 DEL 키 반복 횟수
+BET_AMOUNT_DOUBLE_INPUT = True  # 금액 이중 입력 (입력→BACK→재탭→재입력) — 오입력 방지
 BET_DELAY_AFTER_COLOR_TAP = 0.02
 BET_DELAY_BETWEEN_CONFIRM_TAPS = 0.02
 BET_DELAY_AFTER_CONFIRM = 0.02
 BET_CONFIRM_TAP_COUNT = 1  # 정정 버튼 1번만
 BET_RETRY_ATTEMPTS = 2  # 실패 시 재시도 횟수
 BET_RETRY_DELAY = 0.8   # 재시도 전 대기(초)
+
+
+def _validate_bet_amount(amt):
+    """금액 유효성 검증. 1~99,999,999 범위, 정수만 허용."""
+    if amt is None:
+        return False
+    try:
+        v = int(amt)
+        return 1 <= v <= 99999999
+    except (TypeError, ValueError):
+        return False
 
 
 def _normalize_pick_color(raw):
@@ -314,10 +328,11 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._amount_confirm_pick = None
         self._amount_confirm_amounts = []
         self._amount_confirm_want = 3
-        # 회차 3회 확인: 같은 (회차, 픽, 금액)이 3회 연속 수신될 때만 배팅 (금액 오탐 방지)
+        # 회차 N회 확인: 같은 (회차, 픽, 금액)이 N회 연속 수신될 때만 배팅 (금액 오탐 방지)
         self._bet_confirm_last = None  # (round_num, pick_color, amount)
         self._bet_confirm_count = 0  # 연속 일치 횟수
         self._last_seen_round = None  # 지금까지 본 최고 회차 — 역행(전회차) 수신 시 거부
+        self._display_best_amount = None  # (round_num, amount) — 같은 회차에서 본 최고 금액 (표시용, 5000 고정 방지)
         # 좌표 찾기 (한곳에 통합)
         self._coord_listener = None
         self._coord_capture_key = None
@@ -969,11 +984,12 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._last_round_when_started = None
         self._last_bet_round = None
         self._pick_history.clear()  # 전회차 히스토리 초기화 → 2회 연속 일치 시에만 배팅
-        self._bet_confirm_last = None  # 회차 3회 확인 상태 초기화
+        self._bet_confirm_last = None  # 회차 N회 확인 상태 초기화
         self._bet_confirm_count = 0
         self._last_seen_round = None  # 회차 역행 방지 초기화
         self._pick_data = {}  # 이전 연결/폴링 잔여 픽 제거 — 계산기 정지 시 매크로만 시작해도 배팅 들어가는 것 방지
         self._display_stable = None  # 표시 깜빡임 방지 상태 초기화 — 새 폴링으로 다시 안정화
+        self._display_best_amount = None  # 표시용 최고 금액 초기화
         self._display_candidate = None
         self._display_confirm_count = 0
         self.start_btn.setEnabled(False)
@@ -1034,6 +1050,11 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             amt_val = None
         key = (round_num, pick_color, amt_val)
         self._display_stable = key
+        # 같은 회차에서 본 최고 금액 유지 — 오래된 5000이 다시 표시되는 것 방지
+        if round_num is not None and amt_val is not None and amt_val > 0:
+            prev_round, prev_amt = self._display_best_amount or (None, 0)
+            if prev_round != round_num or amt_val > prev_amt:
+                self._display_best_amount = (round_num, amt_val)
         self._update_display()
 
         # 매크로는 오는 픽만 따라감. 목표금액/중지 판단은 분석기 계산기에서만 함 — running=False 수신해도 여기서 자동 중지하지 않음.
@@ -1079,20 +1100,20 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             return
         self._last_seen_round = max(self._last_seen_round or 0, round_num)
 
-        # 회차 3회 확인: 같은 (회차, 픽, 금액)이 3회 연속 수신될 때만 배팅 (금액 오탐 방지)
+        # 회차 N회 확인: 같은 (회차, 픽, 금액)이 N회 연속 수신될 때만 배팅 (금액 오탐 방지)
         key = (round_num, pick_color, amt_val)
         if self._bet_confirm_last != key:
             self._bet_confirm_last = key
             self._bet_confirm_count = 1
-            self._log("픽 수신: %s회 %s %s원 (1회 확인 — 3회 연속 일치 시 배팅)" % (round_num, pick_color, amt_val))
+            self._log("픽 수신: %s회 %s %s원 (1회 확인 — %s회 연속 일치 시 배팅)" % (round_num, pick_color, amt_val, BET_AMOUNT_CONFIRM_COUNT))
             return
         self._bet_confirm_count = (self._bet_confirm_count or 0) + 1
-        if self._bet_confirm_count < 3:
-            self._log("픽 수신: %s회 %s %s원 (%s회 확인 — 3회 연속 일치 시 배팅)" % (round_num, pick_color, amt_val, self._bet_confirm_count))
+        if self._bet_confirm_count < BET_AMOUNT_CONFIRM_COUNT:
+            self._log("픽 수신: %s회 %s %s원 (%s회 확인 — %s회 연속 일치 시 배팅)" % (round_num, pick_color, amt_val, self._bet_confirm_count, BET_AMOUNT_CONFIRM_COUNT))
             return
 
-        # 3회 연속 일치 → 배팅
-        self._log("픽 수신: %s회 %s %s원 (3회 확인 — 배팅)" % (round_num, pick_color, amt_val))
+        # N회 연속 일치 → 배팅
+        self._log("픽 수신: %s회 %s %s원 (%s회 확인 — 배팅)" % (round_num, pick_color, amt_val, BET_AMOUNT_CONFIRM_COUNT))
         self._bet_confirm_last = None
         self._bet_confirm_count = 0
         self._pick_history.append((round_num, pick_color))
@@ -1122,12 +1143,19 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
 
     def _run_bet(self, round_num, pick_color, amount):
         """배팅 실행. BET_DELAY_BEFORE_EXECUTE초 후 실제 ADB 전송 (픽 반영 대기)."""
+        # 즉시 pending 등록 — 같은 회차로 _run_bet이 연속 호출되어 두 번 배팅되는 것 방지
+        with self._lock:
+            if round_num in self._pending_bet_rounds:
+                return
+            self._pending_bet_rounds[round_num] = {"pick_color": pick_color, "amount": amount}
         delay_ms = int(BET_DELAY_BEFORE_EXECUTE * 1000)
         self._log("배팅 예약: %s회 %s %s원 (%s초 후 실행)" % (round_num, pick_color, amount, BET_DELAY_BEFORE_EXECUTE))
         def _execute():
             if not self._running:
                 return
             if self._last_bet_round is not None and round_num <= self._last_bet_round:
+                with self._lock:
+                    self._pending_bet_rounds.pop(round_num, None)
                 return
             self._log("배팅 실행: %s회 %s %s원" % (round_num, pick_color, amount))
             ok = self._do_bet(round_num, pick_color, amount)
@@ -1147,15 +1175,14 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             amt = int(amount_from_calc) if amount_from_calc is not None else 0
         except (TypeError, ValueError):
             amt = 0
-        if amt <= 0:
-            self._log("배팅금액이 없습니다. 분석기 웹에서 해당 계산기 배팅금액 입력 후 저장하세요.")
+        if not _validate_bet_amount(amt):
+            self._log("배팅금액 오류: %s (1~99,999,999 범위 정수만 허용)" % amount_from_calc)
+            with self._lock:
+                self._pending_bet_rounds.pop(round_num, None)
             return False
-        # 배팅 시작 전에 이 회차를 대기 목록에 넣어, 동시에 같은 회차로 또 배팅하는 것 방지
-        with self._lock:
-            if round_num in self._pending_bet_rounds:
-                return False
-            self._pending_bet_rounds[round_num] = {"pick_color": pick_color, "amount": amt}
+        # _run_bet에서 이미 _pending_bet_rounds에 등록됨 (두 번 배팅 방지)
         bet_amount = str(amt)
+        self._log("[금액확인] %s회 %s원 입력 예정" % (round_num, bet_amount))
         coords = self._coords
         device = self._device_id or None
 
@@ -1188,12 +1215,20 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         for attempt in range(BET_RETRY_ATTEMPTS):
             try:
                 # 1) 배팅금액 칸 탭 → 포커스 대기 → 기존 값 삭제(DEL) → 금액 입력 → 키보드 닫기
-                tap_swipe(bet_xy[0], bet_xy[1], "bet_amount")
-                time.sleep(BET_DELAY_AFTER_AMOUNT_TAP)
-                adb_input_text(device, bet_amount)
-                time.sleep(BET_DELAY_AFTER_INPUT)
-                adb_keyevent(device, 4)  # BACK
-                time.sleep(BET_DELAY_AFTER_BACK)
+                def _input_amount_once():
+                    tap_swipe(bet_xy[0], bet_xy[1], "bet_amount")
+                    time.sleep(BET_DELAY_AFTER_AMOUNT_TAP)
+                    for _ in range(BET_DEL_COUNT):
+                        adb_keyevent(device, 67)  # KEYCODE_DEL — 기존 값 삭제
+                        time.sleep(0.01)
+                    adb_input_text(device, bet_amount)
+                    time.sleep(BET_DELAY_AFTER_INPUT)
+                    adb_keyevent(device, 4)  # BACK
+                    time.sleep(BET_DELAY_AFTER_BACK)
+                _input_amount_once()
+                if BET_AMOUNT_DOUBLE_INPUT:
+                    time.sleep(0.15)  # 첫 입력 반영 대기
+                    _input_amount_once()  # 이중 입력 — 오입력 방지
                 # 2) 픽 RED=레드 / BLACK=블랙 (한 번만 탭)
                 tap_red_button = pick_color == "RED"
                 color_xy = red_xy if tap_red_button else black_xy
@@ -1231,7 +1266,12 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         if self._display_stable is not None and len(self._display_stable) >= 3:
             stable_round, stable_color, stable_amt = self._display_stable[0], self._display_stable[1], self._display_stable[2]
             round_num, pick_color = stable_round, stable_color
-            amount_str = str(stable_amt) if stable_amt is not None and stable_amt > 0 else "-"
+            # 같은 회차에서 본 최고 금액 사용 (5000 고정 방지 — 오래된 값이 다시 표시되는 것 방지)
+            if self._display_best_amount is not None and self._display_best_amount[0] == stable_round:
+                display_amt = self._display_best_amount[1]
+            else:
+                display_amt = stable_amt
+            amount_str = str(display_amt) if display_amt is not None and display_amt > 0 else "-"
         else:
             round_num = pick.get("round")
             raw_color = pick.get("pick_color")
