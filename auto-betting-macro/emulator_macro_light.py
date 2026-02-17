@@ -189,6 +189,8 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
         self._coords = {}
         self._running = False
         self._last_bet_round = None
+        self._bet_confirm_last = None  # 회차 2회 확인용
+        self._last_seen_round = None  # 회차 역행 방지
         self._coord_listener = None
         self._coord_capture_key = None
         self._pending_coord_click = None
@@ -360,10 +362,12 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
             return
         self._running = True
         self._last_bet_round = None
+        self._bet_confirm_last = None  # 회차 2회 확인 상태 초기화
+        self._last_seen_round = None  # 회차 역행 방지 초기화
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self._timer.start(80)
-        self._log("시작 — 회차·픽·금액 받으면 바로 배팅")
+        self._log("시작 — 회차·픽·금액 2회 연속 일치 시 배팅")
         QTimer.singleShot(50, self._poll)
 
     def _on_stop(self):
@@ -424,7 +428,19 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
         if self._last_bet_round is not None and round_num <= self._last_bet_round:
             return
 
-        self._log("%s회 %s %s원 배팅" % (round_num, pick_color, amt_val))
+        # 회차 역행 방지: 이미 더 높은 회차를 본 적 있으면 전회차 데이터 거부
+        if self._last_seen_round is not None and round_num < self._last_seen_round:
+            return
+        self._last_seen_round = max(self._last_seen_round or 0, round_num)
+
+        # 회차 2회 확인: 같은 (회차, 픽, 금액)이 2회 연속 수신될 때만 배팅
+        key = (round_num, pick_color, amt_val)
+        if self._bet_confirm_last != key:
+            self._bet_confirm_last = key
+            return
+
+        self._bet_confirm_last = None  # 배팅 후 초기화
+        self._log("%s회 %s %s원 배팅 (2회 확인)" % (round_num, pick_color, amt_val))
         ok = self._do_bet(round_num, pick_color, amt_val)
         if ok:
             self._last_bet_round = round_num

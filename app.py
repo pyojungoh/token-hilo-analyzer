@@ -10445,39 +10445,52 @@ def api_current_pick_relay():
             calculator_id = int(calculator_id) if calculator_id in ('1', '2', '3') else 1
         except (TypeError, ValueError):
             calculator_id = 1
-        # 계산기 상단 "배팅중" 금액만 사용 — DB(클라이언트 POST) 우선, 캐시는 DB 없을 때만
+        # DB(클라이언트 POST)와 relay 캐시(스케줄러) 둘 다 있으면 회차가 더 높은 쪽 우선 — 전회차/마틴 금액 오탐 방지
+        db_out = None
         if bet_int and DB_AVAILABLE and DATABASE_URL:
             conn = get_db_connection(statement_timeout_sec=3)
             if conn:
                 try:
                     ensure_current_pick_table(conn)
                     conn.commit()
-                    out = bet_int.get_current_pick(conn, calculator_id=calculator_id)
-                    if out:
-                        # DB = 클라이언트(계산기 상단) POST 값 그대로 사용
-                        _update_current_pick_relay_cache(calculator_id, out.get('round'), out.get('pick_color'),
-                                                         out.get('suggested_amount'), out.get('running', True), out.get('probability'))
-                        if out.get('running') is False:
-                            out = dict(out)
-                            out['pick_color'] = out['round'] = out['suggested_amount'] = None
-                        return jsonify(out if out else empty_pick), 200
+                    db_out = bet_int.get_current_pick(conn, calculator_id=calculator_id)
+                    if db_out:
+                        _update_current_pick_relay_cache(calculator_id, db_out.get('round'), db_out.get('pick_color'),
+                                                         db_out.get('suggested_amount'), db_out.get('running', True), db_out.get('probability'))
                 finally:
                     try:
                         conn.close()
                     except Exception:
                         pass
         cached = _current_pick_relay_cache.get(calculator_id)
+        cached_out = None
         if cached and isinstance(cached, dict):
-            out = dict(empty_pick)
+            cached_out = dict(empty_pick)
             for k in ('round', 'pick_color', 'probability', 'suggested_amount', 'running'):
                 if k in cached:
-                    out[k] = cached[k]
-            if out.get('running') is False:
-                out['pick_color'] = None
-                out['round'] = None
-                out['suggested_amount'] = None
-            return jsonify(out), 200
-        return jsonify(empty_pick), 200
+                    cached_out[k] = cached[k]
+        # 회차 비교: 둘 다 있으면 더 높은(최신) 회차 우선
+        def _round_val(o):
+            r = o.get('round') if o else None
+            try:
+                return int(r) if r is not None else 0
+            except (TypeError, ValueError):
+                return 0
+        if db_out and cached_out:
+            if _round_val(cached_out) > _round_val(db_out):
+                out = cached_out
+            else:
+                out = db_out
+        elif db_out:
+            out = db_out
+        elif cached_out:
+            out = cached_out
+        else:
+            out = empty_pick
+        if out and out.get('running') is False:
+            out = dict(out)
+            out['pick_color'] = out['round'] = out['suggested_amount'] = None
+        return jsonify(out if out else empty_pick), 200
     except Exception as e:
         print(f"[경고] current-pick-relay 실패: {str(e)[:100]}")
         return jsonify(empty_pick), 200
