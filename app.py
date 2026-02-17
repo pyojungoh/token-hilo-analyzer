@@ -4744,13 +4744,15 @@ RESULTS_HTML = '''
         }
         .calc-mini-graph-wrap .calc-mini-block.jung { background: #4caf50; }
         .calc-mini-graph-wrap .calc-mini-block.kkuk { background: #f44336; }
-        /* 계산기 15개 결과 카드 (그래프 위, 뱉365 게임 결과 정/꺽/조) — 항상 15개 1열 반응형 */
+        /* 계산기 15개 결과 카드 (그래프 위, 상단 카드와 동일·작게) — 항상 15개 1열 반응형 */
         .calc-result-cards-wrap { display: flex; flex-direction: row; gap: 2px; margin-bottom: 8px; flex-wrap: nowrap; align-items: stretch; width: 100%; min-width: 0; }
-        .calc-result-cards-wrap .calc-result-card { flex: 1 1 0; min-width: 0; min-height: 28px; display: flex; align-items: center; justify-content: center; font-size: clamp(8px, 2vw, 11px); font-weight: 600; border-radius: 3px; }
-        .calc-result-cards-wrap .calc-result-card.jung { background: #2e7d32; color: #ffeb3b; border: 1px solid #4caf50; }
-        .calc-result-cards-wrap .calc-result-card.kkuk { background: #b71c1c; color: #fff; border: 1px solid #e57373; }
-        .calc-result-cards-wrap .calc-result-card.joker { background: #1565c0; color: #90caf9; border: 1px solid #64b5f6; }
-        .calc-result-cards-wrap .calc-result-card.empty { background: #333; color: #666; border: 1px dashed #555; }
+        .calc-result-cards-wrap .calc-mini-card { flex: 1 1 0; min-width: 0; min-height: 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 3px; border: 1px solid #555; padding: 2px; }
+        .calc-result-cards-wrap .calc-mini-card.red { background: #d32f2f; color: #fff; }
+        .calc-result-cards-wrap .calc-mini-card.black { background: #fff; color: #000; }
+        .calc-result-cards-wrap .calc-mini-card.joker { background: #2196f3; color: #fff; }
+        .calc-result-cards-wrap .calc-mini-card.empty { background: #333; color: #666; border-style: dashed; }
+        .calc-result-cards-wrap .calc-mini-card .calc-mini-suit { font-size: 7px; line-height: 1; }
+        .calc-result-cards-wrap .calc-mini-card .calc-mini-value { font-size: 9px; font-weight: bold; line-height: 1; }
         .calc-round-table-wrap { margin-bottom: 6px; overflow-x: auto; max-height: 32em; overflow-y: auto; }
         .calc-round-table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
         .calc-round-table th, .calc-round-table td { padding: 4px 6px; border: 1px solid #444; text-align: center; }
@@ -6127,21 +6129,34 @@ RESULTS_HTML = '''
                     }
                 }
                 
-                // 계산기 15개 결과 카드 (뱉365 게임 정/꺽/조, 그래프 위, 좌=최신)
+                // 계산기 15개 결과 카드 (상단 카드와 동일·작게, 그래프 위, 좌=최신)
                 [1, 2, 3].forEach(function(cid) {
                     var el = document.getElementById('calc-' + cid + '-result-cards');
                     if (!el) return;
-                    var cardMax = 15;
-                    var html = '';
-                    for (var i = 0; i < cardMax; i++) {
-                        var v = (colorMatchResults && colorMatchResults[i]);
-                        var cls = v === true ? 'jung' : (v === false ? 'kkuk' : 'joker');
-                        var txt = v === true ? '정' : (v === false ? '꺽' : '조');
-                        if (v !== true && v !== false) cls = 'empty';
-                        if (v !== true && v !== false) txt = '—';
-                        html += '<span class="calc-result-card ' + cls + '">' + txt + '</span>';
+                    el.innerHTML = '';
+                    for (var i = 0; i < (displayResults.length < 15 ? displayResults.length : 15); i++) {
+                        var r = displayResults[i];
+                        var mini = document.createElement('div');
+                        mini.className = 'calc-mini-card';
+                        if (r && r.joker) {
+                            mini.classList.add('joker');
+                            mini.innerHTML = '<span class="calc-mini-suit">J</span><span class="calc-mini-value">K</span>';
+                        } else if (r && r.result) {
+                            var info = parseCardValue(r.result || '');
+                            mini.classList.add(info.isRed ? 'red' : 'black');
+                            mini.innerHTML = '<span class="calc-mini-suit">' + (info.suit || '') + '</span><span class="calc-mini-value">' + (info.number || '') + '</span>';
+                        } else {
+                            mini.classList.add('empty');
+                            mini.innerHTML = '<span class="calc-mini-value">—</span>';
+                        }
+                        el.appendChild(mini);
                     }
-                    el.innerHTML = html;
+                    for (var j = (displayResults.length < 15 ? displayResults.length : 15); j < 15; j++) {
+                        var empty = document.createElement('div');
+                        empty.className = 'calc-mini-card empty';
+                        empty.innerHTML = '<span class="calc-mini-value">—</span>';
+                        el.appendChild(empty);
+                    }
                 });
                 
                 // 헤더에 기준 색상 표시 (15번째 카드, 조커면 표시)
