@@ -3137,11 +3137,15 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     if current_run_len >= 4:
         line_w += 0.12
         pong_w = max(0.0, pong_w - 0.06)
-    # 최신열 가중치: 그래프 맨 왼쪽(최신) 열에 소폭 가산. 줄 열(2~3)이면 유지 쪽, 퐁당 열이면 바뀜 쪽.
+    # 최신열 가중치: 그래프 맨 왼쪽(최신) 열에 소폭 가산. 짧은줄2는 바뀜(퐁당) 쪽, 줄3은 유지 소폭, 퐁당 열이면 바뀜 쪽.
     first_is_line_col = (use_for_pattern[0] == use_for_pattern[1]) if len(use_for_pattern) >= 2 else True
     if first_is_line_col and line_runs and line_runs[0] >= 2 and line_runs[0] <= 3:
-        line_w += 0.04
-        pong_w = max(0.0, pong_w - 0.02)
+        if line_runs[0] == 2:
+            pong_w += 0.04
+            line_w = max(0.0, line_w - 0.02)
+        else:
+            line_w += 0.02
+            pong_w = max(0.0, pong_w - 0.01)
     elif not first_is_line_col and pong_runs and pong_runs[0] >= 1:
         pong_w += 0.03
         line_w = max(0.0, line_w - 0.015)
@@ -3165,11 +3169,16 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         pong_w += 0.10 * pong_mul
         line_w = max(0.0, line_w - 0.05 * pong_mul)
         pong_chunk_phase = phase
-    # 덩어리 구간: 블록 반복·줄2~4 → 줄 가중치 우선. 321 끝이면 바뀜 소폭 가산
+    # 덩어리 구간: 블록 반복·줄2~4. 줄2(짧은줄)는 바뀜(퐁당) 쪽, 줄3~4는 줄 가중치 우선. 321 끝이면 바뀜 소폭 가산
     elif phase in ('chunk_start', 'chunk_phase', 'pong_to_chunk'):
+        curr_line_len = line_runs[0] if (first_is_line_col and line_runs) else 0
         if use_shape_adjustments:
-            line_w += 0.05  # 덩어리 기본 가중치 축소 (위로만 쏠림 완화)
-            pong_w = max(0.0, pong_w - 0.025)
+            if curr_line_len == 2:
+                pong_w += 0.05
+                line_w = max(0.0, line_w - 0.025)
+            else:
+                line_w += 0.05  # 덩어리 기본 가중치 축소 (위로만 쏠림 완화)
+                pong_w = max(0.0, pong_w - 0.025)
             if chunk_shape == '321':
                 pong_w += 0.08 * pong_mul  # 321(줄어듦) 구간 퐁당 가산
                 line_w = max(0.0, line_w - 0.04 * pong_mul)
@@ -3177,8 +3186,12 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
                 pong_w += 0.05 * pong_mul  # 줄1퐁당1 패턴 퐁당 반영
                 line_w = max(0.0, line_w - 0.025 * pong_mul)
         else:
-            line_w += 0.10
-            pong_w = max(0.0, pong_w - 0.05)
+            if curr_line_len == 2:
+                pong_w += 0.08
+                line_w = max(0.0, line_w - 0.04)
+            else:
+                line_w += 0.10
+                pong_w = max(0.0, pong_w - 0.05)
             if chunk_shape == '321':
                 pong_w += 0.04 * pong_mul
                 line_w = max(0.0, line_w - 0.02 * pong_mul)
