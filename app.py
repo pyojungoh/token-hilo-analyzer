@@ -3173,6 +3173,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         pong_w = max(0.0, pong_w - 0.03)
     # 저장된 모양 가중치: 그 모양 다음에 정/꺽이 많았으면 해당 예측 쪽 가산. 줄/퐁당은 last에 따라 결정.
     # 정 많음→정 예측: last 정이면 줄(유지), last 꺽이면 퐁당(바뀜). 꺽 많음→꺽 예측: last 꺽이면 줄, last 정이면 퐁당.
+    # 강화: 과거에 자주 나온 모양일수록 가중치 상향 (0.04~0.10 → 0.08~0.20). 65% 이상 편향 시 추가 가산.
     shape_mul = shape_weight if use_shape_adjustments else 1.0
     if shape_win_stats:
         jc = shape_win_stats.get('jung_count') or 0
@@ -3181,12 +3182,16 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         if total >= 10:
             jr = jc / total if total else 0
             kr = kc / total if total else 0
-            if total >= 50:
-                w = 0.10 * shape_mul
+            if total >= 100:
+                w = 0.20 * shape_mul
+            elif total >= 50:
+                w = 0.18 * shape_mul
             elif total >= 20:
-                w = 0.07 * shape_mul
+                w = 0.12 * shape_mul
             else:
-                w = 0.04 * shape_mul
+                w = 0.08 * shape_mul
+            if jr >= 0.65 or kr >= 0.65:
+                w *= 1.5
             if jr >= 0.55:
                 if last is True:
                     line_w += w
@@ -3202,6 +3207,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
                     pong_w += w
                     line_w = max(0.0, line_w - w * 0.5)
     # 유사 덩어리 가중치: 정/꺽→줄/퐁당 매핑은 last 반영 (위 shape_win_stats와 동일).
+    # 강화: 과거 덩어리 패턴 가중치 상향 (0.04~0.10 → 0.08~0.18). 65% 이상 편향 시 추가 가산.
     chunk_mul = chunk_weight if use_shape_adjustments else 1.0
     if chunk_profile_stats:
         jc = chunk_profile_stats.get('jung_count') or 0
@@ -3210,12 +3216,16 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         if total >= 1:
             jr = jc / total if total else 0
             kr = kc / total if total else 0
-            if total >= 15:
-                w = (0.10 if (jr >= 0.6 or kr >= 0.6) else 0.08) * chunk_mul
+            if total >= 30:
+                w = (0.18 if (jr >= 0.6 or kr >= 0.6) else 0.14) * chunk_mul
+            elif total >= 15:
+                w = (0.14 if (jr >= 0.6 or kr >= 0.6) else 0.12) * chunk_mul
             elif total >= 5:
-                w = 0.07 * chunk_mul
+                w = 0.12 * chunk_mul
             else:
-                w = 0.04 * chunk_mul
+                w = 0.08 * chunk_mul
+            if jr >= 0.65 or kr >= 0.65:
+                w *= 1.5
             if jr >= 0.55:
                 if last is True:
                     line_w += w
@@ -10454,9 +10464,7 @@ def api_current_pick_relay():
                     ensure_current_pick_table(conn)
                     conn.commit()
                     db_out = bet_int.get_current_pick(conn, calculator_id=calculator_id)
-                    if db_out:
-                        _update_current_pick_relay_cache(calculator_id, db_out.get('round'), db_out.get('pick_color'),
-                                                         db_out.get('suggested_amount'), db_out.get('running', True), db_out.get('probability'))
+                    # relay 캐시는 DB로 덮어쓰지 않음 — 스케줄러가 서버 calc 금액으로 채운 캐시가 단일 소스
                 finally:
                     try:
                         conn.close()
