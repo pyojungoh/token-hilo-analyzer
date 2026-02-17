@@ -3009,9 +3009,9 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     elif surge_unknown:
         flow_state = 'surge_unknown'
 
-    # 15·20·30열 각각 계산 후 가중 평균(폭 넓힌 대칭·줄 반영). 데이터 부족 시 사용 가능한 구간만 사용.
+    # 15·20·30열 각각 계산 후 가중 평균(폭 넓힌 대칭·줄 반영). 최근 15열 가중치 상향 — 패턴 전환 빠를 때 반영.
     SYM_WINDOWS = (15, 20, 30)
-    SYM_WEIGHTS = (0.2, 0.5, 0.3)
+    SYM_WEIGHTS = (0.35, 0.40, 0.25)  # 15열 35%, 20열 40%, 30열 25% (기존 20/50/30 → 15열 강화)
     per_n = {}
     for w in SYM_WINDOWS:
         data = _symmetry_line_for_n(graph_values, w)
@@ -4844,7 +4844,7 @@ RESULTS_HTML = '''
                         <li><strong>전이 확률</strong> · 인접한 두 회차 쌍(정→정, 정→꺽, 꺽→정, 꺽→꺽) 비율을 최근 15회·30회·전체로 계산. 직전이 정이면 «정 유지/정→꺽», 꺽이면 «꺽 유지/꺽→정» 확률 사용.</li>
                         <li><strong>퐁당 / 줄</strong> · 최근 15회에서 «바뀜» 비율 = 퐁당%, «유지» 비율 = 줄%. 퐁당%·줄%로 각각 가중치 초기값 설정.</li>
                         <li><strong>흐름 보정</strong> · 15회 vs 30회 유지 확률 차이가 15%p 이상이면 «줄 강함» 또는 «퐁당 강함»으로 판단. 줄 강함이면 줄 가중치 +0.25, 퐁당 강함이면 퐁당 가중치 +0.25.</li>
-                        <li><strong>15·20·30열 대칭·줄</strong> · 15열·20열·30열 각각 좌반/우반 대칭도·줄 개수 계산 후 가중 평균(0.2·0.5·0.3) 반영. 새 구간 감지 시 줄 +0.22, 대칭 70% 이상·우측 줄 적으면 줄 +0.28 등 보정.</li>
+                        <li><strong>15·20·30열 대칭·줄</strong> · 15열·20열·30열 각각 좌반/우반 대칭도·줄 개수 계산 후 가중 평균(0.35·0.40·0.25) 반영. 새 구간 감지 시 줄 +0.22, 대칭 70% 이상·우측 줄 적으면 줄 +0.28 등 보정.</li>
                         <li><strong>30회 패턴</strong> · «덩어리»(줄이 2개 이상 이어짐) 비율·«띄엄»(줄 1개씩)·«두줄한개» 비율을 지수로 계산. 덩어리/두줄한개는 줄 가중치에, 띄엄은 퐁당 가중치에 반영.</li>
                         <li><strong>가중치 정규화</strong> · 위에서 나온 줄 가중치(lineW)와 퐁당 가중치(pongW)를 더한 뒤 1이 되도록 나눔.</li>
                         <li><strong>V자 패턴 보정</strong> · 그래프가 «긴 줄 → 퐁당 1~2개 → 짧은 줄 → 퐁당 → …» 형태(V자 밸런스)일 때 연패가 많아서, 퐁당(바뀜) 가중치를 올려 이 구간을 넘기기 쉽게 보정함.</li>
@@ -6779,7 +6779,7 @@ RESULTS_HTML = '''
                                 recentRunLength: recentRunLen
                             };
                         }
-                        var SYM_WINDOWS = [15, 20, 30], SYM_WEIGHTS = [0.2, 0.5, 0.3];
+                        var SYM_WINDOWS = [15, 20, 30], SYM_WEIGHTS = [0.35, 0.40, 0.25];
                         var perN = {};
                         for (var wi = 0; wi < SYM_WINDOWS.length; wi++) {
                             var d = symmetryForN(graphValues, SYM_WINDOWS[wi]);
