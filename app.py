@@ -3117,6 +3117,14 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     if current_run_len >= 4:
         line_w += 0.12
         pong_w = max(0.0, pong_w - 0.06)
+    # 최신열 가중치: 그래프 맨 왼쪽(최신) 열에 소폭 가산. 줄 열(2~3)이면 유지 쪽, 퐁당 열이면 바뀜 쪽.
+    first_is_line_col = (use_for_pattern[0] == use_for_pattern[1]) if len(use_for_pattern) >= 2 else True
+    if first_is_line_col and line_runs and line_runs[0] >= 2 and line_runs[0] <= 3:
+        line_w += 0.04
+        pong_w = max(0.0, pong_w - 0.02)
+    elif not first_is_line_col and pong_runs and pong_runs[0] >= 1:
+        pong_w += 0.03
+        line_w = max(0.0, line_w - 0.015)
     # 퐁당 / 덩어리 / 줄 세 가지 구간 보정: phase·chunk_shape에 따라 line_w·pong_w 조정
     pong_chunk_phase = None
     pong_chunk_debug = {}
