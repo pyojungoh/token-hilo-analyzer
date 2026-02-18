@@ -358,9 +358,10 @@ def save_game_result(game_data):
         return False
 
 
-def save_prediction_record(round_num, predicted, actual, probability=None, pick_color=None, results=None):
+def save_prediction_record(round_num, predicted, actual, probability=None, pick_color=None, results=None, shape_predicted=None):
     """시스템 예측 기록 1건 저장. 해당 회차 직전 이력으로 합산승률(blended_win_rate) 계산 후 저장.
-    results가 제공되면 shape_signature를 계산하여 prediction_details에 저장."""
+    results가 제공되면 shape_signature를 계산하여 prediction_details에 저장.
+    shape_predicted: 클라이언트에서 전달한 모양판별 픽('정'|'꺽'). 있으면 우선 사용, 없으면 results로 계산."""
     if not DB_AVAILABLE or not DATABASE_URL:
         return False
     conn = get_db_connection(statement_timeout_sec=5)
@@ -378,19 +379,22 @@ def save_prediction_record(round_num, predicted, actual, probability=None, pick_
         # shape_predicted = 모양판별 알고리즘(get_shape_prediction_hint) 결과. 모양판별반픽 도구로 사용.
         shape_sig = None
         shape_pred = None
+        if shape_predicted and str(shape_predicted).strip() in ('정', '꺽'):
+            shape_pred = str(shape_predicted).strip()
         prediction_details = None
         if results and len(results) >= 16:
             sig = _get_shape_signature(results)
             if sig:
                 shape_sig = sig
                 prediction_details = json.dumps({'shape_signature': shape_sig})
-            try:
-                lose_streak = _get_recent_lose_streak(history_before)
-                mul = 0.6 if lose_streak >= 2 else 1.0
-                hint = get_shape_prediction_hint(results, history_before, shape_weight=mul, chunk_weight=mul, pong_weight=mul, symmetry_weight=mul)
-                shape_pred = hint.get('value') if hint and hint.get('value') in ('정', '꺽') else None
-            except Exception:
-                shape_pred = None
+            if shape_pred is None:
+                try:
+                    lose_streak = _get_recent_lose_streak(history_before)
+                    mul = 0.6 if lose_streak >= 2 else 1.0
+                    hint = get_shape_prediction_hint(results, history_before, shape_weight=mul, chunk_weight=mul, pong_weight=mul, symmetry_weight=mul)
+                    shape_pred = hint.get('value') if hint and hint.get('value') in ('정', '꺽') else None
+                except Exception:
+                    shape_pred = None
         
         cur = conn.cursor()
         if prediction_details or shape_pred:
@@ -5288,10 +5292,11 @@ RESULTS_HTML = '''
         function savePredictionHistory() {
             try { localStorage.setItem(PREDICTION_HISTORY_KEY, JSON.stringify(predictionHistory)); } catch (e) {}
         }
-        function savePredictionHistoryToServer(round, predicted, actual, probability, pickColor) {
+        function savePredictionHistoryToServer(round, predicted, actual, probability, pickColor, shapePredicted) {
             const body = { round: round, predicted: predicted, actual: actual };
             if (probability != null) body.probability = probability;
             if (pickColor) body.pickColor = pickColor;
+            if (shapePredicted === '정' || shapePredicted === '꺽') body.shape_predicted = shapePredicted;
             fetch('/api/prediction-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(function() {});
         }
         // 배팅 색상 통일: RED/빨강 → 빨강, BLACK/검정 → 검정 (표시·저장 일관성)
@@ -6411,7 +6416,9 @@ RESULTS_HTML = '''
                         const isActualJoker = displayResults.length > 0 && !!displayResults[0].joker;
                         if (isActualJoker) {
                             if (predForRecord) {
-                                predictionHistory.push({ round: currentRoundFull, predicted: predForRecord.value, actual: 'joker', probability: predForRecord.prob != null ? predForRecord.prob : null, pickColor: predForRecord.color || null });
+                                var pushObj = { round: currentRoundFull, predicted: predForRecord.value, actual: 'joker', probability: predForRecord.prob != null ? predForRecord.prob : null, pickColor: predForRecord.color || null };
+                                if (predForRecord.shape_predicted === '정' || predForRecord.shape_predicted === '꺽') pushObj.shape_predicted = predForRecord.shape_predicted;
+                                predictionHistory.push(pushObj);
                             }
                             var betPredForServer = null, betColorForServer = null;
                             CALC_IDS.forEach(id => {
@@ -6482,11 +6489,13 @@ RESULTS_HTML = '''
                                 _lastCalcHistKey[id] = (calcState[id].history.length) + '-joker';
                             });
                             saveCalcStateToServer();
-                            if (predForRecord) { savePredictionHistoryToServer(currentRoundFull, predForRecord.value, 'joker', predForRecord.prob, predForRecord.color || null); }
+                            if (predForRecord) { savePredictionHistoryToServer(currentRoundFull, predForRecord.value, 'joker', predForRecord.prob, predForRecord.color || null, predForRecord.shape_predicted); }
                         } else if (graphValues.length > 0 && (graphValues[0] === true || graphValues[0] === false)) {
                             const actual = graphValues[0] ? '정' : '꺽';
                             if (predForRecord) {
-                                predictionHistory.push({ round: currentRoundFull, predicted: predForRecord.value, actual: actual, probability: predForRecord.prob != null ? predForRecord.prob : null, pickColor: predForRecord.color || null });
+                                var pushObjA = { round: currentRoundFull, predicted: predForRecord.value, actual: actual, probability: predForRecord.prob != null ? predForRecord.prob : null, pickColor: predForRecord.color || null };
+                                if (predForRecord.shape_predicted === '정' || predForRecord.shape_predicted === '꺽') pushObjA.shape_predicted = predForRecord.shape_predicted;
+                                predictionHistory.push(pushObjA);
                             }
                             var betPredForServerActual = null, betColorForServerActual = null;
                             CALC_IDS.forEach(id => {
@@ -6583,7 +6592,7 @@ RESULTS_HTML = '''
                                 }
                             });
                             saveCalcStateToServer();
-                            if (predForRecord) { savePredictionHistoryToServer(currentRoundFull, predForRecord.value, actual, predForRecord.prob, predForRecord.color || null); }
+                            if (predForRecord) { savePredictionHistoryToServer(currentRoundFull, predForRecord.value, actual, predForRecord.prob, predForRecord.color || null, predForRecord.shape_predicted); }
                         }
                         predictionHistory = predictionHistory.slice(-300);
                         savePredictionHistory();  // localStorage 백업
@@ -10433,6 +10442,9 @@ def api_save_prediction_history():
             s = str(pick_color).strip().upper()
             if s in ('RED', '빨강'): pick_color = '빨강'
             elif s in ('BLACK', '검정'): pick_color = '검정'
+        shape_predicted = data.get('shape_predicted')
+        if shape_predicted and str(shape_predicted).strip() not in ('정', '꺽'):
+            shape_predicted = None
         results_for_shape = None
         try:
             res = get_recent_results(hours=24)
@@ -10442,7 +10454,7 @@ def api_save_prediction_history():
                     results_for_shape = _sort_results_newest_first(filtered)
         except Exception:
             pass
-        ok = save_prediction_record(int(round_num), str(predicted), str(actual), probability=probability, pick_color=pick_color, results=results_for_shape)
+        ok = save_prediction_record(int(round_num), str(predicted), str(actual), probability=probability, pick_color=pick_color, results=results_for_shape, shape_predicted=shape_predicted)
         return jsonify({'ok': ok}), 200
     except Exception as e:
         print(f"[❌ 오류] 예측 기록 API 실패: {str(e)[:200]}")
