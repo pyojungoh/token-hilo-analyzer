@@ -6026,6 +6026,7 @@ RESULTS_HTML = '''
                         if (!isNaN(newRound) && (isNaN(prevRound) || newRound >= prevRound)) {
                             var normColor = normalizePickColor(sp.color) || sp.color || null;
                             lastPrediction = { value: sp.value, round: sp.round, prob: sp.prob != null ? sp.prob : 0, color: normColor };
+                            if (sp.shape_predicted === '정' || sp.shape_predicted === '꺽') lastPrediction.shape_predicted = sp.shape_predicted;
                             setRoundPrediction(sp.round, lastPrediction);
                             if (lastServerPrediction) {
                                 fetch('/api/round-prediction', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ round: sp.round, predicted: sp.value, pickColor: normColor || sp.color, probability: sp.prob }) }).catch(function() {});
@@ -6382,7 +6383,7 @@ RESULTS_HTML = '''
                     const alreadyRecordedRound = predictionHistory.some(function(h) { return h && Number(h.round) === currentRoundNum; });
                     // predForRound: 계산기 루프에서 반픽/승률반픽 적용할 때 쓸 기준 (기존 로직 유지)
                     var predForRound = (predictionHistory && predictionHistory.find(function(p) { return p && Number(p.round) === currentRoundNum; })) || getRoundPrediction(currentRoundFull) || (lastPrediction && Number(lastPrediction.round) === currentRoundNum ? lastPrediction : null);
-                    if (predForRound && predForRound.actual !== undefined) predForRound = { round: predForRound.round, value: predForRound.predicted, prob: predForRound.probability, color: predForRound.pickColor || predForRound.pick_color };
+                    if (predForRound && predForRound.actual !== undefined) predForRound = { round: predForRound.round, value: predForRound.predicted, prob: predForRound.probability, color: predForRound.pickColor || predForRound.pick_color, shape_predicted: predForRound.shape_predicted };
                     // 예측기표에 넣을 값은 서버·버퍼에서만 취함. predictionHistory.find는 배팅픽 오염 가능으로 사용 안 함.
                     var predForRecord = getRoundPrediction(currentRoundFull) || (lastPrediction && Number(lastPrediction.round) === currentRoundNum ? lastPrediction : null);
                     var lowWinRateForRecord = false;
@@ -6423,8 +6424,9 @@ RESULTS_HTML = '''
                                     pred = saved.value;
                                     betColor = saved.isRed ? '빨강' : '검정';
                                 } else {
+                                    var baseForPred = (!!(calcState[id] && calcState[id].shape_prediction) && (predForRound.shape_predicted === '정' || predForRound.shape_predicted === '꺽')) ? predForRound.shape_predicted : predForRound.value;
                                     const rev = !!(calcState[id] && calcState[id].reverse);
-                                    pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
+                                    pred = rev ? (baseForPred === '정' ? '꺽' : '정') : baseForPred;
                                     const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
                                     var shapeWr = (typeof getShape50WinRate === 'function') ? getShape50WinRate() : null;
                                     var wrThrEl = document.getElementById('calc-' + id + '-win-rate-threshold');
@@ -6438,6 +6440,7 @@ RESULTS_HTML = '''
                                     var loseStreakThr = (loseStreakThrEl && !isNaN(parseFloat(loseStreakThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(loseStreakThrEl.value))) : (calcState[id] != null && typeof calcState[id].lose_streak_reverse_threshold === 'number' ? calcState[id].lose_streak_reverse_threshold : 48);
                                     if (useLoseStreakRev && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThr && noRevByMain15 && noRevByStreak5) pred = pred === '정' ? '꺽' : '정';
                                     betColor = normalizePickColor(predForRound.color);
+                                    if (baseForPred !== predForRound.value) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (useWinRateRev && shapeWr != null && shapeWr <= wrThr && noRevByMain15 && noRevByStreak5) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (useLoseStreakRev && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThr && noRevByMain15 && noRevByStreak5) betColor = betColor === '빨강' ? '검정' : '빨강';
@@ -6449,6 +6452,12 @@ RESULTS_HTML = '''
                                         if (zone === 'high_falling') { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; calcState[id].last_trend_direction = 'down'; }
                                         else if (zone === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
                                         else if (zone === 'mid_flat' && calcState[id].last_trend_direction === 'down') { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
+                                    }
+                                    var shapePredRev = !!(calcState[id] && calcState[id].shape_prediction_reverse);
+                                    var shapePredRevThr = (calcState[id] != null && typeof calcState[id].shape_prediction_reverse_threshold === 'number') ? calcState[id].shape_prediction_reverse_threshold : 50;
+                                    if (!!(calcState[id] && calcState[id].shape_prediction) && shapePredRev && typeof getShapePredictionWinRate10 === 'function') {
+                                        var sp10 = getShapePredictionWinRate10(id);
+                                        if (sp10 != null && sp10 <= shapePredRevThr) { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
                                     }
                                 }
                                 if (betPredForServer == null) { betPredForServer = pred; betColorForServer = betColor || null; }
@@ -6490,8 +6499,9 @@ RESULTS_HTML = '''
                                     pred = saved.value;
                                     betColorActual = saved.isRed ? '빨강' : '검정';
                                 } else {
+                                    var baseForPredA = (!!(calcState[id] && calcState[id].shape_prediction) && (predForRound.shape_predicted === '정' || predForRound.shape_predicted === '꺽')) ? predForRound.shape_predicted : predForRound.value;
                                     const rev = !!(calcState[id] && calcState[id].reverse);
-                                    pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
+                                    pred = rev ? (baseForPredA === '정' ? '꺽' : '정') : baseForPredA;
                                     const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
                                     var shapeWrActual = (typeof getShape50WinRate === 'function') ? getShape50WinRate() : null;
                                     var wrThrElA = document.getElementById('calc-' + id + '-win-rate-threshold');
@@ -6504,10 +6514,18 @@ RESULTS_HTML = '''
                                     var loseStreakThrElActual = document.getElementById('calc-' + id + '-lose-streak-reverse-threshold');
                                     var loseStreakThrActual = (loseStreakThrElActual && !isNaN(parseFloat(loseStreakThrElActual.value))) ? Math.max(0, Math.min(100, parseFloat(loseStreakThrElActual.value))) : (calcState[id] != null && typeof calcState[id].lose_streak_reverse_threshold === 'number' ? calcState[id].lose_streak_reverse_threshold : 48);
                                     if (useLoseStreakRevActual && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThrActual && noRevByMain15A && noRevByStreak5A) pred = pred === '정' ? '꺽' : '정';
+                                    var shapePredRevA = !!(calcState[id] && calcState[id].shape_prediction_reverse);
+                                    var shapePredRevThrA = (calcState[id] != null && typeof calcState[id].shape_prediction_reverse_threshold === 'number') ? calcState[id].shape_prediction_reverse_threshold : 50;
+                                    if (!!(calcState[id] && calcState[id].shape_prediction) && shapePredRevA && typeof getShapePredictionWinRate10 === 'function') {
+                                        var sp10A = getShapePredictionWinRate10(id);
+                                        if (sp10A != null && sp10A <= shapePredRevThrA) pred = pred === '정' ? '꺽' : '정';
+                                    }
                                     betColorActual = normalizePickColor(predForRound.color);
+                                    if (baseForPredA !== predForRound.value) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (useWinRateRevActual && shapeWrActual != null && shapeWrActual <= wrThrA && noRevByMain15A && noRevByStreak5A) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (useLoseStreakRevActual && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThrActual && noRevByMain15A && noRevByStreak5A) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                    if (!!(calcState[id] && calcState[id].shape_prediction) && shapePredRevA && typeof getShapePredictionWinRate10 === 'function' && sp10A != null && sp10A <= shapePredRevThrA) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     var winRateDirRevElA = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
                                     var useWinRateDirRevActual = !!(winRateDirRevElA && winRateDirRevElA.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
                                     if (useWinRateDirRevActual && noRevByStreak5A && typeof getEffectiveWinRateDirectionZone === 'function') {
@@ -6583,8 +6601,9 @@ RESULTS_HTML = '''
                                     pred = saved.value;
                                     betColor = saved.isRed ? '빨강' : '검정';
                                 } else {
+                                    var baseForPred = (!!(calcState[id] && calcState[id].shape_prediction) && (predForRound.shape_predicted === '정' || predForRound.shape_predicted === '꺽')) ? predForRound.shape_predicted : predForRound.value;
                                     const rev = !!(calcState[id] && calcState[id].reverse);
-                                    pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
+                                    pred = rev ? (baseForPred === '정' ? '꺽' : '정') : baseForPred;
                                     const useWinRateRev = !!(calcState[id] && calcState[id].win_rate_reverse);
                                     var shapeWr2 = (typeof getShape50WinRate === 'function') ? getShape50WinRate() : null;
                                     var wrThrEl2 = document.getElementById('calc-' + id + '-win-rate-threshold');
@@ -6645,8 +6664,9 @@ RESULTS_HTML = '''
                                     pred = saved.value;
                                     betColorActual = saved.isRed ? '빨강' : '검정';
                                 } else {
+                                    var baseForPredA = (!!(calcState[id] && calcState[id].shape_prediction) && (predForRound.shape_predicted === '정' || predForRound.shape_predicted === '꺽')) ? predForRound.shape_predicted : predForRound.value;
                                     const rev = !!(calcState[id] && calcState[id].reverse);
-                                    pred = rev ? (predForRound.value === '정' ? '꺽' : '정') : predForRound.value;
+                                    pred = rev ? (baseForPredA === '정' ? '꺽' : '정') : baseForPredA;
                                     const useWinRateRevActual = !!(calcState[id] && calcState[id].win_rate_reverse);
                                     var shapeWr3 = (typeof getShape50WinRate === 'function') ? getShape50WinRate() : null;
                                     var wrThrEl3 = document.getElementById('calc-' + id + '-win-rate-threshold');
@@ -8269,8 +8289,8 @@ RESULTS_HTML = '''
                         var noRevByMain15Card = (r15Card == null || r15Card < 53);
                         var noRevByStreak5Card = !(calcState[id].streak_suppress_reverse && runLenCard >= 5);
                         var shapePredOn = !!(document.getElementById('calc-' + id + '-shape-prediction') && document.getElementById('calc-' + id + '-shape-prediction').checked);
-                        // 상단 예측픽: lastPrediction.value 사용
-                        var predictionText = lastPrediction.value;
+                        // 상단 예측픽: 모양판별 켜면 shape_predicted 우선, 없으면 lastPrediction.value
+                        var predictionText = (shapePredOn && (lastPrediction.shape_predicted === '정' || lastPrediction.shape_predicted === '꺽')) ? lastPrediction.shape_predicted : lastPrediction.value;
                         var predColorNorm = normalizePickColor(lastPrediction.color);
                         var predictionIsRed = (predColorNorm === '빨강' || predColorNorm === '검정') ? (predColorNorm === '빨강') : (predictionText === '정');
                         var bettingText, bettingIsRed;
@@ -9521,22 +9541,32 @@ def _build_results_payload_db_only(hours=24, backfill=False):
                             'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
                             'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {},
                         }
-                        # 퐁당/덩어리 판별 메뉴용: 저장 픽은 유지하되 phase/debug만 계산. API 응답 속도 위해 shape/chunk DB 조회 생략.
+                        # 퐁당/덩어리 판별 메뉴용: 저장 픽은 유지하되 phase/debug만 계산. shape_predicted 추가(모양판별 반픽 옵션용).
                         try:
                             computed = compute_prediction(results, ph, shape_win_stats=None, chunk_profile_stats=None)
                             if computed:
                                 server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                 server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
-                                # 가장 최근 다음 픽 추가
                                 latest_next_pick = _get_latest_next_pick_for_chunk(results)
                                 if latest_next_pick:
+                                    server_pred['pong_chunk_debug'] = server_pred.get('pong_chunk_debug') or {}
                                     server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
+                            hint = get_shape_prediction_hint(results, ph)
+                            if hint and hint.get('value') in ('정', '꺽'):
+                                server_pred['shape_predicted'] = hint['value']
                         except Exception:
                             pass
             except Exception as e:
                 print(f"[API] server_pred 조회 오류: {str(e)[:100]}")
         if server_pred is None:
-            server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
+            server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}, 'shape_predicted': None}
+        if len(results) >= 16 and server_pred.get('shape_predicted') is None:
+            try:
+                hint = get_shape_prediction_hint(results, ph)
+                if hint and hint.get('value') in ('정', '꺽'):
+                    server_pred['shape_predicted'] = hint['value']
+            except Exception:
+                pass
         # 모양 옵션: server_pred가 기본값이어도 latest_next_pick 항상 포함 — 계산기 최상단 보류만 표시 버그 방지
         if len(results) >= 16 and (not server_pred.get('pong_chunk_debug') or 'latest_next_pick' not in (server_pred.get('pong_chunk_debug') or {})):
             try:
@@ -9721,13 +9751,24 @@ def _build_results_payload():
                                     server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
                                     latest_next_pick = _get_latest_next_pick_for_chunk(results)
                                     if latest_next_pick:
+                                        server_pred['pong_chunk_debug'] = server_pred.get('pong_chunk_debug') or {}
                                         server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
+                                hint = get_shape_prediction_hint(results, ph)
+                                if hint and hint.get('value') in ('정', '꺽'):
+                                    server_pred['shape_predicted'] = hint['value']
                             except Exception:
                                 pass
                 except Exception as e:
                     print(f"[API] server_pred 조회 오류: {str(e)[:100]}")
             if server_pred is None:
-                server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
+                server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}, 'shape_predicted': None}
+            if len(results) >= 16 and server_pred.get('shape_predicted') is None:
+                try:
+                    hint = get_shape_prediction_hint(results, ph)
+                    if hint and hint.get('value') in ('정', '꺽'):
+                        server_pred['shape_predicted'] = hint['value']
+                except Exception:
+                    pass
             # 모양 옵션: latest_next_pick 항상 포함 (계산기 최상단 보류만 표시 버그 방지)
             if len(results) >= 16 and (not server_pred.get('pong_chunk_debug') or 'latest_next_pick' not in (server_pred.get('pong_chunk_debug') or {})):
                 try:
@@ -9808,7 +9849,11 @@ def _build_results_payload():
                                     server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
                                     latest_next_pick = _get_latest_next_pick_for_chunk(results)
                                     if latest_next_pick:
+                                        server_pred['pong_chunk_debug'] = server_pred.get('pong_chunk_debug') or {}
                                         server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
+                                hint = get_shape_prediction_hint(results, ph)
+                                if hint and hint.get('value') in ('정', '꺽'):
+                                    server_pred['shape_predicted'] = hint['value']
                             except Exception:
                                 pass
                 except Exception as e:
@@ -9816,7 +9861,14 @@ def _build_results_payload():
             if server_pred is None:
                 shape_stats = _get_shape_stats_for_results(results) if len(results) >= 16 else None
                 chunk_stats = _get_chunk_stats_for_results(results) if len(results) >= 16 else None
-                server_pred = compute_prediction(results, ph, shape_win_stats=shape_stats, chunk_profile_stats=chunk_stats) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
+                server_pred = compute_prediction(results, ph, shape_win_stats=shape_stats, chunk_profile_stats=chunk_stats) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}, 'shape_predicted': None}
+            if len(results) >= 16 and server_pred.get('shape_predicted') is None:
+                try:
+                    hint = get_shape_prediction_hint(results, ph)
+                    if hint and hint.get('value') in ('정', '꺽'):
+                        server_pred['shape_predicted'] = hint['value']
+                except Exception:
+                    pass
             # 모양 옵션: latest_next_pick 항상 포함 (계산기 최상단 보류만 표시 버그 방지)
             if len(results) >= 16 and (not server_pred.get('pong_chunk_debug') or 'latest_next_pick' not in (server_pred.get('pong_chunk_debug') or {})):
                 try:
@@ -10367,7 +10419,7 @@ def api_save_round_prediction():
 
 @app.route('/api/prediction-history', methods=['POST'])
 def api_save_prediction_history():
-    """시스템 예측 기록 1건 저장 (round, predicted, actual, probability, pick_color). 어디서 접속해도 동일 기록 유지."""
+    """시스템 예측 기록 1건 저장 (round, predicted, actual, probability, pick_color). 어디서 접속해도 동일 기록 유지. shape_predicted 보정용 results 조회."""
     try:
         data = request.get_json(force=True, silent=True) or {}
         round_num = data.get('round')
@@ -10381,7 +10433,16 @@ def api_save_prediction_history():
             s = str(pick_color).strip().upper()
             if s in ('RED', '빨강'): pick_color = '빨강'
             elif s in ('BLACK', '검정'): pick_color = '검정'
-        ok = save_prediction_record(int(round_num), str(predicted), str(actual), probability=probability, pick_color=pick_color)
+        results_for_shape = None
+        try:
+            res = get_recent_results(hours=24)
+            if res and len(res) >= 16:
+                filtered = [r for r in res if int(str(r.get('gameID') or '0'), 10) < int(round_num)]
+                if len(filtered) >= 16:
+                    results_for_shape = _sort_results_newest_first(filtered)
+        except Exception:
+            pass
+        ok = save_prediction_record(int(round_num), str(predicted), str(actual), probability=probability, pick_color=pick_color, results=results_for_shape)
         return jsonify({'ok': ok}), 200
     except Exception as e:
         print(f"[❌ 오류] 예측 기록 API 실패: {str(e)[:200]}")
