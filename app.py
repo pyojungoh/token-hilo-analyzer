@@ -1132,15 +1132,15 @@ def _get_shape_50_win_rate_excluding_round(exclude_round):
     return round(100.0 * wins / len(valid), 1)
 
 
-def _get_shape_prediction_win_rate_10(c):
-    """모양판별승률: 메인 예측기표 모양판별 픽(shape_predicted) 최신 10개 결과. prediction_history 기준, 조커=패. 모양판별반픽 판단용."""
+def _get_shape_prediction_win_rate_15(c):
+    """모양판별승률: 메인 예측기표 모양판별 픽(shape_predicted) 최신 15개 결과. prediction_history 기준, 조커=패. 모양판별반픽 판단용."""
     ph = get_prediction_history(200)
     with_shape = [h for h in ph if h and h.get('shape_predicted') in ('정', '꺽') and h.get('actual') in ('정', '꺽', 'joker', '조커')]
     if not with_shape:
         return None
-    last10 = with_shape[-10:]
+    last15 = with_shape[-15:]
     wins, total = 0, 0
-    for h in last10:
+    for h in last15:
         sp = h.get('shape_predicted')
         act = h.get('actual')
         if act in ('joker', '조커'):
@@ -1635,9 +1635,9 @@ def _apply_results_to_calcs(results):
                             pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
                             bet_color_for_history = _flip_pick_color(bet_color_for_history)
                 if c.get('shape_prediction') and c.get('shape_prediction_reverse'):
-                    sp10 = _get_shape_prediction_win_rate_10(c)
+                    sp15 = _get_shape_prediction_win_rate_15(c)
                     thr = max(0, min(100, int(c.get('shape_prediction_reverse_threshold') or 50)))
-                    if sp10 is not None and sp10 <= thr:
+                    if sp15 is not None and sp15 <= thr:
                         pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
                         bet_color_for_history = _flip_pick_color(bet_color_for_history)
                 history_entry = {'round': pending_round, 'predicted': pred_for_calc, 'actual': actual}
@@ -1970,9 +1970,9 @@ def _server_calc_effective_pick_and_amount(c):
             pred = '꺽' if pred == '정' else '정'
             color = _flip_pick_color(color)
     if c.get('shape_prediction') and c.get('shape_prediction_reverse'):
-        sp10 = _get_shape_prediction_win_rate_10(c)
+        sp15 = _get_shape_prediction_win_rate_15(c)
         thr = max(0, min(100, int(c.get('shape_prediction_reverse_threshold') or 50)))
-        if sp10 is not None and sp10 <= thr:
+        if sp15 is not None and sp15 <= thr:
             pred = '꺽' if pred == '정' else '정'
             color = _flip_pick_color(color)
     pick_color = 'RED' if color == '빨강' else ('BLACK' if color == '검정' else None)
@@ -4994,7 +4994,7 @@ RESULTS_HTML = '''
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-1-lose-streak-reverse"> 연패≥<input type="number" id="calc-1-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-1-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-1-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-1-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-1-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
-                                            <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-1-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-1-shape-prediction-reverse"> 모양판별반픽</label> <label title="계산기표 2~11행 모양판별승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-1-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label> <label title="모양판별 계산식 내 shape/chunk/퐁당/대칭 배율(0~3, 기본 1)">shape×<input type="number" id="calc-1-shape-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> chunk×<input type="number" id="calc-1-chunk-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 퐁당×<input type="number" id="calc-1-pong-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 대칭×<input type="number" id="calc-1-symmetry-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"></label></td></tr>
+                                            <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-1-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-1-shape-prediction-reverse"> 모양판별반픽</label> <label title="메인 예측기표 모양판별 픽 최신 15회 승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-1-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label> <label title="모양판별 계산식 내 shape/chunk/퐁당/대칭 배율(0~3, 기본 1)">shape×<input type="number" id="calc-1-shape-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> chunk×<input type="number" id="calc-1-chunk-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 퐁당×<input type="number" id="calc-1-pong-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 대칭×<input type="number" id="calc-1-symmetry-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"></label></td></tr>
                                             <tr><td>모양판별 로그</td><td><div id="calc-1-shape-prediction-log" class="shape-prediction-log" style="font-size:0.8em;color:#888;max-height:80px;overflow-y:auto;white-space:pre-wrap;">—</div></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-1-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-1-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
@@ -5049,7 +5049,7 @@ RESULTS_HTML = '''
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-2-lose-streak-reverse"> 연패≥<input type="number" id="calc-2-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-2-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-2-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-2-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-2-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
-                                            <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-2-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-2-shape-prediction-reverse"> 모양판별반픽</label> <label title="계산기표 2~11행 모양판별승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-2-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label> <label title="모양판별 계산식 내 shape/chunk/퐁당/대칭 배율(0~3, 기본 1)">shape×<input type="number" id="calc-2-shape-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> chunk×<input type="number" id="calc-2-chunk-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 퐁당×<input type="number" id="calc-2-pong-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 대칭×<input type="number" id="calc-2-symmetry-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"></label></td></tr>
+                                            <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-2-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-2-shape-prediction-reverse"> 모양판별반픽</label> <label title="메인 예측기표 모양판별 픽 최신 15회 승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-2-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label> <label title="모양판별 계산식 내 shape/chunk/퐁당/대칭 배율(0~3, 기본 1)">shape×<input type="number" id="calc-2-shape-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> chunk×<input type="number" id="calc-2-chunk-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 퐁당×<input type="number" id="calc-2-pong-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 대칭×<input type="number" id="calc-2-symmetry-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"></label></td></tr>
                                             <tr><td>모양판별 로그</td><td><div id="calc-2-shape-prediction-log" class="shape-prediction-log" style="font-size:0.8em;color:#888;max-height:80px;overflow-y:auto;white-space:pre-wrap;">—</div></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-2-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-2-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
@@ -5104,7 +5104,7 @@ RESULTS_HTML = '''
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-3-lose-streak-reverse"> 연패≥<input type="number" id="calc-3-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-3-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-3-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-3-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-3-shape-only-latest-next-pick" title="모양 판별의 가장 최근 다음 픽에 뜬 픽에만 배팅. 값이 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
-                                            <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-3-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-3-shape-prediction-reverse"> 모양판별반픽</label> <label title="계산기표 2~11행 모양판별승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-3-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label> <label title="모양판별 계산식 내 shape/chunk/퐁당/대칭 배율(0~3, 기본 1)">shape×<input type="number" id="calc-3-shape-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> chunk×<input type="number" id="calc-3-chunk-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 퐁당×<input type="number" id="calc-3-pong-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 대칭×<input type="number" id="calc-3-symmetry-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"></label></td></tr>
+                                            <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-3-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-3-shape-prediction-reverse"> 모양판별반픽</label> <label title="메인 예측기표 모양판별 픽 최신 15회 승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-3-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label> <label title="모양판별 계산식 내 shape/chunk/퐁당/대칭 배율(0~3, 기본 1)">shape×<input type="number" id="calc-3-shape-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> chunk×<input type="number" id="calc-3-chunk-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 퐁당×<input type="number" id="calc-3-pong-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 대칭×<input type="number" id="calc-3-symmetry-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"></label></td></tr>
                                             <tr><td>모양판별 로그</td><td><div id="calc-3-shape-prediction-log" class="shape-prediction-log" style="font-size:0.8em;color:#888;max-height:80px;overflow-y:auto;white-space:pre-wrap;">—</div></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-3-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-3-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
@@ -6455,9 +6455,9 @@ RESULTS_HTML = '''
                                     }
                                     var shapePredRev = !!(calcState[id] && calcState[id].shape_prediction_reverse);
                                     var shapePredRevThr = (calcState[id] != null && typeof calcState[id].shape_prediction_reverse_threshold === 'number') ? calcState[id].shape_prediction_reverse_threshold : 50;
-                                    if (!!(calcState[id] && calcState[id].shape_prediction) && shapePredRev && typeof getShapePredictionWinRate10 === 'function') {
-                                        var sp10 = getShapePredictionWinRate10(id);
-                                        if (sp10 != null && sp10 <= shapePredRevThr) { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
+                                    if (!!(calcState[id] && calcState[id].shape_prediction) && shapePredRev && typeof getShapePredictionWinRate15 === 'function') {
+                                        var sp15 = getShapePredictionWinRate15(id);
+                                        if (sp15 != null && sp15 <= shapePredRevThr) { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
                                     }
                                 }
                                 if (betPredForServer == null) { betPredForServer = pred; betColorForServer = betColor || null; }
@@ -6516,16 +6516,16 @@ RESULTS_HTML = '''
                                     if (useLoseStreakRevActual && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThrActual && noRevByMain15A && noRevByStreak5A) pred = pred === '정' ? '꺽' : '정';
                                     var shapePredRevA = !!(calcState[id] && calcState[id].shape_prediction_reverse);
                                     var shapePredRevThrA = (calcState[id] != null && typeof calcState[id].shape_prediction_reverse_threshold === 'number') ? calcState[id].shape_prediction_reverse_threshold : 50;
-                                    if (!!(calcState[id] && calcState[id].shape_prediction) && shapePredRevA && typeof getShapePredictionWinRate10 === 'function') {
-                                        var sp10A = getShapePredictionWinRate10(id);
-                                        if (sp10A != null && sp10A <= shapePredRevThrA) pred = pred === '정' ? '꺽' : '정';
+                                    if (!!(calcState[id] && calcState[id].shape_prediction) && shapePredRevA && typeof getShapePredictionWinRate15 === 'function') {
+                                        var sp15A = getShapePredictionWinRate15(id);
+                                        if (sp15A != null && sp15A <= shapePredRevThrA) pred = pred === '정' ? '꺽' : '정';
                                     }
                                     betColorActual = normalizePickColor(predForRound.color);
                                     if (baseForPredA !== predForRound.value) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (useWinRateRevActual && shapeWrActual != null && shapeWrActual <= wrThrA && noRevByMain15A && noRevByStreak5A) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (useLoseStreakRevActual && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= loseStreakThrActual && noRevByMain15A && noRevByStreak5A) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
-                                    if (!!(calcState[id] && calcState[id].shape_prediction) && shapePredRevA && typeof getShapePredictionWinRate10 === 'function' && sp10A != null && sp10A <= shapePredRevThrA) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
+                                    if (!!(calcState[id] && calcState[id].shape_prediction) && shapePredRevA && typeof getShapePredictionWinRate15 === 'function' && sp15A != null && sp15A <= shapePredRevThrA) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     var winRateDirRevElA = document.getElementById('calc-' + id + '-win-rate-direction-reverse');
                                     var useWinRateDirRevActual = !!(winRateDirRevElA && winRateDirRevElA.checked) || !!(calcState[id] && calcState[id].win_rate_direction_reverse);
                                     if (useWinRateDirRevActual && noRevByStreak5A && typeof getEffectiveWinRateDirectionZone === 'function') {
@@ -7764,14 +7764,14 @@ RESULTS_HTML = '''
             var sp = last50.filter(function(h) { return h.shape_predicted === h.actual; }).length;
             return Math.round(1000 * sp / last50.length) / 10;
         }
-        /** 모양판별승률: 메인 예측기표 모양판별 픽(shape_predicted) 최신 10개 결과. prediction_history 기준, 조커=패. 모양판별반픽 판단용. */
-        function getShapePredictionWinRate10(id) {
+        /** 모양판별승률: 메인 예측기표 모양판별 픽(shape_predicted) 최신 15개 결과. prediction_history 기준, 조커=패. 모양판별반픽 판단용. */
+        function getShapePredictionWinRate15(id) {
             var vh = Array.isArray(predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
             var withShape = vh.filter(function(h) { return (h.shape_predicted === '정' || h.shape_predicted === '꺽') && (h.actual === '정' || h.actual === '꺽' || h.actual === 'joker' || h.actual === '조커'); });
             if (withShape.length < 1) return null;
-            var last10 = withShape.slice(-10);
+            var last15 = withShape.slice(-15);
             var wins = 0, total = 0;
-            last10.forEach(function(h) {
+            last15.forEach(function(h) {
                 var sp = h.shape_predicted;
                 var act = h.actual;
                 if (act === 'joker' || act === '조커') { total++; return; }
@@ -8324,9 +8324,9 @@ RESULTS_HTML = '''
                             var shapePredRev = !!(document.getElementById('calc-' + id + '-shape-prediction-reverse') && document.getElementById('calc-' + id + '-shape-prediction-reverse').checked);
                             var shapePredRevThrEl = document.getElementById('calc-' + id + '-shape-prediction-reverse-threshold');
                             var shapePredRevThr = (shapePredRevThrEl && !isNaN(parseFloat(shapePredRevThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(shapePredRevThrEl.value))) : 50;
-                            if (shapePredOn && shapePredRev && (typeof getShapePredictionWinRate10 === 'function')) {
-                                var sp10 = getShapePredictionWinRate10(id);
-                                if (sp10 != null && sp10 <= shapePredRevThr) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                            if (shapePredOn && shapePredRev && (typeof getShapePredictionWinRate15 === 'function')) {
+                                var sp15 = getShapePredictionWinRate15(id);
+                                if (sp15 != null && sp15 <= shapePredRevThr) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                             }
                             if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
                         }
@@ -8860,9 +8860,9 @@ RESULTS_HTML = '''
             var dispRateStr = (dispTotal < 1) ? '-' : (dispWins / dispTotal * 100).toFixed(1) + '%';
             var shape50 = (typeof getShape50WinRate === 'function') ? getShape50WinRate() : null;
             var shape50Str = (shape50 != null && !isNaN(shape50)) ? shape50.toFixed(1) + '%' : '-';
-            var shapePred10 = (typeof getShapePredictionWinRate10 === 'function') ? getShapePredictionWinRate10(id) : null;
-            var shapePred10Str = (shapePred10 != null && !isNaN(shapePred10)) ? shapePred10.toFixed(1) + '%' : '-';
-            statsEl.textContent = '최대연승: ' + r.maxWinStreak + ' | 최대연패: ' + r.maxLoseStreak + ' | 모양적중률: ' + shape50Str + ' | 표승률: ' + dispRateStr + ' | 15회승률: ' + rate15Str + ' | 모양판별승률: ' + shapePred10Str;
+            var shapePred15 = (typeof getShapePredictionWinRate15 === 'function') ? getShapePredictionWinRate15(id) : null;
+            var shapePred15Str = (shapePred15 != null && !isNaN(shapePred15)) ? shapePred15.toFixed(1) + '%' : '-';
+            statsEl.textContent = '최대연승: ' + r.maxWinStreak + ' | 최대연패: ' + r.maxLoseStreak + ' | 모양적중률: ' + shape50Str + ' | 표승률: ' + dispRateStr + ' | 15회승률: ' + rate15Str + ' | 모양판별승률(15회): ' + shapePred15Str;
             } catch (e) { console.warn('updateCalcDetail', id, e); }
         }
         document.querySelectorAll('.calc-dropdown-header').forEach(h => {
@@ -9780,7 +9780,7 @@ def _build_results_payload():
                 except Exception:
                     pass
             blended = _blended_win_rate(ph)
-            ph = _backfill_shape_predicted_in_ph(ph, results_full)
+            ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=25, persist_to_db=False)
             return {
                 'results': results,
                 'count': len(results),
@@ -9881,7 +9881,7 @@ def _build_results_payload():
                     pass
             blended = _blended_win_rate(ph)
             round_actuals = _build_round_actuals(results)
-            ph = _backfill_shape_predicted_in_ph(ph, results)
+            ph = _backfill_shape_predicted_in_ph(ph, results, max_backfill=25, persist_to_db=False)
             return {
                 'results': results,
                 'count': len(results),
