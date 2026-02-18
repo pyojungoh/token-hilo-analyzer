@@ -5372,7 +5372,9 @@ RESULTS_HTML = '''
         }
         function setRoundPrediction(round, pred) {
             if (round == null || !pred) return;
-            roundPredictionBuffer[String(round)] = { value: pred.value, round: round, prob: pred.prob != null ? pred.prob : 0, color: pred.color || null };
+            var buf = { value: pred.value, round: round, prob: pred.prob != null ? pred.prob : 0, color: pred.color || null };
+            if (pred.shape_predicted === '정' || pred.shape_predicted === '꺽') buf.shape_predicted = pred.shape_predicted;
+            roundPredictionBuffer[String(round)] = buf;
             var keys = Object.keys(roundPredictionBuffer).map(Number).filter(function(k) { return !isNaN(k); }).sort(function(a,b) { return a - b; });
             while (keys.length > ROUND_PREDICTION_BUFFER_MAX) {
                 delete roundPredictionBuffer[String(keys.shift())];
@@ -9587,8 +9589,8 @@ def _build_results_payload_db_only(hours=24, backfill=False):
             except Exception:
                 pass
         blended = _blended_win_rate(ph)
-        if backfill:
-            ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=10, persist_to_db=True)
+        # 최근 누락 건 보정: 항상 최대 2건 (API 지연 최소화). backfill=1이면 10건까지
+        ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=10 if backfill else 2, persist_to_db=True)
         return {
             'results': results,
             'count': len(results),
