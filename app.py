@@ -1003,12 +1003,12 @@ def _get_actual_for_round(results, round_id):
 
 
 def _build_round_actuals(results):
-    """results(최신순)에서 회차별 실제 결과 추출. 프론트엔드 getCategory와 동일한 색상 로직."""
+    """results(최신순)에서 회차별 실제 결과 추출. 프론트엔드 getCategory와 동일한 색상 로직. 최대 30회차."""
     out = {}
     if not results or len(results) < 16:
         return out
     gv = _build_graph_values(results)
-    for i in range(min(15, len(results) - 15, len(gv))):
+    for i in range(min(30, len(results) - 15, len(gv))):
         r = results[i]
         r15 = results[i + 15]
         rid = str(r.get('gameID', ''))
@@ -7187,7 +7187,7 @@ RESULTS_HTML = '''
                             '<span class="stat-joker">조커 - <span class="num">' + joker50 + '</span>회</span>' +
                             (count50 > 0 ? '<span class="stat-rate ' + rateClass50 + '">승률 : ' + rate50Str + '%</span>' : '') +
                             '</div>' +
-                            '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 예측픽 기준(계산기와 독립) · 합산승률=15·30·100 반영(65·25·10)</div>';
+                            '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 예측픽 기준(계산기와 독립) · 합산승률=15·30·100 반영(65·25·10)<br>※ 모양판별: 예측값 없을 때 실제 결과(정/꺽)로 표시</div>';
                         // 예측기표: 실제 경고 합산승률 + 최근 50회 결과 + 회차별(정/꺽/승·패·조커) 표 — 예측픽만 사용
                         let streakTableBlock = '';
                         try {
@@ -7208,7 +7208,7 @@ RESULTS_HTML = '''
                                 return '<td class="' + c + '">' + out + '</td>';
                             }).join('');
                             const rowShapePick = '<td>모양판별</td>' + rev.map(function(h) {
-                                const sp = h.shape_predicted;
+                                const sp = (h.shape_predicted && (h.shape_predicted === '정' || h.shape_predicted === '꺽')) ? h.shape_predicted : (roundActualsFromServer[String(h.round)] && (roundActualsFromServer[String(h.round)].actual === '정' || roundActualsFromServer[String(h.round)].actual === '꺽') ? roundActualsFromServer[String(h.round)].actual : null);
                                 var c = '';
                                 if (sp === '정' || sp === '꺽') {
                                     var mainColor = (h.pickColor || h.pick_color);
@@ -7225,7 +7225,7 @@ RESULTS_HTML = '''
                                 var actualForDisplay = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
                                 if (typeof actualForDisplay === 'string') actualForDisplay = actualForDisplay.trim();
                                 var isJoker = (actualForDisplay === 'joker' || actualForDisplay === '조커');
-                                const sp = (h.shape_predicted && typeof h.shape_predicted === 'string') ? h.shape_predicted.trim() : null;
+                                const sp = (h.shape_predicted && (h.shape_predicted === '정' || h.shape_predicted === '꺽')) ? h.shape_predicted : (roundActualsFromServer[String(h.round)] && (roundActualsFromServer[String(h.round)].actual === '정' || roundActualsFromServer[String(h.round)].actual === '꺽') ? roundActualsFromServer[String(h.round)].actual : null);
                                 const out = isJoker ? '조커' : (sp && (sp === '정' || sp === '꺽') && (actualForDisplay === '정' || actualForDisplay === '꺽') && sp === actualForDisplay ? '승' : (sp && (sp === '정' || sp === '꺽') && (actualForDisplay === '정' || actualForDisplay === '꺽') ? '패' : '-'));
                                 const c = out === '승' ? 'streak-win' : out === '패' ? 'streak-lose' : out === '조커' ? 'streak-joker' : '';
                                 return '<td class="' + c + '">' + (out || '-') + '</td>';
@@ -9596,6 +9596,13 @@ def _build_results_payload_db_only(hours=24, backfill=False):
         blended = _blended_win_rate(ph)
         # 최근 누락 건 보정: 항상 최대 10건 (화면 표시 우선). backfill=1이면 25건까지
         ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=25 if backfill else 10, persist_to_db=True)
+        # 모양판별 fallback: shape_predicted 없을 때 round_actuals(실제 결과)로 채움 — '-' 표시 최소화
+        for h in (ph or []):
+            if h and h.get('shape_predicted') not in ('정', '꺽') and h.get('round') is not None:
+                ra = round_actuals.get(str(h['round']), {})
+                act = (ra.get('actual') or '').strip()
+                if act in ('정', '꺽'):
+                    h['shape_predicted'] = act
         return {
             'results': results,
             'count': len(results),
@@ -9797,6 +9804,12 @@ def _build_results_payload():
                     pass
             blended = _blended_win_rate(ph)
             ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=25, persist_to_db=True)
+            for h in (ph or []):
+                if h and h.get('shape_predicted') not in ('정', '꺽') and h.get('round') is not None:
+                    ra = round_actuals.get(str(h['round']), {})
+                    act = (ra.get('actual') or '').strip()
+                    if act in ('정', '꺽'):
+                        h['shape_predicted'] = act
             return {
                 'results': results,
                 'count': len(results),
@@ -9898,6 +9911,14 @@ def _build_results_payload():
             blended = _blended_win_rate(ph)
             round_actuals = _build_round_actuals(results)
             ph = _backfill_shape_predicted_in_ph(ph, results, max_backfill=25, persist_to_db=False)
+            # 모양판별 shape_predicted 없을 때 round_actuals로 fallback
+            if round_actuals:
+                for h in ph:
+                    if h.get('shape_predicted') not in ('정', '꺽') and h.get('round') is not None:
+                        ra = round_actuals.get(str(h['round']), {})
+                        act = (ra.get('actual') or '').strip()
+                        if act in ('정', '꺽'):
+                            h['shape_predicted'] = act
             return {
                 'results': results,
                 'count': len(results),
