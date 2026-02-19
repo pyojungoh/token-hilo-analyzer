@@ -73,6 +73,33 @@ _log_throttle_last = {}
 # 값이 바뀔 때만 로그 (키 -> 마지막 값)
 _log_when_changed_last = {}
 
+# 병목 분석: PERF_PROFILE=1 환경변수 시 주요 구간 타이밍 로그 (5초마다 요약)
+_PERF_PROFILE = os.getenv('PERF_PROFILE', '').strip() in ('1', 'true', 'yes')
+_PERF_TIMES = {}  # label -> [ms, ms, ...]
+_PERF_LAST_SUMMARY = 0
+
+def _perf_start(label):
+    if not _PERF_PROFILE:
+        return
+    _PERF_TIMES.setdefault(label, []).append(-time.time())
+
+def _perf_end(label):
+    if not _PERF_PROFILE:
+        return
+    if label in _PERF_TIMES and _PERF_TIMES[label] and _PERF_TIMES[label][-1] < 0:
+        _PERF_TIMES[label][-1] = (time.time() + _PERF_TIMES[label][-1]) * 1000
+
+def _perf_log(label, ms):
+    if not _PERF_PROFILE:
+        return
+    _PERF_TIMES.setdefault(label, []).append(ms)
+    global _PERF_LAST_SUMMARY
+    now = time.time()
+    if now - _PERF_LAST_SUMMARY >= 5:
+        _PERF_LAST_SUMMARY = now
+        top = sorted([(k, sum(v)/max(1,len(v))) for k, v in _PERF_TIMES.items() if v], key=lambda x: -x[1])[:10]
+        print("[⏱ 병목] " + ", ".join(f"{k}:{v:.0f}ms" for k, v in top))
+
 def _log_throttle(key, interval_sec, message):
     """같은 key로 interval_sec 초에 한 번만 출력."""
     now = time.time()
@@ -1536,6 +1563,7 @@ def _apply_results_to_calcs(results):
     """결과 수집 후 실행 중인 계산기 회차 반영: pending_round 결과 있으면 history 반영 후 다음 예측으로 갱신.
     안정화: pending_*는 저장된 예측(round_predictions)만 사용. 저장은 스케줄러 ensure_stored에서만.
     서버에서 계산기 수익, 마틴게일, 연승/연패 계산."""
+    t0 = time.time()
     if not results or len(results) < 16:
         return
     try:
@@ -1807,6 +1835,8 @@ def _apply_results_to_calcs(results):
                     pass
     except Exception as e:
         print(f"[스케줄러] 회차 반영 오류: {str(e)[:200]}")
+    finally:
+        _perf_log('apply_results_to_calcs', (time.time() - t0) * 1000)
 
 
 def get_prediction_history_before_round(conn, round_num, limit=100):
@@ -1886,6 +1916,7 @@ def get_stored_round_prediction(round_num):
 
 def ensure_stored_prediction_for_current_round(results):
     """현재 회차에 대한 예측이 round_predictions에 없으면 한 번만 계산·저장. 스케줄러에서만 호출(저장은 한 곳)."""
+    t0 = time.time()
     if not results or len(results) < 16 or not DB_AVAILABLE or not DATABASE_URL:
         return
     try:
@@ -1905,6 +1936,8 @@ def ensure_stored_prediction_for_current_round(results):
             )
     except Exception as e:
         print(f"[경고] ensure_stored_prediction_for_current_round 실패: {str(e)[:120]}")
+    finally:
+        _perf_log('ensure_stored_prediction', (time.time() - t0) * 1000)
 
 
 def save_round_prediction(round_num, predicted, pick_color=None, probability=None):
@@ -2308,6 +2341,7 @@ def _backfill_shape_predicted_in_ph(ph, results, max_backfill=0, persist_to_db=F
     """prediction_history 중 shape_predicted가 null인 회차에 대해 results로 보정.
     기본 비활성화(max_backfill=0): 매 요청마다 50회×(DB 2회+저장 1회)=150회 DB 작업으로 API 지연 발생.
     필요 시 ?backfill=1 로 호출하거나 별도 배치에서 실행."""
+    t0 = time.time()
     if not ph or not results or len(results) < 16 or max_backfill <= 0:
         return ph
     to_fill = [h for h in ph if h and isinstance(h, dict) and h.get('shape_predicted') not in ('정', '꺽')]
@@ -2339,6 +2373,7 @@ def _backfill_shape_predicted_in_ph(ph, results, max_backfill=0, persist_to_db=F
                 filled += 1
         except Exception:
             pass
+    _perf_log('backfill_shape_predicted', (time.time() - t0) * 1000)
     return ph
 
 
@@ -2959,6 +2994,7 @@ def get_shape_prediction_hint(results, prediction_history=None, shape_weight=1.0
     """모양판별 옵션용: 덩어리 끝 변형·퐁당 가중치 개선된 예측. 기존 compute_prediction 공식 변경 없음.
     shape_weight, chunk_weight, pong_weight, symmetry_weight: 모양판별 계산식 내 각 요소 배율(0~3, 기본 1).
     반환: {'value': '정'|'꺽'|None, 'color': '빨강'|'검정'|None, 'debug': {...}} 또는 None(15번 조커 등)."""
+    t0 = time.time()
     if not results or len(results) < 16:
         return None
     ph = prediction_history or []
@@ -2977,7 +3013,9 @@ def get_shape_prediction_hint(results, prediction_history=None, shape_weight=1.0
         symmetry_weight=symmetry_weight
     )
     if not out or out.get('value') is None:
+        _perf_log('get_shape_prediction_hint', (time.time() - t0) * 1000)
         return None
+    _perf_log('get_shape_prediction_hint', (time.time() - t0) * 1000)
     return {'value': out['value'], 'color': out.get('color', '빨강'), 'debug': debug}
 
 
@@ -2996,13 +3034,17 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     15번 카드가 조커면 value=None, color=None (픽 보류).
     좌우 대칭·줄 유사도는 15·20·30열 가중 평균으로 반영(데이터 있으면).
     """
+    t0 = time.time()
     if not results or len(results) < 16:
+        _perf_log('compute_prediction', (time.time() - t0) * 1000)
         return {'value': None, 'round': 0, 'prob': 0, 'color': None}
     graph_values = _build_graph_values(results)
     if len(graph_values) < 2:
+        _perf_log('compute_prediction', (time.time() - t0) * 1000)
         return {'value': None, 'round': 0, 'prob': 0, 'color': None}
     valid_gv = [v for v in graph_values if v is True or v is False]
     if len(valid_gv) < 2:
+        _perf_log('compute_prediction', (time.time() - t0) * 1000)
         return {'value': None, 'round': 0, 'prob': 0, 'color': None}
 
     latest_game_id = results[0].get('gameID')
@@ -3014,6 +3056,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
 
     is_15_joker = len(results) >= 15 and bool(results[14].get('joker'))
     if is_15_joker:
+        _perf_log('compute_prediction', (time.time() - t0) * 1000)
         return {'value': None, 'round': predicted_round_full, 'prob': 0, 'color': None}
 
     full = _calc_transitions(graph_values)
@@ -3391,6 +3434,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         shape_debug_out['chunk_shape'] = chunk_shape
         shape_debug_out['pred'] = predict
         shape_debug_out['prob'] = round(pred_prob, 1)
+    _perf_log('compute_prediction', (time.time() - t0) * 1000)
     return {
         'value': predict, 'round': predicted_round_full, 'prob': round(pred_prob, 1), 'color': color_to_pick,
         'warning_u35': u35_detected,
@@ -3565,11 +3609,13 @@ def _sort_results_newest_first(results):
 
 def get_recent_results(hours=24):
     """최근 N시간 데이터 조회 (정/꺽 결과 포함). 규칙: 24h 구간으로 최신 회차 누락 방지. statement_timeout·LIMIT으로 먹통 방지."""
+    t0 = time.time()
     if not DB_AVAILABLE or not DATABASE_URL:
         return []
     
     conn = get_db_connection(statement_timeout_sec=8)
     if not conn:
+        _perf_log('get_recent_results', (time.time() - t0) * 1000)
         return []
     
     try:
@@ -3647,6 +3693,7 @@ def get_recent_results(hours=24):
         
         cur.close()
         conn.close()
+        _perf_log('get_recent_results', (time.time() - t0) * 1000)
         return _sort_results_newest_first(results)
     except Exception as e:
         print(f"[❌ 오류] 게임 결과 조회 실패: {str(e)[:200]}")
@@ -3654,6 +3701,7 @@ def get_recent_results(hours=24):
             conn.close()
         except Exception:
             pass
+        _perf_log('get_recent_results', (time.time() - t0) * 1000)
         return []
 
 def cleanup_old_results(hours=5):
@@ -3926,6 +3974,7 @@ def load_results_data(base_url=None):
 
 def _update_relay_cache_for_running_calcs():
     """실행 중인 계산기 relay 캐시 갱신. 결과 유무와 관계없이 0.15초마다 호출 → 전회차 금액 송출·20000 고정 방지."""
+    t0 = time.time()
     if not DB_AVAILABLE or not DATABASE_URL:
         return
     try:
@@ -3947,10 +3996,13 @@ def _update_relay_cache_for_running_calcs():
                     pass
     except Exception:
         pass
+    finally:
+        _perf_log('update_relay_cache', (time.time() - t0) * 1000)
 
 
 def _scheduler_fetch_results():
     """스케줄러에서 호출: results_cache 갱신 + DB 저장 + 현재 회차 예측 1회 저장(한 곳) + 계산기 회차 반영 + prediction_history 누락 보정."""
+    t0 = time.time()
     try:
         _refresh_results_background()
         if DB_AVAILABLE and DATABASE_URL:
@@ -3963,6 +4015,8 @@ def _scheduler_fetch_results():
             _update_relay_cache_for_running_calcs()
     except Exception as e:
         print(f"[스케줄러] 결과 수집/회차 반영 오류: {str(e)[:150]}")
+    finally:
+        _perf_log('scheduler_fetch', (time.time() - t0) * 1000)
 
 
 def _scheduler_trim_shape_tables():
@@ -9600,6 +9654,7 @@ def results_page():
 
 def _build_results_payload_db_only(hours=24, backfill=False):
     """DB만으로 페이로드 생성 (네트워크 없음). 규칙: 24h 구간. 캐시 비어 있을 때 첫 화면 빠르게 표시용."""
+    t0 = time.time()
     try:
         if not DB_AVAILABLE or not DATABASE_URL:
             return None
@@ -9688,6 +9743,8 @@ def _build_results_payload_db_only(hours=24, backfill=False):
     except Exception as e:
         print(f"[API] DB 전용 페이로드 오류: {str(e)[:150]}")
         return None
+    finally:
+        _perf_log('build_results_payload_db_only', (time.time() - t0) * 1000)
 
 
 def _build_results_payload():
@@ -10012,6 +10069,7 @@ _results_refreshing = False
 def _refresh_results_background():
     """백그라운드에서 캐시 갱신. 서버가 항상 최신 결과를 송출하려면 유효한 페이로드가 오면 캐시를 덮어쓴다."""
     global results_cache, last_update_time, _results_refreshing
+    t0 = time.time()
     if not _results_refresh_lock.acquire(blocking=False):
         return
     _results_refreshing = True
@@ -10024,6 +10082,7 @@ def _refresh_results_background():
         print(f"[API] 백그라운드 갱신 오류: {str(e)[:150]}")
     finally:
         _results_refreshing = False
+        _perf_log('refresh_results_background', (time.time() - t0) * 1000)
         try:
             _results_refresh_lock.release()
         except Exception:
