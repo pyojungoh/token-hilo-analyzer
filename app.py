@@ -812,22 +812,38 @@ def _get_latest_next_pick_for_chunk(results, exclude_round=None):
 
 
 def _get_pong_pick_for_round(results, round_num):
-    """정꺽정꺽(alternating) 패턴용: 해당 회차 직전 4개가 정꺽정꺽이면 다음 픽(마지막 반대) 반환. 아니면 None.
-    results: 최신순. round_num 제외된 results(직전 4회차 포함, len>=16) 필요."""
+    """퐁당 시퀀스: 퐁당 구간→alternating, 줄/덩어리 구간→승할 때까지 한 픽 고집·승 후 반대픽 전환.
+    results: 최신순. round_num 제외된 results(직전 회차들, len>=16) 필요."""
     if not results or len(results) < 16:
         return None
-    actuals = []
-    for i in range(4):
-        if i >= len(results):
-            return None
+    gv = _build_graph_values(results)
+    if len(gv) < 4:
+        return None
+    line_runs, pong_runs = _get_line_pong_runs(gv[:15])
+    pong_pct, _ = _pong_line_pct(gv[:15]) if len([v for v in gv[:15] if v is True or v is False]) >= 2 else (50.0, 50.0)
+    pong_prev15 = _pong_line_pct(gv[15:30])[0] if len(gv) >= 30 else 50.0
+    phase, _ = _detect_pong_chunk_phase(
+        line_runs, pong_runs,
+        gv[:2] if len(gv) >= 2 else None,
+        pong_pct, pong_prev15
+    )
+    is_pong = phase in ('pong_phase', 'chunk_to_pong')
+    if is_pong:
+        last_actual = _get_actual_for_round(results, results[0].get('gameID'))
+        if last_actual in ('정', '꺽'):
+            return '정' if last_actual == '꺽' else '꺽'
+        return None
+    stubborn_pick = None
+    for i in range(len(results) - 1, -1, -1):
         rid = results[i].get('gameID')
         a = _get_actual_for_round(results, rid)
         if a is None or a in ('joker', '조커'):
-            return None
-        actuals.append(a)
-    if actuals[0] == actuals[1] or actuals[1] == actuals[2] or actuals[2] == actuals[3]:
-        return None
-    return '정' if actuals[0] == '꺽' else '꺽'
+            continue
+        if stubborn_pick is None:
+            stubborn_pick = '정' if a == '꺽' else '꺽'
+        elif a == stubborn_pick:
+            stubborn_pick = '정' if stubborn_pick == '꺽' else '꺽'
+    return stubborn_pick
 
 
 def update_shape_win_stats(conn, signature, actual, round_num=None):
@@ -5059,6 +5075,7 @@ RESULTS_HTML = '''
         </div>
         <div class="analysis-tabs-wrap" id="analysis-tabs-wrap">
             <div class="analysis-tabs" role="tablist">
+                <span class="analysis-tab" role="tab" data-panel="prediction-picks" aria-selected="false">예측기픽</span>
                 <span class="analysis-tab active" role="tab" data-panel="pong-chunk" aria-selected="true">모양 판별</span>
                 <span class="analysis-tab" role="tab" data-panel="formula">예측 공식</span>
                 <span class="analysis-tab" role="tab" data-panel="graph-stats">승률관리</span>
@@ -5067,6 +5084,25 @@ RESULTS_HTML = '''
                 <span class="analysis-tab" role="tab" data-panel="win-rate-direction">승률 방향</span>
                 <span class="analysis-tab" role="tab" data-panel="symmetry-line">대칭/줄</span>
                 <span class="analysis-tabs-collapse-btn" id="analysis-tabs-collapse-btn" title="접기/펼치기">▼</span>
+            </div>
+            <div id="panel-prediction-picks" class="analysis-panel">
+                <div class="prediction-picks-cards" id="prediction-picks-cards" style="display:flex;flex-wrap:wrap;gap:16px;padding:12px 0;">
+                    <div class="pred-pick-card" data-type="main" style="flex:1;min-width:140px;padding:16px;background:linear-gradient(135deg,#1e2a3e 0%,#1a1a2e 100%);border-radius:10px;border:1px solid #37474f;text-align:center;">
+                        <div class="pred-pick-label" style="font-size:0.85em;color:#81c784;margin-bottom:8px;">메인</div>
+                        <div class="pred-pick-value" style="font-size:1.4em;font-weight:bold;color:#fff;">—</div>
+                        <div class="pred-pick-meta" style="font-size:0.8em;color:#888;margin-top:4px;">—</div>
+                    </div>
+                    <div class="pred-pick-card" data-type="shape" style="flex:1;min-width:140px;padding:16px;background:linear-gradient(135deg,#1e2a3e 0%,#1a1a2e 100%);border-radius:10px;border:1px solid #37474f;text-align:center;">
+                        <div class="pred-pick-label" style="font-size:0.85em;color:#64b5f6;margin-bottom:8px;">모양</div>
+                        <div class="pred-pick-value" style="font-size:1.4em;font-weight:bold;color:#fff;">—</div>
+                        <div class="pred-pick-meta" style="font-size:0.8em;color:#888;margin-top:4px;">가장 최근 다음 픽</div>
+                    </div>
+                    <div class="pred-pick-card" data-type="pong" style="flex:1;min-width:140px;padding:16px;background:linear-gradient(135deg,#1e2a3e 0%,#1a1a2e 100%);border-radius:10px;border:1px solid #37474f;text-align:center;">
+                        <div class="pred-pick-label" style="font-size:0.85em;color:#ffb74d;margin-bottom:8px;">퐁당</div>
+                        <div class="pred-pick-value" style="font-size:1.4em;font-weight:bold;color:#fff;">—</div>
+                        <div class="pred-pick-meta" style="font-size:0.8em;color:#888;margin-top:4px;">줄/덩어리 시 승할때까지 고집</div>
+                    </div>
+                </div>
             </div>
             <div id="panel-pong-chunk" class="analysis-panel active">
                 <div id="pong-chunk-collapse-body" class="prob-bucket-collapse-body">
@@ -6251,6 +6287,32 @@ RESULTS_HTML = '''
                     lastWarningU35 = !!(lastServerPrediction && sp && sp.warning_u35);
                     lastPongChunkPhase = (sp && (sp.pong_chunk_phase != null && sp.pong_chunk_phase !== '')) ? sp.pong_chunk_phase : null;
                     lastPongChunkDebug = (sp && sp.pong_chunk_debug && typeof sp.pong_chunk_debug === 'object') ? sp.pong_chunk_debug : {};
+                    (function() {
+                        var cards = document.getElementById('prediction-picks-cards');
+                        if (!cards) return;
+                        var mainVal = (sp && (sp.value === '정' || sp.value === '꺽')) ? sp.value : null;
+                        var shapeVal = (sp && sp.shape_pick && (sp.shape_pick === '정' || sp.shape_pick === '꺽')) ? sp.shape_pick : null;
+                        var pongVal = (sp && sp.pong_pick && (sp.pong_pick === '정' || sp.pong_pick === '꺽')) ? sp.pong_pick : null;
+                        var roundStr = (sp && sp.round != null) ? String(sp.round) : '—';
+                        var mainCard = cards.querySelector('.pred-pick-card[data-type="main"]');
+                        var shapeCard = cards.querySelector('.pred-pick-card[data-type="shape"]');
+                        var pongCard = cards.querySelector('.pred-pick-card[data-type="pong"]');
+                        if (mainCard) {
+                            var v = mainCard.querySelector('.pred-pick-value');
+                            var m = mainCard.querySelector('.pred-pick-meta');
+                            if (v) v.textContent = mainVal || '—';
+                            if (m) m.textContent = roundStr + '회';
+                            v.style.color = mainVal === '정' ? '#e57373' : mainVal === '꺽' ? '#90a4ae' : '#fff';
+                        }
+                        if (shapeCard) {
+                            var sv = shapeCard.querySelector('.pred-pick-value');
+                            if (sv) { sv.textContent = shapeVal || '—'; sv.style.color = shapeVal === '정' ? '#e57373' : shapeVal === '꺽' ? '#90a4ae' : '#fff'; }
+                        }
+                        if (pongCard) {
+                            var pv = pongCard.querySelector('.pred-pick-value');
+                            if (pv) { pv.textContent = pongVal || '—'; pv.style.color = pongVal === '정' ? '#e57373' : pongVal === '꺽' ? '#90a4ae' : '#fff'; }
+                        }
+                    })();
                     if (sp && sp.round != null) {
                         var newRound = Number(sp.round);
                         var prevRound = (lastPrediction && lastPrediction.round != null) ? Number(lastPrediction.round) : NaN;
@@ -9904,6 +9966,16 @@ def _build_results_payload_db_only(hours=24, backfill=False):
                     server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
             except Exception:
                 pass
+        # 예측기픽 탭: shape_pick(모양), pong_pick(퐁당) 추가
+        if len(results) >= 16:
+            try:
+                pred_rnd = int(str(results[0].get('gameID') or '0'), 10) + 1
+                sp, _ = _get_shape_only_pick_with_phase(results, exclude_round=pred_rnd, calc_state=None)
+                server_pred['shape_pick'] = sp if sp in ('정', '꺽') else None
+                server_pred['pong_pick'] = _get_pong_pick_for_round(results, pred_rnd)
+            except Exception:
+                server_pred['shape_pick'] = None
+                server_pred['pong_pick'] = None
         blended = _blended_win_rate(ph)
         # backfill=1일 때만 shape_predicted 보정 (get_shape_prediction_hint 비용 큼). 평소엔 round_actuals fallback만 사용
         ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=25 if backfill else 0, persist_to_db=bool(backfill))
@@ -10115,6 +10187,16 @@ def _build_results_payload():
                         server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
                 except Exception:
                     pass
+            # 예측기픽 탭: shape_pick, pong_pick
+            if len(results) >= 16:
+                try:
+                    pred_rnd = int(str(results[0].get('gameID') or '0'), 10) + 1
+                    sp, _ = _get_shape_only_pick_with_phase(results, exclude_round=pred_rnd, calc_state=None)
+                    server_pred['shape_pick'] = sp if sp in ('정', '꺽') else None
+                    server_pred['pong_pick'] = _get_pong_pick_for_round(results, pred_rnd)
+                except Exception:
+                    server_pred['shape_pick'] = None
+                    server_pred['pong_pick'] = None
             blended = _blended_win_rate(ph)
             ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=0, persist_to_db=False)
             for h in (ph or []):
@@ -10221,6 +10303,16 @@ def _build_results_payload():
                         server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
                 except Exception:
                     pass
+            # 예측기픽 탭: shape_pick, pong_pick
+            if len(results) >= 16:
+                try:
+                    pred_rnd = int(str(results[0].get('gameID') or '0'), 10) + 1
+                    sp, _ = _get_shape_only_pick_with_phase(results, exclude_round=pred_rnd, calc_state=None)
+                    server_pred['shape_pick'] = sp if sp in ('정', '꺽') else None
+                    server_pred['pong_pick'] = _get_pong_pick_for_round(results, pred_rnd)
+                except Exception:
+                    server_pred['shape_pick'] = None
+                    server_pred['pong_pick'] = None
             blended = _blended_win_rate(ph)
             round_actuals = _build_round_actuals(results)
             ph = _backfill_shape_predicted_in_ph(ph, results, max_backfill=0, persist_to_db=False)
