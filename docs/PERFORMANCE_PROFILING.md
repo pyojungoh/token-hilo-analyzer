@@ -49,3 +49,13 @@ PERF_PROFILE=1 python app.py
 2. `get_shape_prediction_hint`·`compute_prediction`이 비중이 크면 → 캐싱/호출 축소 검토
 3. `get_recent_results`가 느리면 → DB 인덱스, LIMIT 축소, color_matches 배치 최적화
 4. `apply_results_to_calcs`가 느리면 → 세션 수·반복 호출 줄이기
+
+---
+
+## 적용된 최적화 (배포 환경 프로파일 기반)
+
+| 변경 | 효과 |
+|------|------|
+| **refresh 비블로킹** | 스케줄러가 외부 fetch(~2.5초) 대기 안 함 → scheduler_fetch ~4초 → ~1.5초 |
+| **스케줄러 주기 0.15초 → 2초** | 4초 걸리는 작업에 0.15초 간격은 무의미. 2초로 여유 확보 |
+| **get_shape_prediction_hint 캐싱** | apply_results_to_calcs 내 동일 results·가중치 시 재사용 → 세션 N개 시 ~120ms×(N-1) 절약 |

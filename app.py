@@ -1570,6 +1570,8 @@ def _apply_results_to_calcs(results):
         latest_gid = results[0].get('gameID')
         predicted_round = int(str(latest_gid or '0'), 10) + 1
         stored_for_round = get_stored_round_prediction(predicted_round) if predicted_round else None
+        # get_shape_prediction_hint 캐시: 동일 results·가중치면 재사용 (세션 여러 개 시 ~120ms×N 절약)
+        _shape_hint_cache = {}
 
         session_ids = _get_all_calc_session_ids()
         for session_id in session_ids:
@@ -1600,7 +1602,10 @@ def _apply_results_to_calcs(results):
                                 cw = max(0, min(3, (float(c.get('chunk_weight', 1)) or 1) * mul))
                                 pw = max(0, min(3, (float(c.get('pong_weight', 1)) or 1) * mul))
                                 symw = max(0, min(3, (float(c.get('symmetry_weight', 1)) or 1) * mul))
-                                hint = get_shape_prediction_hint(results, ph_hint, shape_weight=sw, chunk_weight=cw, pong_weight=pw, symmetry_weight=symw)
+                                cache_key = (latest_gid, round(sw, 2), round(cw, 2), round(pw, 2), round(symw, 2))
+                                if cache_key not in _shape_hint_cache:
+                                    _shape_hint_cache[cache_key] = get_shape_prediction_hint(results, ph_hint, shape_weight=sw, chunk_weight=cw, pong_weight=pw, symmetry_weight=symw)
+                                hint = _shape_hint_cache[cache_key]
                                 if hint and hint.get('value') in ('정', '꺽'):
                                     c['pending_predicted'] = hint['value']
                                     c['pending_color'] = hint.get('color') or c.get('pending_color')
@@ -1802,7 +1807,10 @@ def _apply_results_to_calcs(results):
                             cw = max(0, min(3, (float(c.get('chunk_weight', 1)) or 1) * mul))
                             pw = max(0, min(3, (float(c.get('pong_weight', 1)) or 1) * mul))
                             symw = max(0, min(3, (float(c.get('symmetry_weight', 1)) or 1) * mul))
-                            hint = get_shape_prediction_hint(results, ph_hint, shape_weight=sw, chunk_weight=cw, pong_weight=pw, symmetry_weight=symw)
+                            cache_key = (latest_gid, round(sw, 2), round(cw, 2), round(pw, 2), round(symw, 2))
+                            if cache_key not in _shape_hint_cache:
+                                _shape_hint_cache[cache_key] = get_shape_prediction_hint(results, ph_hint, shape_weight=sw, chunk_weight=cw, pong_weight=pw, symmetry_weight=symw)
+                            hint = _shape_hint_cache[cache_key]
                             if hint and hint.get('value') in ('정', '꺽'):
                                 c['pending_predicted'] = hint['value']
                                 c['pending_color'] = hint.get('color') or c.get('pending_color')
@@ -4001,10 +4009,12 @@ def _update_relay_cache_for_running_calcs():
 
 
 def _scheduler_fetch_results():
-    """스케줄러에서 호출: results_cache 갱신 + DB 저장 + 현재 회차 예측 1회 저장(한 곳) + 계산기 회차 반영 + prediction_history 누락 보정."""
+    """스케줄러에서 호출: results_cache 갱신 + DB 저장 + 현재 회차 예측 1회 저장(한 곳) + 계산기 회차 반영 + prediction_history 누락 보정.
+    성능: refresh(외부 fetch ~2.5초)는 별도 스레드로 비블로킹. DB 기반 apply/relay는 즉시 수행."""
     t0 = time.time()
     try:
-        _refresh_results_background()
+        # 외부 fetch(~2.5초)는 비블로킹 — results_cache 갱신만 담당. apply/relay는 DB 사용
+        threading.Thread(target=_refresh_results_background, daemon=True).start()
         if DB_AVAILABLE and DATABASE_URL:
             results = get_recent_results(hours=24)
             if results and len(results) >= 16:
@@ -4036,13 +4046,13 @@ def _scheduler_trim_shape_tables():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    # 배팅시간 확보: 0.15초마다 실행 → 픽/금액 빠른 반영 (0.2→0.15 속도 개선)
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.15, id='fetch_results', max_instances=1)
+    # 성능: 0.15초→2초. refresh 비블로킹으로 apply/relay ~1.5초 내 완료, 2초 주기로 여유 확보
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=2.0, id='fetch_results', max_instances=1)
     _scheduler.add_job(_scheduler_trim_shape_tables, 'interval', seconds=300, id='trim_shape', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (0.15초마다, 픽/금액 빠른 반영)")
+        print("[✅] 결과 수집 스케줄러 시작 (2초마다, refresh 비블로킹)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:
