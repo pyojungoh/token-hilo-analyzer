@@ -2270,7 +2270,8 @@ def _backfill_shape_predicted_in_ph(ph, results, max_backfill=0, persist_to_db=F
         return ph
     ph_by_round = {h['round']: h for h in ph if h and h.get('round') is not None}
     filled = 0
-    for h in to_fill:
+    # 최신 회차부터 보정 (화면에 보이는 쪽 우선)
+    for h in reversed(to_fill):
         if filled >= max_backfill:
             break
         rnd = h.get('round')
@@ -7184,6 +7185,16 @@ RESULTS_HTML = '''
                             '</div>' +
                             '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 예측픽 기준(계산기와 독립) · 합산승률=15·30·100 반영(65·25·10)</div>';
                         // 예측기표: 실제 경고 합산승률 + 최근 50회 결과 + 회차별(정/꺽/승·패·조커) 표 — 예측픽만 사용
+                        // 모양판별 보정: graphValues(15↔16번 비교)로 shape_predicted 없을 때 채움
+                        var roundToShapeFromGraph = {};
+                        if (typeof graphValues !== 'undefined' && Array.isArray(graphValues) && graphValues.length >= 2 && results && results.length >= 16) {
+                            for (var gi = 0; gi < graphValues.length && gi < results.length; gi++) {
+                                var gid = results[gi] && results[gi].gameID;
+                                if (gid != null && gid !== '' && (graphValues[gi] === true || graphValues[gi] === false)) {
+                                    roundToShapeFromGraph[String(gid)] = graphValues[gi] ? '정' : '꺽';
+                                }
+                            }
+                        }
                         let streakTableBlock = '';
                         try {
                         if (rev.length === 0) {
@@ -7203,7 +7214,7 @@ RESULTS_HTML = '''
                                 return '<td class="' + c + '">' + out + '</td>';
                             }).join('');
                             const rowShapePick = '<td>모양판별</td>' + rev.map(function(h) {
-                                const sp = h.shape_predicted;
+                                const sp = h.shape_predicted || (roundToShapeFromGraph[String(h.round)] || null);
                                 var c = '';
                                 if (sp === '정' || sp === '꺽') {
                                     var mainColor = (h.pickColor || h.pick_color);
@@ -7220,7 +7231,7 @@ RESULTS_HTML = '''
                                 var actualForDisplay = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
                                 if (typeof actualForDisplay === 'string') actualForDisplay = actualForDisplay.trim();
                                 var isJoker = (actualForDisplay === 'joker' || actualForDisplay === '조커');
-                                const sp = (h.shape_predicted && typeof h.shape_predicted === 'string') ? h.shape_predicted.trim() : null;
+                                const sp = (h.shape_predicted && typeof h.shape_predicted === 'string') ? h.shape_predicted.trim() : (roundToShapeFromGraph[String(h.round)] || null);
                                 const out = isJoker ? '조커' : (sp && (sp === '정' || sp === '꺽') && (actualForDisplay === '정' || actualForDisplay === '꺽') && sp === actualForDisplay ? '승' : (sp && (sp === '정' || sp === '꺽') && (actualForDisplay === '정' || actualForDisplay === '꺽') ? '패' : '-'));
                                 const c = out === '승' ? 'streak-win' : out === '패' ? 'streak-lose' : out === '조커' ? 'streak-joker' : '';
                                 return '<td class="' + c + '">' + (out || '-') + '</td>';
