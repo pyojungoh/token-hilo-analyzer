@@ -650,6 +650,9 @@ def _get_shape_only_pick_with_phase(results, exclude_round=None, calc_state=None
         pong_pct, pong_prev15
     )
     is_pong = phase in ('pong_phase', 'chunk_to_pong')
+    # 긴 퐁당 구간: 퐁당%가 높으면 덩어리/줄1퐁당1로 잡혀도 퐁당으로 간주 (모양판별 사용)
+    if not is_pong and phase in ('chunk_phase', 'chunk_start') and pong_pct >= 60:
+        is_pong = True
     if is_pong:
         c = calc_state or {}
         try:
@@ -3922,7 +3925,7 @@ def load_results_data(base_url=None):
 
 
 def _update_relay_cache_for_running_calcs():
-    """실행 중인 계산기 relay 캐시 갱신. 결과 유무와 관계없이 0.2초마다 호출 → 전회차 금액 송출·20000 고정 방지."""
+    """실행 중인 계산기 relay 캐시 갱신. 결과 유무와 관계없이 0.15초마다 호출 → 전회차 금액 송출·20000 고정 방지."""
     if not DB_AVAILABLE or not DATABASE_URL:
         return
     try:
@@ -3979,13 +3982,13 @@ def _scheduler_trim_shape_tables():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    # 배팅시간 확보: 0.2초마다 실행 → 픽/금액 DB 반영을 빠르게 해 매크로가 곧바로 가져가도록
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.2, id='fetch_results', max_instances=1)
+    # 배팅시간 확보: 0.15초마다 실행 → 픽/금액 빠른 반영 (0.2→0.15 속도 개선)
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.15, id='fetch_results', max_instances=1)
     _scheduler.add_job(_scheduler_trim_shape_tables, 'interval', seconds=300, id='trim_shape', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (0.2초마다, 픽/금액 빠른 반영)")
+        print("[✅] 결과 수집 스케줄러 시작 (0.15초마다, 픽/금액 빠른 반영)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:
@@ -10716,7 +10719,7 @@ def api_current_pick_relay():
             round_num = data.get('round')
             suggested_amount = data.get('suggested_amount')
             running = data.get('running')
-            # relay 캐시는 POST에서 갱신하지 않음 — 스케줄러가 0.2초마다 서버 금액으로 덮어써서 5천↔1만 깜빡임 방지
+            # relay 캐시는 POST에서 갱신하지 않음 — 스케줄러가 0.15초마다 서버 금액으로 덮어써서 5천↔1만 깜빡임 방지
             # DB(current_pick)만 저장. 매크로 GET 시 relay 캐시(스케줄러가 채움) 또는 DB 폴백 사용
             # 금액 깜빡임 방지: 서버 calc 상태의 pending_bet_amount 우선 (웹·스케줄러 교차 시 5천↔1만 방지)
             try:
