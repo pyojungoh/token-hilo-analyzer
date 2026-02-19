@@ -7556,10 +7556,37 @@ RESULTS_HTML = '''
                     const probBucketBodyEmpty = document.getElementById('prob-bucket-collapse-body');
                     const symmetryLineBodyEmpty = document.getElementById('symmetry-line-collapse-body');
                     if (resultBarEmpty) resultBarEmpty.innerHTML = '';
-                    if (pickEmpty) pickEmpty.innerHTML = '';
-                    if (predDivEmpty) predDivEmpty.innerHTML = '';
                     if (probBucketBodyEmpty) probBucketBodyEmpty.innerHTML = '';
                     if (symmetryLineBodyEmpty) symmetryLineBodyEmpty.innerHTML = '';
+                    // graphValues 부족 시에도 메인 예측기·예측기표는 최소 표시 (비우지 않음)
+                    const usePred = (lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) ? lastPrediction : null;
+                    const dispRnd = (usePred && usePred.round) ? usePred.round : (displayResults.length > 0 && displayResults[0] && displayResults[0].gameID ? Number(displayResults[0].gameID) + 1 : '-');
+                    const minPickBlock = '<div class="prediction-pick">' +
+                        '<div class="prediction-pick-title">예측 픽</div>' +
+                        '<div class="prediction-card" style="background:#455a64;border-color:#78909c">' +
+                        '<span class="pred-value-big" style="color:#fff;font-size:1.2em">' + (usePred ? usePred.value : '보류') + '</span>' +
+                        '</div>' +
+                        '<div class="prediction-prob-under" style="color:#ffb74d">' + (usePred ? ('예측 확률 ' + (usePred.prob != null ? Number(usePred.prob).toFixed(1) : '0') + '%') : (displayResults.length < 16 ? '정/꺽 계산을 위해 16회 이상 결과 필요' : '서버 예측 대기 중')) + '</div>' +
+                        '<div class="pred-round">' + (dispRnd != null ? String(dispRnd) : '-') + '회</div>' +
+                        '</div>';
+                    if (pickEmpty) { pickEmpty.innerHTML = minPickBlock; pickEmpty.setAttribute('data-section', '메인 예측기'); }
+                    if (predDivEmpty) {
+                        const vh = Array.isArray(predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
+                        const rev = vh.slice(-30).slice().reverse();
+                        const head = '<th>구분</th>' + rev.map(function(h) { return '<th>' + (h.round != null ? String(h.round) : '-') + '</th>'; }).join('');
+                        const rowP = '<td>메인</td>' + rev.map(function(h) { return '<td>' + (h.probability != null ? Number(h.probability).toFixed(1) + '%' : '-') + '</td>'; }).join('');
+                        const rowPick = '<td>메인</td>' + rev.map(function(h) { return '<td>' + (h.predicted != null ? h.predicted : '-') + '</td>'; }).join('');
+                        const rowOut = '<td>메인</td>' + rev.map(function(h) {
+                            var a = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
+                            var isJ = (a === 'joker' || a === '조커');
+                            var o = isJ ? '조커' : (h.predicted === a ? '승' : '패');
+                            return '<td class="' + (o === '승' ? 'streak-win' : o === '패' ? 'streak-lose' : 'streak-joker') + '">' + o + '</td>';
+                        }).join('');
+                        predDivEmpty.innerHTML = '<div class="main-streak-table-wrap" data-section="예측기표"><table class="main-streak-table"><thead><tr>' + head + '</tr></thead><tbody><tr>' + rowP + '</tr><tr>' + rowPick + '</tr><tr>' + rowOut + '</tr></tbody></table></div>';
+                        predDivEmpty.setAttribute('data-section', '예측기표');
+                    }
+                    var atw = document.getElementById('analysis-tabs-wrap');
+                    if (atw) atw.style.display = '';
                 }
                 } catch (renderErr) {
                     if (statusEl) statusEl.textContent = '표시 오류 - 새로고침 해 주세요';
