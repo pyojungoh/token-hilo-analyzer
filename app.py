@@ -2277,16 +2277,20 @@ def _backfill_shape_predicted_in_ph(ph, results, max_backfill=0, persist_to_db=F
         rnd = h.get('round')
         if rnd is None:
             continue
-        filtered = [r for r in results if int(str(r.get('gameID') or '0'), 10) < rnd]
+        try:
+            rnd_int = int(str(rnd), 10)
+        except (ValueError, TypeError):
+            continue
+        filtered = [r for r in results if int(str(r.get('gameID') or '0'), 10) < rnd_int]
         if len(filtered) < 16:
             continue
-        history_before = [ph_by_round[r] for r in sorted(ph_by_round.keys()) if r < rnd][-100:]
+        history_before = [ph_by_round[r] for r in sorted(ph_by_round.keys(), key=lambda x: int(str(x), 10) if x is not None else 0) if r is not None and int(str(r), 10) < rnd_int][-100:]
         try:
             hint = get_shape_prediction_hint(filtered, history_before)
             if hint and hint.get('value') in ('정', '꺽'):
                 h['shape_predicted'] = hint['value']
                 if persist_to_db:
-                    _update_shape_predicted_in_db(rnd, hint['value'])
+                    _update_shape_predicted_in_db(rnd_int, hint['value'])
                 filled += 1
         except Exception:
             pass
@@ -7185,16 +7189,6 @@ RESULTS_HTML = '''
                             '</div>' +
                             '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 예측픽 기준(계산기와 독립) · 합산승률=15·30·100 반영(65·25·10)</div>';
                         // 예측기표: 실제 경고 합산승률 + 최근 50회 결과 + 회차별(정/꺽/승·패·조커) 표 — 예측픽만 사용
-                        // 모양판별 보정: graphValues(15↔16번 비교)로 shape_predicted 없을 때 채움
-                        var roundToShapeFromGraph = {};
-                        if (typeof graphValues !== 'undefined' && Array.isArray(graphValues) && graphValues.length >= 2 && results && results.length >= 16) {
-                            for (var gi = 0; gi < graphValues.length && gi < results.length; gi++) {
-                                var gid = results[gi] && results[gi].gameID;
-                                if (gid != null && gid !== '' && (graphValues[gi] === true || graphValues[gi] === false)) {
-                                    roundToShapeFromGraph[String(gid)] = graphValues[gi] ? '정' : '꺽';
-                                }
-                            }
-                        }
                         let streakTableBlock = '';
                         try {
                         if (rev.length === 0) {
@@ -7214,7 +7208,7 @@ RESULTS_HTML = '''
                                 return '<td class="' + c + '">' + out + '</td>';
                             }).join('');
                             const rowShapePick = '<td>모양판별</td>' + rev.map(function(h) {
-                                const sp = h.shape_predicted || (roundToShapeFromGraph[String(h.round)] || null);
+                                const sp = h.shape_predicted;
                                 var c = '';
                                 if (sp === '정' || sp === '꺽') {
                                     var mainColor = (h.pickColor || h.pick_color);
@@ -7231,7 +7225,7 @@ RESULTS_HTML = '''
                                 var actualForDisplay = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
                                 if (typeof actualForDisplay === 'string') actualForDisplay = actualForDisplay.trim();
                                 var isJoker = (actualForDisplay === 'joker' || actualForDisplay === '조커');
-                                const sp = (h.shape_predicted && typeof h.shape_predicted === 'string') ? h.shape_predicted.trim() : (roundToShapeFromGraph[String(h.round)] || null);
+                                const sp = (h.shape_predicted && typeof h.shape_predicted === 'string') ? h.shape_predicted.trim() : null;
                                 const out = isJoker ? '조커' : (sp && (sp === '정' || sp === '꺽') && (actualForDisplay === '정' || actualForDisplay === '꺽') && sp === actualForDisplay ? '승' : (sp && (sp === '정' || sp === '꺽') && (actualForDisplay === '정' || actualForDisplay === '꺽') ? '패' : '-'));
                                 const c = out === '승' ? 'streak-win' : out === '패' ? 'streak-lose' : out === '조커' ? 'streak-joker' : '';
                                 return '<td class="' + c + '">' + (out || '-') + '</td>';
@@ -9600,8 +9594,8 @@ def _build_results_payload_db_only(hours=24, backfill=False):
             except Exception:
                 pass
         blended = _blended_win_rate(ph)
-        # 최근 누락 건 보정: 항상 최대 2건 (API 지연 최소화). backfill=1이면 10건까지
-        ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=10 if backfill else 2, persist_to_db=True)
+        # 최근 누락 건 보정: 항상 최대 10건 (화면 표시 우선). backfill=1이면 25건까지
+        ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=25 if backfill else 10, persist_to_db=True)
         return {
             'results': results,
             'count': len(results),
@@ -9802,7 +9796,7 @@ def _build_results_payload():
                 except Exception:
                     pass
             blended = _blended_win_rate(ph)
-            ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=25, persist_to_db=False)
+            ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=25, persist_to_db=True)
             return {
                 'results': results,
                 'count': len(results),
