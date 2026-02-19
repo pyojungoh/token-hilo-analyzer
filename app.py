@@ -187,7 +187,7 @@ def init_database():
         cur.execute('''
             CREATE INDEX IF NOT EXISTS idx_prediction_history_created ON prediction_history(created_at DESC)
         ''')
-        for col, typ in [('probability', 'REAL'), ('pick_color', 'VARCHAR(10)'), ('blended_win_rate', 'REAL'), ('rate_15', 'REAL'), ('rate_30', 'REAL'), ('rate_100', 'REAL'), ('prediction_details', 'JSONB'), ('shape_predicted', 'VARCHAR(10)')]:
+        for col, typ in [('probability', 'REAL'), ('pick_color', 'VARCHAR(10)'), ('blended_win_rate', 'REAL'), ('rate_15', 'REAL'), ('rate_30', 'REAL'), ('rate_100', 'REAL'), ('prediction_details', 'JSONB'), ('shape_predicted', 'VARCHAR(10)'), ('shape_pick', 'VARCHAR(10)'), ('pong_pick', 'VARCHAR(10)')]:
             cur.execute(
                 "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'prediction_history' AND column_name = %s",
                 (col,)
@@ -406,6 +406,8 @@ def save_prediction_record(round_num, predicted, actual, probability=None, pick_
         # shape_predicted = 모양판별 알고리즘(get_shape_prediction_hint) 결과. 모양판별반픽 도구로 사용.
         shape_sig = None
         shape_pred = None
+        shape_pick_val = None
+        pong_pick_val = None
         if shape_predicted and str(shape_predicted).strip() in ('정', '꺽'):
             shape_pred = str(shape_predicted).strip()
         prediction_details = None
@@ -422,21 +424,33 @@ def save_prediction_record(round_num, predicted, actual, probability=None, pick_
                     shape_pred = hint.get('value') if hint and hint.get('value') in ('정', '꺽') else None
                 except Exception:
                     shape_pred = None
+            try:
+                sp, _ = _get_shape_only_pick_with_phase(results, exclude_round=round_num, calc_state=None)
+                shape_pick_val = sp if sp in ('정', '꺽') else None
+            except Exception:
+                pass
+        if results and len(results) >= 16:
+            try:
+                pong_pick_val = _get_pong_pick_for_round(results, round_num)
+            except Exception:
+                pass
         
         cur = conn.cursor()
-        if prediction_details or shape_pred:
+        if prediction_details or shape_pred or shape_pick_val or pong_pick_val:
             cur.execute('''
-                INSERT INTO prediction_history (round_num, predicted, actual, probability, pick_color, blended_win_rate, rate_15, rate_30, rate_100, prediction_details, shape_predicted)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                INSERT INTO prediction_history (round_num, predicted, actual, probability, pick_color, blended_win_rate, rate_15, rate_30, rate_100, prediction_details, shape_predicted, shape_pick, pong_pick)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
                 ON CONFLICT (round_num) DO UPDATE SET predicted = EXCLUDED.predicted, actual = EXCLUDED.actual,
                     probability = EXCLUDED.probability, pick_color = EXCLUDED.pick_color,
                     blended_win_rate = EXCLUDED.blended_win_rate, rate_15 = EXCLUDED.rate_15, rate_30 = EXCLUDED.rate_30, rate_100 = EXCLUDED.rate_100,
                     prediction_details = COALESCE(EXCLUDED.prediction_details, prediction_history.prediction_details),
                     shape_predicted = COALESCE(EXCLUDED.shape_predicted, prediction_history.shape_predicted),
+                    shape_pick = COALESCE(EXCLUDED.shape_pick, prediction_history.shape_pick),
+                    pong_pick = COALESCE(EXCLUDED.pong_pick, prediction_history.pong_pick),
                     created_at = DEFAULT
             ''', (int(round_num), str(predicted), str(actual), float(probability) if probability is not None else None, str(pick_color) if pick_color else None,
                  round(blended_val, 1) if blended_val is not None else None, round(r15_val, 1) if r15_val is not None else None, round(r30_val, 1) if r30_val is not None else None, round(r100_val, 1) if r100_val is not None else None,
-                 prediction_details, str(shape_pred) if shape_pred in ('정', '꺽') else None))
+                 prediction_details, str(shape_pred) if shape_pred in ('정', '꺽') else None, str(shape_pick_val) if shape_pick_val in ('정', '꺽') else None, str(pong_pick_val) if pong_pick_val in ('정', '꺽') else None))
         else:
             cur.execute('''
                 INSERT INTO prediction_history (round_num, predicted, actual, probability, pick_color, blended_win_rate, rate_15, rate_30, rate_100)
@@ -795,6 +809,25 @@ def _get_latest_next_pick_for_chunk(results, exclude_round=None):
             conn.close()
         except Exception:
             pass
+
+
+def _get_pong_pick_for_round(results, round_num):
+    """정꺽정꺽(alternating) 패턴용: 해당 회차 직전 4개가 정꺽정꺽이면 다음 픽(마지막 반대) 반환. 아니면 None.
+    results: 최신순. round_num 제외된 results(직전 4회차 포함, len>=16) 필요."""
+    if not results or len(results) < 16:
+        return None
+    actuals = []
+    for i in range(4):
+        if i >= len(results):
+            return None
+        rid = results[i].get('gameID')
+        a = _get_actual_for_round(results, rid)
+        if a is None or a in ('joker', '조커'):
+            return None
+        actuals.append(a)
+    if actuals[0] == actuals[1] or actuals[1] == actuals[2] or actuals[2] == actuals[3]:
+        return None
+    return '정' if actuals[0] == '꺽' else '꺽'
 
 
 def update_shape_win_stats(conn, signature, actual, round_num=None):
@@ -2449,7 +2482,7 @@ def get_prediction_history(limit=30):
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute('''
-            SELECT round_num as "round", predicted, actual, probability, pick_color, blended_win_rate, rate_15, rate_30, rate_100, shape_predicted
+            SELECT round_num as "round", predicted, actual, probability, pick_color, blended_win_rate, rate_15, rate_30, rate_100, shape_predicted, shape_pick, pong_pick
             FROM prediction_history
             ORDER BY round_num DESC
             LIMIT %s
@@ -2463,6 +2496,10 @@ def get_prediction_history(limit=30):
             o = {'round': r['round'], 'predicted': r['predicted'], 'actual': r['actual']}
             if r.get('shape_predicted') in ('정', '꺽'):
                 o['shape_predicted'] = r['shape_predicted']
+            if r.get('shape_pick') in ('정', '꺽'):
+                o['shape_pick'] = r['shape_pick']
+            if r.get('pong_pick') in ('정', '꺽'):
+                o['pong_pick'] = r['pong_pick']
             if r.get('probability') is not None:
                 o['probability'] = float(r['probability'])
             if r.get('blended_win_rate') is not None:
@@ -7369,7 +7406,7 @@ RESULTS_HTML = '''
                             '<span class="stat-joker">조커 - <span class="num">' + joker50 + '</span>회</span>' +
                             (count50 > 0 ? '<span class="stat-rate ' + rateClass50 + '">승률 : ' + rate50Str + '%</span>' : '') +
                             '</div>' +
-                            '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 예측픽 기준(계산기와 독립) · 합산승률=15·30·100 반영(65·25·10)<br>※ 모양판별: 예측값 없을 때 실제 결과(정/꺽)로 표시</div>';
+                            '<div class="prediction-stats-note" style="font-size:0.8em;color:#888;margin-top:2px">※ 예측픽 기준(계산기와 독립) · 합산승률=15·30·100 반영(65·25·10)</div>';
                         // 예측기표: 실제 경고 합산승률 + 최근 50회 결과 + 회차별(정/꺽/승·패·조커) 표 — 예측픽만 사용
                         let streakTableBlock = '';
                         try {
@@ -7389,29 +7426,47 @@ RESULTS_HTML = '''
                                 const c = out === '승' ? 'streak-win' : out === '패' ? 'streak-lose' : 'streak-joker';
                                 return '<td class="' + c + '">' + out + '</td>';
                             }).join('');
-                            const rowShapePick = '<td>모양판별</td>' + rev.map(function(h) {
-                                const sp = (h.shape_predicted && (h.shape_predicted === '정' || h.shape_predicted === '꺽')) ? h.shape_predicted : (roundActualsFromServer[String(h.round)] && (roundActualsFromServer[String(h.round)].actual === '정' || roundActualsFromServer[String(h.round)].actual === '꺽') ? roundActualsFromServer[String(h.round)].actual : null);
-                                var c = '';
-                                if (sp === '정' || sp === '꺽') {
-                                    var mainColor = (h.pickColor || h.pick_color);
-                                    if (mainColor === '빨강' || mainColor === '검정') {
-                                        if (sp === (h.predicted || '')) c = pickColorToClass(mainColor);
-                                        else c = pickColorToClass(mainColor === '빨강' ? '검정' : '빨강');
-                                    } else {
-                                        c = pickColorToClass(sp === '정' ? '빨강' : '검정');
-                                    }
-                                }
+                            const rowShapePick = '<td>모양</td>' + rev.map(function(h) {
+                                const sp = (h.shape_pick && (h.shape_pick === '정' || h.shape_pick === '꺽')) ? h.shape_pick : null;
+                                var c = sp === '정' ? pickColorToClass('빨강') : sp === '꺽' ? pickColorToClass('검정') : '';
                                 return '<td class="' + (c || '') + '">' + (sp || '-') + '</td>';
                             }).join('');
-                            const rowShapeOutcome = '<td>모양판별</td>' + rev.map(function(h) {
+                            const rowShapeOutcome = '<td>모양</td>' + rev.map(function(h) {
                                 var actualForDisplay = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
                                 if (typeof actualForDisplay === 'string') actualForDisplay = actualForDisplay.trim();
                                 var isJoker = (actualForDisplay === 'joker' || actualForDisplay === '조커');
-                                const sp = (h.shape_predicted && (h.shape_predicted === '정' || h.shape_predicted === '꺽')) ? h.shape_predicted : (roundActualsFromServer[String(h.round)] && (roundActualsFromServer[String(h.round)].actual === '정' || roundActualsFromServer[String(h.round)].actual === '꺽') ? roundActualsFromServer[String(h.round)].actual : null);
-                                const out = isJoker ? '조커' : (sp && (sp === '정' || sp === '꺽') && (actualForDisplay === '정' || actualForDisplay === '꺽') && sp === actualForDisplay ? '승' : (sp && (sp === '정' || sp === '꺽') && (actualForDisplay === '정' || actualForDisplay === '꺽') ? '패' : '-'));
+                                const sp = (h.shape_pick && (h.shape_pick === '정' || h.shape_pick === '꺽')) ? h.shape_pick : null;
+                                const out = !sp ? '-' : isJoker ? '조커' : (actualForDisplay === '정' || actualForDisplay === '꺽') ? (sp === actualForDisplay ? '승' : '패') : '-';
                                 const c = out === '승' ? 'streak-win' : out === '패' ? 'streak-lose' : out === '조커' ? 'streak-joker' : '';
                                 return '<td class="' + c + '">' + (out || '-') + '</td>';
                             }).join('');
+                            const rowPongPick = '<td>퐁당</td>' + rev.map(function(h) {
+                                const pp = (h.pong_pick && (h.pong_pick === '정' || h.pong_pick === '꺽')) ? h.pong_pick : null;
+                                var c = pp === '정' ? pickColorToClass('빨강') : pp === '꺽' ? pickColorToClass('검정') : '';
+                                return '<td class="' + (c || '') + '">' + (pp || '-') + '</td>';
+                            }).join('');
+                            const rowPongOutcome = '<td>퐁당</td>' + rev.map(function(h) {
+                                var actualForDisplay = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
+                                if (typeof actualForDisplay === 'string') actualForDisplay = actualForDisplay.trim();
+                                var isJoker = (actualForDisplay === 'joker' || actualForDisplay === '조커');
+                                const pp = (h.pong_pick && (h.pong_pick === '정' || h.pong_pick === '꺽')) ? h.pong_pick : null;
+                                const out = !pp ? '-' : isJoker ? '조커' : (actualForDisplay === '정' || actualForDisplay === '꺽') ? (pp === actualForDisplay ? '승' : '패') : '-';
+                                const c = out === '승' ? 'streak-win' : out === '패' ? 'streak-lose' : out === '조커' ? 'streak-joker' : '';
+                                return '<td class="' + c + '">' + (out || '-') + '</td>';
+                            }).join('');
+                            var shapeWins = 0, shapeTotal = 0, pongWins = 0, pongTotal = 0;
+                            rev.forEach(function(h) {
+                                var a = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
+                                var isJ = (a === 'joker' || a === '조커');
+                                if (h.shape_pick && (h.shape_pick === '정' || h.shape_pick === '꺽') && (a === '정' || a === '꺽' || isJ)) {
+                                    shapeTotal++; if (!isJ && h.shape_pick === a) shapeWins++;
+                                }
+                                if (h.pong_pick && (h.pong_pick === '정' || h.pong_pick === '꺽') && (a === '정' || a === '꺽' || isJ)) {
+                                    pongTotal++; if (!isJ && h.pong_pick === a) pongWins++;
+                                }
+                            });
+                            var shapeRateStr = shapeTotal > 0 ? (100 * shapeWins / shapeTotal).toFixed(1) : '-';
+                            var pongRateStr = pongTotal > 0 ? (100 * pongWins / pongTotal).toFixed(1) : '-';
                             streakTableBlock = '<div class="main-streak-table-wrap" data-section="예측기표"><table class="main-streak-table" aria-label="예측기표">' +
                                 '<thead><tr>' + headerCells + '</tr></thead><tbody>' +
                                 '<tr>' + rowProb + '</tr>' +
@@ -7419,7 +7474,13 @@ RESULTS_HTML = '''
                                 '<tr>' + rowOutcome + '</tr>' +
                                 '<tr>' + rowShapePick + '</tr>' +
                                 '<tr>' + rowShapeOutcome + '</tr>' +
-                                '</tbody></table></div><div class="prediction-streak-line" style="margin-top:6px">최근 100회 기준 · <span class="streak-now">' + streakLine100 + '</span></div>';
+                                '<tr>' + rowPongPick + '</tr>' +
+                                '<tr>' + rowPongOutcome + '</tr>' +
+                                '</tbody></table></div>' +
+                                '<div class="prediction-streak-line" style="margin-top:6px">최근 100회 기준 · <span class="streak-now">' + streakLine100 + '</span>' +
+                                (shapeTotal > 0 ? ' &nbsp;|&nbsp; 모양승률: ' + shapeRateStr + '% (' + shapeWins + '/' + shapeTotal + ')' : '') +
+                                (pongTotal > 0 ? ' &nbsp;|&nbsp; 퐁당승률: ' + pongRateStr + '% (' + pongWins + '/' + pongTotal + ')' : '') +
+                                '</div>';
                         }
                         } catch (streakErr) {
                             console.warn('연승/연패 표 구성 오류:', streakErr);
@@ -7764,7 +7825,21 @@ RESULTS_HTML = '''
                             var o = isJ ? '조커' : (h.predicted === a ? '승' : '패');
                             return '<td class="' + (o === '승' ? 'streak-win' : o === '패' ? 'streak-lose' : 'streak-joker') + '">' + o + '</td>';
                         }).join('');
-                        predDivEmpty.innerHTML = '<div class="main-streak-table-wrap" data-section="예측기표"><table class="main-streak-table"><thead><tr>' + head + '</tr></thead><tbody><tr>' + rowP + '</tr><tr>' + rowPick + '</tr><tr>' + rowOut + '</tr></tbody></table></div>';
+                        const rowShapePick = '<td>모양</td>' + rev.map(function(h) { var sp = (h.shape_pick && (h.shape_pick === '정' || h.shape_pick === '꺽')) ? h.shape_pick : null; return '<td>' + (sp || '-') + '</td>'; }).join('');
+                        const rowShapeOut = '<td>모양</td>' + rev.map(function(h) {
+                            var a = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
+                            var sp = (h.shape_pick && (h.shape_pick === '정' || h.shape_pick === '꺽')) ? h.shape_pick : null;
+                            var o = !sp ? '-' : (a === 'joker' || a === '조커') ? '조커' : (a === '정' || a === '꺽') ? (sp === a ? '승' : '패') : '-';
+                            return '<td class="' + (o === '승' ? 'streak-win' : o === '패' ? 'streak-lose' : o === '조커' ? 'streak-joker' : '') + '">' + o + '</td>';
+                        }).join('');
+                        const rowPongPick = '<td>퐁당</td>' + rev.map(function(h) { var pp = (h.pong_pick && (h.pong_pick === '정' || h.pong_pick === '꺽')) ? h.pong_pick : null; return '<td>' + (pp || '-') + '</td>'; }).join('');
+                        const rowPongOut = '<td>퐁당</td>' + rev.map(function(h) {
+                            var a = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
+                            var pp = (h.pong_pick && (h.pong_pick === '정' || h.pong_pick === '꺽')) ? h.pong_pick : null;
+                            var o = !pp ? '-' : (a === 'joker' || a === '조커') ? '조커' : (a === '정' || a === '꺽') ? (pp === a ? '승' : '패') : '-';
+                            return '<td class="' + (o === '승' ? 'streak-win' : o === '패' ? 'streak-lose' : o === '조커' ? 'streak-joker' : '') + '">' + o + '</td>';
+                        }).join('');
+                        predDivEmpty.innerHTML = '<div class="main-streak-table-wrap" data-section="예측기표"><table class="main-streak-table"><thead><tr>' + head + '</tr></thead><tbody><tr>' + rowP + '</tr><tr>' + rowPick + '</tr><tr>' + rowOut + '</tr><tr>' + rowShapePick + '</tr><tr>' + rowShapeOut + '</tr><tr>' + rowPongPick + '</tr><tr>' + rowPongOut + '</tr></tbody></table></div>';
                         predDivEmpty.setAttribute('data-section', '예측기표');
                     }
                     var atw = document.getElementById('analysis-tabs-wrap');
