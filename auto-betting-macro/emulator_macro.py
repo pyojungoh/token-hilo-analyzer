@@ -49,11 +49,11 @@ COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드"
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
 # 배팅 동작 간 지연(초). 픽 수신 즉시 ADB 전송·빠른 입력을 위해 최소화. 입력/확정이 안 먹으면 값을 늘리세요.
-BET_DELAY_BEFORE_EXECUTE = 2.0  # 배팅 실행 전 대기(초) — 픽이 화면에 반영될 시간 확보 (너무 빠르면 픽 미반영)
+BET_DELAY_BEFORE_EXECUTE = 1.2  # 배팅 실행 전 대기(초) — 서버 계산 지연 고려해 1.2초로 단축
 BET_DELAY_AFTER_AMOUNT_TAP = 0.03  # 금액 칸 탭 후 대기 (입력 안정)
 BET_DELAY_AFTER_INPUT = 0.05  # 금액 입력 후 대기 (키보드 반영)
-BET_DELAY_AFTER_BACK = 0.5  # 금액 입력·키보드 닫기 후 레드/블랙 탭 전 대기
-BET_AMOUNT_CONFIRM_COUNT = 7  # 같은 (회차, 픽, 금액) 7회 연속 수신 시에만 배팅 (금액 오탐 방지)
+BET_DELAY_AFTER_BACK = 0.7  # 금액 입력·키보드 닫기 후 레드/블랙 탭 전 대기 (키보드 완전 닫힐 때까지)
+BET_AMOUNT_CONFIRM_COUNT = 5  # 같은 (회차, 픽, 금액) 5회 연속 수신 시 배팅 (7→5로 속도 개선)
 BET_DEL_COUNT = 15  # 기존 값 삭제용 DEL 키 반복 횟수
 BET_AMOUNT_DOUBLE_INPUT = True  # 금액 이중 입력 (입력→BACK→재탭→재입력) — 오입력 방지
 BET_DELAY_AFTER_COLOR_TAP = 0.02
@@ -162,7 +162,8 @@ def get_device_size_via_adb(device_id=None):
 
 
 def get_window_rect_at(screen_x, screen_y):
-    """클릭한 점(screen_x, screen_y)이 속한 최상위 창의 (left, top, width, height) 반환. Windows 전용."""
+    """클릭한 점이 속한 창의 클라이언트 영역 (left, top, width, height) 반환.
+    GetClientRect + ClientToScreen 사용 — LDPlayer 실제 화면 영역과 일치 (제목줄/테두리 제외)."""
     if os.name != "nt":
         return None
     try:
@@ -178,17 +179,18 @@ def get_window_rect_at(screen_x, screen_y):
         hwnd = user32.WindowFromPoint(pt)
         if not hwnd:
             return None
-        root = user32.GetAncestor(hwnd, GA_ROOT)
-        if not root:
-            root = hwnd
-        rect = RECT()
-        if not user32.GetWindowRect(root, ctypes.byref(rect)):
+        root = user32.GetAncestor(hwnd, GA_ROOT) or hwnd
+        crect = RECT()
+        if not user32.GetClientRect(root, ctypes.byref(crect)):
             return None
-        w = rect.right - rect.left
-        h = rect.bottom - rect.top
-        if w <= 0 or h <= 0:
+        client_w = crect.right - crect.left
+        client_h = crect.bottom - crect.top
+        if client_w <= 0 or client_h <= 0:
             return None
-        return (rect.left, rect.top, w, h)
+        pt_tl = POINT(0, 0)
+        if not user32.ClientToScreen(root, ctypes.byref(pt_tl)):
+            return None
+        return (pt_tl.x, pt_tl.y, client_w, client_h)
     except Exception:
         return None
 
@@ -198,8 +200,12 @@ def _apply_window_offset(coords, x, y, key=None):
     try:
         x, y = int(x), int(y)
         if coords.get("raw_coords"):
+            dev_w = int(coords.get("device_width") or 0)
+            dev_h = int(coords.get("device_height") or 0)
+            if dev_w > 0 and dev_h > 0:
+                x = max(0, min(dev_w - 1, x))
+                y = max(0, min(dev_h - 1, y))
             return x, y
-        # 해당 키가 창 상대로 저장됐는지 확인(키 없으면 예전 호환: coords_are_window_relative)
         spaces = coords.get("coord_spaces") or {}
         is_window_relative = (spaces.get(key, coords.get("coords_are_window_relative")) if key
                               else coords.get("coords_are_window_relative"))
@@ -218,8 +224,18 @@ def _apply_window_offset(coords, x, y, key=None):
             if win_w > 0 and win_h > 0 and dev_w > 0 and dev_h > 0:
                 rx = int(rx * dev_w / win_w)
                 ry = int(ry * dev_h / win_h)
+            # 창/기기 미설정 시: 창 상대면 그대로, 아니면 0,0 기준이라 화면좌표가 됨 → 기기 범위로 클램프(밖으로 튕김 방지)
+            elif not is_window_relative and (ox == 0 and oy == 0) and (dev_w > 0 and dev_h > 0):
+                rx = max(0, min(dev_w - 1, rx))
+                ry = max(0, min(dev_h - 1, ry))
         except (TypeError, ValueError):
             pass
+        # 기기 범위 초과 시 클램프 (밖으로 튕김 방지)
+        dev_w = int(coords.get("device_width") or 0)
+        dev_h = int(coords.get("device_height") or 0)
+        if dev_w > 0 and dev_h > 0:
+            rx = max(0, min(dev_w - 1, rx))
+            ry = max(0, min(dev_h - 1, ry))
         return rx, ry
     except (TypeError, ValueError):
         return int(x), int(y)
@@ -465,8 +481,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             self._coord_value_labels[key] = val_lbl
             self._coord_status_labels[key] = status_lbl
             fl_coord.addRow(row_w)
-        self.raw_coords_check = QCheckBox("원시 좌표 (창/해상도 보정 안 함 — 저장된 x,y 그대로 전송)")
+        self.raw_coords_check = QCheckBox("원시 좌표 (보정 없이 저장된 x,y 그대로 전송 — 탭이 밖으로 튕기면 체크)")
         self.raw_coords_check.setChecked(False)
+        self.raw_coords_check.setToolTip("체크 시 창/해상도 보정 없이 저장된 좌표를 ADB에 그대로 전송. 탭이 밖으로 튕길 때 시도해 보세요.")
         self.raw_coords_check.setStyleSheet("color: #888; font-size: 11px;")
         fl_coord.addRow("", self.raw_coords_check)
         win_row = QHBoxLayout()
@@ -491,7 +508,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         win_row.addWidget(QLabel("(0,0이면 비움)"))
         win_row.addStretch(1)
         fl_coord.addRow(win_row)
-        win_hint = QLabel("※ 좌표 찾기로 레드/배팅금액 등을 잡으면 창 위치는 자동으로 채워져서, 위 칸은 건드리지 않아도 됩니다.")
+        win_hint = QLabel("※ 좌표 찾기로 레드/배팅금액 등을 잡으면 창(클라이언트 영역) 위치가 자동 채워집니다. 탭이 밖으로 튕기면 '기기 해상도 가져오기' 후 창 위치 저장.")
         win_hint.setStyleSheet("color: #888; font-size: 11px;")
         fl_coord.addRow("", win_hint)
         res_row = QHBoxLayout()
@@ -686,7 +703,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             save_coords(self._coords)
             self._refresh_coord_labels()
             self._set_coord_status(key, "저장됨(창 자동)", "green")
-            self._log("클릭한 창 자동 감지됨. %s = 창 내 (%s, %s), 창 크기 %s×%s. 레드 1회 탭으로 확인해 보세요." % (COORD_KEYS.get(key, key), rel_x, rel_y, w, h))
+            self._log("클릭한 창(콘텐츠 영역) 자동 감지됨. %s = (%s, %s), 크기 %s×%s. 레드 1회 탭으로 확인해 보세요." % (COORD_KEYS.get(key, key), rel_x, rel_y, w, h))
         else:
             self._coords[key] = [x, y]
             sp = self._coords.get("coord_spaces") or {}
@@ -834,7 +851,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._coords = load_coords()
         bet_xy = self._coords.get("bet_amount")
         if not bet_xy or len(bet_xy) < 2:
-            self._log("배팅금액 좌표를 먼저 잡아주세요.")
+            self._log("배팅금액 좌표를 먼저 잡아주세요. (좌표 설정 → 금액 찾기)")
             return
         device = self.device_edit.text().strip() or None
         btn.setEnabled(False)
@@ -854,13 +871,23 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                         self.test_tap_done.emit(btn, restore, msg)
                     return
                 tx, ty = _apply_window_offset(coords, bet_xy_copy[0], bet_xy_copy[1], key="bet_amount")
+                dev_w = int(coords.get("device_width") or 0)
+                dev_h = int(coords.get("device_height") or 0)
+                if dev_w > 0 and dev_h > 0 and (tx < 0 or ty < 0 or tx >= dev_w or ty >= dev_h):
+                    msg = "배팅금액 테스트: 보정 좌표 (%s,%s)가 기기(%s×%s) 밖입니다. '기기 해상도 가져오기' 후 좌표를 다시 잡거나, '원시 좌표' 체크해 보세요." % (tx, ty, dev_w, dev_h)
+                    if self.test_tap_done is not None:
+                        self.test_tap_done.emit(btn, restore, msg)
+                    return
+                # 1) 배팅금액 칸 탭 (2회 — 포커스 확실히)
                 adb_swipe(device, tx, ty, 100)
-                time.sleep(0.6)
+                time.sleep(0.5)
+                adb_swipe(device, tx, ty, 80)
+                time.sleep(0.5)  # 키보드 뜰 때까지 대기 (0.6→0.5×2로 분리)
                 adb_input_text(device, "5000")
-                time.sleep(0.4)
+                time.sleep(0.5)
                 adb_keyevent(device, 4)  # BACK
                 cmd_str = "adb -s %s shell input swipe %s %s %s %s 100" % (device or "", tx, ty, tx, ty) if device else "adb shell input swipe %s %s %s %s 100" % (tx, ty, tx, ty)
-                msg = "배팅금액 테스트 완료. 보정 (%s,%s) | 직접 테스트: %s" % (tx, ty, cmd_str)
+                msg = "배팅금액 테스트 완료. 저장(%s,%s)→전송(%s,%s) | 직접: %s" % (bet_xy_copy[0], bet_xy_copy[1], tx, ty, cmd_str)
             except Exception as e:
                 msg = "배팅금액 테스트 실패: " + str(e)
             if self.test_tap_done is not None:
@@ -974,8 +1001,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._analyzer_url = url
         self._calculator_id = self.calc_combo.currentData()
         self._device_id = self.device_edit.text().strip() or "127.0.0.1:5555"
-        # 배팅 중: 0.2초 간격으로 픽 조회 (픽 수신 즉시 ADB 전송용)
-        self._poll_interval_sec = 0.2
+        # 배팅 중: 0.15초 간격으로 픽 조회 (서버 스케줄러와 동기화, 빠른 반영)
+        self._poll_interval_sec = 0.15
         self._coords = load_coords()
         if not self._coords.get("bet_amount") or not self._coords.get("red") or not self._coords.get("black"):
             self._log("좌표를 먼저 설정하세요. coord_picker.py로 배팅금액/정정/레드/블랙 좌표를 잡으세요.")
@@ -1229,14 +1256,16 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 if BET_AMOUNT_DOUBLE_INPUT:
                     time.sleep(0.15)  # 첫 입력 반영 대기
                     _input_amount_once()  # 이중 입력 — 오입력 방지
-                # 2) 픽 RED=레드 / BLACK=블랙 (한 번만 탭)
+                # 2) 픽 RED=레드 / BLACK=블랙 — 100ms swipe로 확실히 터치 (50ms는 미등록될 수 있음)
                 tap_red_button = pick_color == "RED"
                 color_xy = red_xy if tap_red_button else black_xy
                 color_key = "red" if tap_red_button else "black"
                 button_name = "레드" if tap_red_button else "블랙"
                 cx, cy = _apply_window_offset(coords, color_xy[0], color_xy[1], key=color_key)
                 self._log("ADB: 픽 %s → %s 버튼 탭 (%s,%s)" % (pick_color, button_name, cx, cy))
-                tap_swipe(color_xy[0], color_xy[1], color_key)
+                adb_swipe(device, cx, cy, 100)  # 100ms로 확실한 터치 (tap_swipe 50ms는 미등록 가능)
+                time.sleep(0.08)
+                adb_swipe(device, cx, cy, 80)   # 2회 탭 — 일부 사이트에서 1회만으로 미선택 시 보완
                 time.sleep(BET_DELAY_AFTER_COLOR_TAP)
                 # 3) 정정 버튼(배팅 확정) — 1번만 탭 (여러 번 누르면 버벅거림)
                 if confirm_xy and len(confirm_xy) >= 2:

@@ -116,9 +116,15 @@ def adb_keyevent(device_id, keycode):
 
 
 def _apply_window_offset(coords, x, y, key=None):
+    """창/기기 보정 후 ADB 전송 좌표. 기기 범위 초과 시 클램프 (밖으로 튕김 방지)."""
     try:
         x, y = int(x), int(y)
         if coords.get("raw_coords"):
+            dev_w = int(coords.get("device_width") or 0)
+            dev_h = int(coords.get("device_height") or 0)
+            if dev_w > 0 and dev_h > 0:
+                x = max(0, min(dev_w - 1, x))
+                y = max(0, min(dev_h - 1, y))
             return x, y
         spaces = coords.get("coord_spaces") or {}
         is_window_relative = spaces.get(key, coords.get("coords_are_window_relative")) if key else coords.get("coords_are_window_relative")
@@ -137,15 +143,23 @@ def _apply_window_offset(coords, x, y, key=None):
             if win_w > 0 and win_h > 0 and dev_w > 0 and dev_h > 0:
                 rx = int(rx * dev_w / win_w)
                 ry = int(ry * dev_h / win_h)
+            elif not is_window_relative and (ox == 0 and oy == 0) and (dev_w > 0 and dev_h > 0):
+                rx = max(0, min(dev_w - 1, rx))
+                ry = max(0, min(dev_h - 1, ry))
         except (TypeError, ValueError):
             pass
+        dev_w = int(coords.get("device_width") or 0)
+        dev_h = int(coords.get("device_height") or 0)
+        if dev_w > 0 and dev_h > 0:
+            rx = max(0, min(dev_w - 1, rx))
+            ry = max(0, min(dev_h - 1, ry))
         return rx, ry
     except (TypeError, ValueError):
         return int(x), int(y)
 
 
 def get_window_rect_at(screen_x, screen_y):
-    """클릭한 점이 속한 창의 rect (left, top, width, height)."""
+    """클릭한 점이 속한 창의 클라이언트 영역 (left, top, width, height). 제목줄/테두리 제외."""
     try:
         import ctypes
         from ctypes import wintypes
@@ -162,14 +176,17 @@ def get_window_rect_at(screen_x, screen_y):
         root = user32.GetAncestor(hwnd, GA_ROOT)
         if not root:
             root = hwnd
-        rect = RECT()
-        if not user32.GetWindowRect(root, ctypes.byref(rect)):
+        crect = RECT()
+        if not user32.GetClientRect(root, ctypes.byref(crect)):
             return None
-        w = rect.right - rect.left
-        h = rect.bottom - rect.top
-        if w <= 0 or h <= 0:
+        client_w = crect.right - crect.left
+        client_h = crect.bottom - crect.top
+        if client_w <= 0 or client_h <= 0:
             return None
-        return (rect.left, rect.top, w, h)
+        pt_tl = POINT(0, 0)
+        if not user32.ClientToScreen(root, ctypes.byref(pt_tl)):
+            return None
+        return (pt_tl.x, pt_tl.y, client_w, client_h)
     except Exception:
         return None
 

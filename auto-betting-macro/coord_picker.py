@@ -4,9 +4,11 @@
 배팅금액, 정정(금액정정), 레드, 블랙 버튼 위치를 화면에서 클릭해 좌표를 저장합니다.
 저장된 좌표는 emulator_coords.json 에 저장되며, ADB 매크로에서 사용합니다.
 정정 = 금액정정 버튼 좌표.
+※ 반드시 LDPlayer 창 안에서만 클릭하세요. 창 좌표가 자동 감지되어 매크로와 호환됩니다.
 """
 import json
 import os
+import sys
 import tkinter as tk
 from tkinter import ttk, font as tkfont
 
@@ -24,6 +26,40 @@ except ImportError:
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(SCRIPT_DIR, "emulator_coords.json")
 
+
+def get_window_rect_at(screen_x, screen_y):
+    """클릭한 점이 속한 창의 클라이언트 영역 (left, top, width, height) 반환.
+    emulator_macro.py와 동일 — GetClientRect + ClientToScreen 사용."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        GA_ROOT = 2
+        class RECT(ctypes.Structure):
+            _fields_ = [("left", wintypes.LONG), ("top", wintypes.LONG), ("right", wintypes.LONG), ("bottom", wintypes.LONG)]
+        class POINT(ctypes.Structure):
+            _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+        pt = POINT(int(screen_x), int(screen_y))
+        hwnd = user32.WindowFromPoint(pt)
+        if not hwnd:
+            return None
+        root = user32.GetAncestor(hwnd, GA_ROOT) or hwnd
+        crect = RECT()
+        if not user32.GetClientRect(root, ctypes.byref(crect)):
+            return None
+        client_w = crect.right - crect.left
+        client_h = crect.bottom - crect.top
+        if client_w <= 0 or client_h <= 0:
+            return None
+        pt_tl = POINT(0, 0)
+        if not user32.ClientToScreen(root, ctypes.byref(pt_tl)):
+            return None
+        return (pt_tl.x, pt_tl.y, client_w, client_h)
+    except Exception:
+        return None
+
 # 설정 키 → 한글 라벨 (정정 = 금액정정 버튼)
 LABELS = {
     "bet_amount": "배팅금액",
@@ -34,7 +70,7 @@ LABELS = {
 
 
 def load_config():
-    """저장된 좌표 설정 불러오기."""
+    """저장된 좌표 설정 불러오기. 기존 window_left, coord_spaces 등은 유지."""
     if not os.path.exists(CONFIG_PATH):
         return {k: None for k in LABELS}
     try:
@@ -73,7 +109,7 @@ class CoordPickerApp:
         main = ttk.Frame(self.root, padding=12)
         main.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(main, text="LDPlayer 등 화면에서 해당 위치를 클릭해 좌표를 잡습니다.", font=("", 9)).pack(anchor=tk.W)
+        ttk.Label(main, text="LDPlayer 창 안에서 해당 위치를 클릭하세요. (매크로 창과 겹치면 잘못 잡힙니다)", font=("", 9)).pack(anchor=tk.W)
 
         f = tkfont.Font(size=9)
         self._value_labels = {}
@@ -156,10 +192,31 @@ class CoordPickerApp:
             return
         key, x, y = self._pending_click
         self._pending_click = None
-        self.config[key] = [x, y]
+        # emulator_macro와 동일: 클릭한 창의 클라이언트 영역 자동 감지 → 창 내 상대 좌표 저장
+        rect = get_window_rect_at(x, y)
+        if rect is not None:
+            left, top, w, h = rect
+            rel_x, rel_y = x - left, y - top
+            self.config[key] = [rel_x, rel_y]
+            self.config["window_left"] = left
+            self.config["window_top"] = top
+            self.config["window_width"] = w
+            self.config["window_height"] = h
+            if not int(self.config.get("device_width") or 0) or not int(self.config.get("device_height") or 0):
+                self.config["device_width"] = w
+                self.config["device_height"] = h
+            sp = self.config.get("coord_spaces") or {}
+            sp[key] = True
+            self.config["coord_spaces"] = sp
+            self._set_status(key, "저장됨(창 자동)", "green")
+        else:
+            self.config[key] = [x, y]
+            sp = self.config.get("coord_spaces") or {}
+            sp[key] = False
+            self.config["coord_spaces"] = sp
+            self._set_status(key, "저장됨", "green")
         save_config(self.config)
         self._refresh_labels()
-        self._set_status(key, "저장됨", "green")
         self.root.after(1500, lambda: self._set_status(key, ""))
 
     def _save_default_bet(self):

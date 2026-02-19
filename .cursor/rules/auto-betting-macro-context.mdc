@@ -25,6 +25,14 @@ alwaysApply: false
 - 매크로 표시 안정화: `(회차, 픽, 금액)`이 2회 연속 동일할 때만 UI 갱신 (`emulator_macro.py`)
 - relay 캐시 단일 소스: 서버 스케줄러만 갱신, 웹 POST는 relay 갱신 제외
 
+## 좌표 기능 (금액 테스트·탭 튕김 방지)
+
+- **get_window_rect_at**: `GetClientRect` + `ClientToScreen` 사용 — LDPlayer 클라이언트 영역(실제 화면) 기준. `GetWindowRect`(창 전체) 사용 금지.
+- **emulator_macro.py, emulator_macro_light.py, coord_picker.py** 세 곳 모두 동일한 `get_window_rect_at` 구현 유지.
+- **coord_picker**: 클릭 시 창 자동 감지 → `window_left/top/width/height`, `coord_spaces`, `device_width/height` 저장. 매크로와 형식 호환.
+- **금액 테스트**: 보정 좌표가 기기 범위 밖이면 탭 전에 에러 반환(튕김 방지). 배팅금액 칸 2회 탭 후 입력으로 포커스 확보.
+- **_apply_window_offset**: `raw_coords` 포함 기기 범위 클램프 적용 — 밖으로 튕김 방지.
+
 ## 관련 파일
 
 | 파일 | 역할 |
@@ -32,3 +40,4 @@ alwaysApply: false
 | `app.py` | relay API, `_update_current_pick_relay_cache`, `_push_current_pick_from_calc` |
 | `emulator_macro.py` | 풀 매크로 UI, 폴링, 표시 안정화 |
 | `emulator_macro_light.py` | 경량 매크로 |
+| `coord_picker.py` | 좌표 찾기 (창 자동 감지, emulator_coords.json 저장) |
