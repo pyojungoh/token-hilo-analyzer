@@ -1347,7 +1347,7 @@ def _check_streak_wait_ready(ph, target_streak):
     for h in last_n_plus_one[:-1]:
         a = h.get('actual')
         p = h.get('predicted')
-        if a == 'joker' or (a in ('정', '꺽') and p != a):
+        if a in ('joker', '조커') or (a in ('정', '꺽') and p != a):
             continue  # 패
         return False, None  # 승 나오면 패턴 깨짐
     try:
@@ -8332,9 +8332,11 @@ RESULTS_HTML = '''
             var v = (el && !isNaN(parseInt(el.value, 10))) ? Math.max(2, Math.min(15, parseInt(el.value, 10))) : (calcState[id] != null && typeof calcState[id].lose_streak_reverse_min_streak === 'number' ? calcState[id].lose_streak_reverse_min_streak : 3);
             return typeof v === 'number' && !isNaN(v) ? v : 4;
         }
-        /** 마틴 사용 중 연패 구간이면 멈춤(paused) 적용 안 함 — 마틴을 마친 다음(연패 후 승)에만 멈춤. */
+        /** 마틴 사용 중 연패 구간이면 멈춤(paused) 적용 안 함 — 마틴을 마친 다음(연패 후 승)에만 멈춤.
+         * 연패정지 대기/일시정지 상태면 배팅 없음(no_bet) 처리. */
         function effectivePausedForRound(id) {
             if (!calcState[id]) return false;
+            if (calcState[id].streak_wait_enabled && (calcState[id].streak_wait_state === 'waiting' || calcState[id].streak_wait_state === 'paused')) return true;
             var martingaleEl = document.getElementById('calc-' + id + '-martingale');
             if (!(martingaleEl && martingaleEl.checked)) return !!calcState[id].paused;
             var hist = calcState[id].history || [];
