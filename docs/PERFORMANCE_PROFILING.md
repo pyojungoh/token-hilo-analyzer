@@ -56,6 +56,6 @@ PERF_PROFILE=1 python app.py
 
 | 변경 | 효과 |
 |------|------|
-| **refresh 비블로킹** | 스케줄러가 외부 fetch(~2.5초) 대기 안 함 → scheduler_fetch ~4초 → ~1.5초 |
-| **스케줄러 주기 0.15초 → 2초** | 4초 걸리는 작업에 0.15초 간격은 무의미. 2초로 여유 확보 |
 | **get_shape_prediction_hint 캐싱** | apply_results_to_calcs 내 동일 results·가중치 시 재사용 → 세션 N개 시 ~120ms×(N-1) 절약 |
+
+**refresh 비블로킹 롤백**: 비블로킹 시 apply가 refresh 저장 전 DB를 읽어 최신 데이터를 놓침 → 화면 버벅임. 블로킹 유지.

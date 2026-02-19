@@ -4010,11 +4010,10 @@ def _update_relay_cache_for_running_calcs():
 
 def _scheduler_fetch_results():
     """스케줄러에서 호출: results_cache 갱신 + DB 저장 + 현재 회차 예측 1회 저장(한 곳) + 계산기 회차 반영 + prediction_history 누락 보정.
-    성능: refresh(외부 fetch ~2.5초)는 별도 스레드로 비블로킹. DB 기반 apply/relay는 즉시 수행."""
+    refresh 블로킹 유지: apply가 최신 DB(방금 저장된 외부 결과) 사용 보장. 비블로킹 시 데이터 지연으로 버벅임 발생."""
     t0 = time.time()
     try:
-        # 외부 fetch(~2.5초)는 비블로킹 — results_cache 갱신만 담당. apply/relay는 DB 사용
-        threading.Thread(target=_refresh_results_background, daemon=True).start()
+        _refresh_results_background()
         if DB_AVAILABLE and DATABASE_URL:
             results = get_recent_results(hours=24)
             if results and len(results) >= 16:
@@ -4046,13 +4045,13 @@ def _scheduler_trim_shape_tables():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    # 성능: 0.15초→2초. refresh 비블로킹으로 apply/relay ~1.5초 내 완료, 2초 주기로 여유 확보
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=2.0, id='fetch_results', max_instances=1)
+    # 0.15초마다 시도. refresh 블로킹(~2.5초)+apply(~1초)로 run당 ~4초, max_instances=1로 겹침 없음
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.15, id='fetch_results', max_instances=1)
     _scheduler.add_job(_scheduler_trim_shape_tables, 'interval', seconds=300, id='trim_shape', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (2초마다, refresh 비블로킹)")
+        print("[✅] 결과 수집 스케줄러 시작 (0.15초마다, refresh 블로킹)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:
