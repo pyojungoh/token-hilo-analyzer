@@ -629,13 +629,14 @@ def _get_chunk_stats_for_results(results):
 
 def _get_shape_only_pick_with_phase(results, exclude_round=None, calc_state=None):
     """가장 최근 다음 픽 옵션용: 퐁당 구간이면 모양판별 픽, 덩어리/줄 구간이면 가장 최근 다음 픽. 자동 스위칭.
-    반환: (pick: '정'|'꺽'|None, is_pong_phase: bool). is_pong_phase=True면 모양판별 사용(퐁당), False면 덩어리/시그니처 사용."""
+    반환: (pick: '정'|'꺽'|None, is_pong_phase: bool). is_pong_phase=True면 모양판별 사용(퐁당), False면 덩어리/시그니처 사용.
+    구간 판별은 최근 15열만 사용해 전환 시 빠르게 스위칭되도록 함."""
     if not results or len(results) < 16:
         return None, False
     graph_values = _build_graph_values(results)
     if len(graph_values) < 4:
         return None, False
-    use_for_pattern = graph_values[:30]
+    use_for_pattern = graph_values[:15]
     line_runs, pong_runs = _get_line_pong_runs(use_for_pattern)
     pong_pct, line_pct = 50.0, 50.0
     if len([v for v in graph_values[:15] if v is True or v is False]) >= 2:
@@ -2028,11 +2029,10 @@ def _server_calc_effective_pick_and_amount(c):
     if c.get('shape_only_latest_next_pick'):
         results = None
         try:
-            results = (results_cache or {}).get('results') if results_cache else None
-            if not results or len(results) < 16:
-                results = get_recent_results(hours=24)
-                if results:
-                    results = _sort_results_newest_first(results)
+            # 스위칭은 최신 결과 기준이므로 항상 DB에서 직접 조회 (results_cache는 갱신 지연 시 구간 전환 놓침)
+            results = get_recent_results(hours=24)
+            if results:
+                results = _sort_results_newest_first(results)
         except Exception:
             results = None
         if not results or len(results) < 16:
