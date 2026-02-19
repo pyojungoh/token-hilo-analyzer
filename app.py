@@ -6206,10 +6206,10 @@ RESULTS_HTML = '''
                 if (data.session_id) localStorage.setItem(CALC_SESSION_KEY, data.session_id);
                 lastServerTimeSec = data.server_time || Math.floor(Date.now() / 1000);
                 let calcs = data.calcs || {};
-                // 가이드 §6: 서버에 실행 중/히스토리 없으면 localStorage 백업으로 복원(새로고침 후 실행 상태 유지)
-                const hasRunning = CALC_IDS.some(id => calcs[String(id)] && calcs[String(id)].running);
-                const hasHistory = CALC_IDS.some(id => calcs[String(id)] && Array.isArray(calcs[String(id)].history) && calcs[String(id)].history.length > 0);
-                if (!hasRunning && !hasHistory) {
+                // 서버가 정상 응답(200)했을 때는 항상 서버 상태 사용. 리셋 후 모바일에서 과거 회차가 다시 보이는 버그 방지.
+                // localStorage 백업은 fetch 실패/응답 없음일 때만 사용(오프라인·서버 장애 시 새로고침 후 복구)
+                var serverRespondedOk = res.ok && data.calcs && typeof data.calcs === 'object';
+                if (!serverRespondedOk) {
                     try {
                         const backup = localStorage.getItem(CALC_STATE_BACKUP_KEY);
                         if (backup) {
