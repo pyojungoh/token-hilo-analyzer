@@ -9621,8 +9621,8 @@ def _build_results_payload_db_only(hours=24, backfill=False):
             except Exception:
                 pass
         blended = _blended_win_rate(ph)
-        # 최근 누락 건 보정: 항상 최대 10건 (화면 표시 우선). backfill=1이면 25건까지
-        ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=25 if backfill else 10, persist_to_db=True)
+        # backfill=1일 때만 shape_predicted 보정 (get_shape_prediction_hint 비용 큼). 평소엔 round_actuals fallback만 사용
+        ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=25 if backfill else 0, persist_to_db=bool(backfill))
         # 모양판별 fallback: shape_predicted 없을 때 round_actuals(실제 결과)로 채움 — '-' 표시 최소화
         for h in (ph or []):
             if h and h.get('shape_predicted') not in ('정', '꺽') and h.get('round') is not None:
@@ -9830,7 +9830,7 @@ def _build_results_payload():
                 except Exception:
                     pass
             blended = _blended_win_rate(ph)
-            ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=25, persist_to_db=True)
+            ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=0, persist_to_db=False)
             for h in (ph or []):
                 if h and h.get('shape_predicted') not in ('정', '꺽') and h.get('round') is not None:
                     ra = round_actuals.get(str(h['round']), {})
@@ -9937,7 +9937,7 @@ def _build_results_payload():
                     pass
             blended = _blended_win_rate(ph)
             round_actuals = _build_round_actuals(results)
-            ph = _backfill_shape_predicted_in_ph(ph, results, max_backfill=25, persist_to_db=False)
+            ph = _backfill_shape_predicted_in_ph(ph, results, max_backfill=0, persist_to_db=False)
             # 모양판별 shape_predicted 없을 때 round_actuals로 fallback
             if round_actuals:
                 for h in ph:
