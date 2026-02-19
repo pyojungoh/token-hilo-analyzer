@@ -1161,6 +1161,37 @@ def _get_current_result_run_length(ph):
     return run
 
 
+def _check_streak_wait_ready(ph, target_streak):
+    """연패정지: prediction_history에서 'N연패+승' 패턴 확인. 조커 포함 연패.
+    ph: prediction_history (과거→현재 순). target_streak: 연패 수(N).
+    반환: (ready: bool, next_round: int|None) — ready면 next_round부터 배팅 시작."""
+    if not ph or target_streak < 1:
+        return False, None
+    need = target_streak + 1  # N연패 + 1승
+    if len(ph) < need:
+        return False, None
+    last_n_plus_one = ph[-need:]
+    # 마지막(가장 최근)이 승인지
+    last = last_n_plus_one[-1]
+    act = last.get('actual')
+    pred = last.get('predicted')
+    is_win = act in ('정', '꺽') and pred == act
+    if not is_win:
+        return False, None
+    # 그 앞 N개가 모두 패(조커 포함)
+    for h in last_n_plus_one[:-1]:
+        a = h.get('actual')
+        p = h.get('predicted')
+        if a == 'joker' or (a in ('정', '꺽') and p != a):
+            continue  # 패
+        return False, None  # 승 나오면 패턴 깨짐
+    try:
+        next_round = int(last.get('round') or 0) + 1
+    except (TypeError, ValueError):
+        return False, None
+    return True, next_round
+
+
 def _get_lose_streak_from_history(history):
     """완료된 history 끝에서부터 연패 개수. 조커/멈춤(no_bet)은 연패 카운트에 포함(패와 동일)."""
     if not history:
@@ -1584,6 +1615,19 @@ def _apply_results_to_calcs(results):
                 c = state.get(cid)
                 if not c or not isinstance(c, dict) or not c.get('running'):
                     continue
+                # 연패정지: 대기/일시정지 상태면 패턴 확인. 준비되면 first_bet_round·betting으로 전환
+                if c.get('streak_wait_enabled'):
+                    sw_state = c.get('streak_wait_state') or 'waiting'
+                    if sw_state in ('waiting', 'paused'):
+                        ph = get_prediction_history(100)
+                        target_streak = max(1, min(15, int(c.get('streak_wait_target') or 3)))
+                        ready, next_round = _check_streak_wait_ready(ph, target_streak)
+                        if ready:
+                            c['first_bet_round'] = next_round
+                            c['streak_wait_state'] = 'betting'
+                            c['streak_wait_cumulative_wins'] = 0
+                        else:
+                            continue  # 아직 대기 — 이 calc는 이번에 처리 안 함
                 pending_round = c.get('pending_round')
                 pending_predicted = c.get('pending_predicted')
                 if pending_round is None or pending_predicted is None:
@@ -1782,6 +1826,13 @@ def _apply_results_to_calcs(results):
                     except (TypeError, ValueError):
                         pass
                 c['history'] = (c.get('history') or []) + [history_entry]
+                # 연패정지: 배팅 중 승이면 합산승수 증가. 목표 달성 시 일시정지
+                if c.get('streak_wait_enabled') and c.get('streak_wait_state') == 'betting':
+                    if not history_entry.get('no_bet') and history_entry.get('actual') in ('정', '꺽') and history_entry.get('predicted') == history_entry.get('actual'):
+                        c['streak_wait_cumulative_wins'] = (c.get('streak_wait_cumulative_wins') or 0) + 1
+                        target_wins = max(1, min(100, int(c.get('streak_wait_target_wins') or 15)))
+                        if c['streak_wait_cumulative_wins'] >= target_wins:
+                            c['streak_wait_state'] = 'paused'
                 # 해당 회차 완료 시점의 계산기 15회 승률 저장 (표 15회승률 열용)
                 completed_new = [x for x in c['history'] if x.get('actual') and x.get('actual') != 'pending']
                 history_entry['rate15'] = round(_server_recent_15_win_rate(completed_new), 1)
@@ -1836,9 +1887,9 @@ def _apply_results_to_calcs(results):
                     continue
                 try:
                     pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
-                    if pick_color is not None:
-                        pr = c.get('pending_round')
-                        _update_current_pick_relay_cache(int(cid), pr, pick_color, suggested_amount, c.get('running', True))
+                    pr = c.get('pending_round')
+                    if pick_color is not None or (c.get('streak_wait_enabled') and c.get('streak_wait_state') in ('waiting', 'paused')):
+                        _update_current_pick_relay_cache(int(cid), pr, pick_color, suggested_amount if suggested_amount is not None else 0, c.get('running', True))
                 except Exception:
                     pass
     except Exception as e:
@@ -2017,6 +2068,9 @@ def _server_calc_effective_pick_and_amount(c):
     """계산기 c의 pending_round 기준으로 배팅 픽(RED/BLACK)과 금액 계산. 매크로 current_pick 반영용.
     반환: (pick_color, amt, pred) — pred는 모양옵션 시 1열·배팅중 일치용."""
     if not c or not c.get('running'):
+        return None, 0, None
+    # 연패정지: 대기/일시정지 상태면 배팅 0
+    if c.get('streak_wait_enabled') and c.get('streak_wait_state') in ('waiting', 'paused'):
         return None, 0, None
     pr = c.get('pending_round')
     pred = c.get('pending_predicted')
@@ -3997,9 +4051,10 @@ def _update_relay_cache_for_running_calcs():
                     continue
                 try:
                     pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
-                    if pick_color is not None:
-                        pr = c.get('pending_round')
-                        _update_current_pick_relay_cache(int(cid), pr, pick_color, suggested_amount, c.get('running', True))
+                    pr = c.get('pending_round')
+                    # 연패정지 대기/일시정지 시 pick_color=None, amount=0 — relay에 0 반영해 매크로 배팅 스킵
+                    if pick_color is not None or (c.get('streak_wait_enabled') and c.get('streak_wait_state') in ('waiting', 'paused')):
+                        _update_current_pick_relay_cache(int(cid), pr, pick_color, suggested_amount if suggested_amount is not None else 0, c.get('running', True))
                 except Exception:
                     pass
     except Exception:
@@ -5114,6 +5169,7 @@ RESULTS_HTML = '''
                                             <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-1-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-1-shape-prediction-reverse"> 모양판별반픽</label> <label title="메인 예측기표 모양판별 픽 최신 15회 승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-1-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label> <label title="모양판별 계산식 내 shape/chunk/퐁당/대칭 배율(0~3, 기본 1)">shape×<input type="number" id="calc-1-shape-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> chunk×<input type="number" id="calc-1-chunk-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 퐁당×<input type="number" id="calc-1-pong-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 대칭×<input type="number" id="calc-1-symmetry-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"></label></td></tr>
                                             <tr><td>모양판별 로그</td><td><div id="calc-1-shape-prediction-log" class="shape-prediction-log" style="font-size:0.8em;color:#888;max-height:80px;overflow-y:auto;white-space:pre-wrap;">—</div></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-1-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-1-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
+                                            <tr><td>연패정지</td><td><label><input type="checkbox" id="calc-1-streak-wait-enabled" title="지정 연패(조커 포함) 후 승 나오면 배팅 시작, 합산 N승 달성 시 일시정지 후 다시 대기"> 연패정지</label> <label>연패 <input type="number" id="calc-1-streak-wait-target" min="1" max="15" value="3" class="calc-threshold-input" title="이 연패 수 나올 때까지 대기">회</label> <label>합산승수 <input type="number" id="calc-1-streak-wait-target-wins" min="1" max="100" value="15" class="calc-threshold-input" title="이 승수 달성 시 일시정지 후 다시 연패 대기">승</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-1-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-1-duration-check"> 지정 시간만 실행</label></td></tr>
                                             <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-1-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-1-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
                                             <tr><td>목표</td><td><label><input type="checkbox" id="calc-1-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-1-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-1-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
@@ -5169,6 +5225,7 @@ RESULTS_HTML = '''
                                             <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-2-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-2-shape-prediction-reverse"> 모양판별반픽</label> <label title="메인 예측기표 모양판별 픽 최신 15회 승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-2-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label> <label title="모양판별 계산식 내 shape/chunk/퐁당/대칭 배율(0~3, 기본 1)">shape×<input type="number" id="calc-2-shape-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> chunk×<input type="number" id="calc-2-chunk-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 퐁당×<input type="number" id="calc-2-pong-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 대칭×<input type="number" id="calc-2-symmetry-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"></label></td></tr>
                                             <tr><td>모양판별 로그</td><td><div id="calc-2-shape-prediction-log" class="shape-prediction-log" style="font-size:0.8em;color:#888;max-height:80px;overflow-y:auto;white-space:pre-wrap;">—</div></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-2-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-2-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
+                                            <tr><td>연패정지</td><td><label><input type="checkbox" id="calc-2-streak-wait-enabled" title="지정 연패(조커 포함) 후 승 나오면 배팅 시작, 합산 N승 달성 시 일시정지 후 다시 대기"> 연패정지</label> <label>연패 <input type="number" id="calc-2-streak-wait-target" min="1" max="15" value="3" class="calc-threshold-input" title="이 연패 수 나올 때까지 대기">회</label> <label>합산승수 <input type="number" id="calc-2-streak-wait-target-wins" min="1" max="100" value="15" class="calc-threshold-input" title="이 승수 달성 시 일시정지 후 다시 연패 대기">승</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-2-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-2-duration-check"> 지정 시간만 실행</label></td></tr>
                                             <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-2-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-2-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
                                             <tr><td>목표</td><td><label><input type="checkbox" id="calc-2-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-2-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-2-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
@@ -5224,6 +5281,7 @@ RESULTS_HTML = '''
                                             <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-3-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-3-shape-prediction-reverse"> 모양판별반픽</label> <label title="메인 예측기표 모양판별 픽 최신 15회 승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-3-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label> <label title="모양판별 계산식 내 shape/chunk/퐁당/대칭 배율(0~3, 기본 1)">shape×<input type="number" id="calc-3-shape-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> chunk×<input type="number" id="calc-3-chunk-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 퐁당×<input type="number" id="calc-3-pong-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 대칭×<input type="number" id="calc-3-symmetry-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"></label></td></tr>
                                             <tr><td>모양판별 로그</td><td><div id="calc-3-shape-prediction-log" class="shape-prediction-log" style="font-size:0.8em;color:#888;max-height:80px;overflow-y:auto;white-space:pre-wrap;">—</div></td></tr>
                                             <tr><td>멈춤</td><td><label><input type="checkbox" id="calc-3-pause-low-win-rate"> 계산기 표 15회승률≤<input type="number" id="calc-3-pause-win-rate-threshold" min="0" max="100" value="45" class="calc-threshold-input" title="해당 계산기 표의 15회 승률이 이 값 이하일 때 배팅멈춤. 표 하단 15회승률과 동일 기준">% 이하일 때 배팅멈춤</label></td></tr>
+                                            <tr><td>연패정지</td><td><label><input type="checkbox" id="calc-3-streak-wait-enabled" title="지정 연패(조커 포함) 후 승 나오면 배팅 시작, 합산 N승 달성 시 일시정지 후 다시 대기"> 연패정지</label> <label>연패 <input type="number" id="calc-3-streak-wait-target" min="1" max="15" value="3" class="calc-threshold-input" title="이 연패 수 나올 때까지 대기">회</label> <label>합산승수 <input type="number" id="calc-3-streak-wait-target-wins" min="1" max="100" value="15" class="calc-threshold-input" title="이 승수 달성 시 일시정지 후 다시 연패 대기">승</label></td></tr>
                                             <tr><td>시간</td><td><label>지속 시간(분) <input type="number" id="calc-3-duration" min="0" value="0" placeholder="0=무제한"></label> <label class="calc-duration-check"><input type="checkbox" id="calc-3-duration-check"> 지정 시간만 실행</label></td></tr>
                                             <tr><td>마틴</td><td><label class="calc-martingale"><input type="checkbox" id="calc-3-martingale"> 마틴 적용</label> <label>마틴 방식 <select id="calc-3-martingale-type"><option value="pyo" selected>표마틴</option><option value="pyo_half">표마틴 반</option></select></label></td></tr>
                                             <tr><td>목표</td><td><label><input type="checkbox" id="calc-3-target-enabled"> 목표금액 설정</label> <label>목표 <input type="number" id="calc-3-target-amount" min="0" value="0" placeholder="0=미사용">원</label> <span class="calc-target-hint" id="calc-3-target-hint" style="color:#888;font-size:0.85em"></span></td></tr>
@@ -5619,6 +5677,11 @@ RESULTS_HTML = '''
                     target_amount: Math.max(0, parseInt(document.getElementById('calc-' + id + '-target-amount')?.value, 10) || 0),
                     pause_low_win_rate_enabled: !!(pauseLowEl && pauseLowEl.checked),
                     pause_win_rate_threshold: pauseThr,
+                    streak_wait_enabled: !!(document.getElementById('calc-' + id + '-streak-wait-enabled') && document.getElementById('calc-' + id + '-streak-wait-enabled').checked),
+                    streak_wait_target: Math.max(1, Math.min(15, parseInt(document.getElementById('calc-' + id + '-streak-wait-target')?.value, 10) || 3)),
+                    streak_wait_target_wins: Math.max(1, Math.min(100, parseInt(document.getElementById('calc-' + id + '-streak-wait-target-wins')?.value, 10) || 15)),
+                    streak_wait_state: calcState[id].streak_wait_state || 'waiting',
+                    streak_wait_cumulative_wins: calcState[id].streak_wait_cumulative_wins || 0,
                     paused: !!calcState[id].paused,
                     timer_completed: !!calcState[id].timer_completed,
                     max_win_streak_ever: calcState[id].maxWinStreakEver || 0,
@@ -5764,6 +5827,11 @@ RESULTS_HTML = '''
                 calcState[id].maxWinStreakEver = Math.max(0, parseInt(c.max_win_streak_ever, 10) || 0);
                 calcState[id].maxLoseStreakEver = Math.max(0, parseInt(c.max_lose_streak_ever, 10) || 0);
                 calcState[id].first_bet_round = Math.max(0, parseInt(c.first_bet_round, 10) || 0);
+                calcState[id].streak_wait_enabled = !!c.streak_wait_enabled;
+                calcState[id].streak_wait_target = Math.max(1, Math.min(15, parseInt(c.streak_wait_target, 10) || 3));
+                calcState[id].streak_wait_target_wins = Math.max(1, Math.min(100, parseInt(c.streak_wait_target_wins, 10) || 15));
+                calcState[id].streak_wait_state = (c.streak_wait_state === 'waiting' || c.streak_wait_state === 'betting' || c.streak_wait_state === 'paused') ? c.streak_wait_state : 'waiting';
+                calcState[id].streak_wait_cumulative_wins = Math.max(0, parseInt(c.streak_wait_cumulative_wins, 10) || 0);
                 calcState[id].elapsed = calcState[id].running && calcState[id].started_at ? Math.max(0, st - calcState[id].started_at) : 0;
                 calcState[id].pending_round = c.pending_round != null ? c.pending_round : null;
                 calcState[id].pending_predicted = c.pending_predicted != null ? c.pending_predicted : null;
@@ -5855,6 +5923,12 @@ RESULTS_HTML = '''
                 const pauseThrEl = document.getElementById('calc-' + id + '-pause-win-rate-threshold');
                 if (pauseLowEl) pauseLowEl.checked = !!calcState[id].pause_low_win_rate_enabled;
                 if (pauseThrEl) pauseThrEl.value = String(Math.round(calcState[id].pause_win_rate_threshold || 45));
+                const streakWaitEl = document.getElementById('calc-' + id + '-streak-wait-enabled');
+                const streakWaitTargetEl = document.getElementById('calc-' + id + '-streak-wait-target');
+                const streakWaitWinsEl = document.getElementById('calc-' + id + '-streak-wait-target-wins');
+                if (streakWaitEl) streakWaitEl.checked = !!calcState[id].streak_wait_enabled;
+                if (streakWaitTargetEl) streakWaitTargetEl.value = String(Math.max(1, Math.min(15, calcState[id].streak_wait_target || 3)));
+                if (streakWaitWinsEl) streakWaitWinsEl.value = String(Math.max(1, Math.min(100, calcState[id].streak_wait_target_wins || 15)));
                 const capitalEl = document.getElementById('calc-' + id + '-capital');
                 const baseEl = document.getElementById('calc-' + id + '-base');
                 const oddsEl = document.getElementById('calc-' + id + '-odds');
@@ -8619,10 +8693,12 @@ RESULTS_HTML = '''
                 const targetEnabled = !!(targetEnabledEl && targetEnabledEl.checked);
                 const targetAmount = Math.max(0, parseInt(targetAmountEl?.value, 10) || 0);
                 if (targetEnabled && targetAmount > 0) targetNoteEmpty = '<span class="calc-timer-note" style="grid-column:1/-1">목표금액: ' + targetAmount.toLocaleString() + '원 / 목표까지: ' + targetAmount.toLocaleString() + '원 남음</span>';
+                var betDisplayEmpty = '-';
+                if (calcState[id].streak_wait_enabled && (calcState[id].streak_wait_state === 'waiting' || calcState[id].streak_wait_state === 'paused')) betDisplayEmpty = '대기중';
                 el.innerHTML = '<div class="calc-summary-grid">' + timerNote + targetNoteEmpty +
                     '<span class="label">보유자산</span><span class="value">-</span>' +
                     '<span class="label">순익</span><span class="value">-</span>' +
-                    '<span class="label">배팅중</span><span class="value">-</span>' +
+                    '<span class="label">배팅중</span><span class="value">' + betDisplayEmpty + '</span>' +
                     '<span class="label">경과</span><span class="value">' + elapsedStr + '</span></div>';
                 updateCalcBetCopyLine(id);
                 updateCalcShapeRateRow(id);
@@ -8632,7 +8708,15 @@ RESULTS_HTML = '''
             const r = getCalcResult(id);
             const profitStr = (r.profit >= 0 ? '+' : '') + r.profit.toLocaleString() + '원';
             const profitClass = r.profit > 0 ? 'profit-plus' : (r.profit < 0 ? 'profit-minus' : '');
-            var betDisplay = (effectivePausedForRound(id) || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker) ? '-' : (r.currentBet.toLocaleString() + '원'));
+            var betDisplay;
+            if (calcState[id].streak_wait_enabled && (calcState[id].streak_wait_state === 'waiting' || calcState[id].streak_wait_state === 'paused')) {
+                betDisplay = '대기중';
+            } else if (calcState[id].streak_wait_enabled && calcState[id].streak_wait_state === 'betting') {
+                var cw = Math.max(0, parseInt(calcState[id].streak_wait_cumulative_wins, 10) || 0);
+                betDisplay = '현재 ' + cw + '승중';
+            } else {
+                betDisplay = (effectivePausedForRound(id) || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker) ? '-' : (r.currentBet.toLocaleString() + '원'));
+            }
             // 보유자산·순익·배팅중이 그대로면 그리드 전체를 다시 쓰지 않고 경과만 갱신 (깜빡임 방지)
             try {
                 var cache = window.__calcSummaryCache = window.__calcSummaryCache || {};
@@ -9165,6 +9249,12 @@ RESULTS_HTML = '''
                 const pauseThrRunEl = document.getElementById('calc-' + id + '-pause-win-rate-threshold');
                 calcState[id].pause_low_win_rate_enabled = !!(pauseLowRun && pauseLowRun.checked);
                 calcState[id].pause_win_rate_threshold = (pauseThrRunEl && !isNaN(parseFloat(pauseThrRunEl.value))) ? Math.max(0, Math.min(100, parseFloat(pauseThrRunEl.value))) : 45;
+                var streakWaitRunEl = document.getElementById('calc-' + id + '-streak-wait-enabled');
+                calcState[id].streak_wait_enabled = !!(streakWaitRunEl && streakWaitRunEl.checked);
+                calcState[id].streak_wait_target = Math.max(1, Math.min(15, parseInt(document.getElementById('calc-' + id + '-streak-wait-target')?.value, 10) || 3));
+                calcState[id].streak_wait_target_wins = Math.max(1, Math.min(100, parseInt(document.getElementById('calc-' + id + '-streak-wait-target-wins')?.value, 10) || 15));
+                calcState[id].streak_wait_state = calcState[id].streak_wait_enabled ? 'waiting' : 'betting';
+                calcState[id].streak_wait_cumulative_wins = 0;
                 calcState[id].paused = false;
                 calcState[id].timer_completed = false;
                 calcState[id].running = true;
@@ -9177,12 +9267,17 @@ RESULTS_HTML = '''
                 try { latestG = window.__latestGameIDForCalc; } catch (e) {}
                 var nextRound = 0;
                 if (latestG != null && latestG !== '') { var n = parseInt(String(latestG), 10); if (!isNaN(n)) nextRound = n + 1; }
-                calcState[id].first_bet_round = nextRound;
+                calcState[id].first_bet_round = calcState[id].streak_wait_enabled ? 0 : nextRound;
                 try {
                     const payload = buildCalcPayload();
                     payload[String(id)].running = true;
                     payload[String(id)].history = [];
                     payload[String(id)].first_bet_round = calcState[id].first_bet_round;
+                    payload[String(id)].streak_wait_enabled = calcState[id].streak_wait_enabled;
+                    payload[String(id)].streak_wait_target = calcState[id].streak_wait_target;
+                    payload[String(id)].streak_wait_target_wins = calcState[id].streak_wait_target_wins;
+                    payload[String(id)].streak_wait_state = calcState[id].streak_wait_state || 'waiting';
+                    payload[String(id)].streak_wait_cumulative_wins = 0;
                     const session_id = localStorage.getItem(CALC_SESSION_KEY) || 'default';
                     const res = await fetch('/api/calc-state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: session_id, calcs: payload }) });
                     const data = await res.json().catch(function() { return {}; });
@@ -9257,6 +9352,7 @@ RESULTS_HTML = '''
                 state.started_at = 0;
                 state.elapsed = 0;
                 state.first_bet_round = 0;
+                if (state.streak_wait_enabled) { state.streak_wait_state = 'waiting'; state.streak_wait_cumulative_wins = 0; }
                 state.maxWinStreakEver = 0;
                 state.maxLoseStreakEver = 0;
                 state.pending_round = null;
@@ -9343,6 +9439,10 @@ RESULTS_HTML = '''
             calcState[id].symmetry_weight = (symmetryWeightEl && !isNaN(parseFloat(symmetryWeightEl.value))) ? Math.max(0, Math.min(3, parseFloat(symmetryWeightEl.value))) : 1;
             const pauseLowEl = document.getElementById('calc-' + id + '-pause-low-win-rate');
             calcState[id].pause_low_win_rate_enabled = !!(pauseLowEl && pauseLowEl.checked);
+            const streakWaitEl = document.getElementById('calc-' + id + '-streak-wait-enabled');
+            calcState[id].streak_wait_enabled = !!(streakWaitEl && streakWaitEl.checked);
+            calcState[id].streak_wait_target = Math.max(1, Math.min(15, parseInt(document.getElementById('calc-' + id + '-streak-wait-target')?.value, 10) || 3));
+            calcState[id].streak_wait_target_wins = Math.max(1, Math.min(100, parseInt(document.getElementById('calc-' + id + '-streak-wait-target-wins')?.value, 10) || 15));
             const pauseThrEl = document.getElementById('calc-' + id + '-pause-win-rate-threshold');
             calcState[id].pause_win_rate_threshold = (pauseThrEl && !isNaN(parseFloat(pauseThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(pauseThrEl.value))) : 45;
         }
@@ -10200,7 +10300,7 @@ def api_calc_state():
             if state is None:
                 state = {}
             # 계산기 1,2,3만 반환 (레거시 defense 제거 후 클라이언트 호환)
-            _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'shape_only_latest_next_pick': False, 'shape_prediction': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None}
+            _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'shape_only_latest_next_pick': False, 'shape_prediction': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'streak_wait_enabled': False, 'streak_wait_target': 3, 'streak_wait_target_wins': 15, 'streak_wait_state': 'waiting', 'streak_wait_cumulative_wins': 0, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None}
             calcs = {}
             for cid in ('1', '2', '3'):
                 calcs[cid] = state[cid] if (cid in state and isinstance(state.get(cid), dict)) else dict(_default)
@@ -10297,6 +10397,11 @@ def api_calc_state():
                     'target_amount': max(0, int(c.get('target_amount') or 0)),
                     'pause_low_win_rate_enabled': bool(c.get('pause_low_win_rate_enabled')),
                     'pause_win_rate_threshold': max(0, min(100, int(c.get('pause_win_rate_threshold') or 45))),
+                    'streak_wait_enabled': bool(c.get('streak_wait_enabled')),
+                    'streak_wait_target': max(1, min(15, int(c.get('streak_wait_target') or 3))),
+                    'streak_wait_target_wins': max(1, min(100, int(c.get('streak_wait_target_wins') or 15))),
+                    'streak_wait_state': str(c.get('streak_wait_state') or 'waiting') if c.get('streak_wait_state') in ('waiting', 'betting', 'paused') else 'waiting',
+                    'streak_wait_cumulative_wins': max(0, int(c.get('streak_wait_cumulative_wins') or 0)),
                     'paused': bool(c.get('paused')),
                     'max_win_streak_ever': int(c.get('max_win_streak_ever') or 0),
                     'max_lose_streak_ever': int(c.get('max_lose_streak_ever') or 0),
@@ -10335,7 +10440,7 @@ def api_calc_state():
         session_id = ((request.get_json(force=True, silent=True) or {}).get('session_id') or '').strip() or 'default'
         calcs = (request.get_json(force=True, silent=True) or {}).get('calcs') or {}
         out_fallback = {}
-        _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'shape_only_latest_next_pick': False, 'shape_prediction': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None}
+        _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'win_rate_reverse': False, 'win_rate_threshold': 50, 'lose_streak_reverse': False, 'lose_streak_reverse_threshold': 48, 'lose_streak_reverse_min_streak': 3, 'win_rate_direction_reverse': False, 'streak_suppress_reverse': False, 'shape_only_latest_next_pick': False, 'shape_prediction': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'streak_wait_enabled': False, 'streak_wait_target': 3, 'streak_wait_target_wins': 15, 'streak_wait_state': 'waiting', 'streak_wait_cumulative_wins': 0, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None}
         for cid in ('1', '2', '3'):
             c = calcs.get(cid) or {}
             if isinstance(c, dict):
