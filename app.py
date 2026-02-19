@@ -425,7 +425,7 @@ def save_prediction_record(round_num, predicted, actual, probability=None, pick_
                 except Exception:
                     shape_pred = None
             try:
-                sp, _ = _get_shape_only_pick_with_phase(results, exclude_round=round_num, calc_state=None)
+                sp = _get_latest_next_pick_for_chunk(results, exclude_round=round_num)
                 shape_pick_val = sp if sp in ('정', '꺽') else None
             except Exception:
                 pass
@@ -1213,14 +1213,59 @@ def _get_pong_15_win_rate(ph):
     return round(100.0 * wins / len(last15), 1)
 
 
+def _get_weighted_15_win_rate(records, is_win_fn, decay=1.1):
+    """지수 가중치 승률. i=0(가장 오래됨)~n-1(가장 최근), 가중치=decay^i. 최근일수록 비중 높음."""
+    if not records or len(records) < 3:
+        return None
+    total_weight = 0.0
+    weighted_wins = 0.0
+    for i, h in enumerate(records):
+        w = decay ** i
+        total_weight += w
+        if is_win_fn(h):
+            weighted_wins += w
+    if total_weight <= 0:
+        return None
+    return round(100.0 * weighted_wins / total_weight, 1)
+
+
+def _get_main_recent15_win_rate_weighted(ph, decay=1.1):
+    """메인 예측기 최근 15회 지수가중 승률(%). 조커 제외. 5회 미만이면 None."""
+    if not ph or len(ph) < 5:
+        return None
+    vh = [h for h in ph if h and h.get('actual') not in ('joker', '조커')]
+    last15 = vh[-15:] if len(vh) >= 15 else vh
+    if len(last15) < 5:
+        return None
+    return _get_weighted_15_win_rate(last15, lambda h: h.get('predicted') == h.get('actual'), decay)
+
+
+def _get_shape_15_win_rate_weighted(ph, decay=1.1):
+    """모양(shape_pick) 최근 15회 지수가중 승률."""
+    if not ph:
+        return None
+    valid = [h for h in ph if h and h.get('shape_pick') in ('정', '꺽') and h.get('actual') in ('정', '꺽', 'joker', '조커')]
+    last15 = [h for h in valid[-15:] if h.get('actual') != 'joker' and h.get('actual') != '조커']
+    return _get_weighted_15_win_rate(last15, lambda h: h.get('shape_pick') == h.get('actual'), decay)
+
+
+def _get_pong_15_win_rate_weighted(ph, decay=1.1):
+    """퐁당(pong_pick) 최근 15회 지수가중 승률."""
+    if not ph:
+        return None
+    valid = [h for h in ph if h and h.get('pong_pick') in ('정', '꺽') and h.get('actual') in ('정', '꺽', 'joker', '조커')]
+    last15 = [h for h in valid[-15:] if h.get('actual') != 'joker' and h.get('actual') != '조커']
+    return _get_weighted_15_win_rate(last15, lambda h: h.get('pong_pick') == h.get('actual'), decay)
+
+
 def _get_prediction_picks_best(results, predicted_round, ph):
-    """메인/모양/퐁당 3픽 중 15회 승률이 가장 높은 픽 선택. 동점 시 메인>모양>퐁당.
+    """메인/모양/퐁당 3픽 중 15회 승률이 가장 높은 픽 선택. 지수 가중치(decay=1.1)로 최근 회차 비중 높임. 동점 시 메인>모양>퐁당.
     반환: (pred, color) 또는 (None, None)."""
     if not results or len(results) < 16 or not ph:
         return None, None
-    main_rate = _get_main_recent15_win_rate(ph)
-    shape_rate = _get_shape_15_win_rate(ph)
-    pong_rate = _get_pong_15_win_rate(ph)
+    main_rate = _get_main_recent15_win_rate_weighted(ph)
+    shape_rate = _get_shape_15_win_rate_weighted(ph)
+    pong_rate = _get_pong_15_win_rate_weighted(ph)
     main_pred = None
     try:
         filtered = [r for r in results if int(str(r.get('gameID') or '0'), 10) < predicted_round]
@@ -1230,8 +1275,9 @@ def _get_prediction_picks_best(results, predicted_round, ph):
                 main_pred = cp['value']
     except Exception:
         pass
-    sp, _ = _get_shape_only_pick_with_phase(results, exclude_round=predicted_round, calc_state=None)
-    shape_pred = sp if sp in ('정', '꺽') else None
+    shape_pred = _get_latest_next_pick_for_chunk(results)
+    if shape_pred not in ('정', '꺽'):
+        shape_pred = None
     pong_pred = _get_pong_pick_for_round(results, predicted_round)
     if pong_pred not in ('정', '꺽'):
         pong_pred = None
@@ -10086,11 +10132,11 @@ def _build_results_payload_db_only(hours=24, backfill=False):
                     server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
             except Exception:
                 pass
-        # 예측기픽 탭: shape_pick, pong_pick, 색상(15번 카드 기준), 최근 15회 승률
+        # 예측기픽 탭: shape_pick = 모양판별 메뉴의 "가장 최근 다음 픽"과 동일 (덩어리/시그니처 기반)
         if len(results) >= 16:
             try:
                 pred_rnd = int(str(results[0].get('gameID') or '0'), 10) + 1
-                sp, _ = _get_shape_only_pick_with_phase(results, exclude_round=pred_rnd, calc_state=None)
+                sp = _get_latest_next_pick_for_chunk(results)
                 server_pred['shape_pick'] = sp if sp in ('정', '꺽') else None
                 server_pred['pong_pick'] = _get_pong_pick_for_round(results, pred_rnd)
                 is_15_red = _get_card_15_color_for_latest_round(results)
@@ -10325,11 +10371,11 @@ def _build_results_payload():
                         server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
                 except Exception:
                     pass
-            # 예측기픽 탭: shape_pick, pong_pick, 색상, 15회 승률
+            # 예측기픽 탭: shape_pick = 모양판별 "가장 최근 다음 픽"과 동일, pong_pick, 색상, 15회 승률
             if len(results) >= 16:
                 try:
                     pred_rnd = int(str(results[0].get('gameID') or '0'), 10) + 1
-                    sp, _ = _get_shape_only_pick_with_phase(results, exclude_round=pred_rnd, calc_state=None)
+                    sp = _get_latest_next_pick_for_chunk(results)
                     server_pred['shape_pick'] = sp if sp in ('정', '꺽') else None
                     server_pred['pong_pick'] = _get_pong_pick_for_round(results, pred_rnd)
                     is_15_red = _get_card_15_color_for_latest_round(results)
@@ -10459,11 +10505,11 @@ def _build_results_payload():
                         server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
                 except Exception:
                     pass
-            # 예측기픽 탭: shape_pick, pong_pick, 색상, 15회 승률
+            # 예측기픽 탭: shape_pick = 모양판별 "가장 최근 다음 픽"과 동일, pong_pick, 색상, 15회 승률
             if len(results) >= 16:
                 try:
                     pred_rnd = int(str(results[0].get('gameID') or '0'), 10) + 1
-                    sp, _ = _get_shape_only_pick_with_phase(results, exclude_round=pred_rnd, calc_state=None)
+                    sp = _get_latest_next_pick_for_chunk(results)
                     server_pred['shape_pick'] = sp if sp in ('정', '꺽') else None
                     server_pred['pong_pick'] = _get_pong_pick_for_round(results, pred_rnd)
                     is_15_red = _get_card_15_color_for_latest_round(results)
