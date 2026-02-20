@@ -1323,9 +1323,10 @@ def _get_prediction_picks_best(results, predicted_round, ph):
         rate = pong_rate if pong_rate is not None else -1
         candidates.append((rate, 3, pong_pred, 'pong'))
     if not candidates:
-        return None, None
+        return None, None, None
     candidates.sort(key=lambda x: (-x[0], x[1]))
     best_pred = candidates[0][2]
+    best_type = candidates[0][3]
     is_15_red = _get_card_15_color_for_latest_round(results)
     if is_15_red is True:
         color = '빨강' if best_pred == '정' else '검정'
@@ -1333,7 +1334,7 @@ def _get_prediction_picks_best(results, predicted_round, ph):
         color = '검정' if best_pred == '정' else '빨강'
     else:
         color = '빨강' if best_pred == '정' else '검정'
-    return best_pred, color
+    return best_pred, color, best_type
 
 
 def _get_current_result_run_length(ph):
@@ -1837,14 +1838,19 @@ def _apply_results_to_calcs(results):
                         c['pending_predicted'] = stored_for_round['predicted']
                         c['pending_prob'] = stored_for_round.get('probability')
                         c['pending_color'] = stored_for_round.get('pick_color')
-                        # 예측기픽: 메인/메인반픽/모양/퐁당 4픽 중 15회 승률 최고 픽 선택
+                        # 예측기픽: 예측기픽 메뉴 강조 카드(calc_best)와 동일한 픽 사용 — 단일 출처
                         if c.get('prediction_picks_best') and results and len(results) >= 16:
                             try:
-                                ph_best = get_prediction_history(100)
-                                best_pred, best_color = _get_prediction_picks_best(results, predicted_round, ph_best)
-                                if best_pred and best_color:
-                                    c['pending_predicted'] = best_pred
-                                    c['pending_color'] = best_color
+                                sp_cache = (results_cache or {}).get('server_prediction') if isinstance(results_cache, dict) else {}
+                                if isinstance(sp_cache, dict) and sp_cache.get('round') == predicted_round and sp_cache.get('calc_best_pred') and sp_cache.get('calc_best_color'):
+                                    c['pending_predicted'] = sp_cache['calc_best_pred']
+                                    c['pending_color'] = sp_cache['calc_best_color']
+                                else:
+                                    ph_best = get_prediction_history(100)
+                                    best_pred, best_color, _ = _get_prediction_picks_best(results, predicted_round, ph_best)
+                                    if best_pred and best_color:
+                                        c['pending_predicted'] = best_pred
+                                        c['pending_color'] = best_color
                             except Exception:
                                 pass
                         # 모양판별 옵션: shape_only와 별도. 예측기픽 사용 시 스킵
@@ -5833,6 +5839,9 @@ RESULTS_HTML = '''
         var lastWarningU35 = false;       // U자+줄 3~5 구간 감지 시 서버가 보낸 경고
         var lastPongChunkPhase = null;    // 퐁당/덩어리 구간 판별 결과
         var lastPongChunkDebug = {};      // 퐁당/덩어리 판별 디버그 데이터
+        var lastCalcBestTypeSeen = null;  // calc_best 디바운스: 직전 수신값
+        var lastCalcBestTypeStable = null;  // calc_best 디바운스: 2회 연속 동일 시 적용값
+        var lastCalcBestRound = null;     // calc_best 디바운스: 회차 변경 시 리셋용
         let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
         let lastLoseEffectRound = null;  // 실패 이펙트를 이미 보여준 회차 (한 번만 표시)
         var prevSymmetryCounts = { left: null, right: null };  // 이전 시점 20열 줄 개수 (새 구간 빨리 캐치용)
@@ -6539,17 +6548,25 @@ RESULTS_HTML = '''
                         updateCard(mainReverseCard, mainReverseVal, mainReverseColor, mainReverseRate);
                         updateCard(shapeCard, shapeVal, shapeColor, shapeRate);
                         updateCard(pongCard, pongVal, pongColor, pongRate);
-                        // 계산기에 사용될 최종 픽(승률 최고) 강조. 서버와 동일: 동점 시 메인>메인반픽>모양>퐁당
-                        [mainCard, mainReverseCard, shapeCard, pongCard].forEach(function(c) { if (c) c.classList.remove('pred-pick-card-calc-best'); });
-                        var candidates = [];
-                        if (mainVal && mainRate != null) candidates.push({ rate: mainRate, order: 0, card: mainCard });
-                        if (mainReverseVal && mainReverseRate != null) candidates.push({ rate: mainReverseRate, order: 1, card: mainReverseCard });
-                        if (shapeVal && shapeRate != null) candidates.push({ rate: shapeRate, order: 2, card: shapeCard });
-                        if (pongVal && pongRate != null) candidates.push({ rate: pongRate, order: 3, card: pongCard });
-                        if (candidates.length > 0) {
-                            candidates.sort(function(a, b) { return (b.rate - a.rate) || (a.order - b.order); });
-                            if (candidates[0].card) candidates[0].card.classList.add('pred-pick-card-calc-best');
+                        // 계산기에 사용될 최종 픽 강조 — 서버 calc_best_type과 매칭. 디바운스: 2회 연속 동일 시에만 적용 (캐시 전환·승률 순차 반영으로 픽 깜빡임 방지)
+                        var incomingBest = sp && sp.calc_best_type;
+                        var currentRound = (sp && sp.round != null) ? Number(sp.round) : null;
+                        if (currentRound !== lastCalcBestRound) {
+                            lastCalcBestRound = currentRound;
+                            lastCalcBestTypeSeen = incomingBest;
+                            lastCalcBestTypeStable = incomingBest;
+                        } else if (lastCalcBestTypeStable == null) {
+                            lastCalcBestTypeSeen = incomingBest;
+                            lastCalcBestTypeStable = incomingBest;
+                        } else if (incomingBest === lastCalcBestTypeSeen) {
+                            lastCalcBestTypeStable = incomingBest;
+                        } else {
+                            lastCalcBestTypeSeen = incomingBest;
                         }
+                        var bestType = lastCalcBestTypeStable;
+                        [mainCard, mainReverseCard, shapeCard, pongCard].forEach(function(c) { if (c) c.classList.remove('pred-pick-card-calc-best'); });
+                        var bestCard = (bestType === 'main' && mainCard) || (bestType === 'main_reverse' && mainReverseCard) || (bestType === 'shape' && shapeCard) || (bestType === 'pong' && pongCard);
+                        if (bestCard) bestCard.classList.add('pred-pick-card-calc-best');
                     })();
                     if (sp && sp.round != null) {
                         var newRound = Number(sp.round);
@@ -10265,6 +10282,16 @@ def _build_results_payload_db_only(hours=24, backfill=False):
                     server_pred['main_reverse_color'] = '검정' if server_pred['main_reverse'] == '정' else '빨강'
                 else:
                     server_pred['main_reverse_color'] = '빨강' if server_pred.get('main_reverse') == '정' else '검정' if server_pred.get('main_reverse') == '꺽' else None
+                # 계산기 예측기픽: 예측기픽 메뉴 강조 카드와 동일한 픽 사용 (단일 출처)
+                try:
+                    best_pred, best_color, best_type = _get_prediction_picks_best(results, pred_rnd, ph)
+                    server_pred['calc_best_pred'] = best_pred
+                    server_pred['calc_best_color'] = best_color
+                    server_pred['calc_best_type'] = best_type
+                except Exception:
+                    server_pred['calc_best_pred'] = None
+                    server_pred['calc_best_color'] = None
+                    server_pred['calc_best_type'] = None
             except Exception:
                 server_pred['shape_pick'] = None
                 server_pred['pong_pick'] = None
@@ -10276,6 +10303,9 @@ def _build_results_payload_db_only(hours=24, backfill=False):
                 server_pred['main_reverse'] = None
                 server_pred['main_reverse_color'] = None
                 server_pred['main_reverse_15_rate'] = None
+                server_pred['calc_best_pred'] = None
+                server_pred['calc_best_color'] = None
+                server_pred['calc_best_type'] = None
         blended = _blended_win_rate(ph)
         # backfill=1일 때만 shape_predicted 보정 (get_shape_prediction_hint 비용 큼). 평소엔 round_actuals fallback만 사용
         ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=25 if backfill else 0, persist_to_db=bool(backfill))
@@ -10516,6 +10546,15 @@ def _build_results_payload():
                         server_pred['main_reverse_color'] = '검정' if server_pred['main_reverse'] == '정' else '빨강'
                     else:
                         server_pred['main_reverse_color'] = '빨강' if server_pred.get('main_reverse') == '정' else '검정' if server_pred.get('main_reverse') == '꺽' else None
+                    try:
+                        best_pred, best_color, best_type = _get_prediction_picks_best(results, pred_rnd, ph)
+                        server_pred['calc_best_pred'] = best_pred
+                        server_pred['calc_best_color'] = best_color
+                        server_pred['calc_best_type'] = best_type
+                    except Exception:
+                        server_pred['calc_best_pred'] = None
+                        server_pred['calc_best_color'] = None
+                        server_pred['calc_best_type'] = None
                 except Exception:
                     server_pred['shape_pick'] = None
                     server_pred['pong_pick'] = None
@@ -10527,6 +10566,9 @@ def _build_results_payload():
                     server_pred['main_reverse'] = None
                     server_pred['main_reverse_color'] = None
                     server_pred['main_reverse_15_rate'] = None
+                    server_pred['calc_best_pred'] = None
+                    server_pred['calc_best_color'] = None
+                    server_pred['calc_best_type'] = None
             blended = _blended_win_rate(ph)
             ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=0, persist_to_db=False)
             for h in (ph or []):
@@ -10662,6 +10704,15 @@ def _build_results_payload():
                         server_pred['main_reverse_color'] = '검정' if server_pred['main_reverse'] == '정' else '빨강'
                     else:
                         server_pred['main_reverse_color'] = '빨강' if server_pred.get('main_reverse') == '정' else '검정' if server_pred.get('main_reverse') == '꺽' else None
+                    try:
+                        best_pred, best_color, best_type = _get_prediction_picks_best(results, pred_rnd, ph)
+                        server_pred['calc_best_pred'] = best_pred
+                        server_pred['calc_best_color'] = best_color
+                        server_pred['calc_best_type'] = best_type
+                    except Exception:
+                        server_pred['calc_best_pred'] = None
+                        server_pred['calc_best_color'] = None
+                        server_pred['calc_best_type'] = None
                 except Exception:
                     server_pred['shape_pick'] = None
                     server_pred['pong_pick'] = None
@@ -10673,6 +10724,9 @@ def _build_results_payload():
                     server_pred['main_reverse'] = None
                     server_pred['main_reverse_color'] = None
                     server_pred['main_reverse_15_rate'] = None
+                    server_pred['calc_best_pred'] = None
+                    server_pred['calc_best_color'] = None
+                    server_pred['calc_best_type'] = None
             blended = _blended_win_rate(ph)
             round_actuals = _build_round_actuals(results)
             ph = _backfill_shape_predicted_in_ph(ph, results, max_backfill=0, persist_to_db=False)
