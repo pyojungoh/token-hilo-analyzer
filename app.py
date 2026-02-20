@@ -1808,10 +1808,12 @@ def _apply_results_to_calcs(results):
             to_push = []  # (calculator_id, c) — save_calc_state 후에 푸시해 POST 시 서버 보정이 동작하도록
             for cid in ('1', '2', '3'):
                 c = state.get(cid)
-                if not c or not isinstance(c, dict) or not c.get('running'):
+                if not c or not isinstance(c, dict):
                     continue
-                # 연패정지: 대기/일시정지 상태면 패턴 확인. 준비되면 first_bet_round·betting으로 전환
-                if c.get('streak_wait_enabled'):
+                is_running = c.get('running')
+                # 정지(running=false): 배팅만 멈춤. 픽/승패는 계속 기록(no_bet). 푸시(to_push)는 안 함
+                # 연패정지: 대기/일시정지 상태면 패턴 확인. 준비되면 first_bet_round·betting으로 전환 (실행 중일 때만)
+                if is_running and c.get('streak_wait_enabled'):
                     sw_state = c.get('streak_wait_state') or 'waiting'
                     if sw_state in ('waiting', 'paused'):
                         ph = get_prediction_history(100)
@@ -1862,13 +1864,14 @@ def _apply_results_to_calcs(results):
                             except Exception:
                                 pass
                         eff_pick, amt, eff_pred = _server_calc_effective_pick_and_amount(c)
-                        c['pending_bet_amount'] = amt if amt is not None and amt > 0 else None
+                        c['pending_bet_amount'] = (amt if amt is not None and amt > 0 else None) if is_running else None
                         # 모양옵션 체크 시: 실제 배팅 픽(shape 기준)으로 pending_color·pending_predicted 보정 → 1열과 배팅중 색 일치. 예측기픽 사용 시 스킵
                         if c.get('shape_only_latest_next_pick') and not c.get('prediction_picks_best') and eff_pick and eff_pred:
                             c['pending_predicted'] = eff_pred
                             c['pending_color'] = '빨강' if eff_pick == 'RED' else ('검정' if eff_pick == 'BLACK' else c.get('pending_color'))
                         updated = True
-                        to_push.append((int(cid), c))
+                        if is_running:
+                            to_push.append((int(cid), c))
                     continue
                 actual = _get_actual_for_round(results, pending_round)
                 if actual is None:
@@ -2000,6 +2003,10 @@ def _apply_results_to_calcs(results):
                 if paused:
                     history_entry['no_bet'] = True
                     history_entry['betAmount'] = 0
+                # 정지(running=false): 배팅만 멈춤. 픽/승패는 계속 기록
+                if not is_running:
+                    history_entry['no_bet'] = True
+                    history_entry['betAmount'] = 0
                 # 15번 카드 조커 시 배팅 안 함 → no_bet. 조커 끝나면 마틴 이어감
                 if actual == 'joker':
                     is_15_joker_at_pred = len(results) >= 16 and bool(results[15].get('joker'))
@@ -2074,13 +2081,14 @@ def _apply_results_to_calcs(results):
                         except Exception:
                             pass
                     eff_pick, next_amt, eff_pred = _server_calc_effective_pick_and_amount(c)
-                    c['pending_bet_amount'] = next_amt if next_amt is not None and next_amt > 0 else None
+                    c['pending_bet_amount'] = (next_amt if next_amt is not None and next_amt > 0 else None) if is_running else None
                     # 모양옵션 체크 시: 실제 배팅 픽(shape 기준)으로 pending_color·pending_predicted 보정 → 1열과 배팅중 색 일치
                     if c.get('shape_only_latest_next_pick') and eff_pick and eff_pred:
                         c['pending_predicted'] = eff_pred
                         c['pending_color'] = '빨강' if eff_pick == 'RED' else ('검정' if eff_pick == 'BLACK' else c.get('pending_color'))
                     updated = True
-                    to_push.append((int(cid), c))
+                    if is_running:
+                        to_push.append((int(cid), c))
             if updated:
                 save_calc_state(session_id, state)  # 먼저 저장 → POST /api/current-pick 시 get_calc_state가 새 상태를 읽어 금액 보정 가능
                 for calc_id, calc_c in to_push:
@@ -9693,11 +9701,7 @@ RESULTS_HTML = '''
                 state.running = false;
                 state.timer_completed = false;
                 if (state.timerId) { clearInterval(state.timerId); state.timerId = null; }
-                state.history = [];
-                state.pending_round = null;
-                state.pending_predicted = null;
-                state.pending_prob = null;
-                state.pending_color = null;
+                // 정지 = 배팅만 멈춤. history·pending 유지 → 서버에서 픽/승패 계속 기록(no_bet)
                 state.pending_bet_amount = null;
                 lastResetOrRunAt = Date.now();
                 updateCalcSummary(id);
@@ -9737,6 +9741,7 @@ RESULTS_HTML = '''
                 updateCalcBetCopyLine(id);
                 const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
                 if (saveBtn) saveBtn.style.display = 'none';
+                postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null, running: false });
                 await saveCalcStateToServer({ skipApplyForIds: [id], immediate: true });
             });
         });
@@ -10919,7 +10924,11 @@ def api_calc_state():
                 try:
                     for cid in ('1', '2', '3'):
                         if cid in out and isinstance(out[cid], dict):
-                            bet_int.set_calculator_running(conn, int(cid), out[cid].get('running', True))
+                            r = out[cid].get('running', True)
+                            bet_int.set_calculator_running(conn, int(cid), r)
+                            # relay 캐시 즉시 반영 — 정지/리셋 후 캐시에 이전 픽 남아 매크로가 계속 배팅하는 버그 방지
+                            if not r:
+                                _current_pick_relay_cache[int(cid)] = {'round': None, 'pick_color': None, 'suggested_amount': None, 'running': False, 'probability': None}
                     conn.commit()
                 except Exception:
                     conn.rollback()
@@ -11424,7 +11433,7 @@ def api_current_pick_relay():
             for k in ('round', 'pick_color', 'probability', 'suggested_amount', 'running'):
                 if k in cached:
                     cached_out[k] = cached[k]
-        # 회차·금액 우선: 둘 다 있으면 (1) 더 높은 회차 우선, (2) 회차 같으면 캐시(스케줄러) 우선 — DB는 웹 POST로 금액 지연 가능
+        # 회차·금액 우선: 둘 다 있으면 (1) running=False 우선(정지/리셋 상태), (2) 더 높은 회차 우선, (3) 회차 같으면 캐시 우선
         def _round_val(o):
             r = o.get('round') if o else None
             try:
@@ -11432,13 +11441,20 @@ def api_current_pick_relay():
             except (TypeError, ValueError):
                 return 0
         if db_out and cached_out:
-            rd, rc = _round_val(db_out), _round_val(cached_out)
-            if rc > rd:
+            db_stopped = db_out.get('running') is False
+            cache_stopped = cached_out.get('running') is False
+            if db_stopped:
+                out = db_out  # DB가 중지 상태면 무조건 DB 우선 — 화면만 비워지고 계속 돌아가는 버그 방지
+            elif cache_stopped:
                 out = cached_out
-            elif rc < rd:
-                out = db_out
             else:
-                out = cached_out  # 회차 같으면 캐시 우선 (서버 calc 금액이 더 정확)
+                rd, rc = _round_val(db_out), _round_val(cached_out)
+                if rc > rd:
+                    out = cached_out
+                elif rc < rd:
+                    out = db_out
+                else:
+                    out = cached_out  # 회차 같으면 캐시 우선 (서버 calc 금액이 더 정확)
         elif db_out:
             out = db_out
         elif cached_out:

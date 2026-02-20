@@ -35,18 +35,18 @@ COORDS_PATH = os.path.join(SCRIPT_DIR, "emulator_coords.json")
 COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
-# 배팅 지연 — 픽 수신 즉시 ADB 전송용 최소화 (입력 안 먹으면 늘리세요)
-D_BEFORE_EXECUTE = 2.0  # 배팅 실행 전 대기(초) — 픽이 화면에 반영될 시간 확보 (너무 빠르면 픽 미반영)
-D_AMOUNT_TAP = 0.03  # 금액 칸 탭 후 대기 (입력 안정)
-D_INPUT = 0.05  # 금액 입력 후 대기 (키보드 반영)
-D_BACK = 0.5  # 금액 입력·키보드 닫기 후 레드/블랙 탭 전 대기
+# 배팅 지연 — 픽 수신 즉시 사이트로 빠르게 배팅 (입력 안 먹으면 늘리세요)
+D_BEFORE_EXECUTE = 0.4  # 배팅 실행 전 대기(초) — 최대한 빠르게
+D_AMOUNT_TAP = 0.01  # 금액 칸 탭 후 바로 입력
+D_INPUT = 0.01  # 금액 입력 후 바로 BACK
+D_BACK = 0.12  # 키보드 닫힌 뒤 바로 레드/블랙 탭
 D_COLOR = 0.01
 D_CONFIRM = 0.01
 SWIPE_AMOUNT_MS = 50
 SWIPE_COLOR_MS = 50
-D_AMOUNT_CONFIRM_COUNT = 7  # 같은 (회차, 픽, 금액) 7회 연속 수신 시에만 배팅 (금액 오탐 방지)
-D_DEL_COUNT = 15  # 기존 값 삭제용 DEL 키 반복 횟수
-D_AMOUNT_DOUBLE_INPUT = True  # 금액 이중 입력 — 오입력 방지
+D_AMOUNT_CONFIRM_COUNT = 3  # 같은 (회차, 픽, 금액) 3회 연속 수신 시 즉시 배팅
+D_DEL_COUNT = 8  # 기존 값 삭제용 DEL (8자리. 1회 ADB로 전송)
+D_AMOUNT_DOUBLE_INPUT = False  # 금액 1회만 입력 (이중 입력 시 1000010000 중복 발생)
 
 
 def load_coords():
@@ -88,7 +88,7 @@ def _normalize_pick_color(raw):
 
 
 def _run_adb_raw(device_id, *args):
-    kw = {"capture_output": True, "timeout": 10}
+    kw = {"capture_output": True, "timeout": 10, "encoding": "utf-8", "errors": "replace"}
     if os.name == "nt":
         cmd = "adb -s %s %s" % (device_id, " ".join(str(a) for a in args)) if device_id else "adb " + " ".join(str(a) for a in args)
         kw["shell"] = True
@@ -113,6 +113,22 @@ def adb_input_text(device_id, text):
 
 def adb_keyevent(device_id, keycode):
     _run_adb_raw(device_id, "shell", "input", "keyevent", str(keycode))
+
+
+def adb_keyevent_repeat(device_id, keycode, count):
+    """keyevent를 count회 한 번의 ADB 호출로 전송 (1초 대기 방지)."""
+    if count <= 0:
+        return
+    if count == 1:
+        adb_keyevent(device_id, keycode)
+        return
+    loop = ";".join(["input keyevent %s" % keycode] * count)
+    import subprocess
+    try:
+        cmd = 'adb -s %s shell "%s"' % (device_id, loop) if device_id else 'adb shell "%s"' % loop
+        subprocess.run(cmd, shell=True, capture_output=True, timeout=5, encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 
 def _apply_window_offset(coords, x, y, key=None):
@@ -418,7 +434,7 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
         try:
             import subprocess
             cmd = "adb devices" if os.name == "nt" else ["adb", "devices"]
-            kw = {"shell": True, "capture_output": True, "text": True, "timeout": 5} if os.name == "nt" else {"capture_output": True, "text": True, "timeout": 5}
+            kw = {"shell": True, "capture_output": True, "text": True, "timeout": 5, "encoding": "utf-8", "errors": "replace"} if os.name == "nt" else {"capture_output": True, "text": True, "timeout": 5}
             r = subprocess.run(cmd, **kw)
             out = (r.stdout or "").strip()
             self._log(out[:400] if out else "adb devices 완료")
@@ -505,6 +521,9 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
             _execute()
 
     def _do_bet(self, round_num, pick_color, amount):
+        """한 회차당 1번만 배팅. 회차/픽/금액은 서버에서 받은 값만 사용."""
+        if self._last_bet_round is not None and round_num <= self._last_bet_round:
+            return False  # 이미 배팅한 회차 — 중복 방지
         if not _validate_bet_amount(amount):
             self._log("배팅금액 오류: %s (1~99,999,999 범위)" % amount)
             return False
@@ -529,17 +548,12 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
                 tx, ty = _apply_window_offset(coords, bet_xy[0], bet_xy[1], key="bet_amount")
                 adb_swipe(device, tx, ty, SWIPE_AMOUNT_MS)
                 time.sleep(D_AMOUNT_TAP)
-                for _ in range(D_DEL_COUNT):
-                    adb_keyevent(device, 67)  # KEYCODE_DEL — 기존 값 삭제
-                    time.sleep(0.01)
+                adb_keyevent_repeat(device, 67, D_DEL_COUNT)  # DEL 8회 — 1회 ADB로 즉시
                 adb_input_text(device, bet_amount)
                 time.sleep(D_INPUT)
                 adb_keyevent(device, 4)
                 time.sleep(D_BACK)
             _input_amount_once()
-            if D_AMOUNT_DOUBLE_INPUT:
-                time.sleep(0.15)
-                _input_amount_once()  # 이중 입력 — 오입력 방지
 
             cx, cy = _apply_window_offset(coords, color_xy[0], color_xy[1], key="red" if pick_color == "RED" else "black")
             adb_swipe(device, cx, cy, SWIPE_COLOR_MS)

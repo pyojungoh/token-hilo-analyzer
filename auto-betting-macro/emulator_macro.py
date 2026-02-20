@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 에뮬레이터(LDPlayer) 자동배팅 매크로.
-- 계산기에서 회차·배팅중 픽·배팅금액만 가져와서 ADB로 배팅. 계산/승패는 분석기 가상배팅 계산기가 담당.
-- 분석기 웹 계산기1/2/3 중 선택 → 해당 계산기 픽/금액 수신 → 금액 입력 → RED/BLACK 탭 → 정정.
+- 서버(계산기)에서 회차·배팅중 픽·배팅금액만 받아서 ADB로 배팅. 매크로는 전회차/다음회차 계산 안 함.
+- 한 회차당 1번만 배팅. 분석기 웹 계산기1/2/3 중 선택 → 해당 계산기 픽/금액 수신 → 금액 입력 → RED/BLACK 탭 → 정정.
 """
 import json
 import os
@@ -48,20 +48,19 @@ COORDS_PATH = os.path.join(SCRIPT_DIR, "emulator_coords.json")
 COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
-# 배팅 동작 간 지연(초). 픽 수신 즉시 ADB 전송·빠른 입력을 위해 최소화. 입력/확정이 안 먹으면 값을 늘리세요.
-BET_DELAY_BEFORE_EXECUTE = 1.2  # 배팅 실행 전 대기(초) — 서버 계산 지연 고려해 1.2초로 단축
-BET_DELAY_AFTER_AMOUNT_TAP = 0.03  # 금액 칸 탭 후 대기 (입력 안정)
-BET_DELAY_AFTER_INPUT = 0.05  # 금액 입력 후 대기 (키보드 반영)
-BET_DELAY_AFTER_BACK = 0.7  # 금액 입력·키보드 닫기 후 레드/블랙 탭 전 대기 (키보드 완전 닫힐 때까지)
-BET_AMOUNT_CONFIRM_COUNT = 5  # 같은 (회차, 픽, 금액) 5회 연속 수신 시 배팅 (7→5로 속도 개선)
-BET_DEL_COUNT = 15  # 기존 값 삭제용 DEL 키 반복 횟수
-BET_AMOUNT_DOUBLE_INPUT = True  # 금액 이중 입력 (입력→BACK→재탭→재입력) — 오입력 방지
-BET_DELAY_AFTER_COLOR_TAP = 0.02
+# 배팅 동작 간 지연(초). 픽 수신 즉시 사이트로 빠르게 배팅 — 최소화. 입력/확정이 안 먹으면 값을 늘리세요.
+BET_DELAY_BEFORE_EXECUTE = 0.4  # 배팅 실행 전 대기(초) — 최대한 빠르게
+BET_DELAY_AFTER_AMOUNT_TAP = 0.01  # 금액 칸 탭 후 바로 입력
+BET_DELAY_AFTER_INPUT = 0.01  # 금액 입력 후 바로 BACK
+BET_DELAY_AFTER_BACK = 0.12  # 키보드 닫힌 뒤 바로 레드/블랙 탭
+BET_AMOUNT_CONFIRM_COUNT = 3  # 같은 (회차, 픽, 금액) 3회 연속 수신 시 즉시 배팅
+BET_DEL_COUNT = 8  # 기존 값 삭제용 DEL (8자리: 99999999까지. 탭 후 바로 입력 위해 최소화)
+BET_AMOUNT_DOUBLE_INPUT = False  # 금액 1회만 입력 (이중 입력 시 1000010000 중복 발생)
+BET_DELAY_AFTER_COLOR_TAP = 0.01
 BET_DELAY_BETWEEN_CONFIRM_TAPS = 0.02
 BET_DELAY_AFTER_CONFIRM = 0.02
 BET_CONFIRM_TAP_COUNT = 1  # 정정 버튼 1번만
-BET_RETRY_ATTEMPTS = 2  # 실패 시 재시도 횟수
-BET_RETRY_DELAY = 0.8   # 재시도 전 대기(초)
+BET_RETRY_ATTEMPTS = 1  # 한 회차당 1번만 배팅 (재시도 시 중복 배팅됨)
 
 
 def _validate_bet_amount(amt):
@@ -243,7 +242,7 @@ def _apply_window_offset(coords, x, y, key=None):
 
 def _run_adb_shell_cmd(device_id, *args):
     """Windows에서는 CMD와 동일한 환경으로 adb 실행(shell=True). 반환: (returncode, stdout, stderr)."""
-    kw = {"capture_output": True, "text": True, "timeout": 10}
+    kw = {"capture_output": True, "text": True, "timeout": 10, "encoding": "utf-8", "errors": "replace"}
     if os.name == "nt":
         if device_id:
             cmd = "adb -s %s %s" % (device_id, " ".join(str(a) for a in args))
@@ -263,7 +262,7 @@ def _run_adb_shell_cmd(device_id, *args):
 
 def _run_adb_raw(device_id, *args):
     """adb 명령 실행. Windows는 shell=True로 CMD와 동일하게 동작하도록 함."""
-    kw = {"capture_output": True, "timeout": 10}
+    kw = {"capture_output": True, "timeout": 10, "encoding": "utf-8", "errors": "replace"}
     if os.name == "nt":
         cmd = "adb -s %s %s" % (device_id, " ".join(str(a) for a in args)) if device_id else "adb " + " ".join(str(a) for a in args)
         kw["shell"] = True
@@ -305,6 +304,25 @@ def adb_swipe(device_id, x, y, duration_ms=80):
 def adb_keyevent(device_id, keycode):
     """adb shell input keyevent KEYCODE (4=BACK, 66=ENTER)."""
     _run_adb_raw(device_id, "shell", "input", "keyevent", str(keycode))
+
+
+def adb_keyevent_repeat(device_id, keycode, count):
+    """keyevent를 count회 한 번의 ADB 호출로 전송 (1초 대기 방지)."""
+    if count <= 0:
+        return
+    if count == 1:
+        adb_keyevent(device_id, keycode)
+        return
+    # 한 번의 shell 호출로 여러 keyevent 전송 (8회 DEL = 1회 왕복)
+    loop = ";".join(["input keyevent %s" % keycode] * count)
+    if device_id:
+        cmd = 'adb -s %s shell "%s"' % (device_id, loop)
+    else:
+        cmd = 'adb shell "%s"' % loop
+    try:
+        subprocess.run(cmd, shell=True, capture_output=True, timeout=5, encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 
 class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
@@ -878,11 +896,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                     if self.test_tap_done is not None:
                         self.test_tap_done.emit(btn, restore, msg)
                     return
-                # 1) 배팅금액 칸 탭 (2회 — 포커스 확실히)
+                # 1) 배팅금액 칸 탭 1회 (중복 탭 시 오동작)
                 adb_swipe(device, tx, ty, 100)
-                time.sleep(0.5)
-                adb_swipe(device, tx, ty, 80)
-                time.sleep(0.5)  # 키보드 뜰 때까지 대기 (0.6→0.5×2로 분리)
+                time.sleep(0.6)  # 키보드 뜰 때까지 대기
                 adb_input_text(device, "5000")
                 time.sleep(0.5)
                 adb_keyevent(device, 4)  # BACK
@@ -1001,8 +1017,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._analyzer_url = url
         self._calculator_id = self.calc_combo.currentData()
         self._device_id = self.device_edit.text().strip() or "127.0.0.1:5555"
-        # 배팅 중: 0.15초 간격으로 픽 조회 (서버 스케줄러와 동기화, 빠른 반영)
-        self._poll_interval_sec = 0.15
+        # 배팅 중: 0.1초 간격으로 픽 조회 (픽 들어오면 즉시 배팅)
+        self._poll_interval_sec = 0.1
         self._coords = load_coords()
         if not self._coords.get("bet_amount") or not self._coords.get("red") or not self._coords.get("black"):
             self._log("좌표를 먼저 설정하세요. coord_picker.py로 배팅금액/정정/레드/블랙 좌표를 잡으세요.")
@@ -1197,7 +1213,12 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             _execute()
 
     def _do_bet(self, round_num, pick_color, amount_from_calc=None):
-        """금액 입력 → RED/BLACK 픽대로 레드 또는 블랙 탭 → 마지막에 정정(선택). 성공 시 True, 실패(스킵) 시 False."""
+        """금액 입력 → RED/BLACK 픽대로 레드 또는 블랙 탭 → 마지막에 정정(선택). 성공 시 True, 실패(스킵) 시 False.
+        한 회차당 1번만 배팅. 회차/픽/금액은 서버에서 받은 값만 사용 (매크로는 계산 안 함)."""
+        with self._lock:
+            if self._last_bet_round is not None and round_num <= self._last_bet_round:
+                self._pending_bet_rounds.pop(round_num, None)
+                return False  # 이미 배팅한 회차 — 중복 방지
         try:
             amt = int(amount_from_calc) if amount_from_calc is not None else 0
         except (TypeError, ValueError):
@@ -1245,9 +1266,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 def _input_amount_once():
                     tap_swipe(bet_xy[0], bet_xy[1], "bet_amount")
                     time.sleep(BET_DELAY_AFTER_AMOUNT_TAP)
-                    for _ in range(BET_DEL_COUNT):
-                        adb_keyevent(device, 67)  # KEYCODE_DEL — 기존 값 삭제
-                        time.sleep(0.01)
+                    adb_keyevent_repeat(device, 67, BET_DEL_COUNT)  # DEL 8회 — 1회 ADB 호출로 즉시
                     adb_input_text(device, bet_amount)
                     time.sleep(BET_DELAY_AFTER_INPUT)
                     adb_keyevent(device, 4)  # BACK
@@ -1263,9 +1282,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 button_name = "레드" if tap_red_button else "블랙"
                 cx, cy = _apply_window_offset(coords, color_xy[0], color_xy[1], key=color_key)
                 self._log("ADB: 픽 %s → %s 버튼 탭 (%s,%s)" % (pick_color, button_name, cx, cy))
-                adb_swipe(device, cx, cy, 100)  # 100ms로 확실한 터치 (tap_swipe 50ms는 미등록 가능)
-                time.sleep(0.08)
-                adb_swipe(device, cx, cy, 80)   # 2회 탭 — 일부 사이트에서 1회만으로 미선택 시 보완
+                adb_swipe(device, cx, cy, 100)  # 1회만 탭 (중복 클릭 시 오동작)
                 time.sleep(BET_DELAY_AFTER_COLOR_TAP)
                 # 3) 정정 버튼(배팅 확정) — 1번만 탭 (여러 번 누르면 버벅거림)
                 if confirm_xy and len(confirm_xy) >= 2:
@@ -1277,11 +1294,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 return True
             except Exception as e:
                 last_error = e
-                if attempt < BET_RETRY_ATTEMPTS - 1:
-                    self._log("배팅 시도 실패 → %s초 후 재시도 (%s)" % (BET_RETRY_DELAY, str(e)[:60]))
-                    time.sleep(BET_RETRY_DELAY)
-                else:
-                    break
+                break  # 한 회차 1번만 — 재시도 안 함
         self._log("배팅 실행 중 오류: %s — 같은 회차 다음 폴링에 재시도됩니다." % (str(last_error)[:80] if last_error else "unknown"))
         with self._lock:
             self._pending_bet_rounds.pop(round_num, None)
