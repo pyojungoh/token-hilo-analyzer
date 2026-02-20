@@ -1293,7 +1293,7 @@ def _get_prediction_picks_best(results, predicted_round, ph):
     main_rate = _get_main_recent15_win_rate_weighted(ph)
     main_reverse_rate = _get_main_reverse_15_win_rate_weighted(ph)
     shape_rate = _get_shape_15_win_rate_weighted(ph)
-    pong_rate = _get_pong_15_win_rate_weighted(ph)
+    pong_rate = _get_pong_15_win_rate_weighted(ph, decay=1.25)  # 퐁당만 decay 강화 — 전환 시 더 빨리 사라짐
     main_pred = None
     try:
         filtered = [r for r in results if int(str(r.get('gameID') or '0'), 10) < predicted_round]
