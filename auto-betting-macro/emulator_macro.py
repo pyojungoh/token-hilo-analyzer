@@ -54,6 +54,8 @@ BET_DELAY_AFTER_AMOUNT_TAP = 0.01  # 금액 칸 탭 후 바로 입력
 BET_DELAY_AFTER_INPUT = 0.01  # 금액 입력 후 바로 BACK
 BET_DELAY_AFTER_BACK = 0.12  # 키보드 닫힌 뒤 바로 레드/블랙 탭
 BET_AMOUNT_CONFIRM_COUNT = 3  # 같은 (회차, 픽, 금액) 3회 연속 수신 시 즉시 배팅
+PUSH_PICK_PORT = 8765  # 중간페이지→매크로 푸시 수신 포트. 푸시 시 3회확인 생략·즉시 ADB
+PUSH_BET_DELAY = 0.15  # 푸시 수신 시 배팅 전 대기(초) — 배팅시간 확보용 최소화
 BET_DEL_COUNT = 8  # 기존 값 삭제용 DEL (8자리: 99999999까지. 탭 후 바로 입력 위해 최소화)
 BET_AMOUNT_DOUBLE_INPUT = False  # 금액 1회만 입력 (이중 입력 시 1000010000 중복 발생)
 BET_DELAY_AFTER_COLOR_TAP = 0.01
@@ -120,6 +122,53 @@ def normalize_analyzer_url(analyzer_url):
         return base.rstrip("/")
     except Exception:
         return s.split("/")[0] if s else ""
+
+
+def _run_push_server(port, on_pick_callback):
+    """중간페이지→매크로 푸시 수신. POST /push-pick {round, pick_color, suggested_amount} → 즉시 배팅용."""
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    pick_data = [None]  # mutable for closure
+
+    class PushHandler(BaseHTTPRequestHandler):
+        def do_OPTIONS(self):
+            self.send_response(200)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.end_headers()
+
+        def do_POST(self):
+            if self.path != "/push-pick":
+                self.send_response(404)
+                self.end_headers()
+                return
+            try:
+                content_len = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_len).decode("utf-8", errors="replace") if content_len else "{}"
+                data = json.loads(body) if body.strip() else {}
+                pick_data[0] = {
+                    "round": data.get("round"),
+                    "pick_color": data.get("pick_color") or data.get("pickColor"),
+                    "suggested_amount": data.get("suggested_amount") or data.get("suggestedAmount"),
+                }
+                if callable(on_pick_callback):
+                    on_pick_callback(pick_data[0])
+            except Exception:
+                pass
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+
+        def log_message(self, format, *args):
+            pass
+
+    try:
+        server = HTTPServer(("", port), PushHandler)
+        server.serve_forever()
+    except Exception:
+        pass
 
 
 def fetch_current_pick(analyzer_url, calculator_id=1, timeout=5):
@@ -329,6 +378,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
     connect_result_ready = pyqtSignal(object, object) if HAS_PYQT else None  # (pick, results) 서브스레드 → 메인 스레드
     test_tap_done = pyqtSignal(object, str, str) if HAS_PYQT else None  # (버튼, 복원텍스트, 로그메시지)
     poll_done = pyqtSignal(object, object) if HAS_PYQT else None  # (pick, results) 폴링 스레드 → 메인 스레드
+    push_pick_received = pyqtSignal(object) if HAS_PYQT else None  # 푸시 수신 시 (pick dict) → 즉시 배팅
     device_size_fetched = pyqtSignal(int, int) if HAS_PYQT else None  # (width, height) 기기 해상도 가져오기 완료
     adb_device_suggested = pyqtSignal(str) if HAS_PYQT else None  # 연결된 기기 ID로 ADB 칸 자동 채움
 
@@ -367,6 +417,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._bet_confirm_count = 0  # 연속 일치 횟수
         self._last_seen_round = None  # 지금까지 본 최고 회차 — 역행(전회차) 수신 시 거부
         self._display_best_amount = None  # (round_num, amount) — 같은 회차에서 본 최고 금액 (표시용, 5000 고정 방지)
+        self._round_prev = None  # 전회차 (배팅 완료)
+        self._round_current = None  # 지금회차 (배팅 대기/진행)
+        self._round_next = None  # 다음회차 (픽 수신 시 설정)
         # 좌표 찾기 (한곳에 통합)
         self._coord_listener = None
         self._coord_capture_key = None
@@ -388,6 +441,18 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 self.adb_device_suggested.connect(self._on_adb_device_suggested)
         if HAS_PYQT and self.poll_done is not None:
             self.poll_done.connect(self._on_poll_done)
+        if HAS_PYQT and self.push_pick_received is not None:
+            self.push_pick_received.connect(self._on_push_pick_received)
+        # 중간페이지→매크로 푸시 수신 서버 (localhost:8765)
+        def _push_cb(pick):
+            if HAS_PYQT and self.push_pick_received is not None:
+                self.push_pick_received.emit(pick)
+        try:
+            t = threading.Thread(target=_run_push_server, args=(PUSH_PICK_PORT, _push_cb), daemon=True)
+            t.start()
+            self._log("푸시 수신: localhost:%s (중간페이지→매크로 즉시 배팅)" % PUSH_PICK_PORT)
+        except Exception:
+            pass
 
     def _on_test_tap_done(self, btn, restore_text, message):
         """테스트 탭/연결확인 완료 시 버튼 복원 + 로그 (메인 스레드)."""
@@ -566,6 +631,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self.round_label = QLabel("회차: -")
         self.round_label.setStyleSheet("font-size: 14px; font-weight: bold;")
         disp_layout.addWidget(self.round_label)
+        self.rounds_track_label = QLabel("전/지금/다음: - / - / -")
+        self.rounds_track_label.setStyleSheet("color: #888; font-size: 11px;")
+        disp_layout.addWidget(self.rounds_track_label)
 
         self.amount_label = QLabel("금액: -")
         disp_layout.addWidget(self.amount_label)
@@ -1142,6 +1210,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             self._log("전회차 데이터 무시: %s회 (최고 %s회)" % (round_num, self._last_seen_round))
             return
         self._last_seen_round = max(self._last_seen_round or 0, round_num)
+        self._round_next = round_num  # 픽 수신 시 다음회차 갱신
 
         # 회차 N회 확인: 같은 (회차, 픽, 금액)이 N회 연속 수신될 때만 배팅 (금액 오탐 방지)
         key = (round_num, pick_color, amt_val)
@@ -1161,7 +1230,44 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._bet_confirm_count = 0
         self._pick_history.append((round_num, pick_color))
         self._coords = load_coords()
-        self._run_bet(round_num, pick_color, amt_val)
+        self._run_bet(round_num, pick_color, amt_val, from_push=False)
+
+    def _on_push_pick_received(self, pick):
+        """중간페이지 푸시 수신: 회차 검증 후 즉시 ADB 전송 (3회확인 생략, 배팅시간 확보)."""
+        if not isinstance(pick, dict):
+            return
+        round_num = pick.get("round")
+        raw_color = pick.get("pick_color")
+        pick_color = _normalize_pick_color(raw_color)
+        try:
+            amt = pick.get("suggested_amount")
+            amt_val = int(amt) if amt is not None else 0
+        except (TypeError, ValueError):
+            amt_val = 0
+        if round_num is None or pick_color is None:
+            return
+        try:
+            round_num = int(round_num)
+        except (TypeError, ValueError):
+            return
+        if not self._running:
+            return
+        if amt_val <= 0:
+            self._log("[푸시] 금액 없음 — %s회 %s 스킵" % (round_num, pick_color))
+            return
+        if not _validate_bet_amount(amt_val):
+            return
+        with self._lock:
+            if round_num in self._pending_bet_rounds:
+                return
+            if self._last_bet_round is not None and round_num <= self._last_bet_round:
+                return
+        # 회차 검증: 전회차/지금회차/다음회차 — 픽 회차가 다음회차(또는 지금회차)와 일치 시 배팅
+        self._round_next = round_num
+        self._last_seen_round = max(self._last_seen_round or 0, round_num)
+        self._log("[푸시] %s회 %s %s원 수신 — 회차 검증 후 즉시 ADB" % (round_num, pick_color, amt_val))
+        self._coords = load_coords()
+        self._run_bet(round_num, pick_color, amt_val, from_push=True)
 
     def _on_amount_confirm_timeout(self):
         """금액 2~3회 수집 타임아웃: 1회 분이라도 있으면 그 금액으로 즉시 배팅."""
@@ -1184,15 +1290,16 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._coords = load_coords()
         self._run_bet(round_num, pick_color, final_amt)
 
-    def _run_bet(self, round_num, pick_color, amount):
-        """배팅 실행. BET_DELAY_BEFORE_EXECUTE초 후 실제 ADB 전송 (픽 반영 대기)."""
+    def _run_bet(self, round_num, pick_color, amount, from_push=False):
+        """배팅 실행. from_push면 PUSH_BET_DELAY, 아니면 BET_DELAY_BEFORE_EXECUTE 후 ADB 전송."""
         # 즉시 pending 등록 — 같은 회차로 _run_bet이 연속 호출되어 두 번 배팅되는 것 방지
         with self._lock:
             if round_num in self._pending_bet_rounds:
                 return
             self._pending_bet_rounds[round_num] = {"pick_color": pick_color, "amount": amount}
-        delay_ms = int(BET_DELAY_BEFORE_EXECUTE * 1000)
-        self._log("배팅 예약: %s회 %s %s원 (%s초 후 실행)" % (round_num, pick_color, amount, BET_DELAY_BEFORE_EXECUTE))
+        delay_sec = PUSH_BET_DELAY if from_push else BET_DELAY_BEFORE_EXECUTE
+        delay_ms = int(delay_sec * 1000)
+        self._log("배팅 예약: %s회 %s %s원 (%s초 후 실행%s)" % (round_num, pick_color, amount, delay_sec, " [푸시]" if from_push else ""))
         def _execute():
             if not self._running:
                 return
@@ -1204,6 +1311,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             ok = self._do_bet(round_num, pick_color, amount)
             if ok:
                 self._last_bet_round = round_num
+                self._round_prev = self._round_current
+                self._round_current = round_num
+                self._round_next = round_num + 1
                 if HAS_PYQT:
                     QTimer.singleShot(80, self._poll)
                     QTimer.singleShot(300, self._poll)
@@ -1327,6 +1437,10 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         icon_ch, _ = get_round_icon(round_num)
         round_str = f"{round_num}회 {icon_ch}" if round_num is not None else "-"
         self.round_label.setText(f"회차: {round_str}")
+        pr = self._round_prev
+        cr = self._round_current
+        nr = self._round_next
+        self.rounds_track_label.setText("전/지금/다음: %s / %s / %s" % (pr if pr is not None else "-", cr if cr is not None else "-", nr if nr is not None else "-"))
         self.amount_label.setText(f"금액: {amount_str} (계산기에서 전달)")
 
         # 정/꺽 + 색깔 카드 (RED=정·빨강, BLACK=꺽·검정)

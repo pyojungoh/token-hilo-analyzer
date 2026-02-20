@@ -45,6 +45,8 @@
         <h2>분석기 현재 픽 (참고)</h2>
         <div id="analyzer-pick" class="analyzer-pick">— 로딩 중</div>
         <div id="analyzer-meta" style="font-size:0.85em;color:#888;">—</div>
+        <label style="display:block;margin-top:8px;font-size:0.85em;color:#888;">매크로 푸시 주소 (빠른 배팅용, 에뮬: http://10.0.2.2:8765)</label>
+        <input type="text" id="push-url" placeholder="http://10.0.2.2:8765 또는 비움" style="width:100%;max-width:280px;padding:8px;margin-top:4px;background:#0d0d0d;border:1px solid #37474f;border-radius:4px;color:#fff;font-size:0.9em;" />
     </div>
 
     <div class="section">
@@ -111,8 +113,9 @@
             var m = /calculator=([123])/.exec(location.search);
             if (m) calcId = parseInt(m[1], 10);
         } catch (e) {}
+        var lastPushedKey = null;
         function pollAnalyzerPick() {
-            fetch('/api/current-pick?calculator=' + calcId, { cache: 'no-cache' }).then(function(r) { return r.json(); }).then(function(data) {
+            fetch('/api/current-pick-relay?calculator=' + calcId, { cache: 'no-cache' }).then(function(r) { return r.json(); }).then(function(data) {
                 var color = data.pick_color || data.pickColor;
                 var round = data.round;
                 var amt = data.suggested_amount != null ? data.suggested_amount : (data.suggestedAmount != null ? data.suggestedAmount : null);
@@ -123,9 +126,22 @@
                     analyzerPick.innerHTML = '<span class="color ' + (isRed ? 'red' : 'black') + '">' + (isRed ? 'RED' : 'BLACK') + '</span>' +
                         (amt != null && amt > 0 ? '<span class="amount">' + Number(amt).toLocaleString() + '원</span>' : '');
                     analyzerMeta.textContent = '계산기 ' + calcId + ' | 회차: ' + (round != null ? round : '—') + (run === false ? ' | 정지' : '');
+                    var pushUrl = (document.getElementById('push-url') || {}).value;
+                    if (pushUrl && round != null && color && amt != null && amt > 0 && run !== false) {
+                        var key = round + '|' + color + '|' + amt;
+                        if (key !== lastPushedKey) {
+                            lastPushedKey = key;
+                            fetch((pushUrl.replace(/\/$/, '')) + '/push-pick', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ round: round, pick_color: color, suggested_amount: amt })
+                            }).catch(function() {});
+                        }
+                    } else if (!pushUrl) lastPushedKey = null;
                 } else {
                     analyzerPick.textContent = '— 픽 없음';
                     analyzerMeta.textContent = run === false ? '계산기 정지' : '대기 중';
+                    lastPushedKey = null;
                 }
             }).catch(function() {
                 analyzerPick.textContent = '— API 연결 실패 (같은 도메인에서 열어야 함)';
@@ -133,7 +149,7 @@
             });
         }
         pollAnalyzerPick();
-        setInterval(pollAnalyzerPick, 2000);
+        setInterval(pollAnalyzerPick, 500);
 })();
     </script>
 </body>
