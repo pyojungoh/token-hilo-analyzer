@@ -11521,7 +11521,8 @@ def api_current_pick_relay():
             calculator_id = int(calculator_id) if calculator_id in ('1', '2', '3') else 1
         except (TypeError, ValueError):
             calculator_id = 1
-        # DB(클라이언트 POST)와 relay 캐시(스케줄러) 둘 다 있으면 회차가 더 높은 쪽 우선 — 전회차/마틴 금액 오탐 방지
+        # 계산기 상단 배팅중(회차·픽·금액) = relay 캐시 단일 소스. 스케줄러가 0.15초마다 서버 calc 금액으로 갱신.
+        # DB(클라이언트 POST)는 캐시가 비었을 때만 폴백 — DB 회차가 높아도 금액이 어긋날 수 있어 캐시 우선.
         db_out = None
         if bet_int and DB_AVAILABLE and DATABASE_URL:
             conn = get_db_connection(statement_timeout_sec=3)
@@ -11530,7 +11531,6 @@ def api_current_pick_relay():
                     ensure_current_pick_table(conn)
                     conn.commit()
                     db_out = bet_int.get_current_pick(conn, calculator_id=calculator_id)
-                    # relay 캐시는 DB로 덮어쓰지 않음 — 스케줄러가 서버 calc 금액으로 채운 캐시가 단일 소스
                 finally:
                     try:
                         conn.close()
@@ -11543,32 +11543,15 @@ def api_current_pick_relay():
             for k in ('round', 'pick_color', 'probability', 'suggested_amount', 'running'):
                 if k in cached:
                     cached_out[k] = cached[k]
-        # 회차·금액 우선: 둘 다 있으면 (1) running=False 우선(정지/리셋 상태), (2) 더 높은 회차 우선, (3) 회차 같으면 캐시 우선
-        def _round_val(o):
-            r = o.get('round') if o else None
-            try:
-                return int(r) if r is not None else 0
-            except (TypeError, ValueError):
-                return 0
-        if db_out and cached_out:
-            db_stopped = db_out.get('running') is False
-            cache_stopped = cached_out.get('running') is False
-            if db_stopped:
-                out = db_out  # DB가 중지 상태면 무조건 DB 우선 — 화면만 비워지고 계속 돌아가는 버그 방지
-            elif cache_stopped:
-                out = cached_out
-            else:
-                rd, rc = _round_val(db_out), _round_val(cached_out)
-                if rc > rd:
-                    out = cached_out
-                elif rc < rd:
-                    out = db_out
-                else:
-                    out = cached_out  # 회차 같으면 캐시 우선 (서버 calc 금액이 더 정확)
-        elif db_out:
-            out = db_out
+        # relay 캐시(계산기 상단 배팅중) 우선 — 회차·픽·금액이 모두 동일 출처에서 옴
+        if cached_out and cached_out.get('round') is not None:
+            out = cached_out  # 캐시에 회차가 있으면 무조건 캐시 사용 (배팅금액 매칭 정확)
+        elif cached_out and cached_out.get('running') is False:
+            out = cached_out  # 정지 상태도 캐시 우선
         elif cached_out:
             out = cached_out
+        elif db_out:
+            out = db_out
         else:
             out = empty_pick
         if out and out.get('running') is False:

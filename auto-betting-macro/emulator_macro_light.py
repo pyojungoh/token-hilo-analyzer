@@ -237,6 +237,7 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
         self._coords = {}
         self._running = False
         self._last_bet_round = None
+        self._bet_rounds_done = set()  # 배팅 완료 회차 — 마틴 끝 후 동일 금액 재송출 방지
         self._pending_bet_rounds = {}  # round_num -> {} (두 번 배팅 방지)
         self._bet_confirm_last = None  # 회차 3회 확인용
         self._bet_confirm_count = 0
@@ -412,6 +413,7 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
             return
         self._running = True
         self._last_bet_round = None
+        self._bet_rounds_done.clear()  # 배팅 완료 회차 초기화
         self._pending_bet_rounds = {}  # 시작 시 초기화
         self._bet_confirm_last = None  # 회차 3회 확인 상태 초기화
         self._bet_confirm_count = 0
@@ -481,6 +483,8 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
             return
         if round_num in self._pending_bet_rounds:
             return
+        if round_num in self._bet_rounds_done:
+            return  # 이미 배팅 완료 — 마틴 끝 후 동일 금액 재송출 방지
 
         # 회차 역행 방지: 이미 더 높은 회차를 본 적 있으면 전회차 데이터 거부
         if self._last_seen_round is not None and round_num < self._last_seen_round:
@@ -504,6 +508,9 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
         def _execute():
             if not self._running:
                 return
+            if round_num in self._bet_rounds_done:
+                self._pending_bet_rounds.pop(round_num, None)
+                return  # 이미 배팅 완료 — 마틴 끝 후 동일 금액 재송출 방지
             if self._last_bet_round is not None and round_num <= self._last_bet_round:
                 self._pending_bet_rounds.pop(round_num, None)
                 return
@@ -511,6 +518,10 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
             ok = self._do_bet(round_num, pick_color, amt_val)
             if ok:
                 self._last_bet_round = round_num
+                self._bet_rounds_done.add(round_num)
+                if len(self._bet_rounds_done) > 50:
+                    for r in sorted(self._bet_rounds_done)[:-50]:
+                        self._bet_rounds_done.discard(r)
                 QTimer.singleShot(60, self._poll)
             else:
                 self._pending_bet_rounds.pop(round_num, None)
@@ -522,6 +533,8 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
 
     def _do_bet(self, round_num, pick_color, amount):
         """한 회차당 1번만 배팅. 회차/픽/금액은 서버에서 받은 값만 사용."""
+        if round_num in self._bet_rounds_done:
+            return False  # 이미 배팅 완료 — 중복 방지
         if self._last_bet_round is not None and round_num <= self._last_bet_round:
             return False  # 이미 배팅한 회차 — 중복 방지
         if not _validate_bet_amount(amount):

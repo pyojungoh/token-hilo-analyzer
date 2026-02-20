@@ -397,6 +397,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._connected = False  # 연결 버튼으로 연결됨 → 계속 폴링해 픽/회차 갱신
         self._last_round_when_started = None  # 미사용 (바로 시작 시 현재 회차부터 배팅)
         self._last_bet_round = None  # 이미 배팅한 회차 (중복 방지)
+        self._bet_rounds_done = set()  # 배팅 완료 회차 집합 — 마틴 끝 후 동일 금액 재송출 방지 (최대 50개 유지)
         self._pending_bet_rounds = {}  # round_num -> { pick_color, amount } (결과 대기 → 승/패/조커 로그)
         self._pick_history = deque(maxlen=5)  # 최근 5회 (round_num, pick_color) — 회차·픽 안정 시에만 배팅
         self._pick_data = {}
@@ -1094,6 +1095,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._running = True
         self._last_round_when_started = None
         self._last_bet_round = None
+        self._bet_rounds_done.clear()  # 배팅 완료 회차 초기화
         self._pick_history.clear()  # 전회차 히스토리 초기화 → 2회 연속 일치 시에만 배팅
         self._bet_confirm_last = None  # 회차 N회 확인 상태 초기화
         self._bet_confirm_count = 0
@@ -1202,6 +1204,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                     self._pending_bet_rounds.pop(old_r, None)
             if round_num in self._pending_bet_rounds:
                 return
+            if round_num in self._bet_rounds_done:
+                return  # 이미 배팅 완료한 회차 — 마틴 끝 후 동일 금액 재송출 방지
         if self._last_bet_round is not None and round_num <= self._last_bet_round:
             return
 
@@ -1260,6 +1264,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         with self._lock:
             if round_num in self._pending_bet_rounds:
                 return
+            if round_num in self._bet_rounds_done:
+                return  # 이미 배팅 완료한 회차 — 마틴 끝 후 동일 금액 재송출 방지
             if self._last_bet_round is not None and round_num <= self._last_bet_round:
                 return
         # 회차 검증: 전회차/지금회차/다음회차 — 픽 회차가 다음회차(또는 지금회차)와 일치 시 배팅
@@ -1284,7 +1290,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._amount_confirm_pick = None
         self._amount_confirm_amounts = []
         with self._lock:
-            if round_num in self._pending_bet_rounds or (self._last_bet_round is not None and round_num <= self._last_bet_round):
+            if round_num in self._pending_bet_rounds or round_num in self._bet_rounds_done:
+                return
+            if self._last_bet_round is not None and round_num <= self._last_bet_round:
                 return
         self._log("픽 수신: %s회 %s %s원 (확인 1회분으로 즉시 배팅)" % (round_num, pick_color, final_amt))
         self._coords = load_coords()
@@ -1303,6 +1311,10 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         def _execute():
             if not self._running:
                 return
+            with self._lock:
+                if round_num in self._bet_rounds_done:
+                    self._pending_bet_rounds.pop(round_num, None)
+                    return  # 이미 배팅 완료 — 마틴 끝 후 동일 금액 재송출 방지
             if self._last_bet_round is not None and round_num <= self._last_bet_round:
                 with self._lock:
                     self._pending_bet_rounds.pop(round_num, None)
@@ -1311,6 +1323,12 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             ok = self._do_bet(round_num, pick_color, amount)
             if ok:
                 self._last_bet_round = round_num
+                with self._lock:
+                    self._bet_rounds_done.add(round_num)
+                    # 최대 50개 유지 (오래된 것 제거)
+                    if len(self._bet_rounds_done) > 50:
+                        for r in sorted(self._bet_rounds_done)[:-50]:
+                            self._bet_rounds_done.discard(r)
                 self._round_prev = self._round_current
                 self._round_current = round_num
                 self._round_next = round_num + 1
@@ -1326,6 +1344,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         """금액 입력 → RED/BLACK 픽대로 레드 또는 블랙 탭 → 마지막에 정정(선택). 성공 시 True, 실패(스킵) 시 False.
         한 회차당 1번만 배팅. 회차/픽/금액은 서버에서 받은 값만 사용 (매크로는 계산 안 함)."""
         with self._lock:
+            if round_num in self._bet_rounds_done:
+                self._pending_bet_rounds.pop(round_num, None)
+                return False  # 이미 배팅 완료한 회차 — 중복 방지
             if self._last_bet_round is not None and round_num <= self._last_bet_round:
                 self._pending_bet_rounds.pop(round_num, None)
                 return False  # 이미 배팅한 회차 — 중복 방지
