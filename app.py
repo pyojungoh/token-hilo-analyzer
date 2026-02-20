@@ -6529,12 +6529,13 @@ RESULTS_HTML = '''
                             if (r) r.textContent = rate != null ? '15회 승률: ' + rate + '%' : '15회 승률: —';
                             if (val && color) {
                                 card.style.borderColor = color === 'RED' ? '#b71c1c' : '#212121';
-                                card.style.background = color === 'RED' ? 'linear-gradient(135deg,#2e1a1a 0%,#1a1a2e 100%)' : 'linear-gradient(135deg,#1a1a2e 0%,#0d0d0d 100%)';
+                                card.style.background = color === 'RED' ? 'linear-gradient(135deg,#8b1a1a 0%,#b71c1c 50%,#6b1515 100%)' : 'linear-gradient(135deg,#1a1a1a 0%,#111 50%,#0d0d0d 100%)';
+                                if (v) v.style.color = '#fff';
                             } else {
                                 card.style.borderColor = '#37474f';
                                 card.style.background = 'linear-gradient(135deg,#1e2a3e 0%,#1a1a2e 100%)';
+                                if (v) v.style.color = val === '정' ? '#e57373' : val === '꺽' ? '#90a4ae' : '#fff';
                             }
-                            if (v) v.style.color = val === '정' ? '#e57373' : val === '꺽' ? '#90a4ae' : '#fff';
                         }
                         var mainCard = cards.querySelector('.pred-pick-card[data-type="main"]');
                         var mainReverseCard = cards.querySelector('.pred-pick-card[data-type="main_reverse"]');
