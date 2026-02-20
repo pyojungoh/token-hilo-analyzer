@@ -1811,6 +1811,9 @@ def _apply_results_to_calcs(results):
                 if not c or not isinstance(c, dict):
                     continue
                 is_running = c.get('running')
+                # 리셋(running=false, history=[]): 회차 반영 안 함 — 표가 다시 살아나는 버그 방지
+                if not is_running and len(c.get('history') or []) == 0:
+                    continue
                 # 정지(running=false): 배팅만 멈춤. 픽/승패는 계속 기록(no_bet). 푸시(to_push)는 안 함
                 # 연패정지: 대기/일시정지 상태면 패턴 확인. 준비되면 first_bet_round·betting으로 전환 (실행 중일 때만)
                 if is_running and c.get('streak_wait_enabled'):
@@ -4021,6 +4024,7 @@ def cleanup_old_results(hours=5):
 game_data_cache = None
 streaks_cache = None
 results_cache = None
+prediction_cache = None  # 예측픽만. DB 전용. 외부 fetch 대기 없이 빠르게 표시
 last_update_time = 0
 CACHE_TTL = 1000  # 결과 캐시 유효 시간 (ms). 1초 동안 동일 캐시 반환, 스케줄러가 1초마다 선제 갱신
 
@@ -4324,8 +4328,12 @@ if SCHEDULER_AVAILABLE:
     _scheduler.add_job(_scheduler_trim_shape_tables, 'interval', seconds=300, id='trim_shape', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
+        try:
+            _scheduler.add_job(_update_prediction_cache_from_db, 'interval', seconds=0.2, id='prediction_cache', max_instances=1, replace_existing=True)
+        except Exception:
+            pass
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (0.15초마다, refresh 블로킹)")
+        print("[✅] 결과 수집 스케줄러 시작 (0.15초마다, refresh 블로킹, prediction_cache 0.2초)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:
@@ -10031,9 +10039,9 @@ RESULTS_HTML = '''
             if (timerUpdateIntervalId) clearInterval(timerUpdateIntervalId);
             if (predictionPollIntervalId) clearInterval(predictionPollIntervalId);
             
-            // 탭 가시성에 따라 간격 조정. 예측픽 빨리 나오도록 결과 폴링 단축 (280→150ms)
-            var resultsInterval = isTabVisible ? 150 : 1200;
-            var calcStatusInterval = isTabVisible ? 280 : 1200;  // 픽 서버 전달(매크로용)
+            // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·예측픽 먹통 발생
+            var resultsInterval = isTabVisible ? 280 : 1200;
+            var calcStatusInterval = isTabVisible ? 350 : 1200;  // 픽 서버 전달(매크로용)
             var calcStateInterval = isTabVisible ? 2200 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
             var timerInterval = isTabVisible ? 200 : 1000;
             
@@ -10043,8 +10051,8 @@ RESULTS_HTML = '''
                 const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
                 const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
                 const criticalPhase = r <= 3 || r >= 8;
-                // 백그라운드일 때는 최소 1초 간격, 보일 때는 더 빠른 간격 (예측픽 빨리 나오도록 단축)
-                const baseInterval = allResults.length === 0 ? 150 : (anyRunning ? 80 : (criticalPhase ? 120 : 150));
+                // 백그라운드일 때는 최소 1초 간격. 너무 짧으면 서버 부하로 예측픽 안 나옴
+                const baseInterval = allResults.length === 0 ? 280 : (anyRunning ? 150 : (criticalPhase ? 180 : 280));
                 const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
                 if (Date.now() - lastResultsUpdate > interval) {
                     loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
@@ -10071,7 +10079,7 @@ RESULTS_HTML = '''
             // 백그라운드일 때는 1초 간격으로 조정 (브라우저 제한)
             timerUpdateIntervalId = setInterval(updateTimer, timerInterval);
             
-            // 예측픽만 경량 폴링: 캐시 기반으로 80ms마다 받아서 카드만 먼저 갱신 (예측픽이 늦게 나오는 현상 완화)
+            // 예측픽만 경량 폴링: 캐시 기반. 80ms는 서버 부하로 먹통 유발 → 150ms로 완화
             if (isTabVisible) {
                 predictionPollIntervalId = setInterval(function() {
                     fetch('/api/current-prediction?t=' + Date.now(), { cache: 'no-cache' }).then(function(r) { return r.json(); }).then(function(data) {
@@ -10085,7 +10093,7 @@ RESULTS_HTML = '''
                         lastWarningU35 = !!(sp.warning_u35);
                         refreshPredictionPickOnly();
                     }).catch(function() {});
-                }, 80);
+                }, 150);
             }
         }
         
@@ -10671,6 +10679,20 @@ def _build_results_payload():
 _results_refresh_lock = threading.Lock()
 _results_refreshing = False
 
+def _update_prediction_cache_from_db():
+    """DB만 사용해 예측픽 캐시 갱신. load_results_data 호출 금지. 외부 fetch 대기 없이 예측픽 빠르게 표시."""
+    global prediction_cache
+    try:
+        if not DB_AVAILABLE or not DATABASE_URL:
+            return
+        payload = _build_results_payload_db_only(hours=24, backfill=False)
+        if payload and payload.get('server_prediction'):
+            prediction_cache = payload['server_prediction']
+        else:
+            prediction_cache = {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
+    except Exception as e:
+        print(f"[API] prediction_cache 갱신 오류: {str(e)[:100]}")
+
 def _refresh_results_background():
     """백그라운드에서 캐시 갱신. 서버가 항상 최신 결과를 송출하려면 유효한 페이로드가 오면 캐시를 덮어쓴다."""
     global results_cache, last_update_time, _results_refreshing
@@ -10771,11 +10793,17 @@ def get_results():
 
 @app.route('/api/current-prediction', methods=['GET'])
 def get_current_prediction():
-    """예측픽만 경량 반환(캐시 기반). 화면에서 예측픽을 빨리 표시하기 위해 짧은 간격 폴링용."""
-    global results_cache
+    """예측픽만 경량 반환(캐시 기반). prediction_cache 우선 → results_cache. 화면에서 예측픽을 빨리 표시."""
+    global results_cache, prediction_cache
     sp = None
-    if results_cache and results_cache.get('server_prediction'):
+    if prediction_cache is not None:
+        sp = prediction_cache
+    elif results_cache and results_cache.get('server_prediction'):
         sp = results_cache['server_prediction']
+    else:
+        # 첫 요청 시 캐시 비어 있으면 DB에서 1회 갱신 (페이지 멈춤·예측픽 안 나오는 현상 방지)
+        _update_prediction_cache_from_db()
+        sp = prediction_cache if prediction_cache is not None else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
     return jsonify({'server_prediction': sp})
 
 
