@@ -17,7 +17,7 @@ alwaysApply: false
 
 - **원인**: 웹 POST와 서버 스케줄러가 relay 캐시를 번갈아 덮어써서, 타이밍·히스토리 차이로 마틴 단계가 달라짐 (5000 vs 10000)
 - **해결**: relay 캐시를 **서버 단일 소스**로 통일
-  - 스케줄러: 0.15초마다 실행 중인 계산기마다 `_server_calc_effective_pick_and_amount` → `_update_current_pick_relay_cache` 호출
+  - 스케줄러: 0.2초마다 실행 중인 계산기마다 `_server_calc_effective_pick_and_amount` → `_update_current_pick_relay_cache` 호출
   - 웹 POST: relay 캐시 갱신 안 함. DB(current_pick)만 저장.
   - **매크로 GET**: relay 캐시에 회차가 있으면 **무조건 캐시 사용** (계산기 상단 배팅중과 동일 출처). DB는 캐시 비었을 때만 폴백.
 

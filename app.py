@@ -4265,7 +4265,7 @@ def load_results_data(base_url=None):
 
 
 def _update_relay_cache_for_running_calcs():
-    """실행 중인 계산기 relay 캐시 갱신. 결과 유무와 관계없이 0.15초마다 호출 → 전회차 금액 송출·20000 고정 방지."""
+    """실행 중인 계산기 relay 캐시 갱신. 결과 유무와 관계없이 0.2초마다 호출 → 전회차 금액 송출·20000 고정 방지."""
     t0 = time.time()
     if not DB_AVAILABLE or not DATABASE_URL:
         return
@@ -4330,8 +4330,8 @@ def _scheduler_trim_shape_tables():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    # 0.15초마다 시도. refresh 블로킹(~2.5초)+apply(~1초)로 run당 ~4초, max_instances=1로 겹침 없음
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.15, id='fetch_results', max_instances=1)
+    # 0.2초마다 시도. refresh 블로킹(~2.5초)+apply(~1초)로 run당 ~4초. 0.15초는 부하 과다 → 0.2초로 완화
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.2, id='fetch_results', max_instances=1)
     _scheduler.add_job(_scheduler_trim_shape_tables, 'interval', seconds=300, id='trim_shape', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
@@ -4340,7 +4340,7 @@ if SCHEDULER_AVAILABLE:
         except Exception:
             pass
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (0.15초마다, refresh 블로킹, prediction_cache 0.2초)")
+        print("[✅] 결과 수집 스케줄러 시작 (0.2초마다, refresh 블로킹, prediction_cache 0.2초)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:
@@ -10083,10 +10083,11 @@ RESULTS_HTML = '''
             if (predictionPollIntervalId) clearInterval(predictionPollIntervalId);
             
             // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·예측픽 먹통 발생
-            var resultsInterval = isTabVisible ? 280 : 1200;
-            var calcStatusInterval = isTabVisible ? 350 : 1200;  // 픽 서버 전달(매크로용)
-            var calcStateInterval = isTabVisible ? 2200 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
-            var timerInterval = isTabVisible ? 200 : 1000;
+            // 중간페이지 사용 시 매크로는 푸시로 픽 수신 → relay 캐시(스케줄러)가 갱신하면 됨. 분석기 페이지 폴링 완화.
+            var resultsInterval = isTabVisible ? 320 : 1200;
+            var calcStatusInterval = isTabVisible ? 550 : 1200;  // 픽 서버 전달 — 중간페이지 있으면 매크로는 푸시로 받으므로 550ms로 완화
+            var calcStateInterval = isTabVisible ? 2500 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
+            var timerInterval = isTabVisible ? 250 : 1000;
             
             // 결과 폴링: 분당 4게임(15초 사이클) 기준. 계산기 실행 중이면 빠르게 해서 회차 놓침 방지
             // 백그라운드일 때는 브라우저 제한(최소 1초)을 고려해 간격 조정
@@ -10095,7 +10096,7 @@ RESULTS_HTML = '''
                 const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
                 const criticalPhase = r <= 3 || r >= 8;
                 // 백그라운드일 때는 최소 1초 간격. 너무 짧으면 서버 부하로 예측픽 안 나옴
-                const baseInterval = allResults.length === 0 ? 280 : (anyRunning ? 150 : (criticalPhase ? 180 : 280));
+                const baseInterval = allResults.length === 0 ? 320 : (anyRunning ? 220 : (criticalPhase ? 250 : 320));
                 const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
                 if (Date.now() - lastResultsUpdate > interval) {
                     loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
@@ -10122,7 +10123,7 @@ RESULTS_HTML = '''
             // 백그라운드일 때는 1초 간격으로 조정 (브라우저 제한)
             timerUpdateIntervalId = setInterval(updateTimer, timerInterval);
             
-            // 예측픽만 경량 폴링: 캐시 기반. 80ms는 서버 부하로 먹통 유발 → 150ms로 완화
+            // 예측픽만 경량 폴링: 캐시 기반. 150ms는 서버 부하로 느려짐 → 280ms로 완화
             if (isTabVisible) {
                 predictionPollIntervalId = setInterval(function() {
                     fetch('/api/current-prediction?t=' + Date.now(), { cache: 'no-cache' }).then(function(r) { return r.json(); }).then(function(data) {
@@ -10138,7 +10139,7 @@ RESULTS_HTML = '''
                         lastWarningU35 = !!(sp.warning_u35);
                         refreshPredictionPickOnly();
                     }).catch(function() {});
-                }, 150);
+                }, 280);
             }
         }
         
