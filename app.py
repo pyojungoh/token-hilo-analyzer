@@ -11584,6 +11584,102 @@ def api_current_pick_relay():
 BETTING_SITE_URL = os.getenv('BETTING_SITE_URL', 'https://nhs900.com')
 
 
+@app.route('/api/betting-helper-data', methods=['GET'])
+def api_betting_helper_data():
+    """배팅 연동 페이지용: 현재 픽 + 최근 결과(회차·승/패/조커)."""
+    try:
+        pick = {'pick_color': None, 'round': None, 'probability': None, 'suggested_amount': None, 'updated_at': None}
+        if bet_int and DB_AVAILABLE and DATABASE_URL:
+            conn = get_db_connection(statement_timeout_sec=5)
+            if conn:
+                try:
+                    out = bet_int.get_current_pick(conn, calculator_id=1)
+                    if out:
+                        pick = out
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+        ph = get_prediction_history(limit=30)
+        recent_results = []
+        for h in reversed(ph or []):
+            if not h or not isinstance(h, dict):
+                continue
+            rnd = h.get('round')
+            pred = h.get('predicted') or ''
+            act = str(h.get('actual') or '').strip()
+            if rnd is None or act not in ('정', '꺽', 'joker', '조커'):
+                continue
+            if act in ('joker', '조커'):
+                result = '조커'
+            elif pred in ('정', '꺽') and act in ('정', '꺽'):
+                result = '승' if pred == act else '패'
+            else:
+                result = '조커' if act in ('joker', '조커') else ('승' if pred == act else '패')
+            recent_results.append({'round': rnd, 'actual': act, 'result': result})
+            if len(recent_results) >= 15:
+                break
+        return jsonify({
+            'current_pick': pick,
+            'recent_results': recent_results
+        }), 200
+    except Exception as e:
+        print(f"[API] betting-helper-data 오류: {str(e)[:150]}")
+        return jsonify({'current_pick': {}, 'recent_results': []}), 200
+
+
+@app.route('/api/betting-history-export', methods=['GET'])
+def api_betting_history_export():
+    """배팅 이력 CSV 다운로드 (회차·예측·실제·승패·배팅금액). Excel에서 열어 금액 검증용."""
+    try:
+        import csv
+        from io import StringIO
+        from flask import Response
+        ph = get_prediction_history(limit=500)
+        calc_by_round = {}
+        state = get_calc_state('default')
+        if state and isinstance(state.get('1'), dict):
+            hist = state.get('1', {}).get('history') or []
+            for h in hist:
+                if isinstance(h, dict) and h.get('round') is not None:
+                    rn = int(h['round'])
+                    amt = h.get('betAmount')
+                    if amt is not None:
+                        calc_by_round[rn] = int(amt)
+                    elif h.get('no_bet'):
+                        calc_by_round[rn] = 0
+        rows = [['회차', '예측픽', '실제결과', '결과(승/패/조커)', '배팅금액']]
+        for h in (ph or []):
+            if not h or not isinstance(h, dict):
+                continue
+            rnd = h.get('round')
+            pred = h.get('predicted') or ''
+            act = str(h.get('actual') or '').strip()
+            if rnd is None:
+                continue
+            if act in ('joker', '조커'):
+                result = '조커'
+            elif pred in ('정', '꺽') and act in ('정', '꺽'):
+                result = '승' if pred == act else '패'
+            else:
+                result = '조커' if act in ('joker', '조커') else ('승' if pred == act else '패') if act else '—'
+            amt = calc_by_round.get(rnd, '')
+            if amt == '':
+                amt = ''
+            rows.append([rnd, pred, act, result, amt])
+        si = StringIO()
+        w = csv.writer(si)
+        for r in rows:
+            w.writerow(r)
+        resp = Response(si.getvalue(), mimetype='text/csv; charset=utf-8-sig')
+        resp.headers['Content-Disposition'] = 'attachment; filename=betting_history.csv'
+        return resp
+    except Exception as e:
+        print(f"[API] betting-history-export 오류: {str(e)[:150]}")
+        from flask import Response
+        return Response('오류 발생', status=500, mimetype='text/plain')
+
 
 @app.route('/betting-helper', methods=['GET'])
 def betting_helper_page():

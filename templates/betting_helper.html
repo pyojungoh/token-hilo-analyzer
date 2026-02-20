@@ -73,6 +73,7 @@
                 <h2>현재 예측 픽</h2>
                 <div id="pick-display" class="pick hold">—</div>
                 <div id="meta-display" class="meta">회차: — | 확률: —</div>
+                <div id="recent-results-display" class="meta" style="margin-top:6px;">최근 결과: —</div>
                 <div id="status-display" class="meta">연결 대기 중...</div>
             </div>
             <div class="card">
@@ -91,6 +92,7 @@
                 <div id="diagnostic-msg" style="font-size:0.85em;color:#aaa;">확인 중...</div>
                 <button type="button" id="btn-diagnostic" class="btn btn-amount" style="margin-top:6px;">진단 다시 확인</button>
                 <div style="margin-top:10px;padding-top:10px;border-top:1px solid #333;">
+                    <a id="btn-excel-download" href="/api/betting-history-export" class="btn btn-amount" style="display:inline-block;text-decoration:none;color:inherit;margin-bottom:8px;">엑셀 다운로드 (배팅이력)</a>
                     <button type="button" id="btn-save-test" class="btn btn-amount">저장 테스트 (RED 99999회차)</button>
                     <div id="save-test-result" style="margin-top:6px;font-size:0.85em;color:#aaa;"></div>
                 </div>
@@ -128,15 +130,17 @@
             });
             function fetchPick() {
                 var cardEl = document.getElementById("pick-card");
-                fetch("/api/current-pick").then(function(r) { return r.json(); }).then(function(data) {
+                fetch("/api/betting-helper-data").then(function(r) { return r.json(); }).then(function(data) {
+                    var pick = data.current_pick || {};
                     var pickEl = document.getElementById("pick-display");
                     var metaEl = document.getElementById("meta-display");
+                    var recentEl = document.getElementById("recent-results-display");
                     var statusEl = document.getElementById("status-display");
-                    if (data.pick_color === "RED") {
+                    if (pick.pick_color === "RED") {
                         pickEl.textContent = "RED (빨강)";
                         pickEl.className = "pick red";
                         cardEl.classList.add("highlight");
-                    } else if (data.pick_color === "BLACK") {
+                    } else if (pick.pick_color === "BLACK") {
                         pickEl.textContent = "BLACK (검정)";
                         pickEl.className = "pick black";
                         cardEl.classList.add("highlight");
@@ -145,8 +149,17 @@
                         pickEl.className = "pick hold";
                         cardEl.classList.remove("highlight");
                     }
-                    metaEl.textContent = "회차: " + (data.round != null ? data.round : "—") + " | 확률: " + (data.probability != null ? data.probability.toFixed(1) + "%" : "—");
-                    statusEl.textContent = "갱신: " + (data.updated_at || "—");
+                    metaEl.textContent = "회차: " + (pick.round != null ? pick.round : "—") + " | 확률: " + (pick.probability != null ? pick.probability.toFixed(1) + "%" : "—");
+                    var results = data.recent_results || [];
+                    if (results.length > 0) {
+                        var parts = results.slice(0, 5).map(function(r) {
+                            return r.round + "회 " + r.result;
+                        });
+                        recentEl.textContent = "최근 결과: " + parts.join(", ");
+                    } else {
+                        recentEl.textContent = "최근 결과: —";
+                    }
+                    statusEl.textContent = "갱신: " + (pick.updated_at || "—");
                 }).catch(function() {});
             }
             function runDiagnostic() {
