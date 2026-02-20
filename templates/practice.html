@@ -45,6 +45,8 @@
         <h2>분석기 현재 픽 (참고)</h2>
         <div id="analyzer-pick" class="analyzer-pick">— 로딩 중</div>
         <div id="analyzer-meta" style="font-size:0.85em;color:#888;">—</div>
+        <div id="recent-results" style="font-size:0.85em;color:#888;margin-top:6px;">최근 결과: —</div>
+        <a href="/api/betting-history-export" style="display:inline-block;margin-top:8px;padding:6px 12px;background:#0f3460;color:#64b5f6;border:1px solid #64b5f6;border-radius:4px;text-decoration:none;font-size:0.85em;">엑셀 다운로드 (배팅이력)</a>
         <label style="display:block;margin-top:8px;font-size:0.85em;color:#888;">매크로 푸시 주소 (빠른 배팅용, 에뮬: http://10.0.2.2:8765)</label>
         <input type="text" id="push-url" placeholder="http://10.0.2.2:8765 또는 비움" style="width:100%;max-width:280px;padding:8px;margin-top:4px;background:#0d0d0d;border:1px solid #37474f;border-radius:4px;color:#fff;font-size:0.9em;" />
     </div>
@@ -74,6 +76,7 @@
         var betAmount = document.getElementById('bet-amount');
         var analyzerPick = document.getElementById('analyzer-pick');
         var analyzerMeta = document.getElementById('analyzer-meta');
+        var recentResultsEl = document.getElementById('recent-results');
 
         function nowStr() {
             var d = new Date();
@@ -150,6 +153,19 @@
         }
         pollAnalyzerPick();
         setInterval(pollAnalyzerPick, 500);
+        function pollRecentResults() {
+            fetch('/api/betting-helper-data', { cache: 'no-cache' }).then(function(r) { return r.json(); }).then(function(data) {
+                var results = data.recent_results || [];
+                if (results.length > 0) {
+                    var parts = results.slice(0, 5).map(function(r) { return r.round + '회 ' + r.result; });
+                    recentResultsEl.textContent = '최근 결과: ' + parts.join(', ');
+                } else {
+                    recentResultsEl.textContent = '최근 결과: —';
+                }
+            }).catch(function() { recentResultsEl.textContent = '최근 결과: —'; });
+        }
+        pollRecentResults();
+        setInterval(pollRecentResults, 3000);
 })();
     </script>
 </body>
