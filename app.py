@@ -1227,6 +1227,19 @@ def _get_main_reverse_15_win_rate(ph):
     return round(100.0 * wins / len(last15), 1)
 
 
+def _get_main_reverse_15_win_rate_weighted(ph, decay=1.1):
+    """메인반픽(예측픽의 반대) 최근 15회 지수가중 승률. predicted의 반대 vs actual, 조커 제외."""
+    if not ph or len(ph) < 5:
+        return None
+    vh = [h for h in ph if h and h.get('actual') not in ('joker', '조커')]
+    last15 = vh[-15:] if len(vh) >= 15 else vh
+    if len(last15) < 5:
+        return None
+    def reverse_pred(p):
+        return '꺽' if p == '정' else '정' if p == '꺽' else None
+    return _get_weighted_15_win_rate(last15, lambda h: (reverse_pred(h.get('predicted')) or '') == h.get('actual'), decay)
+
+
 def _get_weighted_15_win_rate(records, is_win_fn, decay=1.1):
     """지수 가중치 승률. i=0(가장 오래됨)~n-1(가장 최근), 가중치=decay^i. 최근일수록 비중 높음."""
     if not records or len(records) < 3:
@@ -1273,11 +1286,12 @@ def _get_pong_15_win_rate_weighted(ph, decay=1.1):
 
 
 def _get_prediction_picks_best(results, predicted_round, ph):
-    """메인/모양/퐁당 3픽 중 15회 승률이 가장 높은 픽 선택. 지수 가중치(decay=1.1)로 최근 회차 비중 높임. 동점 시 메인>모양>퐁당.
+    """메인/메인반픽/모양/퐁당 4픽 중 15회 승률이 가장 높은 픽 선택. 지수 가중치(decay=1.1)로 최근 회차 비중 높임. 동점 시 메인>메인반픽>모양>퐁당.
     반환: (pred, color) 또는 (None, None)."""
     if not results or len(results) < 16 or not ph:
         return None, None
     main_rate = _get_main_recent15_win_rate_weighted(ph)
+    main_reverse_rate = _get_main_reverse_15_win_rate_weighted(ph)
     shape_rate = _get_shape_15_win_rate_weighted(ph)
     pong_rate = _get_pong_15_win_rate_weighted(ph)
     main_pred = None
@@ -1289,6 +1303,7 @@ def _get_prediction_picks_best(results, predicted_round, ph):
                 main_pred = cp['value']
     except Exception:
         pass
+    main_reverse_pred = ('꺽' if main_pred == '정' else '정' if main_pred == '꺽' else None)
     shape_pred = _get_latest_next_pick_for_chunk(results)
     if shape_pred not in ('정', '꺽'):
         shape_pred = None
@@ -1299,12 +1314,15 @@ def _get_prediction_picks_best(results, predicted_round, ph):
     if main_pred:
         rate = main_rate if main_rate is not None else -1
         candidates.append((rate, 0, main_pred, 'main'))
+    if main_reverse_pred:
+        rate = main_reverse_rate if main_reverse_rate is not None else -1
+        candidates.append((rate, 1, main_reverse_pred, 'main_reverse'))
     if shape_pred:
         rate = shape_rate if shape_rate is not None else -1
-        candidates.append((rate, 1, shape_pred, 'shape'))
+        candidates.append((rate, 2, shape_pred, 'shape'))
     if pong_pred:
         rate = pong_rate if pong_rate is not None else -1
-        candidates.append((rate, 2, pong_pred, 'pong'))
+        candidates.append((rate, 3, pong_pred, 'pong'))
     if not candidates:
         return None, None
     candidates.sort(key=lambda x: (-x[0], x[1]))
@@ -1815,7 +1833,7 @@ def _apply_results_to_calcs(results):
                         c['pending_predicted'] = stored_for_round['predicted']
                         c['pending_prob'] = stored_for_round.get('probability')
                         c['pending_color'] = stored_for_round.get('pick_color')
-                        # 예측기픽: 메인/모양/퐁당 3픽 중 15회 승률 최고 픽 선택
+                        # 예측기픽: 메인/메인반픽/모양/퐁당 4픽 중 15회 승률 최고 픽 선택
                         if c.get('prediction_picks_best') and results and len(results) >= 16:
                             try:
                                 ph_best = get_prediction_history(100)
@@ -5398,7 +5416,7 @@ RESULTS_HTML = '''
                                             <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-win-rate-reverse"> 승률반픽</label> <label title="모양승률(예측기표 모양픽 최근 50회) 이 값 이하일 때 반픽">모양승률≤<input type="number" id="calc-1-win-rate-threshold" min="0" max="100" value="50" class="calc-threshold-input" title="모양승률 이 값 이하일 때 반픽">% 이하일 때 반픽</label></td></tr>
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-1-lose-streak-reverse"> 연패≥<input type="number" id="calc-1-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-1-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-1-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-1-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
-                                            <tr><td>예측기픽</td><td><label><input type="checkbox" id="calc-1-prediction-picks-best" title="메인/모양/퐁당 3픽 중 15회 승률 최고 픽으로 배팅"> 3픽 중 승률 최고 픽 선택</label></td></tr>
+                                            <tr><td>예측기픽</td><td><label><input type="checkbox" id="calc-1-prediction-picks-best" title="메인/메인반픽/모양/퐁당 4픽 중 15회 승률 최고 픽으로 배팅"> 4픽 중 승률 최고 픽 선택</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-1-shape-only-latest-next-pick" title="퐁당 구간→모양판별 픽, 덩어리/줄 구간→가장 최근 다음 픽. 자동 스위칭. 값 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
                                             <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-1-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-1-shape-prediction-reverse"> 모양판별반픽</label> <label title="메인 예측기표 모양판별 픽 최신 15회 승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-1-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label> <label title="모양판별 계산식 내 shape/chunk/퐁당/대칭 배율(0~3, 기본 1)">shape×<input type="number" id="calc-1-shape-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> chunk×<input type="number" id="calc-1-chunk-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 퐁당×<input type="number" id="calc-1-pong-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 대칭×<input type="number" id="calc-1-symmetry-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"></label></td></tr>
                                             <tr><td>모양판별 로그</td><td><div id="calc-1-shape-prediction-log" class="shape-prediction-log" style="font-size:0.8em;color:#888;max-height:80px;overflow-y:auto;white-space:pre-wrap;">—</div></td></tr>
@@ -5455,7 +5473,7 @@ RESULTS_HTML = '''
                                             <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-win-rate-reverse"> 승률반픽</label> <label title="모양승률(예측기표 모양픽 최근 50회) 이 값 이하일 때 반픽">모양승률≤<input type="number" id="calc-2-win-rate-threshold" min="0" max="100" value="50" class="calc-threshold-input" title="모양승률 이 값 이하일 때 반픽">% 이하일 때 반픽</label></td></tr>
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-2-lose-streak-reverse"> 연패≥<input type="number" id="calc-2-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-2-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-2-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-2-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
-                                            <tr><td>예측기픽</td><td><label><input type="checkbox" id="calc-2-prediction-picks-best" title="메인/모양/퐁당 3픽 중 15회 승률 최고 픽으로 배팅"> 3픽 중 승률 최고 픽 선택</label></td></tr>
+                                            <tr><td>예측기픽</td><td><label><input type="checkbox" id="calc-2-prediction-picks-best" title="메인/메인반픽/모양/퐁당 4픽 중 15회 승률 최고 픽으로 배팅"> 4픽 중 승률 최고 픽 선택</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-2-shape-only-latest-next-pick" title="퐁당 구간→모양판별 픽, 덩어리/줄 구간→가장 최근 다음 픽. 자동 스위칭. 값 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
                                             <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-2-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-2-shape-prediction-reverse"> 모양판별반픽</label> <label title="메인 예측기표 모양판별 픽 최신 15회 승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-2-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label> <label title="모양판별 계산식 내 shape/chunk/퐁당/대칭 배율(0~3, 기본 1)">shape×<input type="number" id="calc-2-shape-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> chunk×<input type="number" id="calc-2-chunk-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 퐁당×<input type="number" id="calc-2-pong-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 대칭×<input type="number" id="calc-2-symmetry-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"></label></td></tr>
                                             <tr><td>모양판별 로그</td><td><div id="calc-2-shape-prediction-log" class="shape-prediction-log" style="font-size:0.8em;color:#888;max-height:80px;overflow-y:auto;white-space:pre-wrap;">—</div></td></tr>
@@ -5512,7 +5530,7 @@ RESULTS_HTML = '''
                                             <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-win-rate-reverse"> 승률반픽</label> <label title="모양승률(예측기표 모양픽 최근 50회) 이 값 이하일 때 반픽">모양승률≤<input type="number" id="calc-3-win-rate-threshold" min="0" max="100" value="50" class="calc-threshold-input" title="모양승률 이 값 이하일 때 반픽">% 이하일 때 반픽</label></td></tr>
                                             <tr><td>연패반픽</td><td><label><input type="checkbox" id="calc-3-lose-streak-reverse"> 연패≥<input type="number" id="calc-3-lose-streak-reverse-min" min="2" max="15" value="3" class="calc-threshold-input" title="이 값 이상 연패일 때">이상·합산승률≤<input type="number" id="calc-3-lose-streak-reverse-threshold" min="0" max="100" value="48" class="calc-threshold-input" title="이 값 이하일 때 반대픽">%일 때 반대픽</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-win-rate-direction-reverse" title="저점→고점 정픽, 고점→저점 반대픽, 정체 시 직전 방향 참조"> 승률방향 반픽 (저점↑정픽·고점↓반대·정체=직전방향)</label> <label><input type="checkbox" id="calc-3-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-3-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
-                                            <tr><td>예측기픽</td><td><label><input type="checkbox" id="calc-3-prediction-picks-best" title="메인/모양/퐁당 3픽 중 15회 승률 최고 픽으로 배팅"> 3픽 중 승률 최고 픽 선택</label></td></tr>
+                                            <tr><td>예측기픽</td><td><label><input type="checkbox" id="calc-3-prediction-picks-best" title="메인/메인반픽/모양/퐁당 4픽 중 15회 승률 최고 픽으로 배팅"> 4픽 중 승률 최고 픽 선택</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-3-shape-only-latest-next-pick" title="퐁당 구간→모양판별 픽, 덩어리/줄 구간→가장 최근 다음 픽. 자동 스위칭. 값 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
                                             <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-3-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-3-shape-prediction-reverse"> 모양판별반픽</label> <label title="메인 예측기표 모양판별 픽 최신 15회 승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-3-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label> <label title="모양판별 계산식 내 shape/chunk/퐁당/대칭 배율(0~3, 기본 1)">shape×<input type="number" id="calc-3-shape-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> chunk×<input type="number" id="calc-3-chunk-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 퐁당×<input type="number" id="calc-3-pong-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 대칭×<input type="number" id="calc-3-symmetry-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"></label></td></tr>
                                             <tr><td>모양판별 로그</td><td><div id="calc-3-shape-prediction-log" class="shape-prediction-log" style="font-size:0.8em;color:#888;max-height:80px;overflow-y:auto;white-space:pre-wrap;">—</div></td></tr>
