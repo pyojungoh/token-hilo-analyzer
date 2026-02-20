@@ -5267,8 +5267,8 @@ RESULTS_HTML = '''
         </div>
         <div class="analysis-tabs-wrap" id="analysis-tabs-wrap">
             <div class="analysis-tabs" role="tablist">
-                <span class="analysis-tab" role="tab" data-panel="prediction-picks" aria-selected="false">예측기픽</span>
-                <span class="analysis-tab active" role="tab" data-panel="pong-chunk" aria-selected="true">모양 판별</span>
+                <span class="analysis-tab active" role="tab" data-panel="prediction-picks" aria-selected="true">예측기픽</span>
+                <span class="analysis-tab" role="tab" data-panel="pong-chunk" aria-selected="false">모양 판별</span>
                 <span class="analysis-tab" role="tab" data-panel="formula">예측 공식</span>
                 <span class="analysis-tab" role="tab" data-panel="graph-stats">승률관리</span>
                 <span class="analysis-tab" role="tab" data-panel="prob-bucket">확률 구간</span>
@@ -5277,7 +5277,7 @@ RESULTS_HTML = '''
                 <span class="analysis-tab" role="tab" data-panel="symmetry-line">대칭/줄</span>
                 <span class="analysis-tabs-collapse-btn" id="analysis-tabs-collapse-btn" title="접기/펼치기">▼</span>
             </div>
-            <div id="panel-prediction-picks" class="analysis-panel">
+            <div id="panel-prediction-picks" class="analysis-panel active">
                 <div class="prediction-picks-cards" id="prediction-picks-cards" style="display:flex;flex-wrap:wrap;gap:16px;padding:12px 0;">
                     <div class="pred-pick-card" data-type="main" style="flex:1;min-width:140px;padding:16px;background:linear-gradient(135deg,#1e2a3e 0%,#1a1a2e 100%);border-radius:10px;border:2px solid #37474f;text-align:center;">
                         <div class="pred-pick-label" style="font-size:0.85em;color:#81c784;margin-bottom:8px;">메인</div>
@@ -5309,7 +5309,7 @@ RESULTS_HTML = '''
                     </div>
                 </div>
             </div>
-            <div id="panel-pong-chunk" class="analysis-panel active">
+            <div id="panel-pong-chunk" class="analysis-panel">
                 <div id="pong-chunk-collapse-body" class="prob-bucket-collapse-body">
                 <div id="shape-visual-summary" class="shape-visual-summary" style="display:none;margin-bottom:12px;padding:12px;background:linear-gradient(135deg,#1e2a1e 0%,#1a1a1a 100%);border-radius:8px;border:1px solid #2d4a2d;">
                     <div class="shape-visual-row" style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:10px;">
