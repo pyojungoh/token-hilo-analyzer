@@ -11544,11 +11544,20 @@ def api_current_pick_relay():
             for k in ('round', 'pick_color', 'probability', 'suggested_amount', 'running'):
                 if k in cached:
                     cached_out[k] = cached[k]
-        # relay 캐시(스케줄러)와 DB(클라이언트 POST) 병합 — 회차 같으면 클라이언트 금액 우선 (분석기 화면과 일치)
-        if cached_out and cached_out.get('round') is not None:
+        # DB(클라이언트 POST) 우선 — 분석기에서 픽 나오자마자 POST하므로 DB가 더 빠름. relay는 스케줄러(2~3초 블로킹)로 느림
+        def _round_val(o):
+            r = o.get('round') if o else None
+            try:
+                return int(r) if r is not None else 0
+            except (TypeError, ValueError):
+                return 0
+        rd, rc = _round_val(db_out), _round_val(cached_out)
+        if db_out and rd > 0 and (rd >= rc or (cached_out and cached_out.get('running') is False)):
+            out = db_out  # DB 회차가 같거나 더 높으면 DB 우선 (분석기→POST가 relay보다 빠름)
+        elif cached_out and cached_out.get('round') is not None:
             out = dict(cached_out)
-            # 회차가 같고 DB에 클라이언트 금액이 있으면 그대로 사용 (분석기 배팅중 표시와 매크로 금액 일치)
-            if db_out and db_out.get('round') is not None and int(db_out.get('round') or 0) == int(out.get('round') or 0):
+            # 회차 같으면 클라이언트 금액 우선
+            if db_out and rd == rc:
                 db_amt = db_out.get('suggested_amount')
                 if db_amt is not None and int(db_amt) > 0:
                     out['suggested_amount'] = int(db_amt)
