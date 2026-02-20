@@ -1284,14 +1284,15 @@ def _get_pong_15_win_rate_weighted(ph, decay=1.1):
 
 
 def _get_prediction_picks_best(results, predicted_round, ph):
-    """메인/메인반픽/모양/퐁당 4픽 중 15회 승률이 가장 높은 픽 선택. 지수 가중치(decay=1.1)로 최근 회차 비중 높임. 동점 시 메인>메인반픽>모양>퐁당.
-    반환: (pred, color) 또는 (None, None)."""
+    """메인/메인반픽/모양/퐁당 4픽 중 15회 승률이 가장 높은 픽 선택. 예측기픽 메뉴 카드에 표시되는 승률과 동일하게 사용.
+    퐁당만 decay=1.25로 최근 승패 가중. 동점 시 메인>메인반픽>모양>퐁당."""
     if not results or len(results) < 16 or not ph:
         return None, None
-    main_rate = _get_main_recent15_win_rate_weighted(ph)
-    main_reverse_rate = _get_main_reverse_15_win_rate_weighted(ph)
-    shape_rate = _get_shape_15_win_rate_weighted(ph)
-    pong_rate = _get_pong_15_win_rate_weighted(ph, decay=1.25)  # 퐁당만 decay 강화 — 전환 시 더 빨리 사라짐
+    # 예측기픽 메뉴(카드) 표시 승률과 동일 — 계산기는 이 승률 기반으로 픽 선택
+    main_rate = _get_main_recent15_win_rate(ph)
+    main_reverse_rate = _get_main_reverse_15_win_rate(ph)
+    shape_rate = _get_shape_15_win_rate(ph)
+    pong_rate = _get_pong_15_win_rate_weighted(ph, decay=1.25)  # 퐁당: 최근 승패 가중
     main_pred = None
     try:
         filtered = [r for r in results if int(str(r.get('gameID') or '0'), 10) < predicted_round]
@@ -4856,6 +4857,17 @@ RESULTS_HTML = '''
             text-align: center;
             width: 100%;
         }
+        /* 예측기픽 메뉴: 계산기에 사용될 최종 픽(승률 최고) 강조 */
+        .pred-pick-card.pred-pick-card-calc-best {
+            border: 3px solid #ffeb3b !important;
+            box-shadow: 0 0 12px rgba(255, 235, 59, 0.4);
+        }
+        .pred-pick-card.pred-pick-card-calc-best .pred-pick-label::after {
+            content: ' (계산기 사용)';
+            font-size: 0.75em;
+            color: #ffeb3b;
+            margin-left: 4px;
+        }
         /* 예측 박스 밖 별도 가로 박스 (몇 회차 성공/실패, 정·꺽 / 빨강·검정) */
         .pick-result-bar {
             padding: 8px 14px;
@@ -6527,6 +6539,17 @@ RESULTS_HTML = '''
                         updateCard(mainReverseCard, mainReverseVal, mainReverseColor, mainReverseRate);
                         updateCard(shapeCard, shapeVal, shapeColor, shapeRate);
                         updateCard(pongCard, pongVal, pongColor, pongRate);
+                        // 계산기에 사용될 최종 픽(승률 최고) 강조. 서버와 동일: 동점 시 메인>메인반픽>모양>퐁당
+                        [mainCard, mainReverseCard, shapeCard, pongCard].forEach(function(c) { if (c) c.classList.remove('pred-pick-card-calc-best'); });
+                        var candidates = [];
+                        if (mainVal && mainRate != null) candidates.push({ rate: mainRate, order: 0, card: mainCard });
+                        if (mainReverseVal && mainReverseRate != null) candidates.push({ rate: mainReverseRate, order: 1, card: mainReverseCard });
+                        if (shapeVal && shapeRate != null) candidates.push({ rate: shapeRate, order: 2, card: shapeCard });
+                        if (pongVal && pongRate != null) candidates.push({ rate: pongRate, order: 3, card: pongCard });
+                        if (candidates.length > 0) {
+                            candidates.sort(function(a, b) { return (b.rate - a.rate) || (a.order - b.order); });
+                            if (candidates[0].card) candidates[0].card.classList.add('pred-pick-card-calc-best');
+                        }
                     })();
                     if (sp && sp.round != null) {
                         var newRound = Number(sp.round);
@@ -10232,7 +10255,7 @@ def _build_results_payload_db_only(hours=24, backfill=False):
                     server_pred['pong_color'] = '빨강' if server_pred.get('pong_pick') == '정' else '검정' if server_pred.get('pong_pick') == '꺽' else None
                 server_pred['main_15_rate'] = _get_main_recent15_win_rate(ph)
                 server_pred['shape_15_rate'] = _get_shape_15_win_rate(ph)
-                server_pred['pong_15_rate'] = _get_pong_15_win_rate(ph)
+                server_pred['pong_15_rate'] = _get_pong_15_win_rate_weighted(ph, decay=1.25)  # 퐁당: 최근 승패 가중
                 mv = server_pred.get('value')
                 server_pred['main_reverse'] = ('꺽' if mv == '정' else '정' if mv == '꺽' else None)
                 server_pred['main_reverse_15_rate'] = _get_main_reverse_15_win_rate(ph)
@@ -10483,7 +10506,7 @@ def _build_results_payload():
                         server_pred['pong_color'] = '빨강' if server_pred.get('pong_pick') == '정' else '검정' if server_pred.get('pong_pick') == '꺽' else None
                     server_pred['main_15_rate'] = _get_main_recent15_win_rate(ph)
                     server_pred['shape_15_rate'] = _get_shape_15_win_rate(ph)
-                    server_pred['pong_15_rate'] = _get_pong_15_win_rate(ph)
+                    server_pred['pong_15_rate'] = _get_pong_15_win_rate_weighted(ph, decay=1.25)  # 퐁당: 최근 승패 가중
                     mv = server_pred.get('value')
                     server_pred['main_reverse'] = ('꺽' if mv == '정' else '정' if mv == '꺽' else None)
                     server_pred['main_reverse_15_rate'] = _get_main_reverse_15_win_rate(ph)
@@ -10629,7 +10652,7 @@ def _build_results_payload():
                         server_pred['pong_color'] = '빨강' if server_pred.get('pong_pick') == '정' else '검정' if server_pred.get('pong_pick') == '꺽' else None
                     server_pred['main_15_rate'] = _get_main_recent15_win_rate(ph)
                     server_pred['shape_15_rate'] = _get_shape_15_win_rate(ph)
-                    server_pred['pong_15_rate'] = _get_pong_15_win_rate(ph)
+                    server_pred['pong_15_rate'] = _get_pong_15_win_rate_weighted(ph, decay=1.25)  # 퐁당: 최근 승패 가중
                     mv = server_pred.get('value')
                     server_pred['main_reverse'] = ('꺽' if mv == '정' else '정' if mv == '꺽' else None)
                     server_pred['main_reverse_15_rate'] = _get_main_reverse_15_win_rate(ph)
