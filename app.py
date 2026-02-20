@@ -6575,6 +6575,7 @@ RESULTS_HTML = '''
                             var normColor = normalizePickColor(sp.color) || sp.color || null;
                             lastPrediction = { value: sp.value, round: sp.round, prob: sp.prob != null ? sp.prob : 0, color: normColor };
                             if (sp.shape_predicted === '정' || sp.shape_predicted === '꺽') lastPrediction.shape_predicted = sp.shape_predicted;
+                            if (sp.calc_best_pred && sp.calc_best_color) { lastPrediction.calc_best_pred = sp.calc_best_pred; lastPrediction.calc_best_color = sp.calc_best_color; }
                             setRoundPrediction(sp.round, lastPrediction);
                             if (lastServerPrediction) {
                                 fetch('/api/round-prediction', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ round: sp.round, predicted: sp.value, pickColor: normColor || sp.color, probability: sp.prob }) }).catch(function() {});
@@ -8937,9 +8938,10 @@ RESULTS_HTML = '''
                         var noRevByMain15Card = (r15Card == null || r15Card < 53);
                         var noRevByStreak5Card = !(calcState[id].streak_suppress_reverse && runLenCard >= 5);
                         var shapePredOn = !!(document.getElementById('calc-' + id + '-shape-prediction') && document.getElementById('calc-' + id + '-shape-prediction').checked);
-                        // 상단 예측픽: 모양판별 켜면 shape_predicted 우선, 없으면 lastPrediction.value
-                        var predictionText = (shapePredOn && (lastPrediction.shape_predicted === '정' || lastPrediction.shape_predicted === '꺽')) ? lastPrediction.shape_predicted : lastPrediction.value;
-                        var predColorNorm = normalizePickColor(lastPrediction.color);
+                        var predPicksBestOn = !!(document.getElementById('calc-' + id + '-prediction-picks-best') && document.getElementById('calc-' + id + '-prediction-picks-best').checked);
+                        // 상단 예측픽: 예측기픽 메뉴 강조 픽 > 모양판별 > lastPrediction.value
+                        var predictionText = (predPicksBestOn && lastPrediction.calc_best_pred && (lastPrediction.calc_best_pred === '정' || lastPrediction.calc_best_pred === '꺽')) ? lastPrediction.calc_best_pred : (shapePredOn && (lastPrediction.shape_predicted === '정' || lastPrediction.shape_predicted === '꺽')) ? lastPrediction.shape_predicted : lastPrediction.value;
+                        var predColorNorm = (predPicksBestOn && lastPrediction.calc_best_color) ? normalizePickColor(lastPrediction.calc_best_color) : normalizePickColor(lastPrediction.color);
                         var predictionIsRed = (predColorNorm === '빨강' || predColorNorm === '검정') ? (predColorNorm === '빨강') : (predictionText === '정');
                         var bettingText, bettingIsRed;
                         if (saved && (saved.value === '정' || saved.value === '꺽')) {
@@ -10130,6 +10132,8 @@ RESULTS_HTML = '''
                         if (isNaN(newRound) || (!isNaN(prevRound) && newRound < prevRound)) return;
                         var normColor = normalizePickColor(sp.color) || sp.color || null;
                         lastPrediction = { value: sp.value, round: sp.round, prob: sp.prob != null ? sp.prob : 0, color: normColor };
+                        if (sp.shape_predicted === '정' || sp.shape_predicted === '꺽') lastPrediction.shape_predicted = sp.shape_predicted;
+                        if (sp.calc_best_pred && sp.calc_best_color) { lastPrediction.calc_best_pred = sp.calc_best_pred; lastPrediction.calc_best_color = sp.calc_best_color; }
                         lastWarningU35 = !!(sp.warning_u35);
                         refreshPredictionPickOnly();
                     }).catch(function() {});
