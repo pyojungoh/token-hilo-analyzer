@@ -690,10 +690,8 @@ def _get_shape_only_pick_with_phase(results, exclude_round=None, calc_state=None
         use_for_pattern[:2] if len(use_for_pattern) >= 2 else None,
         pong_pct, pong_prev15
     )
+    # 퐁당 구간 감지 비활성화 — 덩어리 위주. pong_phase/chunk_to_pong은 더 이상 반환되지 않음
     is_pong = phase in ('pong_phase', 'chunk_to_pong')
-    # 긴 퐁당 구간: 퐁당%가 높으면 덩어리/줄1퐁당1로 잡혀도 퐁당으로 간주 (모양판별 사용)
-    if not is_pong and phase in ('chunk_phase', 'chunk_start') and pong_pct >= 60:
-        is_pong = True
     if is_pong:
         c = calc_state or {}
         try:
@@ -3112,10 +3110,10 @@ def _chunk_profile_similarity(profile_a, profile_b):
 
 def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_short, pong_pct_prev):
     """
-    퐁당 / 덩어리 / 줄 세 가지 구간 판별. 시각화·예측픽 가중치에 사용.
+    덩어리 / 줄 구간 판별. 시각화·예측픽 가중치에 사용. (퐁당 구간 감지 비활성화 — 덩어리 위주)
     - 줄 구간: 한쪽으로 길게 이어짐 (line run >= 5).
-    - 퐁당 구간: 2회 이상 바뀜이 이어짐 (pong run >= 2).
     - 덩어리 구간: 꺽줄-정-꺽줄-정 블록 반복, 줄1퐁당1, 또는 줄 2~4. debug에 chunk_shape(321/123/block_repeat) 추가.
+    - 퐁당 구간(pong_phase, chunk_to_pong)은 반환하지 않음 → None.
     """
     debug = {'first_run_type': None, 'first_run_len': 0, 'pong_pct_short': pong_pct_short, 'pong_pct_prev': pong_pct_prev, 'segment_type': None, 'chunk_shape': None}
     if not line_runs and not pong_runs:
@@ -3149,14 +3147,12 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
         debug['segment_type'] = 'chunk'
         debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, True)
         return 'pong_to_chunk', debug
+    # 퐁당 구간 감지 비활성화 — 덩어리 위주로만 감지 (chunk_to_pong → None)
     if diff_short_prev >= 20:
-        debug['segment_type'] = 'pong'
-        return 'chunk_to_pong', debug
-    # 덩어리 직후 퐁당 진입: 맨 앞이 퐁당 run이고, 그 다음(과거)에 줄 run 2 이상 있으면 chunk_to_pong
+        return None, debug
+    # 덩어리 직후 퐁당 진입: 퐁당 구간 감지 비활성화 — None 반환
     if not first_is_line and pong_runs and line_runs and len(pong_runs) >= 1 and line_runs[0] >= 2:
-        debug['segment_type'] = 'pong'
-        debug['chunk_shape'] = 'chunk_then_pong'
-        return 'chunk_to_pong', debug
+        return None, debug
     # 퐁당 1~2회 직후 긴 줄: 맨 앞이 퐁당 run(1~2), 그 다음(과거)에 줄 run 5 이상 → 줄 쪽 가산(pong_to_chunk)
     if not first_is_line and pong_runs and line_runs and 1 <= current_run_len <= 2 and line_runs[0] >= 5:
         debug['segment_type'] = 'chunk'
@@ -3174,10 +3170,7 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
             return 'chunk_phase', debug
         return 'chunk_start', debug
     else:
-        # 퐁당: 맨 앞이 바뀜(정꺽/꺽정)이면 퐁당 구간. 1회만 있어도 퐁당(덩어리 직후 퐁당 진입 포함)
-        if current_run_len >= 1:
-            debug['segment_type'] = 'pong'
-            return 'pong_phase', debug
+        # 퐁당 구간 감지 비활성화 — 덩어리 위주로만 감지 (pong_phase → None)
         return None, debug
 
 
@@ -5297,7 +5290,7 @@ RESULTS_HTML = '''
                     <div id="shape-u-warning" class="shape-u-warning" style="display:none;margin-top:8px;padding:6px 10px;background:rgba(255,152,0,0.15);border:1px solid rgba(255,152,0,0.4);border-radius:4px;color:#ffb74d;font-size:0.9em;">⚠ U자 구간 감지 — 유지 가중치 보정·멈춤 권장</div>
                 </div>
                 <div id="pong-chunk-section" style="margin-top:0;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
-                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">최근 그래프에서 <strong>줄(유지)</strong>·<strong>퐁당(바뀜)</strong>·<strong>덩어리(블록 반복)</strong>·<strong>U자 구간</strong>을 판별해 가중치에 반영합니다. U자 구간은 연패가 많아 유지 쪽 보정·멈춤 권장. <strong>유사 덩어리</strong>는 현재 덩어리와 높이 프로필이 비슷한 과거 덩어리의 다음 결과를 가중 합산해 반영하며, <strong>가장 최근 다음 픽</strong>은 유사 덩어리·모양 시그니처 중 가장 최근 것의 다음 결과입니다.</p>
+                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">최근 그래프에서 <strong>줄(유지)</strong>·<strong>덩어리(블록 반복)</strong>·<strong>U자 구간</strong>을 판별해 가중치에 반영합니다. (퐁당 구간 감지 비활성화 — 덩어리 위주) U자 구간은 연패가 많아 유지 쪽 보정·멈춤 권장. <strong>유사 덩어리</strong>는 현재 덩어리와 높이 프로필이 비슷한 과거 덩어리의 다음 결과를 가중 합산해 반영하며, <strong>가장 최근 다음 픽</strong>은 유사 덩어리·모양 시그니처 중 가장 최근 것의 다음 결과입니다.</p>
                     <div id="pong-chunk-data" style="font-size:0.9em;color:#ccc;"><table class="symmetry-line-table" style="width:100%;max-width:420px;"><tbody id="pong-chunk-tbody"><tr><td colspan="2" style="color:#888;">데이터 로딩 후 표시</td></tr></tbody></table></div>
                 </div>
                 </div>
@@ -5317,7 +5310,7 @@ RESULTS_HTML = '''
                         <li><strong>V자 패턴 보정</strong> · 그래프가 «긴 줄 → 퐁당 1~2개 → 짧은 줄 → 퐁당 → …» 형태(V자 밸런스)일 때 연패가 많아서, 퐁당(바뀜) 가중치를 올려 이 구간을 넘기기 쉽게 보정함.</li>
                         <li><strong>U자 구간 보정</strong> · «높은 줄 → 낮은 줄(1~2) → 다시 3~5 길이 줄»(U자 모양)일 때 연패가 많음. 감지 시 줄(유지) 가중치 +0.14, 퐁당(반전) -0.07로 유지 쪽 픽 강화·과한 반전 픽 축소. 58% 상한 적용. 계산기에서는 멈춤 권장.</li>
                         <li><strong>연패 길이 보정</strong> · 맨 왼쪽(최신) 열이 꺽(연패)이고 그 연속 길이가 4 이상이면, 퐁당(바뀜) 가중치를 올려 «다음은 정» 쪽으로 픽을 내도록 보정함. (그래프만 봤을 때 연패 구간에서 승을 끌어올리기 위한 보정)</li>
-                        <li><strong>퐁당/덩어리/줄 구간 판별</strong> · 세 구간으로 나눔: <em>줄</em>(한쪽으로 길게 이어짐)→유지 가중치 가산, <em>퐁당</em>(2회 이상 바뀜)→바뀜 가중치 가산, <em>덩어리</em>(블록 반복·줄2~4)→줄 가중치 우선. 덩어리 모양 321(줄어듦)이면 바뀜 소폭 가산.</li>
+                        <li><strong>덩어리/줄 구간 판별</strong> · 줄(한쪽으로 길게 이어짐)→유지 가중치 가산, 덩어리(블록 반복·줄2~4)→줄 가중치 우선. 퐁당 구간 감지 비활성화(덩어리 위주). 덩어리 모양 321(줄어듦)이면 바뀜 소폭 가산.</li>
                         <li><strong>유지 vs 바뀜</strong> · «유지 확률 = 전이에서 구한 유지 확률», «바뀜 확률 = 전이에서 구한 바뀜 확률». 각각 lineW, pongW를 곱해 <em>adjSame</em>, <em>adjChange</em> 계산 후 다시 합으로 나누어 0~1로 만듦.</li>
                         <li><strong>최종 픽</strong> · adjSame ≥ adjChange 이면 직전과 <strong>같은 방향</strong>(직전 정→정, 직전 꺽→꺽), 아니면 <strong>반대</strong>(직전 정→꺽, 직전 꺽→정). 15번 카드가 빨강이면 정=빨강/꺽=검정, 검정이면 정=검정/꺽=빨강으로 <em>배팅 색</em> 결정.</li>
                     </ol>
