@@ -9898,7 +9898,7 @@ RESULTS_HTML = '''
                 remainingSecForPoll = remaining;
                 // 라운드 종료 직전/직후에는 더 자주 폴링 (다음 픽을 빨리 보여주기)
                 const nearEnd = remaining < 3;
-                const fetchInterval = nearEnd ? 150 : 300;
+                const fetchInterval = nearEnd ? 120 : 200;
                 if (now - timerData.lastFetch > fetchInterval) {
                     try {
                     // 10초 경기 룰: 8초 타임아웃
@@ -10031,9 +10031,9 @@ RESULTS_HTML = '''
             if (timerUpdateIntervalId) clearInterval(timerUpdateIntervalId);
             if (predictionPollIntervalId) clearInterval(predictionPollIntervalId);
             
-            // 탭 가시성에 따라 간격 조정. 과도한 폴링 시 ERR_INSUFFICIENT_RESOURCES 방지를 위해 완만한 간격 사용
-            var resultsInterval = isTabVisible ? 280 : 1200;
-            var calcStatusInterval = isTabVisible ? 350 : 1200;  // 픽 서버 전달(매크로용). 350ms로 요청 수 완화
+            // 탭 가시성에 따라 간격 조정. 예측픽 빨리 나오도록 결과 폴링 단축 (280→150ms)
+            var resultsInterval = isTabVisible ? 150 : 1200;
+            var calcStatusInterval = isTabVisible ? 280 : 1200;  // 픽 서버 전달(매크로용)
             var calcStateInterval = isTabVisible ? 2200 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
             var timerInterval = isTabVisible ? 200 : 1000;
             
@@ -10044,7 +10044,7 @@ RESULTS_HTML = '''
                 const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
                 const criticalPhase = r <= 3 || r >= 8;
                 // 백그라운드일 때는 최소 1초 간격, 보일 때는 더 빠른 간격 (예측픽 빨리 나오도록 단축)
-                const baseInterval = allResults.length === 0 ? 200 : (anyRunning ? 100 : (criticalPhase ? 150 : 200));
+                const baseInterval = allResults.length === 0 ? 150 : (anyRunning ? 80 : (criticalPhase ? 120 : 150));
                 const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
                 if (Date.now() - lastResultsUpdate > interval) {
                     loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
@@ -10071,7 +10071,7 @@ RESULTS_HTML = '''
             // 백그라운드일 때는 1초 간격으로 조정 (브라우저 제한)
             timerUpdateIntervalId = setInterval(updateTimer, timerInterval);
             
-            // 예측픽만 경량 폴링: 캐시 기반으로 0.1초마다 받아서 카드만 먼저 갱신 (예측픽이 늦게 나오는 현상 완화)
+            // 예측픽만 경량 폴링: 캐시 기반으로 80ms마다 받아서 카드만 먼저 갱신 (예측픽이 늦게 나오는 현상 완화)
             if (isTabVisible) {
                 predictionPollIntervalId = setInterval(function() {
                     fetch('/api/current-prediction?t=' + Date.now(), { cache: 'no-cache' }).then(function(r) { return r.json(); }).then(function(data) {
@@ -10085,7 +10085,7 @@ RESULTS_HTML = '''
                         lastWarningU35 = !!(sp.warning_u35);
                         refreshPredictionPickOnly();
                     }).catch(function() {});
-                }, 100);
+                }, 80);
             }
         }
         
