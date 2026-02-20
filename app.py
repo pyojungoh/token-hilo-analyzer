@@ -1213,6 +1213,20 @@ def _get_pong_15_win_rate(ph):
     return round(100.0 * wins / len(last15), 1)
 
 
+def _get_main_reverse_15_win_rate(ph):
+    """메인반픽(예측픽의 반대) 최근 15회 승률. predicted의 반대 vs actual, 조커 제외. 5회 미만이면 None."""
+    if not ph or len(ph) < 5:
+        return None
+    vh = [h for h in ph if h and h.get('actual') not in ('joker', '조커')]
+    last15 = vh[-15:] if len(vh) >= 15 else vh
+    if len(last15) < 5:
+        return None
+    def reverse_pred(p):
+        return '꺽' if p == '정' else '정' if p == '꺽' else None
+    wins = sum(1 for h in last15 if (reverse_pred(h.get('predicted')) or '') == h.get('actual'))
+    return round(100.0 * wins / len(last15), 1)
+
+
 def _get_weighted_15_win_rate(records, is_win_fn, decay=1.1):
     """지수 가중치 승률. i=0(가장 오래됨)~n-1(가장 최근), 가중치=decay^i. 최근일수록 비중 높음."""
     if not records or len(records) < 3:
@@ -5227,6 +5241,13 @@ RESULTS_HTML = '''
                         <div class="pred-pick-rate" style="font-size:0.85em;color:#aaa;margin-top:6px;">15회 승률: —</div>
                         <div class="pred-pick-meta" style="font-size:0.8em;color:#888;margin-top:4px;">—</div>
                     </div>
+                    <div class="pred-pick-card" data-type="main_reverse" style="flex:1;min-width:140px;padding:16px;background:linear-gradient(135deg,#1e2a3e 0%,#1a1a2e 100%);border-radius:10px;border:2px solid #37474f;text-align:center;">
+                        <div class="pred-pick-label" style="font-size:0.85em;color:#e57373;margin-bottom:8px;">메인반픽</div>
+                        <div class="pred-pick-value" style="font-size:1.4em;font-weight:bold;color:#fff;">—</div>
+                        <div class="pred-pick-color" style="font-size:0.9em;margin-top:4px;">—</div>
+                        <div class="pred-pick-rate" style="font-size:0.85em;color:#aaa;margin-top:6px;">15회 승률: —</div>
+                        <div class="pred-pick-meta" style="font-size:0.8em;color:#888;margin-top:4px;">메인 픽의 반대</div>
+                    </div>
                     <div class="pred-pick-card" data-type="shape" style="flex:1;min-width:140px;padding:16px;background:linear-gradient(135deg,#1e2a3e 0%,#1a1a2e 100%);border-radius:10px;border:2px solid #37474f;text-align:center;">
                         <div class="pred-pick-label" style="font-size:0.85em;color:#64b5f6;margin-bottom:8px;">모양</div>
                         <div class="pred-pick-value" style="font-size:1.4em;font-weight:bold;color:#fff;">—</div>
@@ -6438,13 +6459,16 @@ RESULTS_HTML = '''
                         var cards = document.getElementById('prediction-picks-cards');
                         if (!cards) return;
                         var mainVal = (sp && (sp.value === '정' || sp.value === '꺽')) ? sp.value : null;
+                        var mainReverseVal = (sp && sp.main_reverse && (sp.main_reverse === '정' || sp.main_reverse === '꺽')) ? sp.main_reverse : null;
                         var shapeVal = (sp && sp.shape_pick && (sp.shape_pick === '정' || sp.shape_pick === '꺽')) ? sp.shape_pick : null;
                         var pongVal = (sp && sp.pong_pick && (sp.pong_pick === '정' || sp.pong_pick === '꺽')) ? sp.pong_pick : null;
                         var mainColor = (sp && sp.color) ? (String(sp.color).toUpperCase().indexOf('RED') >= 0 || sp.color === '빨강' ? 'RED' : 'BLACK') : null;
+                        var mainReverseColor = (sp && sp.main_reverse_color) ? (String(sp.main_reverse_color).toUpperCase().indexOf('RED') >= 0 || sp.main_reverse_color === '빨강' ? 'RED' : 'BLACK') : null;
                         var shapeColor = (sp && sp.shape_color) ? (String(sp.shape_color).toUpperCase().indexOf('RED') >= 0 || sp.shape_color === '빨강' ? 'RED' : 'BLACK') : null;
                         var pongColor = (sp && sp.pong_color) ? (String(sp.pong_color).toUpperCase().indexOf('RED') >= 0 || sp.pong_color === '빨강' ? 'RED' : 'BLACK') : null;
                         var roundStr = (sp && sp.round != null) ? String(sp.round) : '—';
                         var mainRate = (sp && sp.main_15_rate != null) ? sp.main_15_rate : null;
+                        var mainReverseRate = (sp && sp.main_reverse_15_rate != null) ? sp.main_reverse_15_rate : null;
                         var shapeRate = (sp && sp.shape_15_rate != null) ? sp.shape_15_rate : null;
                         var pongRate = (sp && sp.pong_15_rate != null) ? sp.pong_15_rate : null;
                         function updateCard(card, val, color, rate) {
@@ -6465,6 +6489,7 @@ RESULTS_HTML = '''
                             if (v) v.style.color = val === '정' ? '#e57373' : val === '꺽' ? '#90a4ae' : '#fff';
                         }
                         var mainCard = cards.querySelector('.pred-pick-card[data-type="main"]');
+                        var mainReverseCard = cards.querySelector('.pred-pick-card[data-type="main_reverse"]');
                         var shapeCard = cards.querySelector('.pred-pick-card[data-type="shape"]');
                         var pongCard = cards.querySelector('.pred-pick-card[data-type="pong"]');
                         if (mainCard) {
@@ -6472,6 +6497,7 @@ RESULTS_HTML = '''
                             var m = mainCard.querySelector('.pred-pick-meta');
                             if (m) m.textContent = roundStr + '회';
                         }
+                        updateCard(mainReverseCard, mainReverseVal, mainReverseColor, mainReverseRate);
                         updateCard(shapeCard, shapeVal, shapeColor, shapeRate);
                         updateCard(pongCard, pongVal, pongColor, pongRate);
                     })();
@@ -7643,6 +7669,19 @@ RESULTS_HTML = '''
                                 const c = pickColorToClass(h.pickColor || h.pick_color);
                                 return '<td class="' + c + '">' + (h.predicted != null ? h.predicted : '-') + '</td>';
                             }).join('');
+                            const rowReversePick = '<td>반픽</td>' + rev.map(function(h) {
+                                var rp = (h.predicted === '정') ? '꺽' : (h.predicted === '꺽') ? '정' : null;
+                                var c = rp === '정' ? pickColorToClass('빨강') : rp === '꺽' ? pickColorToClass('검정') : '';
+                                return '<td class="' + (c || '') + '">' + (rp || '-') + '</td>';
+                            }).join('');
+                            const rowReverseOutcome = '<td>반픽</td>' + rev.map(function(h) {
+                                var actualForDisplay = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
+                                var isJoker = (actualForDisplay === 'joker' || actualForDisplay === '조커');
+                                var rp = (h.predicted === '정') ? '꺽' : (h.predicted === '꺽') ? '정' : null;
+                                var out = !rp ? '-' : isJoker ? '조커' : (rp === actualForDisplay ? '승' : '패');
+                                var c = out === '승' ? 'streak-win' : out === '패' ? 'streak-lose' : out === '조커' ? 'streak-joker' : '';
+                                return '<td class="' + c + '">' + out + '</td>';
+                            }).join('');
                             const rowOutcome = '<td>메인</td>' + rev.map(function(h) {
                                 var actualForDisplay = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
                                 var isJoker = (actualForDisplay === 'joker' || actualForDisplay === '조커');
@@ -7678,10 +7717,14 @@ RESULTS_HTML = '''
                                 const c = out === '승' ? 'streak-win' : out === '패' ? 'streak-lose' : out === '조커' ? 'streak-joker' : '';
                                 return '<td class="' + c + '">' + (out || '-') + '</td>';
                             }).join('');
-                            var shapeWins = 0, shapeTotal = 0, pongWins = 0, pongTotal = 0;
+                            var shapeWins = 0, shapeTotal = 0, pongWins = 0, pongTotal = 0, reverseWins = 0, reverseTotal = 0;
                             rev.forEach(function(h) {
                                 var a = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
                                 var isJ = (a === 'joker' || a === '조커');
+                                if (h.predicted && (h.predicted === '정' || h.predicted === '꺽') && (a === '정' || a === '꺽' || isJ)) {
+                                    var rp = h.predicted === '정' ? '꺽' : '정';
+                                    reverseTotal++; if (!isJ && rp === a) reverseWins++;
+                                }
                                 if (h.shape_pick && (h.shape_pick === '정' || h.shape_pick === '꺽') && (a === '정' || a === '꺽' || isJ)) {
                                     shapeTotal++; if (!isJ && h.shape_pick === a) shapeWins++;
                                 }
@@ -7689,6 +7732,7 @@ RESULTS_HTML = '''
                                     pongTotal++; if (!isJ && h.pong_pick === a) pongWins++;
                                 }
                             });
+                            var reverseRateStr = reverseTotal > 0 ? (100 * reverseWins / reverseTotal).toFixed(1) : '-';
                             var shapeRateStr = shapeTotal > 0 ? (100 * shapeWins / shapeTotal).toFixed(1) : '-';
                             var pongRateStr = pongTotal > 0 ? (100 * pongWins / pongTotal).toFixed(1) : '-';
                             streakTableBlock = '<div class="main-streak-table-wrap" data-section="예측기표"><table class="main-streak-table" aria-label="예측기표">' +
@@ -7696,12 +7740,15 @@ RESULTS_HTML = '''
                                 '<tr>' + rowProb + '</tr>' +
                                 '<tr>' + rowPick + '</tr>' +
                                 '<tr>' + rowOutcome + '</tr>' +
+                                '<tr>' + rowReversePick + '</tr>' +
+                                '<tr>' + rowReverseOutcome + '</tr>' +
                                 '<tr>' + rowShapePick + '</tr>' +
                                 '<tr>' + rowShapeOutcome + '</tr>' +
                                 '<tr>' + rowPongPick + '</tr>' +
                                 '<tr>' + rowPongOutcome + '</tr>' +
                                 '</tbody></table></div>' +
                                 '<div class="prediction-streak-line" style="margin-top:6px">최근 100회 기준 · <span class="streak-now">' + streakLine100 + '</span>' +
+                                (reverseTotal > 0 ? ' &nbsp;|&nbsp; 반픽승률: ' + reverseRateStr + '% (' + reverseWins + '/' + reverseTotal + ')' : '') +
                                 (shapeTotal > 0 ? ' &nbsp;|&nbsp; 모양승률: ' + shapeRateStr + '% (' + shapeWins + '/' + shapeTotal + ')' : '') +
                                 (pongTotal > 0 ? ' &nbsp;|&nbsp; 퐁당승률: ' + pongRateStr + '% (' + pongWins + '/' + pongTotal + ')' : '') +
                                 '</div>';
@@ -8049,6 +8096,14 @@ RESULTS_HTML = '''
                             var o = isJ ? '조커' : (h.predicted === a ? '승' : '패');
                             return '<td class="' + (o === '승' ? 'streak-win' : o === '패' ? 'streak-lose' : 'streak-joker') + '">' + o + '</td>';
                         }).join('');
+                        const rowReversePick = '<td>반픽</td>' + rev.map(function(h) { var rp = (h.predicted === '정') ? '꺽' : (h.predicted === '꺽') ? '정' : null; return '<td>' + (rp || '-') + '</td>'; }).join('');
+                        const rowReverseOut = '<td>반픽</td>' + rev.map(function(h) {
+                            var a = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
+                            var isJ = (a === 'joker' || a === '조커');
+                            var rp = (h.predicted === '정') ? '꺽' : (h.predicted === '꺽') ? '정' : null;
+                            var o = !rp ? '-' : isJ ? '조커' : (rp === a ? '승' : '패');
+                            return '<td class="' + (o === '승' ? 'streak-win' : o === '패' ? 'streak-lose' : o === '조커' ? 'streak-joker' : '') + '">' + o + '</td>';
+                        }).join('');
                         const rowShapePick = '<td>모양</td>' + rev.map(function(h) { var sp = (h.shape_pick && (h.shape_pick === '정' || h.shape_pick === '꺽')) ? h.shape_pick : null; return '<td>' + (sp || '-') + '</td>'; }).join('');
                         const rowShapeOut = '<td>모양</td>' + rev.map(function(h) {
                             var a = (roundActualsFromServer[String(h.round)] && roundActualsFromServer[String(h.round)].actual) ? roundActualsFromServer[String(h.round)].actual : h.actual;
@@ -8063,7 +8118,7 @@ RESULTS_HTML = '''
                             var o = !pp ? '-' : (a === 'joker' || a === '조커') ? '조커' : (a === '정' || a === '꺽') ? (pp === a ? '승' : '패') : '-';
                             return '<td class="' + (o === '승' ? 'streak-win' : o === '패' ? 'streak-lose' : o === '조커' ? 'streak-joker' : '') + '">' + o + '</td>';
                         }).join('');
-                        predDivEmpty.innerHTML = '<div class="main-streak-table-wrap" data-section="예측기표"><table class="main-streak-table"><thead><tr>' + head + '</tr></thead><tbody><tr>' + rowP + '</tr><tr>' + rowPick + '</tr><tr>' + rowOut + '</tr><tr>' + rowShapePick + '</tr><tr>' + rowShapeOut + '</tr><tr>' + rowPongPick + '</tr><tr>' + rowPongOut + '</tr></tbody></table></div>';
+                        predDivEmpty.innerHTML = '<div class="main-streak-table-wrap" data-section="예측기표"><table class="main-streak-table"><thead><tr>' + head + '</tr></thead><tbody><tr>' + rowP + '</tr><tr>' + rowPick + '</tr><tr>' + rowOut + '</tr><tr>' + rowReversePick + '</tr><tr>' + rowReverseOut + '</tr><tr>' + rowShapePick + '</tr><tr>' + rowShapeOut + '</tr><tr>' + rowPongPick + '</tr><tr>' + rowPongOut + '</tr></tbody></table></div>';
                         predDivEmpty.setAttribute('data-section', '예측기표');
                     }
                     var atw = document.getElementById('analysis-tabs-wrap');
@@ -10154,6 +10209,15 @@ def _build_results_payload_db_only(hours=24, backfill=False):
                 server_pred['main_15_rate'] = _get_main_recent15_win_rate(ph)
                 server_pred['shape_15_rate'] = _get_shape_15_win_rate(ph)
                 server_pred['pong_15_rate'] = _get_pong_15_win_rate(ph)
+                mv = server_pred.get('value')
+                server_pred['main_reverse'] = ('꺽' if mv == '정' else '정' if mv == '꺽' else None)
+                server_pred['main_reverse_15_rate'] = _get_main_reverse_15_win_rate(ph)
+                if server_pred.get('main_reverse') and is_15_red is True:
+                    server_pred['main_reverse_color'] = '빨강' if server_pred['main_reverse'] == '정' else '검정'
+                elif server_pred.get('main_reverse') and is_15_red is False:
+                    server_pred['main_reverse_color'] = '검정' if server_pred['main_reverse'] == '정' else '빨강'
+                else:
+                    server_pred['main_reverse_color'] = '빨강' if server_pred.get('main_reverse') == '정' else '검정' if server_pred.get('main_reverse') == '꺽' else None
             except Exception:
                 server_pred['shape_pick'] = None
                 server_pred['pong_pick'] = None
@@ -10162,6 +10226,9 @@ def _build_results_payload_db_only(hours=24, backfill=False):
                 server_pred['main_15_rate'] = None
                 server_pred['shape_15_rate'] = None
                 server_pred['pong_15_rate'] = None
+                server_pred['main_reverse'] = None
+                server_pred['main_reverse_color'] = None
+                server_pred['main_reverse_15_rate'] = None
         blended = _blended_win_rate(ph)
         # backfill=1일 때만 shape_predicted 보정 (get_shape_prediction_hint 비용 큼). 평소엔 round_actuals fallback만 사용
         ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=25 if backfill else 0, persist_to_db=bool(backfill))
@@ -10393,6 +10460,15 @@ def _build_results_payload():
                     server_pred['main_15_rate'] = _get_main_recent15_win_rate(ph)
                     server_pred['shape_15_rate'] = _get_shape_15_win_rate(ph)
                     server_pred['pong_15_rate'] = _get_pong_15_win_rate(ph)
+                    mv = server_pred.get('value')
+                    server_pred['main_reverse'] = ('꺽' if mv == '정' else '정' if mv == '꺽' else None)
+                    server_pred['main_reverse_15_rate'] = _get_main_reverse_15_win_rate(ph)
+                    if server_pred.get('main_reverse') and is_15_red is True:
+                        server_pred['main_reverse_color'] = '빨강' if server_pred['main_reverse'] == '정' else '검정'
+                    elif server_pred.get('main_reverse') and is_15_red is False:
+                        server_pred['main_reverse_color'] = '검정' if server_pred['main_reverse'] == '정' else '빨강'
+                    else:
+                        server_pred['main_reverse_color'] = '빨강' if server_pred.get('main_reverse') == '정' else '검정' if server_pred.get('main_reverse') == '꺽' else None
                 except Exception:
                     server_pred['shape_pick'] = None
                     server_pred['pong_pick'] = None
@@ -10401,6 +10477,9 @@ def _build_results_payload():
                     server_pred['main_15_rate'] = None
                     server_pred['shape_15_rate'] = None
                     server_pred['pong_15_rate'] = None
+                    server_pred['main_reverse'] = None
+                    server_pred['main_reverse_color'] = None
+                    server_pred['main_reverse_15_rate'] = None
             blended = _blended_win_rate(ph)
             ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=0, persist_to_db=False)
             for h in (ph or []):
@@ -10527,6 +10606,15 @@ def _build_results_payload():
                     server_pred['main_15_rate'] = _get_main_recent15_win_rate(ph)
                     server_pred['shape_15_rate'] = _get_shape_15_win_rate(ph)
                     server_pred['pong_15_rate'] = _get_pong_15_win_rate(ph)
+                    mv = server_pred.get('value')
+                    server_pred['main_reverse'] = ('꺽' if mv == '정' else '정' if mv == '꺽' else None)
+                    server_pred['main_reverse_15_rate'] = _get_main_reverse_15_win_rate(ph)
+                    if server_pred.get('main_reverse') and is_15_red is True:
+                        server_pred['main_reverse_color'] = '빨강' if server_pred['main_reverse'] == '정' else '검정'
+                    elif server_pred.get('main_reverse') and is_15_red is False:
+                        server_pred['main_reverse_color'] = '검정' if server_pred['main_reverse'] == '정' else '빨강'
+                    else:
+                        server_pred['main_reverse_color'] = '빨강' if server_pred.get('main_reverse') == '정' else '검정' if server_pred.get('main_reverse') == '꺽' else None
                 except Exception:
                     server_pred['shape_pick'] = None
                     server_pred['pong_pick'] = None
@@ -10535,6 +10623,9 @@ def _build_results_payload():
                     server_pred['main_15_rate'] = None
                     server_pred['shape_15_rate'] = None
                     server_pred['pong_15_rate'] = None
+                    server_pred['main_reverse'] = None
+                    server_pred['main_reverse_color'] = None
+                    server_pred['main_reverse_15_rate'] = None
             blended = _blended_win_rate(ph)
             round_actuals = _build_round_actuals(results)
             ph = _backfill_shape_predicted_in_ph(ph, results, max_backfill=0, persist_to_db=False)
