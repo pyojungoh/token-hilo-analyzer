@@ -34,8 +34,9 @@ Analyzer 서버의 예측 픽(`/api/current-pick`)을 폴링해서, RED/BLACK �
 
 ## 픽/금액 출처
 
-- **계산기 1/2/3 선택 시**: 픽·회차·금액을 **`GET /api/current-pick-relay?calculator=N`** 에서 가져옵니다. (DB 없이 캐시에서 즉시 반환 → 분석기 부담 감소) 분석기 웹의 해당 계산기(반픽/승률반픽/마틴/멈춤)와 동일한 픽·금액으로 배팅합니다.
-- **current_pick 비어 있을 때**: 픽이 갱신될 때까지 대기합니다.
+- **계산기 1/2/3 선택 시**: 픽·회차·금액을 **`GET /api/current-pick-relay?calculator=N`** 에서 가져옵니다. 분석기 웹의 해당 계산기(반픽/승률반픽/마틴/멈춤)와 동일한 픽·금액으로 배팅합니다.
+- **배팅중 금액**: 계산기 표 1열과 동일 출처 (`getBetForRound`). 클라이언트 POST 값이 DB에 그대로 저장되어 매크로로 전달됩니다.
+- **상세 흐름**: `docs/AUTO_BETTING_DATA_FLOW.md` 참고.
 
 ## EXE 빌드 (배포용 단일 실행 파일)
 

@@ -13,13 +13,17 @@ alwaysApply: false
 - **POST** `/api/current-pick-relay` → 웹 계산기가 픽/금액 갱신
 - **서버 스케줄러**: `_push_current_pick_from_calc` → `_update_current_pick_relay_cache` 직접 호출
 
-## 금액 깜빡임(5천↔1만) — 해결됨
+## 배팅중 금액 정확도 (절대 규칙)
 
-- **원인**: 웹 POST와 서버 스케줄러가 relay 캐시를 번갈아 덮어써서, 타이밍·히스토리 차이로 마틴 단계가 달라짐 (5000 vs 10000)
-- **해결**: relay 캐시를 **서버 단일 소스**로 통일
-  - 스케줄러: 0.2초마다 실행 중인 계산기마다 `_server_calc_effective_pick_and_amount` → `_update_current_pick_relay_cache` 호출
-  - 웹 POST: relay 캐시 갱신 안 함. DB(current_pick)만 저장.
-  - **매크로 GET**: relay 캐시에 회차가 있으면 **무조건 캐시 사용** (계산기 상단 배팅중과 동일 출처). DB는 캐시 비었을 때만 폴백.
+- **배팅중 금액 = 계산기 표 1열과 동일** (`getBetForRound` 출처)
+- **POST 수신**: 클라이언트가 보낸 `suggested_amount` **그대로** DB 저장. 서버가 `pending_bet_amount`로 덮어쓰지 않음.
+- **GET 반환**: DB 회차 ≥ relay 회차이면 **DB 우선** (분석기→POST가 relay보다 빠름)
+- **상세**: `docs/AUTO_BETTING_DATA_FLOW.md` 참고
+
+## relay 캐시
+
+- **스케줄러**: 0.2초마다 `_update_current_pick_relay_cache` 호출
+- **웹 POST**: relay 캐시 갱신 안 함. DB만 저장.
 
 ## 완료된 작업
 

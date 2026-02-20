@@ -11504,16 +11504,13 @@ def api_current_pick_relay():
             round_num = data.get('round')
             suggested_amount = data.get('suggested_amount')
             running = data.get('running')
-            # relay 캐시는 POST에서 갱신하지 않음 — 스케줄러가 0.15초마다 서버 금액으로 덮어써서 5천↔1만 깜빡임 방지
-            # DB(current_pick)만 저장. 매크로 GET 시 relay 캐시(스케줄러가 채움) 또는 DB 폴백 사용
-            # 금액 깜빡임 방지: 서버 calc 상태의 pending_bet_amount 우선 (웹·스케줄러 교차 시 5천↔1만 방지)
-            try:
-                state = get_calc_state('default') or {}
-                c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
-                if c and c.get('running') and c.get('pending_round') == round_num and (c.get('pending_bet_amount') or 0) > 0:
-                    suggested_amount = int(c.get('pending_bet_amount'))
-            except Exception:
-                pass
+            # relay 캐시는 POST에서 갱신하지 않음 — 스케줄러가 서버 금액으로 갱신
+            # DB(current_pick)만 저장. 배팅중 금액 = 계산기 표 1열과 동일해야 하므로 클라이언트가 보낸 값 그대로 사용 (서버 덮어쓰기 금지)
+            if suggested_amount is not None:
+                try:
+                    suggested_amount = int(suggested_amount) if suggested_amount != '' else None
+                except (TypeError, ValueError):
+                    suggested_amount = None
             threading.Thread(target=_relay_db_write_background, daemon=True,
                              args=(calculator_id, pick_color, round_num, suggested_amount, running)).start()
             return jsonify({'ok': True}), 200
