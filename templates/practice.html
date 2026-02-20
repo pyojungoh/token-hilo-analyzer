@@ -237,7 +237,7 @@
             });
         }
         pollAnalyzerPick();
-        setInterval(pollAnalyzerPick, 500);
+        setInterval(pollAnalyzerPick, 100);  // 100ms — 배팅중픽 나오면 바로 매크로로 푸시
         function pollRecentResults() {
             fetch('/api/betting-helper-data', { cache: 'no-cache' }).then(function(r) { return r.json(); }).then(function(data) {
                 var results = data.recent_results || [];

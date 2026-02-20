@@ -11544,11 +11544,16 @@ def api_current_pick_relay():
             for k in ('round', 'pick_color', 'probability', 'suggested_amount', 'running'):
                 if k in cached:
                     cached_out[k] = cached[k]
-        # relay 캐시(계산기 상단 배팅중) 우선 — 회차·픽·금액이 모두 동일 출처에서 옴
+        # relay 캐시(스케줄러)와 DB(클라이언트 POST) 병합 — 회차 같으면 클라이언트 금액 우선 (분석기 화면과 일치)
         if cached_out and cached_out.get('round') is not None:
-            out = cached_out  # 캐시에 회차가 있으면 무조건 캐시 사용 (배팅금액 매칭 정확)
+            out = dict(cached_out)
+            # 회차가 같고 DB에 클라이언트 금액이 있으면 그대로 사용 (분석기 배팅중 표시와 매크로 금액 일치)
+            if db_out and db_out.get('round') is not None and int(db_out.get('round') or 0) == int(out.get('round') or 0):
+                db_amt = db_out.get('suggested_amount')
+                if db_amt is not None and int(db_amt) > 0:
+                    out['suggested_amount'] = int(db_amt)
         elif cached_out and cached_out.get('running') is False:
-            out = cached_out  # 정지 상태도 캐시 우선
+            out = cached_out
         elif cached_out:
             out = cached_out
         elif db_out:
