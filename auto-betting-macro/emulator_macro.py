@@ -53,7 +53,7 @@ BET_DELAY_BEFORE_EXECUTE = 0.4  # 배팅 실행 전 대기(초) — 최대한 �
 BET_DELAY_AFTER_AMOUNT_TAP = 0.01  # 금액 칸 탭 후 바로 입력
 BET_DELAY_AFTER_INPUT = 0.01  # 금액 입력 후 바로 BACK
 BET_DELAY_AFTER_BACK = 0.12  # 키보드 닫힌 뒤 바로 레드/블랙 탭
-BET_AMOUNT_CONFIRM_COUNT = 3  # 같은 (회차, 픽, 금액) 3회 연속 수신 시 즉시 배팅
+BET_AMOUNT_CONFIRM_COUNT = 2  # 같은 (회차, 픽, 금액) 2회 연속 수신 시 즉시 배팅 (3회는 회차 변경 전에 놓치는 경우 많음)
 PUSH_PICK_PORT = 8765  # 중간페이지→매크로 푸시 수신 포트. 푸시 시 3회확인 생략·즉시 ADB
 PUSH_BET_DELAY = 0.15  # 푸시 수신 시 배팅 전 대기(초) — 배팅시간 확보용 최소화
 BET_DEL_COUNT = 8  # 기존 값 삭제용 DEL (8자리: 99999999까지. 탭 후 바로 입력 위해 최소화)
@@ -403,6 +403,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._pick_data = {}
         self._results_data = {}
         self._lock = threading.Lock()
+        self._do_bet_lock = threading.Lock()  # _do_bet 동시 실행 방지 — 픽 1회만 탭, 2중배팅 절대 방지
         # 표시 깜빡임 방지: 같은 (회차, 픽, 금액)이 2회 연속 올 때만 카드/회차/금액 갱신 (웹·서버 교차 덮어쓰기로 5천↔1만 깜빡임 방지)
         self._display_stable = None  # (round_num, pick_color, amount)
         self._display_candidate = None
@@ -1219,6 +1220,17 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         # 회차 N회 확인: 같은 (회차, 픽, 금액)이 N회 연속 수신될 때만 배팅 (금액 오탐 방지)
         key = (round_num, pick_color, amt_val)
         if self._bet_confirm_last != key:
+            # 회차가 올라갔는데 이전 회차를 아직 안 쳤으면 즉시 배팅 (픽 놓침 방지)
+            old = self._bet_confirm_last
+            if old is not None and len(old) >= 3 and (self._bet_confirm_count or 0) >= 1:
+                old_round, old_pick, old_amt = old[0], old[1], old[2]
+                if round_num > old_round and old_round is not None and old_pick and old_amt and old_amt > 0:
+                    with self._lock:
+                        skip = old_round in self._bet_rounds_done or old_round in self._pending_bet_rounds
+                    if not skip and (self._last_bet_round is None or old_round > self._last_bet_round):
+                        self._log("회차 변경 감지 — 이전 %s회 즉시 배팅 (놓침 방지)" % old_round)
+                        self._coords = load_coords()
+                        self._run_bet(old_round, old_pick, old_amt, from_push=False)
             self._bet_confirm_last = key
             self._bet_confirm_count = 1
             self._log("픽 수신: %s회 %s %s원 (1회 확인 — %s회 연속 일치 시 배팅)" % (round_num, pick_color, amt_val, BET_AMOUNT_CONFIRM_COUNT))
@@ -1342,94 +1354,95 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
 
     def _do_bet(self, round_num, pick_color, amount_from_calc=None):
         """금액 입력 → RED/BLACK 픽대로 레드 또는 블랙 탭 → 마지막에 정정(선택). 성공 시 True, 실패(스킵) 시 False.
-        한 회차당 1번만 배팅. 회차/픽/금액은 서버에서 받은 값만 사용 (매크로는 계산 안 함)."""
-        with self._lock:
-            if round_num in self._bet_rounds_done:
-                self._pending_bet_rounds.pop(round_num, None)
-                return False  # 이미 배팅 완료한 회차 — 중복 방지
-            if self._last_bet_round is not None and round_num <= self._last_bet_round:
-                self._pending_bet_rounds.pop(round_num, None)
-                return False  # 이미 배팅한 회차 — 중복 방지
-        try:
-            amt = int(amount_from_calc) if amount_from_calc is not None else 0
-        except (TypeError, ValueError):
-            amt = 0
-        if not _validate_bet_amount(amt):
-            self._log("배팅금액 오류: %s (1~99,999,999 범위 정수만 허용)" % amount_from_calc)
+        한 회차당 1번만 배팅. 픽(RED/BLACK) 버튼은 절대 1회만 탭 — 2중배팅 방지."""
+        with self._do_bet_lock:  # 동시 실행 방지 — 픽 1회만 클릭 보장 (전체 배팅 흐름 직렬화)
             with self._lock:
-                self._pending_bet_rounds.pop(round_num, None)
-            return False
-        # _run_bet에서 이미 _pending_bet_rounds에 등록됨 (두 번 배팅 방지)
-        bet_amount = str(amt)
-        self._log("[금액확인] %s회 %s원 입력 예정" % (round_num, bet_amount))
-        coords = self._coords
-        device = self._device_id or None
-
-        bet_xy = coords.get("bet_amount")
-        confirm_xy = coords.get("confirm")
-        red_xy = coords.get("red")
-        black_xy = coords.get("black")
-        if not bet_xy or len(bet_xy) < 2:
-            self._log("배팅금액 좌표 없음 — 좌표 찾기로 배팅금액 위치를 잡아주세요.")
-            with self._lock:
-                self._pending_bet_rounds.pop(round_num, None)
-            return False
-        if pick_color == "RED" and (not red_xy or len(red_xy) < 2):
-            self._log("레드 좌표 없음 — 좌표 찾기로 레드 버튼 위치를 잡아주세요.")
-            with self._lock:
-                self._pending_bet_rounds.pop(round_num, None)
-            return False
-        if pick_color == "BLACK" and (not black_xy or len(black_xy) < 2):
-            self._log("블랙 좌표 없음 — 좌표 찾기로 블랙 버튼 위치를 잡아주세요.")
-            with self._lock:
-                self._pending_bet_rounds.pop(round_num, None)
-            return False
-
-        def tap_swipe(ax, ay, coord_key=None):
-            """tap 대신 swipe(터치 다운·업) — 웹/앱에서 버튼이 tap에 안 먹을 때 사용."""
-            tx, ty = _apply_window_offset(coords, ax, ay, key=coord_key)
-            adb_swipe(device, tx, ty, 50)
-
-        last_error = None
-        for attempt in range(BET_RETRY_ATTEMPTS):
+                if round_num in self._bet_rounds_done:
+                    self._pending_bet_rounds.pop(round_num, None)
+                    return False  # 이미 배팅 완료한 회차 — 중복 방지
+                if self._last_bet_round is not None and round_num <= self._last_bet_round:
+                    self._pending_bet_rounds.pop(round_num, None)
+                    return False  # 이미 배팅한 회차 — 중복 방지
             try:
-                # 1) 배팅금액 칸 탭 → 포커스 대기 → 기존 값 삭제(DEL) → 금액 입력 → 키보드 닫기
-                def _input_amount_once():
-                    tap_swipe(bet_xy[0], bet_xy[1], "bet_amount")
-                    time.sleep(BET_DELAY_AFTER_AMOUNT_TAP)
-                    adb_keyevent_repeat(device, 67, BET_DEL_COUNT)  # DEL 8회 — 1회 ADB 호출로 즉시
-                    adb_input_text(device, bet_amount)
-                    time.sleep(BET_DELAY_AFTER_INPUT)
-                    adb_keyevent(device, 4)  # BACK
-                    time.sleep(BET_DELAY_AFTER_BACK)
-                _input_amount_once()
-                if BET_AMOUNT_DOUBLE_INPUT:
-                    time.sleep(0.15)  # 첫 입력 반영 대기
-                    _input_amount_once()  # 이중 입력 — 오입력 방지
-                # 2) 픽 RED=레드 / BLACK=블랙 — 100ms swipe로 확실히 터치 (50ms는 미등록될 수 있음)
-                tap_red_button = pick_color == "RED"
-                color_xy = red_xy if tap_red_button else black_xy
-                color_key = "red" if tap_red_button else "black"
-                button_name = "레드" if tap_red_button else "블랙"
-                cx, cy = _apply_window_offset(coords, color_xy[0], color_xy[1], key=color_key)
-                self._log("ADB: 픽 %s → %s 버튼 탭 (%s,%s)" % (pick_color, button_name, cx, cy))
-                adb_swipe(device, cx, cy, 100)  # 1회만 탭 (중복 클릭 시 오동작)
-                time.sleep(BET_DELAY_AFTER_COLOR_TAP)
-                # 3) 정정 버튼(배팅 확정) — 1번만 탭 (여러 번 누르면 버벅거림)
-                if confirm_xy and len(confirm_xy) >= 2:
-                    tap_swipe(confirm_xy[0], confirm_xy[1], "confirm")
-                    time.sleep(BET_DELAY_AFTER_CONFIRM)
+                amt = int(amount_from_calc) if amount_from_calc is not None else 0
+            except (TypeError, ValueError):
+                amt = 0
+            if not _validate_bet_amount(amt):
+                self._log("배팅금액 오류: %s (1~99,999,999 범위 정수만 허용)" % amount_from_calc)
+                with self._lock:
+                    self._pending_bet_rounds.pop(round_num, None)
+                return False
+            # _run_bet에서 이미 _pending_bet_rounds에 등록됨 (두 번 배팅 방지)
+            bet_amount = str(amt)
+            self._log("[금액확인] %s회 %s원 입력 예정" % (round_num, bet_amount))
+            coords = self._coords
+            device = self._device_id or None
 
-                pred_text = "정" if pick_color == "RED" else "꺽"
-                self._log(f"{round_num}회차 {pred_text} {pick_color} {bet_amount}원 (ADB 완료 — 사이트 반영은 화면에서 확인)")
-                return True
-            except Exception as e:
-                last_error = e
-                break  # 한 회차 1번만 — 재시도 안 함
-        self._log("배팅 실행 중 오류: %s — 같은 회차 다음 폴링에 재시도됩니다." % (str(last_error)[:80] if last_error else "unknown"))
-        with self._lock:
-            self._pending_bet_rounds.pop(round_num, None)
-        return False
+            bet_xy = coords.get("bet_amount")
+            confirm_xy = coords.get("confirm")
+            red_xy = coords.get("red")
+            black_xy = coords.get("black")
+            if not bet_xy or len(bet_xy) < 2:
+                self._log("배팅금액 좌표 없음 — 좌표 찾기로 배팅금액 위치를 잡아주세요.")
+                with self._lock:
+                    self._pending_bet_rounds.pop(round_num, None)
+                return False
+            if pick_color == "RED" and (not red_xy or len(red_xy) < 2):
+                self._log("레드 좌표 없음 — 좌표 찾기로 레드 버튼 위치를 잡아주세요.")
+                with self._lock:
+                    self._pending_bet_rounds.pop(round_num, None)
+                return False
+            if pick_color == "BLACK" and (not black_xy or len(black_xy) < 2):
+                self._log("블랙 좌표 없음 — 좌표 찾기로 블랙 버튼 위치를 잡아주세요.")
+                with self._lock:
+                    self._pending_bet_rounds.pop(round_num, None)
+                return False
+
+            def tap_swipe(ax, ay, coord_key=None):
+                """tap 대신 swipe(터치 다운·업) — 웹/앱에서 버튼이 tap에 안 먹을 때 사용."""
+                tx, ty = _apply_window_offset(coords, ax, ay, key=coord_key)
+                adb_swipe(device, tx, ty, 50)
+
+            last_error = None
+            for attempt in range(BET_RETRY_ATTEMPTS):
+                try:
+                    # 1) 배팅금액 칸 탭 → 포커스 대기 → 기존 값 삭제(DEL) → 금액 입력 → 키보드 닫기
+                    def _input_amount_once():
+                        tap_swipe(bet_xy[0], bet_xy[1], "bet_amount")
+                        time.sleep(BET_DELAY_AFTER_AMOUNT_TAP)
+                        adb_keyevent_repeat(device, 67, BET_DEL_COUNT)  # DEL 8회 — 1회 ADB 호출로 즉시
+                        adb_input_text(device, bet_amount)
+                        time.sleep(BET_DELAY_AFTER_INPUT)
+                        adb_keyevent(device, 4)  # BACK
+                        time.sleep(BET_DELAY_AFTER_BACK)
+                    _input_amount_once()
+                    if BET_AMOUNT_DOUBLE_INPUT:
+                        time.sleep(0.15)  # 첫 입력 반영 대기
+                        _input_amount_once()  # 이중 입력 — 오입력 방지
+                    # 2) 픽 RED=레드 / BLACK=블랙 — 1회만 탭 (2중배팅 절대 방지)
+                    tap_red_button = pick_color == "RED"
+                    color_xy = red_xy if tap_red_button else black_xy
+                    color_key = "red" if tap_red_button else "black"
+                    button_name = "레드" if tap_red_button else "블랙"
+                    cx, cy = _apply_window_offset(coords, color_xy[0], color_xy[1], key=color_key)
+                    self._log("ADB: 픽 %s → %s 버튼 탭 (%s,%s)" % (pick_color, button_name, cx, cy))
+                    adb_swipe(device, cx, cy, 100)  # 픽 버튼 1회만 — 2중배팅 방지
+                    time.sleep(BET_DELAY_AFTER_COLOR_TAP)
+                    # 3) 정정 버튼(배팅 확정) — 1번만 탭
+                    if confirm_xy and len(confirm_xy) >= 2:
+                        tap_swipe(confirm_xy[0], confirm_xy[1], "confirm")
+                        time.sleep(BET_DELAY_AFTER_CONFIRM)
+
+                    pred_text = "정" if pick_color == "RED" else "꺽"
+                    self._log(f"{round_num}회차 {pred_text} {pick_color} {bet_amount}원 (ADB 완료 — 사이트 반영은 화면에서 확인)")
+                    return True
+                except Exception as e:
+                    last_error = e
+                    break  # 한 회차 1번만 — 재시도 안 함
+            self._log("배팅 실행 중 오류: %s — 같은 회차 다음 폴링에 재시도됩니다." % (str(last_error)[:80] if last_error else "unknown"))
+            with self._lock:
+                self._pending_bet_rounds.pop(round_num, None)
+            return False
 
     def _update_display(self):
         with self._lock:
