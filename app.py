@@ -10250,7 +10250,7 @@ RESULTS_HTML = '''
             if (shapePollIntervalId) clearInterval(shapePollIntervalId);
             
             // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·예측픽 먹통 발생
-            var resultsInterval = isTabVisible ? 200 : 1200;
+            var resultsInterval = isTabVisible ? 80 : 1200;  // 80ms — 새 픽 빠른 수신
             var calcStatusInterval = isTabVisible ? 25 : 1200;  // 픽 서버 전달 25ms — 자동배팅기 빠른 수신
             var calcStateInterval = isTabVisible ? 2500 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
             var timerInterval = isTabVisible ? 250 : 1000;
@@ -10262,7 +10262,7 @@ RESULTS_HTML = '''
                 const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
                 const criticalPhase = r <= 3 || r >= 8;
                 // 백그라운드일 때는 최소 1초 간격. 너무 짧으면 서버 부하로 예측픽 안 나옴
-                const baseInterval = allResults.length === 0 ? 320 : (anyRunning ? 80 : (criticalPhase ? 250 : 320));
+                const baseInterval = allResults.length === 0 ? 320 : (anyRunning ? 50 : (criticalPhase ? 250 : 320));
                 const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
                 if (Date.now() - lastResultsUpdate > interval) {
                     loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
@@ -10289,7 +10289,7 @@ RESULTS_HTML = '''
             // 백그라운드일 때는 1초 간격으로 조정 (브라우저 제한)
             timerUpdateIntervalId = setInterval(updateTimer, timerInterval);
             
-            // 예측픽만 경량 폴링: 캐시 기반. 150ms는 서버 부하로 느려짐 → 280ms로 완화
+            // 예측픽만 경량 폴링: 캐시 기반. 새 픽 수신 시 즉시 updateCalcStatus → 매크로로 빠른 전달
             if (isTabVisible) {
                 predictionPollIntervalId = setInterval(function() {
                     fetch('/api/current-prediction?t=' + Date.now(), { cache: 'no-cache' }).then(function(r) { return r.json(); }).then(function(data) {
@@ -10306,8 +10306,10 @@ RESULTS_HTML = '''
                         lastWarningU35 = !!(sp.warning_u35);
                         updatePredictionPicksCards(sp);
                         refreshPredictionPickOnly();
+                        // 새 픽 수신 즉시 배팅기로 전달 — 25ms 대기 없이
+                        try { CALC_IDS.forEach(function(id) { if (typeof updateCalcStatus === 'function') updateCalcStatus(id); }); } catch (e) {}
                     }).catch(function() {});
-                }, 280);
+                }, 100);
             }
             // 모양판별 픽 전용 폴링 (120ms) — 예측기픽 모양 카드 빠른 표시
             if (isTabVisible) {
