@@ -4271,7 +4271,7 @@ def load_results_data(base_url=None):
 
 
 def _update_relay_cache_for_running_calcs():
-    """실행 중인 계산기 relay 캐시 갱신. 결과 유무와 관계없이 0.2초마다 호출. 정지된 calc는 캐시 clear."""
+    """실행 중인 계산기 relay 캐시 갱신. 캐시 회차가 서버보다 크면 덮어쓰지 않음(클라이언트 POST 픽 보존)."""
     t0 = time.time()
     if not DB_AVAILABLE or not DATABASE_URL:
         return
@@ -4289,8 +4289,17 @@ def _update_relay_cache_for_running_calcs():
                     _update_current_pick_relay_cache(int(cid), None, None, None, False, None)  # 정지 시 clear
                     continue
                 try:
-                    pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
                     pr = c.get('pending_round')
+                    cached = _current_pick_relay_cache.get(int(cid))
+                    cached_r = cached.get('round') if cached and isinstance(cached, dict) else None
+                    try:
+                        cv = int(cached_r) if cached_r is not None else 0
+                        pv = int(pr) if pr is not None else 0
+                        if cv > pv:
+                            continue  # 캐시가 더 최신(클라이언트 POST) — 덮어쓰지 않음
+                    except (TypeError, ValueError):
+                        pass
+                    pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
                     if pick_color is not None or (c.get('streak_wait_enabled') and c.get('streak_wait_state') in ('waiting', 'paused')):
                         _update_current_pick_relay_cache(int(cid), pr, pick_color, suggested_amount if suggested_amount is not None else 0, True, None)
                 except Exception:
@@ -4340,14 +4349,13 @@ def _scheduler_trim_shape_tables():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    # 0.2초마다 시도. refresh 블로킹(~2.5초)+apply(~1초)로 run당 ~4초. 0.15초는 부하 과다 → 0.2초로 완화
+    # 0.2초마다 시도. refresh 블로킹(~2.5초)+apply(~1초)로 run당 ~4초
     _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.2, id='fetch_results', max_instances=1)
     _scheduler.add_job(_scheduler_trim_shape_tables, 'interval', seconds=300, id='trim_shape', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
-        # prediction_cache는 _scheduler_fetch_results 내부에서만 갱신 (최신 results 반영 직후 — 모양 카드 등 정확한 픽 즉시 표시)
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (0.2초마다, refresh 블로킹, prediction_cache=fetch 직후)")
+        print("[✅] 결과 수집 스케줄러 시작 (fetch 0.2초, relay_cache 0.15초)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:
@@ -10092,7 +10100,7 @@ RESULTS_HTML = '''
             
             // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·예측픽 먹통 발생
             var resultsInterval = isTabVisible ? 320 : 1200;
-            var calcStatusInterval = isTabVisible ? 200 : 1200;  // 픽 서버 전달 200ms — 자동배팅기 즉시 수신·배팅 놓침 방지
+            var calcStatusInterval = isTabVisible ? 150 : 1200;  // 픽 서버 전달 150ms — 자동배팅기 즉시 수신·배팅 놓침 방지
             var calcStateInterval = isTabVisible ? 2500 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
             var timerInterval = isTabVisible ? 250 : 1000;
             
@@ -11498,7 +11506,7 @@ def _relay_db_write_background(calculator_id, pick_color, round_num, suggested_a
 
 @app.route('/api/current-pick-relay', methods=['GET', 'POST'])
 def api_current_pick_relay():
-    """매크로 전용: 캐시 우선(스케줄러만 갱신→서버 값 보장), 캐시 없을 때만 DB/계산. POST: relay 캐시 갱신 안 함."""
+    """매크로 전용: POST 시 relay 캐시 즉시 갱신(픽 빠른 전달), GET은 캐시 우선. 금액은 서버 calc와 회차 일치 시 서버 값."""
     empty_pick = {'pick_color': None, 'round': None, 'probability': None, 'suggested_amount': None, 'running': True}
     try:
         if request.method == 'POST':
@@ -11512,7 +11520,22 @@ def api_current_pick_relay():
             round_num = data.get('round')
             suggested_amount = data.get('suggested_amount')
             running = data.get('running')
-            # relay 캐시 갱신 안 함 — GET이 서버 calc만 사용하므로 클라이언트 금액이 덮어쓰지 않음
+            # 픽 즉시 전달: relay 캐시 갱신. 금액은 서버 calc와 회차 일치 시 서버 값 사용
+            try:
+                state = get_calc_state('default') or {}
+                c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
+                if c and c.get('running') and c.get('pending_round') == round_num:
+                    _, srv_amt, _ = _server_calc_effective_pick_and_amount(c)
+                    if srv_amt is not None and int(srv_amt) > 0:
+                        suggested_amount = int(srv_amt)
+            except Exception:
+                pass
+            if suggested_amount is not None:
+                try:
+                    suggested_amount = int(suggested_amount) if suggested_amount != '' else None
+                except (TypeError, ValueError):
+                    suggested_amount = None
+            _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running if running is not None else True, None)
             threading.Thread(target=_relay_db_write_background, daemon=True,
                              args=(calculator_id, pick_color, round_num, suggested_amount, running)).start()
             return jsonify({'ok': True}), 200
