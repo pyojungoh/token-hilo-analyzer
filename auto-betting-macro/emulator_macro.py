@@ -49,7 +49,7 @@ COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드"
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
 # 배팅 동작 간 지연(초). 픽 수신 즉시 사이트로 빠르게 배팅 — 최소화. 입력/확정이 안 먹으면 값을 늘리세요.
-BET_DELAY_BEFORE_EXECUTE = 0.4  # 배팅 실행 전 대기(초) — 최대한 빠르게
+BET_DELAY_BEFORE_EXECUTE = 0.25  # 배팅 실행 전 대기(초) — 픽 수신 즉시 배팅
 BET_DELAY_AFTER_AMOUNT_TAP = 0.01  # 금액 칸 탭 후 포커스 대기 (자동 클리어됨)
 BET_DELAY_AFTER_INPUT = 0.01  # 금액 입력 후 바로 BACK
 BET_DELAY_AFTER_BACK = 0.12  # 키보드 닫힌 뒤 바로 레드/블랙 탭
