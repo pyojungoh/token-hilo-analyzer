@@ -4166,9 +4166,9 @@ def load_game_data():
         'timestamp': current_status_data.get('timestamp', datetime.now().isoformat())
     }
 
-# 외부 result.json 요청 시 타임아웃 (병렬: 경로당 4초, 전체 6초)
-RESULTS_FETCH_TIMEOUT_PER_PATH = 4
-RESULTS_FETCH_OVERALL_TIMEOUT = 6
+# 외부 result.json 요청 시 타임아웃 (병렬: 경로당 2초, 전체 4초 — 픽 지연 최소화)
+RESULTS_FETCH_TIMEOUT_PER_PATH = 2
+RESULTS_FETCH_OVERALL_TIMEOUT = 4
 RESULTS_FETCH_MAX_RETRIES = 1
 
 
@@ -4302,26 +4302,28 @@ def _update_relay_cache_for_running_calcs():
         _perf_log('update_relay_cache', (time.time() - t0) * 1000)
 
 
-def _scheduler_fetch_results():
-    """스케줄러에서 호출: results_cache 갱신 + DB 저장 + 현재 회차 예측 1회 저장(한 곳) + 계산기 회차 반영 + prediction_history 누락 보정.
-    refresh 블로킹 유지: apply가 최신 DB(방금 저장된 외부 결과) 사용 보장. 비블로킹 시 데이터 지연으로 버벅임 발생."""
+def _scheduler_apply_results():
+    """DB 결과로 계산기 회차 반영 + relay + prediction_cache. 0.1초마다 독립 실행 — fetch 블로킹과 무관하게 픽 즉시 반영."""
     t0 = time.time()
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return
     try:
-        _refresh_results_background()
-        if DB_AVAILABLE and DATABASE_URL:
-            results = get_recent_results(hours=24)
-            if results and len(results) >= 16:
-                ensure_stored_prediction_for_current_round(results)
-                _apply_results_to_calcs(results)
-                _backfill_latest_round_to_prediction_history(results)
-            # relay 캐시: 결과 유무와 관계없이 항상 갱신 (전회차 금액 송출·20000 고정 방지)
-            _update_relay_cache_for_running_calcs()
-            # prediction_cache: 최신 results 반영 직후에만 갱신 — 모양 카드 등 shape_pick이 처음부터 정확히 나오도록
-            _update_prediction_cache_from_db()
+        results = get_recent_results(hours=24)
+        if results and len(results) >= 16:
+            ensure_stored_prediction_for_current_round(results)
+            _apply_results_to_calcs(results)
+            _backfill_latest_round_to_prediction_history(results)
+        _update_relay_cache_for_running_calcs()
+        _update_prediction_cache_from_db()
     except Exception as e:
-        print(f"[스케줄러] 결과 수집/회차 반영 오류: {str(e)[:150]}")
+        print(f"[스케줄러] apply 오류: {str(e)[:100]}")
     finally:
-        _perf_log('scheduler_fetch', (time.time() - t0) * 1000)
+        _perf_log('scheduler_apply', (time.time() - t0) * 1000)
+
+
+def _scheduler_fetch_results():
+    """fetch만 스레드로 실행(스케줄러 블로킹 없음). apply는 별도 job(0.1초)에서 DB 갱신 시 즉시 반영."""
+    threading.Thread(target=_refresh_results_background, daemon=True).start()
 
 
 def _scheduler_trim_shape_tables():
@@ -4341,13 +4343,13 @@ def _scheduler_trim_shape_tables():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    # 0.2초마다 시도. refresh 블로킹(~2.5초)+apply(~1초)로 run당 ~4초
     _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.15, id='fetch_results', max_instances=1)
+    _scheduler.add_job(_scheduler_apply_results, 'interval', seconds=0.1, id='apply_results', max_instances=1)  # DB 갱신 시 0.1초 내 픽 반영
     _scheduler.add_job(_scheduler_trim_shape_tables, 'interval', seconds=300, id='trim_shape', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (fetch 0.15초)")
+        print("[✅] 결과 수집 스케줄러 시작 (fetch 0.15초, apply 0.1초)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:
