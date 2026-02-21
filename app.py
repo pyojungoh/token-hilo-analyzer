@@ -8369,10 +8369,6 @@ RESULTS_HTML = '''
         function getBetForRound(id, roundNum) {
             try {
                 if (!calcState[id] || roundNum == null) return 0;
-                // 서버가 저장한 pending 회차 금액이 있으면 그대로 사용(금액 왔다갔다 방지)
-                var pr = calcState[id].pending_round;
-                var pba = calcState[id].pending_bet_amount;
-                if (pr != null && Number(pr) === Number(roundNum) && pba != null && pba > 0) return Math.floor(pba);
                 const capIn = parseFloat(document.getElementById('calc-' + id + '-capital')?.value) || 1000000;
                 const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
                 const oddsIn = parseFloat(document.getElementById('calc-' + id + '-odds')?.value) || 1.97;
@@ -8400,7 +8396,15 @@ RESULTS_HTML = '''
                 }
                 // [변경] 직전 회차가 pending일 때 패배 가정 제거 — 마틴 한 단계 더 가는 버그 방지 (계산기표 vs 자동배팅 금액 불일치 원인)
                 if (useMartingale && (martingaleType === 'pyo' || martingaleType === 'pyo_half')) currentBet = martinTable[Math.min(martingaleStep, martinTable.length - 1)];
-                return Math.min(currentBet, Math.floor(cap));
+                var simulated = Math.min(currentBet, Math.floor(cap));
+                // 서버 pending_bet_amount가 부정확(5000 고정)할 수 있음 — 로컬 시뮬레이션과 비교해 더 큰 값 사용
+                var pr = calcState[id].pending_round;
+                var pba = calcState[id].pending_bet_amount;
+                if (pr != null && Number(pr) === Number(roundNum) && pba != null && pba > 0) {
+                    var srv = Math.floor(pba);
+                    return Math.max(simulated, srv);
+                }
+                return simulated;
             } catch (e) { return 0; }
         }
         function getCalcRecent15WinRate(id) {
@@ -11899,10 +11903,24 @@ def api_current_pick_relay():
             out['suggested_amount'] = server_out.get('suggested_amount')
             out['running'] = server_out.get('running', True)
             out['probability'] = server_out.get('probability')
+            # 금액: DB(클라이언트 POST) 우선 — 서버 계산값(5000)이 잘못 들어가는 충돌 방지
+            if bet_int and DB_AVAILABLE and DATABASE_URL:
+                try:
+                    conn = get_db_connection(statement_timeout_sec=2)
+                    if conn:
+                        try:
+                            db_row = bet_int.get_current_pick(conn, calculator_id=calculator_id)
+                            if db_row and db_row.get('round') == out.get('round') and db_row.get('suggested_amount') and int(db_row.get('suggested_amount')) > 0:
+                                out['suggested_amount'] = int(db_row.get('suggested_amount'))
+                        finally:
+                            try: conn.close()
+                            except Exception: pass
+                except Exception:
+                    pass
             if out.get('running') is False:
                 out = dict(out)
                 out['pick_color'] = out['round'] = out['suggested_amount'] = None
-            # 캐시 비었을 때 서버 계산값으로 채워서 다음 GET은 즉시 반환
+            # 캐시 비었을 때 채워서 다음 GET은 즉시 반환 (금액은 위에서 DB 우선 적용됨)
             _update_current_pick_relay_cache(calculator_id, out.get('round'), out.get('pick_color'), out.get('suggested_amount'), out.get('running', True), None)
             return jsonify(out), 200
         # 서버 calc 없음(웹 미접속·정지): DB fallback
