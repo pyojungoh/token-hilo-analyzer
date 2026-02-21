@@ -1330,7 +1330,7 @@ def _get_prediction_picks_best(results, predicted_round, ph, shape_pong_only=Fal
         except Exception:
             pass
     main_reverse_pred = ('꺽' if main_pred == '정' else '정' if main_pred == '꺽' else None) if main_pred else None
-    shape_pred = _get_latest_next_pick_for_chunk(results)
+    shape_pred = _get_latest_next_pick_for_chunk(results, exclude_round=predicted_round)
     if shape_pred not in ('정', '꺽'):
         shape_pred = None
     pong_pred = _get_pong_pick_for_round(results, predicted_round)
@@ -1354,6 +1354,17 @@ def _get_prediction_picks_best(results, predicted_round, ph, shape_pong_only=Fal
     candidates.sort(key=lambda x: (-x[0], x[1]))
     best_pred = candidates[0][2]
     best_type = candidates[0][3]
+    # 모양·퐁당만: shape와 pong이 다를 때 승률 차이 8%p 이내면 pong 우선 — "정"만 연속 방지
+    if shape_pong_only and len(candidates) >= 2:
+        shape_cand = next((c for c in candidates if c[3] == 'shape'), None)
+        pong_cand = next((c for c in candidates if c[3] == 'pong'), None)
+        if shape_cand and pong_cand and shape_cand[2] != pong_cand[2]:
+            shape_rate_val = shape_cand[0] if shape_cand[0] >= 0 else 0
+            pong_rate_val = pong_cand[0] if pong_cand[0] >= 0 else 0
+            rate_diff = shape_rate_val - pong_rate_val
+            if 0 <= rate_diff <= 8:  # shape가 더 높지만 8%p 이내면 pong 사용
+                best_pred = pong_cand[2]
+                best_type = pong_cand[3]
     is_15_red = _get_card_15_color_for_latest_round(results)
     if is_15_red is True:
         color = '빨강' if best_pred == '정' else '검정'
