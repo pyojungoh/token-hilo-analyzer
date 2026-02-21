@@ -37,7 +37,7 @@ COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드",
 
 # 배팅 지연 — 픽 수신 즉시 사이트로 빠르게 배팅 (입력 안 먹으면 늘리세요)
 D_BEFORE_EXECUTE = 0.4  # 배팅 실행 전 대기(초) — 최대한 빠르게
-D_AMOUNT_TAP = 0.01  # 금액 칸 탭 후 바로 입력
+D_AMOUNT_TAP = 0.01  # 금액 칸 탭 후 포커스 대기 (자동 클리어됨)
 D_INPUT = 0.01  # 금액 입력 후 바로 BACK
 D_BACK = 0.12  # 키보드 닫힌 뒤 바로 레드/블랙 탭
 D_COLOR = 0.01
@@ -515,8 +515,22 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
             if self._last_bet_round is not None and round_num <= self._last_bet_round:
                 self._pending_bet_rounds.pop(round_num, None)
                 return
-            self._log("%s회 %s %s원 실행" % (round_num, pick_color, amt_val))
-            ok = self._do_bet(round_num, pick_color, amt_val)
+            # 배팅 직전: 전/지금/뒤 회차 확인 후 해당 회차의 최신 금액 재조회
+            final_amt = amt_val
+            try:
+                url = self._url or (self.url_combo.currentText() or self.url_combo.currentData() or "").strip().rstrip("/")
+                calc_id = self._calc_id or (self.calc_combo.currentData() if HAS_PYQT else 1)
+                if url and calc_id:
+                    pick = fetch_pick(url, calc_id=calc_id, timeout=2)
+                    if pick and isinstance(pick, dict) and int(pick.get("round") or 0) == round_num:
+                        amt = pick.get("suggested_amount") or pick.get("suggestedAmount")
+                        if amt is not None and int(amt) > 0:
+                            final_amt = int(amt)
+                            self._log("배팅 직전 %s회 금액 재조회: %s원 (전/지금/뒤 확인 후)" % (round_num, final_amt))
+            except Exception:
+                pass
+            self._log("%s회 %s %s원 실행" % (round_num, pick_color, final_amt))
+            ok = self._do_bet(round_num, pick_color, final_amt)
             if ok:
                 self._last_bet_round = round_num
                 self._bet_rounds_done.add(round_num)
@@ -563,7 +577,6 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
                     tx, ty = _apply_window_offset(coords, bet_xy[0], bet_xy[1], key="bet_amount")
                     adb_swipe(device, tx, ty, SWIPE_AMOUNT_MS)
                     time.sleep(D_AMOUNT_TAP)
-                    adb_keyevent_repeat(device, 67, D_DEL_COUNT)  # DEL 8회 — 1회 ADB로 즉시
                     adb_input_text(device, bet_amount)
                     time.sleep(D_INPUT)
                     adb_keyevent(device, 4)

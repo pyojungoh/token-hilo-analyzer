@@ -16,9 +16,10 @@ alwaysApply: false
 ## 배팅중 금액 정확도 (절대 규칙)
 
 - **배팅중 금액 = 계산기 표 1열과 동일** (`getBetForRound` 출처)
-- **POST 수신**: 클라이언트가 보낸 `suggested_amount` **그대로** DB 저장. 서버가 `pending_bet_amount`로 덮어쓰지 않음.
-- **GET 반환**: DB 회차 ≥ relay 회차이면 **DB 우선** (분석기→POST가 relay보다 빠름)
-- **상세**: `docs/AUTO_BETTING_DATA_FLOW.md` 참고
+- **POST 수신**: 클라이언트 값 사용. **단, 마틴 끝 후** 서버에 직전 회차 결과가 있으면 `pending_bet_amount`로 덮어씀 (잘못된 마틴 금액 방지)
+- **매크로**: `suggested_amount`만 배팅에 사용. `_display_best_amount`는 표시용만.
+- **마틴 승 후**: 반드시 초기 금액으로 리셋. 마틴 금액이 이어져 배팅되면 안 됨.
+- **상세**: `docs/AUTO_BETTING_AMOUNT_RULES.md`, `docs/AUTO_BETTING_DATA_FLOW.md` 참고
 
 ## relay 캐시
 

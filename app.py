@@ -1176,15 +1176,16 @@ def _blended_win_rate_components(prediction_history):
 
 
 def _get_main_recent15_win_rate(ph):
-    """메인 예측기(예측픽) 기준 최근 15경기 승률(%). 조커 제외. 5회 미만이면 None."""
+    """메인 예측기(예측픽) 기준 최근 15경기 승률(%). 조커 제외. 5회 미만이면 None.
+    actual이 '정' 또는 '꺽'인 회차만 포함 (조커/None/빈값 제외)."""
     if not ph or len(ph) < 5:
         return None
-    vh = [h for h in ph if h and h.get('actual') not in ('joker', '조커')]
+    vh = [h for h in ph if h and h.get('actual') in ('정', '꺽')]
     last15 = vh[-15:] if len(vh) >= 15 else vh
     if len(last15) < 5:
         return None
     wins = sum(1 for h in last15 if h.get('predicted') == h.get('actual'))
-    return 100.0 * wins / len(last15)
+    return round(100.0 * wins / len(last15), 1)
 
 
 def _get_shape_15_win_rate(ph):
@@ -1212,10 +1213,11 @@ def _get_pong_15_win_rate(ph):
 
 
 def _get_main_reverse_15_win_rate(ph):
-    """메인반픽(예측픽의 반대) 최근 15회 승률. predicted의 반대 vs actual, 조커 제외. 5회 미만이면 None."""
+    """메인반픽(예측픽의 반대) 최근 15회 승률. predicted의 반대 vs actual, 조커 제외. 5회 미만이면 None.
+    actual이 '정' 또는 '꺽'인 회차만 포함."""
     if not ph or len(ph) < 5:
         return None
-    vh = [h for h in ph if h and h.get('actual') not in ('joker', '조커')]
+    vh = [h for h in ph if h and h.get('actual') in ('정', '꺽')]
     last15 = vh[-15:] if len(vh) >= 15 else vh
     if len(last15) < 5:
         return None
@@ -11531,8 +11533,24 @@ def api_current_pick_relay():
             calculator_id = int(calculator_id) if calculator_id in ('1', '2', '3') else 1
         except (TypeError, ValueError):
             calculator_id = 1
-        # 계산기 상단 배팅중(회차·픽·금액) = relay 캐시 단일 소스. 스케줄러가 0.15초마다 서버 calc 금액으로 갱신.
-        # DB(클라이언트 POST)는 캐시가 비었을 때만 폴백 — DB 회차가 높아도 금액이 어긋날 수 있어 캐시 우선.
+        # [마틴 끝 후 금액 오류 방지] GET 시 항상 서버 calc에서 금액 계산 — DB/캐시는 회차·픽만 참고, 금액은 서버 계산만 사용
+        server_out = None
+        try:
+            state = get_calc_state('default') or {}
+            c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
+            if c and c.get('running'):
+                pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
+                pr = c.get('pending_round')
+                if pick_color is not None or pr is not None:
+                    server_out = {
+                        'round': pr,
+                        'pick_color': pick_color,
+                        'suggested_amount': suggested_amount if suggested_amount and int(suggested_amount) > 0 else None,
+                        'running': True,
+                        'probability': None,
+                    }
+        except Exception:
+            pass
         db_out = None
         if bet_int and DB_AVAILABLE and DATABASE_URL:
             conn = get_db_connection(statement_timeout_sec=3)
@@ -11553,23 +11571,24 @@ def api_current_pick_relay():
             for k in ('round', 'pick_color', 'probability', 'suggested_amount', 'running'):
                 if k in cached:
                     cached_out[k] = cached[k]
-        # DB(클라이언트 POST) 우선 — 분석기에서 픽 나오자마자 POST하므로 DB가 더 빠름. relay는 스케줄러(2~3초 블로킹)로 느림
         def _round_val(o):
             r = o.get('round') if o else None
             try:
                 return int(r) if r is not None else 0
             except (TypeError, ValueError):
                 return 0
-        rd, rc = _round_val(db_out), _round_val(cached_out)
-        if db_out and rd > 0 and (rd >= rc or (cached_out and cached_out.get('running') is False)):
-            out = db_out  # DB 회차가 같거나 더 높으면 DB 우선 (분석기→POST가 relay보다 빠름)
+        # 서버 계산 있으면 우선 사용 (마틴 끝 후 초기 금액 보장) — round·pick·amount 모두 서버 기준
+        if server_out and (server_out.get('round') or server_out.get('pick_color')):
+            out = dict(empty_pick)
+            out['round'] = server_out.get('round')
+            out['pick_color'] = server_out.get('pick_color')
+            out['suggested_amount'] = server_out.get('suggested_amount')
+            out['running'] = server_out.get('running', True)
+            out['probability'] = server_out.get('probability')
+        elif db_out and _round_val(db_out) > 0:
+            out = dict(db_out)
         elif cached_out and cached_out.get('round') is not None:
             out = dict(cached_out)
-            # 회차 같으면 클라이언트 금액 우선
-            if db_out and rd == rc:
-                db_amt = db_out.get('suggested_amount')
-                if db_amt is not None and int(db_amt) > 0:
-                    out['suggested_amount'] = int(db_amt)
         elif cached_out and cached_out.get('running') is False:
             out = cached_out
         elif cached_out:

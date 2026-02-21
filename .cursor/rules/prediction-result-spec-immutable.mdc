@@ -1,0 +1,20 @@
+---
+description: 예측픽·예측기픽·결과·승패 규격 문서 변형 금지
+globs: docs/PREDICTION_AND_RESULT_SPEC.md
+alwaysApply: false
+---
+
+# PREDICTION_AND_RESULT_SPEC.md 변형 금지
+
+**docs/PREDICTION_AND_RESULT_SPEC.md**는 현재 정상 동작 중인 예측픽, 예측기픽, 결과 처리, 승/패 방식을 정의한 **변형 금지** 규격 문서다.
+
+## 절대 수정하지 말 것
+
+- 이 문서를 수정·삭제·요약 변경하지 말 것.
+- 15번 카드(results[14]), 정/꺽→빨강/검정 매핑, graph_values, 승/패 판정 등은 문서에 정의된 대로 유지.
+- 수정 시 예측 색상 반전·승패 오표시 등 버그가 재발함.
+
+## 코드 수정 시
+
+- 예측픽·예측기픽·결과·승패 관련 코드를 수정할 때는 **반드시** 이 문서와 일치하도록 할 것.
+- 문서를 바꾸지 말고, 코드가 문서를 따르도록 할 것.

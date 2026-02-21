@@ -1,0 +1,31 @@
+---
+description: 예측픽·캐시 구조 — prediction_cache, results_cache, current-prediction API
+globs: app.py, docs/PREDICTION_CACHE_ARCHITECTURE.md
+alwaysApply: true
+---
+
+# 예측픽·캐시 구조 (규칙)
+
+예측픽·배팅중 픽·캐시 관련 코드 수정 시 **docs/PREDICTION_CACHE_ARCHITECTURE.md**를 기준으로 한다.
+
+## 캐시 변수
+
+| 변수 | 용도 |
+|------|------|
+| `results_cache` | 전체 페이로드. `_refresh_results_background`(외부 fetch) 또는 `get_results`(DB)로 갱신 |
+| `prediction_cache` | 예측픽만. **DB 전용** `_update_prediction_cache_from_db`(0.1초) + fetch 완료 시 `_refresh_results_background` |
+
+## /api/current-prediction
+
+- **우선순위**: `prediction_cache` → `results_cache['server_prediction']`
+- prediction_cache 우선을 유지할 것. results_cache만 쓰면 외부 fetch 대기(2~4초)로 지연 발생.
+
+## 스케줄러
+
+- `_scheduler_fetch_results`: `_refresh_results_background` 호출 (외부 fetch 포함)
+- `_update_prediction_cache_from_db`: **외부 fetch 없음**, DB만 사용. `_start_scheduler_delayed` 내부에서 job 추가.
+
+## 수정 시 금지
+
+- `_update_prediction_cache_from_db`에서 `load_results_data` 호출 금지
+- `get_current_prediction`에서 prediction_cache 폴백 순서 변경 금지
