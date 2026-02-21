@@ -1306,12 +1306,12 @@ def _get_pong_15_win_rate_weighted(ph, decay=1.1):
     return _get_weighted_15_win_rate(last15, lambda h: h.get('pong_pick') == h.get('actual'), decay)
 
 
-PRED_PICKS_DECAY = 1.25  # 예측기픽 4카드 공통: 최근 회차 가중 (최신 회차가 더 많이 반영되어 잘 맞는 픽 쫒아감)
+PRED_PICKS_DECAY = 1.1  # 예측기픽 4카드 공통: 최근 회차 가중 (1.25→1.1: 과도한 최근 가중 완화, 연패 완화)
 
 
 def _get_prediction_picks_best(results, predicted_round, ph):
     """메인/메인반픽/모양/퐁당 4픽 중 15회 승률이 가장 높은 픽 선택. 예측기픽 메뉴 카드에 표시되는 승률과 동일하게 사용.
-    4카드 모두 decay=1.25로 최근 승패 가중 — 최신 회차가 더 반영되어 잘 맞는 픽 쫒아감. 동점 시 메인>메인반픽>모양>퐁당."""
+    4카드 모두 decay=1.1로 최근 승패 가중. 동점 시 메인>메인반픽>모양>퐁당."""
     if not results or len(results) < 16 or not ph:
         return None, None
     # 예측기픽 메뉴(카드) 표시 승률과 동일 — 계산기는 이 승률 기반으로 픽 선택
