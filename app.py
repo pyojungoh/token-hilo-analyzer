@@ -4271,7 +4271,7 @@ def load_results_data(base_url=None):
 
 
 def _update_relay_cache_for_running_calcs():
-    """실행 중인 계산기 relay 캐시 갱신. 결과 유무와 관계없이 0.2초마다 호출 → 전회차 금액 송출·20000 고정 방지."""
+    """실행 중인 계산기 relay 캐시 갱신. 결과 유무와 관계없이 0.2초마다 호출. 정지된 calc는 캐시 clear."""
     t0 = time.time()
     if not DB_AVAILABLE or not DATABASE_URL:
         return
@@ -4283,14 +4283,16 @@ def _update_relay_cache_for_running_calcs():
                 continue
             for cid in ('1', '2', '3'):
                 c = state.get(cid)
-                if not c or not isinstance(c, dict) or not c.get('running'):
+                if not c or not isinstance(c, dict):
+                    continue
+                if not c.get('running'):
+                    _update_current_pick_relay_cache(int(cid), None, None, None, False, None)  # 정지 시 clear
                     continue
                 try:
                     pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
                     pr = c.get('pending_round')
-                    # 연패정지 대기/일시정지 시 pick_color=None, amount=0 — relay에 0 반영해 매크로 배팅 스킵
                     if pick_color is not None or (c.get('streak_wait_enabled') and c.get('streak_wait_state') in ('waiting', 'paused')):
-                        _update_current_pick_relay_cache(int(cid), pr, pick_color, suggested_amount if suggested_amount is not None else 0, c.get('running', True))
+                        _update_current_pick_relay_cache(int(cid), pr, pick_color, suggested_amount if suggested_amount is not None else 0, True, None)
                 except Exception:
                     pass
     except Exception:
@@ -4313,6 +4315,8 @@ def _scheduler_fetch_results():
                 _backfill_latest_round_to_prediction_history(results)
             # relay 캐시: 결과 유무와 관계없이 항상 갱신 (전회차 금액 송출·20000 고정 방지)
             _update_relay_cache_for_running_calcs()
+            # prediction_cache: 최신 results 반영 직후에만 갱신 — 모양 카드 등 shape_pick이 처음부터 정확히 나오도록
+            _update_prediction_cache_from_db()
     except Exception as e:
         print(f"[스케줄러] 결과 수집/회차 반영 오류: {str(e)[:150]}")
     finally:
@@ -4341,12 +4345,9 @@ if SCHEDULER_AVAILABLE:
     _scheduler.add_job(_scheduler_trim_shape_tables, 'interval', seconds=300, id='trim_shape', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
-        try:
-            _scheduler.add_job(_update_prediction_cache_from_db, 'interval', seconds=0.2, id='prediction_cache', max_instances=1, replace_existing=True)
-        except Exception:
-            pass
+        # prediction_cache는 _scheduler_fetch_results 내부에서만 갱신 (최신 results 반영 직후 — 모양 카드 등 정확한 픽 즉시 표시)
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (0.2초마다, refresh 블로킹, prediction_cache 0.2초)")
+        print("[✅] 결과 수집 스케줄러 시작 (0.2초마다, refresh 블로킹, prediction_cache=fetch 직후)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:
@@ -11497,7 +11498,7 @@ def _relay_db_write_background(calculator_id, pick_color, round_num, suggested_a
 
 @app.route('/api/current-pick-relay', methods=['GET', 'POST'])
 def api_current_pick_relay():
-    """매크로 전용: DB 없이 메모리 캐시에서 즉시 반환. POST: DB에만 저장(relay 캐시는 스케줄러가 서버 금액으로 갱신)."""
+    """매크로 전용: 캐시 우선(스케줄러만 갱신→서버 값 보장), 캐시 없을 때만 DB/계산. POST: relay 캐시 갱신 안 함."""
     empty_pick = {'pick_color': None, 'round': None, 'probability': None, 'suggested_amount': None, 'running': True}
     try:
         if request.method == 'POST':
@@ -11511,23 +11512,7 @@ def api_current_pick_relay():
             round_num = data.get('round')
             suggested_amount = data.get('suggested_amount')
             running = data.get('running')
-            # relay 캐시 금액: 서버 calc와 회차 일치 시 _server_calc_effective_pick_and_amount로 금액 계산 — 계산기 상단 배팅중과 동일
-            try:
-                state = get_calc_state('default') or {}
-                c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
-                if c and c.get('running') and c.get('pending_round') == round_num:
-                    _, srv_amt, _ = _server_calc_effective_pick_and_amount(c)
-                    if srv_amt is not None and int(srv_amt) > 0:
-                        suggested_amount = int(srv_amt)
-            except Exception:
-                pass
-            if suggested_amount is not None:
-                try:
-                    suggested_amount = int(suggested_amount) if suggested_amount != '' else None
-                except (TypeError, ValueError):
-                    suggested_amount = None
-            # relay 캐시 즉시 갱신 — 매크로가 DB 쓰기 대기 없이 바로 픽 수신 (배팅 놓침 방지)
-            _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running if running is not None else True, None)
+            # relay 캐시 갱신 안 함 — GET이 서버 calc만 사용하므로 클라이언트 금액이 덮어쓰지 않음
             threading.Thread(target=_relay_db_write_background, daemon=True,
                              args=(calculator_id, pick_color, round_num, suggested_amount, running)).start()
             return jsonify({'ok': True}), 200
@@ -11536,7 +11521,21 @@ def api_current_pick_relay():
             calculator_id = int(calculator_id) if calculator_id in ('1', '2', '3') else 1
         except (TypeError, ValueError):
             calculator_id = 1
-        # [마틴 끝 후 금액 오류 방지] GET 시 항상 서버 calc에서 금액 계산 — DB/캐시는 회차·픽만 참고, 금액은 서버 계산만 사용
+        # [속도·부하 최적화] 캐시 우선 — 스케줄러만 갱신하므로 서버 값 보장. DB/계산은 캐시 없을 때만
+        cached = _current_pick_relay_cache.get(calculator_id)
+        if cached and isinstance(cached, dict) and (cached.get('round') is not None or cached.get('pick_color') is not None):
+            amt = cached.get('suggested_amount')
+            out = {
+                'round': cached.get('round'),
+                'pick_color': cached.get('pick_color'),
+                'suggested_amount': int(amt) if amt is not None and int(amt) > 0 else None,
+                'running': cached.get('running', True),
+                'probability': cached.get('probability'),
+            }
+            if out.get('running') is False:
+                out['pick_color'] = out['round'] = out['suggested_amount'] = None
+            return jsonify(out), 200
+        # 캐시 없음: 서버 calc 직접 계산 (스케줄러 미실행·최초 요청)
         server_out = None
         try:
             state = get_calc_state('default') or {}
@@ -11544,16 +11543,27 @@ def api_current_pick_relay():
             if c and c.get('running'):
                 pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
                 pr = c.get('pending_round')
-                if pick_color is not None or pr is not None:
-                    server_out = {
-                        'round': pr,
-                        'pick_color': pick_color,
-                        'suggested_amount': suggested_amount if suggested_amount and int(suggested_amount) > 0 else None,
-                        'running': True,
-                        'probability': None,
-                    }
+                server_out = {
+                    'round': pr,
+                    'pick_color': pick_color,
+                    'suggested_amount': int(suggested_amount) if suggested_amount is not None and int(suggested_amount) > 0 else None,
+                    'running': True,
+                    'probability': None,
+                }
         except Exception:
             pass
+        if server_out is not None:
+            out = dict(empty_pick)
+            out['round'] = server_out.get('round')
+            out['pick_color'] = server_out.get('pick_color')
+            out['suggested_amount'] = server_out.get('suggested_amount')
+            out['running'] = server_out.get('running', True)
+            out['probability'] = server_out.get('probability')
+            if out.get('running') is False:
+                out = dict(out)
+                out['pick_color'] = out['round'] = out['suggested_amount'] = None
+            return jsonify(out), 200
+        # 서버 calc 없음(웹 미접속·정지): DB fallback
         db_out = None
         if bet_int and DB_AVAILABLE and DATABASE_URL:
             conn = get_db_connection(statement_timeout_sec=3)
@@ -11567,66 +11577,17 @@ def api_current_pick_relay():
                         conn.close()
                     except Exception:
                         pass
-        cached = _current_pick_relay_cache.get(calculator_id)
-        cached_out = None
-        if cached and isinstance(cached, dict):
-            cached_out = dict(empty_pick)
-            for k in ('round', 'pick_color', 'probability', 'suggested_amount', 'running'):
-                if k in cached:
-                    cached_out[k] = cached[k]
-        def _round_val(o):
-            r = o.get('round') if o else None
-            try:
-                return int(r) if r is not None else 0
-            except (TypeError, ValueError):
-                return 0
-        rv_db = _round_val(db_out) if db_out else 0
-        rv_srv = _round_val(server_out) if server_out else 0
-        rv_cached = _round_val(cached_out) if cached_out else 0
-        # 캐시 최우선: POST가 방금 갱신했으면 DB 쓰기 대기 없이 즉시 반환 (배팅 놓침 방지)
-        if cached_out and (cached_out.get('round') or cached_out.get('pick_color')) and rv_cached >= rv_srv and rv_cached >= rv_db:
-            out = dict(empty_pick)
-            out['round'] = cached_out.get('round')
-            out['pick_color'] = cached_out.get('pick_color')
-            amt = cached_out.get('suggested_amount')
-            if server_out and rv_srv == rv_cached and server_out.get('suggested_amount') and int(server_out.get('suggested_amount') or 0) > 0:
-                amt = server_out.get('suggested_amount')
-            out['suggested_amount'] = int(amt) if amt is not None and int(amt) > 0 else None
-            out['running'] = cached_out.get('running', True)
-            out['probability'] = cached_out.get('probability')
-        elif db_out and rv_db >= rv_srv and (db_out.get('round') or db_out.get('pick_color')):
+        if db_out and (db_out.get('round') or db_out.get('pick_color')):
             out = dict(empty_pick)
             out['round'] = db_out.get('round')
             out['pick_color'] = db_out.get('pick_color')
-            amt = db_out.get('suggested_amount')
-            # 회차 같으면 서버 금액(마틴 보정) 참고 — 서버가 더 정확할 수 있음
-            if server_out and rv_srv == rv_db and server_out.get('suggested_amount'):
-                srv_amt = server_out.get('suggested_amount')
-                if srv_amt and int(srv_amt) > 0:
-                    amt = srv_amt
-            out['suggested_amount'] = int(amt) if amt is not None and int(amt) > 0 else None
+            out['suggested_amount'] = int(db_out.get('suggested_amount')) if db_out.get('suggested_amount') and int(db_out.get('suggested_amount')) > 0 else None
             out['running'] = db_out.get('running', True)
             out['probability'] = db_out.get('probability')
-        elif server_out and (server_out.get('round') or server_out.get('pick_color')):
-            out = dict(empty_pick)
-            out['round'] = server_out.get('round')
-            out['pick_color'] = server_out.get('pick_color')
-            amt = server_out.get('suggested_amount')
-            if db_out and _round_val(db_out) == _round_val(server_out):
-                amt = db_out.get('suggested_amount')
-            out['suggested_amount'] = int(amt) if amt is not None and int(amt) > 0 else None
-            out['running'] = server_out.get('running', True)
-            out['probability'] = server_out.get('probability')
-        elif db_out and rv_db > 0:
-            out = dict(db_out)
-        elif cached_out and cached_out.get('round') is not None:
-            out = dict(cached_out)
-        elif cached_out and cached_out.get('running') is False:
-            out = cached_out
-        elif cached_out:
-            out = cached_out
+        elif cached and isinstance(cached, dict) and cached.get('running') is False:
+            out = {'round': None, 'pick_color': None, 'suggested_amount': None, 'running': False, 'probability': None}
         elif db_out:
-            out = db_out
+            out = dict(db_out)
         else:
             out = empty_pick
         if out and out.get('running') is False:
