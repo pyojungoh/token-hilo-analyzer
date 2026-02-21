@@ -63,6 +63,8 @@ BET_DELAY_BETWEEN_CONFIRM_TAPS = 0.02
 BET_DELAY_AFTER_CONFIRM = 0.02
 BET_CONFIRM_TAP_COUNT = 1  # 정정 버튼 1번만
 BET_RETRY_ATTEMPTS = 1  # 한 회차당 1번만 배팅 (재시도 시 중복 배팅됨)
+# 마틴 연속 동일금액 검증: 이 값 초과 금액이 연속 회차에 같으면 오탐으로 간주 (기본금 1~2만은 연승 시 동일 가능)
+MARTINGALE_SAME_AMOUNT_THRESHOLD = 30000
 
 
 def _validate_bet_amount(amt):
@@ -397,6 +399,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._connected = False  # 연결 버튼으로 연결됨 → 계속 폴링해 픽/회차 갱신
         self._last_round_when_started = None  # 미사용 (바로 시작 시 현재 회차부터 배팅)
         self._last_bet_round = None  # 이미 배팅한 회차 (중복 방지)
+        self._last_bet_amount = None  # 직전 배팅 금액 — 마틴 연속 동일금액 검증용
         self._bet_rounds_done = set()  # 배팅 완료 회차 집합 — 마틴 끝 후 동일 금액 재송출 방지 (최대 50개 유지)
         self._pending_bet_rounds = {}  # round_num -> { pick_color, amount } (결과 대기 → 승/패/조커 로그)
         self._pick_history = deque(maxlen=5)  # 최근 5회 (round_num, pick_color) — 회차·픽 안정 시에만 배팅
@@ -1131,6 +1134,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._running = True
         self._last_round_when_started = None
         self._last_bet_round = None
+        self._last_bet_amount = None  # 마틴 연속 동일금액 검증 초기화
         self._bet_rounds_done.clear()  # 배팅 완료 회차 초기화
         self._pick_history.clear()  # 전회차 히스토리 초기화 → 2회 연속 일치 시에만 배팅
         self._bet_confirm_last = None  # 회차 N회 확인 상태 초기화
@@ -1388,24 +1392,42 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 with self._lock:
                     self._pending_bet_rounds.pop(round_num, None)
                 return
-            # 배팅 직전: 전/지금/뒤 회차 확인 후 해당 회차의 최신 금액 재조회
+            # 마틴 연속 동일금액 검증: 다음 회차에 같은 금액(3만 초과)은 오탐 — 패면 2배, 승이면 기본금
+            if (self._last_bet_round is not None and self._last_bet_amount is not None
+                    and round_num == self._last_bet_round + 1 and amount == self._last_bet_amount
+                    and amount > MARTINGALE_SAME_AMOUNT_THRESHOLD):
+                self._log("[금액검증] %s회 %s원 스킵 — 마틴 연속 동일금액 오탐 (직전 %s회 %s원)" % (round_num, amount, self._last_bet_round, self._last_bet_amount))
+                with self._lock:
+                    self._pending_bet_rounds.pop(round_num, None)
+                return
+            # 배팅 직전: 회차·금액 재조회 — 회차 불일치 시 스킵 (잘못된 금액 배팅 방지)
             final_amount = amount
+            recheck_round_match = None
             try:
                 url = normalize_analyzer_url((self._analyzer_url or "").strip() or self.analyzer_url_edit.text().strip())
                 calc_id = self._calculator_id or (self.calc_combo.currentData() if HAS_PYQT else 1)
                 if url and calc_id:
                     pick = fetch_current_pick(url, calculator_id=calc_id, timeout=2)
-                    if pick and isinstance(pick, dict) and int(pick.get("round") or 0) == round_num:
-                        amt = pick.get("suggested_amount") or pick.get("suggestedAmount")
-                        if amt is not None and int(amt) > 0:
-                            final_amount = int(amt)
-                            self._log("배팅 직전 %s회 금액 재조회: %s원 (전/지금/뒤 확인 후)" % (round_num, final_amount))
+                    if pick and isinstance(pick, dict):
+                        srv_round = int(pick.get("round") or 0)
+                        recheck_round_match = (srv_round == round_num)
+                        if recheck_round_match:
+                            amt = pick.get("suggested_amount") or pick.get("suggestedAmount")
+                            if amt is not None and int(amt) > 0:
+                                final_amount = int(amt)
+                                self._log("배팅 직전 %s회 금액 재조회: %s원" % (round_num, final_amount))
             except Exception:
                 pass
+            if recheck_round_match is False:
+                self._log("[금액검증] %s회 스킵 — 재조회 회차 불일치 (서버 미반영, 다음 폴링 대기)" % round_num)
+                with self._lock:
+                    self._pending_bet_rounds.pop(round_num, None)
+                return
             self._log("배팅 실행: %s회 %s %s원" % (round_num, pick_color, final_amount))
             ok = self._do_bet(round_num, pick_color, final_amount)
             if ok:
                 self._last_bet_round = round_num
+                self._last_bet_amount = final_amount
                 with self._lock:
                     self._bet_rounds_done.add(round_num)
                     # 최대 50개 유지 (오래된 것 제거)

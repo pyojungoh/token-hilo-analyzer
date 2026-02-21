@@ -46,6 +46,7 @@ SWIPE_AMOUNT_MS = 50
 SWIPE_COLOR_MS = 50
 D_AMOUNT_CONFIRM_COUNT = 1  # 같은 (회차, 픽, 금액) 1회 수신 시 즉시 배팅 (2회는 서버 응답 변동으로 놓치는 경우 있음)
 D_DEL_COUNT = 8  # 기존 값 삭제용 DEL (8자리. 1회 ADB로 전송)
+MARTINGALE_SAME_AMOUNT_THRESHOLD = 30000  # 마틴 연속 동일금액 검증: 이 값 초과 금액이 연속 회차에 같으면 오탐
 D_AMOUNT_DOUBLE_INPUT = False  # 금액 1회만 입력 (이중 입력 시 1000010000 중복 발생)
 
 
@@ -237,6 +238,7 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
         self._coords = {}
         self._running = False
         self._last_bet_round = None
+        self._last_bet_amount = None  # 마틴 연속 동일금액 검증용
         self._bet_rounds_done = set()  # 배팅 완료 회차 — 마틴 끝 후 동일 금액 재송출 방지
         self._pending_bet_rounds = {}  # round_num -> {} (두 번 배팅 방지)
         self._bet_confirm_last = None  # 회차 2회 확인용
@@ -414,6 +416,7 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
             return
         self._running = True
         self._last_bet_round = None
+        self._last_bet_amount = None  # 마틴 연속 동일금액 검증 초기화
         self._bet_rounds_done.clear()  # 배팅 완료 회차 초기화
         self._pending_bet_rounds = {}  # 시작 시 초기화
         self._bet_confirm_last = None  # 회차 3회 확인 상태 초기화
@@ -515,24 +518,40 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
             if self._last_bet_round is not None and round_num <= self._last_bet_round:
                 self._pending_bet_rounds.pop(round_num, None)
                 return
-            # 배팅 직전: 전/지금/뒤 회차 확인 후 해당 회차의 최신 금액 재조회
+            # 마틴 연속 동일금액 검증: 다음 회차에 같은 금액(3만 초과)은 오탐
+            if (self._last_bet_round is not None and self._last_bet_amount is not None
+                    and round_num == self._last_bet_round + 1 and amt_val == self._last_bet_amount
+                    and amt_val > MARTINGALE_SAME_AMOUNT_THRESHOLD):
+                self._log("[금액검증] %s회 %s원 스킵 — 마틴 연속 동일금액 오탐" % (round_num, amt_val))
+                self._pending_bet_rounds.pop(round_num, None)
+                return
+            # 배팅 직전: 회차·금액 재조회 — 회차 불일치 시 스킵
             final_amt = amt_val
+            recheck_round_match = None
             try:
                 url = self._url or (self.url_combo.currentText() or self.url_combo.currentData() or "").strip().rstrip("/")
                 calc_id = self._calc_id or (self.calc_combo.currentData() if HAS_PYQT else 1)
                 if url and calc_id:
                     pick = fetch_pick(url, calc_id=calc_id, timeout=2)
-                    if pick and isinstance(pick, dict) and int(pick.get("round") or 0) == round_num:
-                        amt = pick.get("suggested_amount") or pick.get("suggestedAmount")
-                        if amt is not None and int(amt) > 0:
-                            final_amt = int(amt)
-                            self._log("배팅 직전 %s회 금액 재조회: %s원 (전/지금/뒤 확인 후)" % (round_num, final_amt))
+                    if pick and isinstance(pick, dict):
+                        srv_round = int(pick.get("round") or 0)
+                        recheck_round_match = (srv_round == round_num)
+                        if recheck_round_match:
+                            amt = pick.get("suggested_amount") or pick.get("suggestedAmount")
+                            if amt is not None and int(amt) > 0:
+                                final_amt = int(amt)
+                                self._log("배팅 직전 %s회 금액 재조회: %s원" % (round_num, final_amt))
             except Exception:
                 pass
+            if recheck_round_match is False:
+                self._log("[금액검증] %s회 스킵 — 재조회 회차 불일치" % round_num)
+                self._pending_bet_rounds.pop(round_num, None)
+                return
             self._log("%s회 %s %s원 실행" % (round_num, pick_color, final_amt))
             ok = self._do_bet(round_num, pick_color, final_amt)
             if ok:
                 self._last_bet_round = round_num
+                self._last_bet_amount = final_amt
                 self._bet_rounds_done.add(round_num)
                 if len(self._bet_rounds_done) > 50:
                     for r in sorted(self._bet_rounds_done)[:-50]:
