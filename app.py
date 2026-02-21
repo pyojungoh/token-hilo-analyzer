@@ -4342,12 +4342,12 @@ def _scheduler_trim_shape_tables():
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
     # 0.2초마다 시도. refresh 블로킹(~2.5초)+apply(~1초)로 run당 ~4초
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.2, id='fetch_results', max_instances=1)
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.15, id='fetch_results', max_instances=1)
     _scheduler.add_job(_scheduler_trim_shape_tables, 'interval', seconds=300, id='trim_shape', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (fetch 0.2초, relay_cache 0.15초)")
+        print("[✅] 결과 수집 스케줄러 시작 (fetch 0.15초)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:
@@ -10107,8 +10107,8 @@ RESULTS_HTML = '''
             if (predictionPollIntervalId) clearInterval(predictionPollIntervalId);
             
             // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·예측픽 먹통 발생
-            var resultsInterval = isTabVisible ? 320 : 1200;
-            var calcStatusInterval = isTabVisible ? 100 : 1200;  // 픽 서버 전달 100ms — 자동배팅기 즉시 수신·배팅 놓침 방지
+            var resultsInterval = isTabVisible ? 200 : 1200;
+            var calcStatusInterval = isTabVisible ? 80 : 1200;  // 픽 서버 전달 80ms — 자동배팅기 즉시 수신
             var calcStateInterval = isTabVisible ? 2500 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
             var timerInterval = isTabVisible ? 250 : 1000;
             
@@ -10119,7 +10119,7 @@ RESULTS_HTML = '''
                 const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
                 const criticalPhase = r <= 3 || r >= 8;
                 // 백그라운드일 때는 최소 1초 간격. 너무 짧으면 서버 부하로 예측픽 안 나옴
-                const baseInterval = allResults.length === 0 ? 320 : (anyRunning ? 150 : (criticalPhase ? 250 : 320));
+                const baseInterval = allResults.length === 0 ? 320 : (anyRunning ? 100 : (criticalPhase ? 250 : 320));
                 const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
                 if (Date.now() - lastResultsUpdate > interval) {
                     loadResults().catch(e => console.warn('결과 새로고침 실패:', e));

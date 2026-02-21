@@ -49,7 +49,7 @@ COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드"
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
 # 배팅 동작 간 지연(초). 픽 수신 즉시 사이트로 빠르게 배팅 — 최소화. 입력/확정이 안 먹으면 값을 늘리세요.
-BET_DELAY_BEFORE_EXECUTE = 0.25  # 배팅 실행 전 대기(초) — 픽 수신 즉시 배팅
+BET_DELAY_BEFORE_EXECUTE = 0.15  # 배팅 실행 전 대기(초) — 픽 수신 즉시 배팅
 BET_DELAY_AFTER_AMOUNT_TAP = 0.01  # 금액 칸 탭 후 포커스 대기 (자동 클리어됨)
 BET_DELAY_AFTER_INPUT = 0.01  # 금액 입력 후 바로 BACK
 BET_DELAY_AFTER_BACK = 0.12  # 키보드 닫힌 뒤 바로 레드/블랙 탭
@@ -1122,8 +1122,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._analyzer_url = url
         self._calculator_id = self.calc_combo.currentData()
         self._device_id = self.device_edit.text().strip() or "127.0.0.1:5555"
-        # 배팅 중: 0.1초(100ms) 간격 — 픽 수신·배팅 놓침 방지. 50ms는 20req/s로 CPU 부하 과다
-        self._poll_interval_sec = 0.1
+        # 배팅 중: 80ms 간격 — 픽 수신 즉시 배팅
+        self._poll_interval_sec = 0.08
         self._coords = load_coords()
         if not self._coords.get("bet_amount") or not self._coords.get("red") or not self._coords.get("black"):
             self._log("좌표를 먼저 설정하세요. coord_picker.py로 배팅금액/정정/레드/블랙 좌표를 잡으세요.")
@@ -1145,7 +1145,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self.stop_btn.setEnabled(True)
         self._log("시작 — 계산기 픽 바뀌는 즉시 사이트로 전송합니다.")
         self._timer.start(int(self._poll_interval_sec * 1000))
-        QTimer.singleShot(30, self._poll)   # 시작 직후 30ms 뒤 1회 폴링 (빠른 픽 확보)
+        QTimer.singleShot(0, self._poll)   # 시작 직후 즉시 1회 폴링
 
     def _on_stop(self):
         self._running = False
