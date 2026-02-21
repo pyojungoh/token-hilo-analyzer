@@ -5289,6 +5289,13 @@ RESULTS_HTML = '''
                 <span id="remaining-time" class="remaining-time">남은 시간: -- 초</span>
                 <span id="reference-color" class="reference-color"></span>
             </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <label style="font-size:0.8em;color:#888;">매크로 푸시:</label>
+                <select id="macro-push-calc" style="width:50px;padding:4px;background:#1a1a2e;border:1px solid #37474f;border-radius:4px;color:#fff;font-size:0.85em;" title="매크로에서 선택한 계산기">
+                    <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+                </select>
+                <input type="text" id="macro-push-url" placeholder="http://localhost:8765" style="width:140px;padding:4px 8px;background:#1a1a2e;border:1px solid #37474f;border-radius:4px;color:#fff;font-size:0.85em;" title="입력 시 픽 발생 즉시 매크로로 전송 (빈칸=폴링만)" />
+            </div>
         </div>
         <div class="cards-container" id="cards"></div>
         <div id="jung-kkuk-graph" class="jung-kkuk-graph"></div>
@@ -5855,6 +5862,21 @@ RESULTS_HTML = '''
             if (last && last.round === key.round && last.pickColor === key.pickColor && last.suggested_amount === key.suggested_amount && last.running === key.running) return;
             lastPostedCurrentPick[id] = key;
             try { fetch('/api/current-pick-relay', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: payload.pickColor ?? null, round: payload.round ?? null, suggested_amount: payload.suggested_amount ?? null, running: payload.running }) }).catch(function() {}); } catch (e) {}
+            // 픽 발생 즉시 매크로로 푸시 — 폴링 대기 없이 배팅 (매크로 푸시 URL 입력 시)
+            var macroCalc = parseInt((document.getElementById('macro-push-calc') || {}).value, 10) || 1;
+            if (macroCalc !== id) return;
+            var pushUrl = (document.getElementById('macro-push-url') || {}).value;
+            if (!pushUrl) try { pushUrl = localStorage.getItem('macroPushUrl') || ''; } catch (e) {}
+            pushUrl = (pushUrl || '').trim();
+            if (pushUrl && payload.round != null && payload.pickColor && (payload.suggested_amount || 0) > 0 && payload.running !== false) {
+                try {
+                    fetch((pushUrl.replace(/\\/$/, '')) + '/push-pick', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ round: payload.round, pick_color: payload.pickColor, suggested_amount: payload.suggested_amount })
+                    }).catch(function() {});
+                } catch (e) {}
+            }
         }
         function setRoundPrediction(round, pred) {
             if (round == null || !pred) return;
@@ -9553,6 +9575,18 @@ RESULTS_HTML = '''
                 }
             });
         }
+        try {
+            var macroPushEl = document.getElementById('macro-push-url');
+            if (macroPushEl) {
+                macroPushEl.value = localStorage.getItem('macroPushUrl') || '';
+                macroPushEl.addEventListener('change', function() { try { localStorage.setItem('macroPushUrl', (this.value || '').trim()); } catch (e) {} });
+            }
+            var macroCalcEl = document.getElementById('macro-push-calc');
+            if (macroCalcEl) {
+                macroCalcEl.value = localStorage.getItem('macroPushCalc') || '1';
+                macroCalcEl.addEventListener('change', function() { try { localStorage.setItem('macroPushCalc', this.value || '1'); } catch (e) {} });
+            }
+        } catch (e) {}
         document.getElementById('bet-log-clear-all')?.addEventListener('click', function() {
             if (betCalcLog.length === 0) return;
             if (typeof confirm !== 'undefined' && !confirm('로그를 모두 삭제할까요?')) return;
