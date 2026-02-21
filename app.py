@@ -1706,7 +1706,7 @@ def _calculate_calc_profit_server(calc_state, history_entry):
         
         actual = h.get('actual')
         predicted = h.get('predicted')
-        is_joker = actual == 'joker'
+        is_joker = actual in ('joker', '조커')
         is_win = not is_joker and predicted == actual
         
         if is_joker:
@@ -1742,7 +1742,7 @@ def _calculate_calc_profit_server(calc_state, history_entry):
     # 현재 회차의 수익 계산
     actual = history_entry.get('actual')
     predicted = history_entry.get('predicted')
-    is_joker = actual == 'joker'
+    is_joker = actual in ('joker', '조커')
     is_win = not is_joker and predicted == actual
     
     if history_entry.get('no_bet') or bet_amount == 0:
@@ -2020,8 +2020,9 @@ def _apply_results_to_calcs(results):
                     history_entry['no_bet'] = True
                     history_entry['betAmount'] = 0
                 # 15번 카드 조커 시 배팅 안 함 → no_bet. 조커 끝나면 마틴 이어감
+                # 15번째 카드 = results[14] (0-based: 1번째=0, 15번째=14). 16번째(results[15]) 아님.
                 if actual == 'joker':
-                    is_15_joker_at_pred = len(results) >= 16 and bool(results[15].get('joker'))
+                    is_15_joker_at_pred = len(results) >= 15 and bool(results[14].get('joker'))
                     if is_15_joker_at_pred:
                         history_entry['no_bet'] = True
                         history_entry['betAmount'] = 0
@@ -11467,6 +11468,29 @@ def api_current_pick():
         return jsonify(empty_pick if request.method == 'GET' else {'ok': False}), 200
 
 
+def _is_current_pick_recent(updated_at_val, max_sec=5):
+    """current_pick.updated_at이 max_sec 초 이내인지. 클라이언트/서버 최신 금액 신뢰용."""
+    if updated_at_val is None:
+        return False
+    try:
+        if hasattr(updated_at_val, 'timestamp'):
+            dt = updated_at_val
+        else:
+            s = str(updated_at_val or '')
+            if not s:
+                return False
+            dt = datetime.fromisoformat(s.replace('Z', '+00:00')[:26])
+        now = datetime.now()
+        if dt.tzinfo:
+            try:
+                now = datetime.now(dt.tzinfo)
+            except Exception:
+                pass
+        return 0 <= (now - dt).total_seconds() <= max_sec
+    except Exception:
+        return False
+
+
 def _relay_db_write_background(calculator_id, pick_color, round_num, suggested_amount, running):
     """relay POST 시 DB 쓰기를 백그라운드로 수행. 응답 지연 없음."""
     if not bet_int or not DB_AVAILABLE or not DATABASE_URL:
@@ -11578,11 +11602,17 @@ def api_current_pick_relay():
             except (TypeError, ValueError):
                 return 0
         # 서버 계산 있으면 우선 사용 (마틴 끝 후 초기 금액 보장) — round·pick·amount 모두 서버 기준
+        # 단, 클라이언트가 최근(5초 이내) POST한 금액이 있고 회차가 같으면 그 금액 사용 — 계산기 상단 배팅중과 정확히 일치
         if server_out and (server_out.get('round') or server_out.get('pick_color')):
             out = dict(empty_pick)
             out['round'] = server_out.get('round')
             out['pick_color'] = server_out.get('pick_color')
-            out['suggested_amount'] = server_out.get('suggested_amount')
+            amt = server_out.get('suggested_amount')
+            if db_out and _round_val(db_out) == _round_val(server_out):
+                db_amt = db_out.get('suggested_amount')
+                if db_amt is not None and int(db_amt) > 0 and _is_current_pick_recent(db_out.get('updated_at'), 5):
+                    amt = int(db_amt)
+            out['suggested_amount'] = amt if amt and int(amt) > 0 else None
             out['running'] = server_out.get('running', True)
             out['probability'] = server_out.get('probability')
         elif db_out and _round_val(db_out) > 0:
