@@ -1281,7 +1281,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._last_seen_round = max(self._last_seen_round or 0, round_num)
         self._round_next = round_num  # 픽 수신 시 다음회차 갱신
 
-        # 회차 N회 확인: 같은 (회차, 픽, 금액)이 N회 연속 수신될 때만 배팅 (금액 오탐 방지)
+        # 회차 N회 확인: 같은 (회차, 픽, 금액)이 N회 연속 수신될 때만 배팅 (금액 오탐 방지). N=1이면 1회 수신 즉시 배팅
         key = (round_num, pick_color, amt_val)
         if self._bet_confirm_last != key:
             # 회차가 올라갔는데 이전 회차를 아직 안 쳤으면 즉시 배팅 (픽 놓침 방지)
@@ -1297,6 +1297,14 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                         self._run_bet(old_round, old_pick, old_amt, from_push=False)
             self._bet_confirm_last = key
             self._bet_confirm_count = 1
+            if self._bet_confirm_count >= BET_AMOUNT_CONFIRM_COUNT:
+                self._log("픽 수신: %s회 %s %s원 (1회 확인 — 즉시 배팅)" % (round_num, pick_color, amt_val))
+                self._bet_confirm_last = None
+                self._bet_confirm_count = 0
+                self._pick_history.append((round_num, pick_color))
+                self._coords = load_coords()
+                self._run_bet(round_num, pick_color, amt_val, from_push=False)
+                return
             self._log("픽 수신: %s회 %s %s원 (1회 확인 — %s회 연속 일치 시 배팅)" % (round_num, pick_color, amt_val, BET_AMOUNT_CONFIRM_COUNT))
             return
         self._bet_confirm_count = (self._bet_confirm_count or 0) + 1
