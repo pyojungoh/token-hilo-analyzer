@@ -6507,72 +6507,7 @@ RESULTS_HTML = '''
                     lastWarningU35 = !!(lastServerPrediction && sp && sp.warning_u35);
                     lastPongChunkPhase = (sp && (sp.pong_chunk_phase != null && sp.pong_chunk_phase !== '')) ? sp.pong_chunk_phase : null;
                     lastPongChunkDebug = (sp && sp.pong_chunk_debug && typeof sp.pong_chunk_debug === 'object') ? sp.pong_chunk_debug : {};
-                    (function() {
-                        var cards = document.getElementById('prediction-picks-cards');
-                        if (!cards) return;
-                        var mainVal = (sp && (sp.value === '정' || sp.value === '꺽')) ? sp.value : null;
-                        var mainReverseVal = (sp && sp.main_reverse && (sp.main_reverse === '정' || sp.main_reverse === '꺽')) ? sp.main_reverse : null;
-                        var shapeVal = (sp && sp.shape_pick && (sp.shape_pick === '정' || sp.shape_pick === '꺽')) ? sp.shape_pick : null;
-                        var pongVal = (sp && sp.pong_pick && (sp.pong_pick === '정' || sp.pong_pick === '꺽')) ? sp.pong_pick : null;
-                        var mainColor = (sp && sp.color) ? (String(sp.color).toUpperCase().indexOf('RED') >= 0 || sp.color === '빨강' ? 'RED' : 'BLACK') : null;
-                        var mainReverseColor = (sp && sp.main_reverse_color) ? (String(sp.main_reverse_color).toUpperCase().indexOf('RED') >= 0 || sp.main_reverse_color === '빨강' ? 'RED' : 'BLACK') : null;
-                        var shapeColor = (sp && sp.shape_color) ? (String(sp.shape_color).toUpperCase().indexOf('RED') >= 0 || sp.shape_color === '빨강' ? 'RED' : 'BLACK') : null;
-                        var pongColor = (sp && sp.pong_color) ? (String(sp.pong_color).toUpperCase().indexOf('RED') >= 0 || sp.pong_color === '빨강' ? 'RED' : 'BLACK') : null;
-                        var roundStr = (sp && sp.round != null) ? String(sp.round) : '—';
-                        var mainRate = (sp && sp.main_15_rate != null) ? sp.main_15_rate : null;
-                        var mainReverseRate = (sp && sp.main_reverse_15_rate != null) ? sp.main_reverse_15_rate : null;
-                        var shapeRate = (sp && sp.shape_15_rate != null) ? sp.shape_15_rate : null;
-                        var pongRate = (sp && sp.pong_15_rate != null) ? sp.pong_15_rate : null;
-                        function updateCard(card, val, color, rate) {
-                            if (!card) return;
-                            var v = card.querySelector('.pred-pick-value');
-                            var c = card.querySelector('.pred-pick-color');
-                            var r = card.querySelector('.pred-pick-rate');
-                            if (v) v.textContent = val || '—';
-                            if (c) c.textContent = color ? (color === 'RED' ? 'RED' : 'BLACK') : '—';
-                            if (r) r.textContent = rate != null ? '15회 승률: ' + rate + '%' : '15회 승률: —';
-                            if (val && color) {
-                                card.style.borderColor = color === 'RED' ? '#b71c1c' : '#212121';
-                                card.style.background = color === 'RED' ? 'linear-gradient(135deg,#8b1a1a 0%,#b71c1c 50%,#6b1515 100%)' : 'linear-gradient(135deg,#1a1a1a 0%,#111 50%,#0d0d0d 100%)';
-                                if (v) v.style.color = '#fff';
-                            } else {
-                                card.style.borderColor = '#37474f';
-                                card.style.background = 'linear-gradient(135deg,#1e2a3e 0%,#1a1a2e 100%)';
-                                if (v) v.style.color = val === '정' ? '#e57373' : val === '꺽' ? '#90a4ae' : '#fff';
-                            }
-                        }
-                        var mainCard = cards.querySelector('.pred-pick-card[data-type="main"]');
-                        var mainReverseCard = cards.querySelector('.pred-pick-card[data-type="main_reverse"]');
-                        var shapeCard = cards.querySelector('.pred-pick-card[data-type="shape"]');
-                        var pongCard = cards.querySelector('.pred-pick-card[data-type="pong"]');
-                        if (mainCard) {
-                            updateCard(mainCard, mainVal, mainColor, mainRate);
-                            var m = mainCard.querySelector('.pred-pick-meta');
-                            if (m) m.textContent = roundStr + '회';
-                        }
-                        updateCard(mainReverseCard, mainReverseVal, mainReverseColor, mainReverseRate);
-                        updateCard(shapeCard, shapeVal, shapeColor, shapeRate);
-                        updateCard(pongCard, pongVal, pongColor, pongRate);
-                        // 계산기에 사용될 최종 픽 강조 — 서버 calc_best_type과 매칭. 디바운스: 2회 연속 동일 시에만 적용 (캐시 전환·승률 순차 반영으로 픽 깜빡임 방지)
-                        var incomingBest = sp && sp.calc_best_type;
-                        var currentRound = (sp && sp.round != null) ? Number(sp.round) : null;
-                        if (currentRound !== lastCalcBestRound) {
-                            lastCalcBestRound = currentRound;
-                            lastCalcBestTypeSeen = incomingBest;
-                            lastCalcBestTypeStable = incomingBest;
-                        } else if (lastCalcBestTypeStable == null) {
-                            lastCalcBestTypeSeen = incomingBest;
-                            lastCalcBestTypeStable = incomingBest;
-                        } else if (incomingBest === lastCalcBestTypeSeen) {
-                            lastCalcBestTypeStable = incomingBest;
-                        } else {
-                            lastCalcBestTypeSeen = incomingBest;
-                        }
-                        var bestType = lastCalcBestTypeStable;
-                        [mainCard, mainReverseCard, shapeCard, pongCard].forEach(function(c) { if (c) c.classList.remove('pred-pick-card-calc-best'); });
-                        var bestCard = (bestType === 'main' && mainCard) || (bestType === 'main_reverse' && mainReverseCard) || (bestType === 'shape' && shapeCard) || (bestType === 'pong' && pongCard);
-                        if (bestCard) bestCard.classList.add('pred-pick-card-calc-best');
-                    })();
+                    if (sp) updatePredictionPicksCards(sp);
                     if (sp && sp.round != null) {
                         var newRound = Number(sp.round);
                         var prevRound = (lastPrediction && lastPrediction.round != null) ? Number(lastPrediction.round) : NaN;
@@ -10055,6 +9990,72 @@ RESULTS_HTML = '''
         // 리셋/실행 직후에는 서버 폴링 스킵 (저장 반영 전에 예전 상태로 덮어쓰는 것 방지)
         var lastResetOrRunAt = 0;
         
+        function updatePredictionPicksCards(sp) {
+            var cards = document.getElementById('prediction-picks-cards');
+            if (!cards || !sp) return;
+            var mainVal = (sp.value === '정' || sp.value === '꺽') ? sp.value : null;
+            var mainReverseVal = (sp.main_reverse === '정' || sp.main_reverse === '꺽') ? sp.main_reverse : null;
+            var shapeVal = (sp.shape_pick === '정' || sp.shape_pick === '꺽') ? sp.shape_pick : null;
+            var pongVal = (sp.pong_pick === '정' || sp.pong_pick === '꺽') ? sp.pong_pick : null;
+            var mainColor = sp.color ? (String(sp.color).toUpperCase().indexOf('RED') >= 0 || sp.color === '빨강' ? 'RED' : 'BLACK') : null;
+            var mainReverseColor = sp.main_reverse_color ? (String(sp.main_reverse_color).toUpperCase().indexOf('RED') >= 0 || sp.main_reverse_color === '빨강' ? 'RED' : 'BLACK') : null;
+            var shapeColor = sp.shape_color ? (String(sp.shape_color).toUpperCase().indexOf('RED') >= 0 || sp.shape_color === '빨강' ? 'RED' : 'BLACK') : null;
+            var pongColor = sp.pong_color ? (String(sp.pong_color).toUpperCase().indexOf('RED') >= 0 || sp.pong_color === '빨강' ? 'RED' : 'BLACK') : null;
+            var roundStr = (sp.round != null) ? String(sp.round) : '—';
+            var mainRate = sp.main_15_rate != null ? sp.main_15_rate : null;
+            var mainReverseRate = sp.main_reverse_15_rate != null ? sp.main_reverse_15_rate : null;
+            var shapeRate = sp.shape_15_rate != null ? sp.shape_15_rate : null;
+            var pongRate = sp.pong_15_rate != null ? sp.pong_15_rate : null;
+            function updateCard(card, val, color, rate) {
+                if (!card) return;
+                var v = card.querySelector('.pred-pick-value');
+                var c = card.querySelector('.pred-pick-color');
+                var r = card.querySelector('.pred-pick-rate');
+                if (v) v.textContent = val || '—';
+                if (c) c.textContent = color ? (color === 'RED' ? 'RED' : 'BLACK') : '—';
+                if (r) r.textContent = rate != null ? '15회 승률: ' + rate + '%' : '15회 승률: —';
+                if (val && color) {
+                    card.style.borderColor = color === 'RED' ? '#b71c1c' : '#212121';
+                    card.style.background = color === 'RED' ? 'linear-gradient(135deg,#8b1a1a 0%,#b71c1c 50%,#6b1515 100%)' : 'linear-gradient(135deg,#1a1a1a 0%,#111 50%,#0d0d0d 100%)';
+                    if (v) v.style.color = '#fff';
+                } else {
+                    card.style.borderColor = '#37474f';
+                    card.style.background = 'linear-gradient(135deg,#1e2a3e 0%,#1a1a2e 100%)';
+                    if (v) v.style.color = val === '정' ? '#e57373' : val === '꺽' ? '#90a4ae' : '#fff';
+                }
+            }
+            var mainCard = cards.querySelector('.pred-pick-card[data-type="main"]');
+            var mainReverseCard = cards.querySelector('.pred-pick-card[data-type="main_reverse"]');
+            var shapeCard = cards.querySelector('.pred-pick-card[data-type="shape"]');
+            var pongCard = cards.querySelector('.pred-pick-card[data-type="pong"]');
+            if (mainCard) {
+                updateCard(mainCard, mainVal, mainColor, mainRate);
+                var m = mainCard.querySelector('.pred-pick-meta');
+                if (m) m.textContent = roundStr + '회';
+            }
+            updateCard(mainReverseCard, mainReverseVal, mainReverseColor, mainReverseRate);
+            updateCard(shapeCard, shapeVal, shapeColor, shapeRate);
+            updateCard(pongCard, pongVal, pongColor, pongRate);
+            var incomingBest = sp.calc_best_type;
+            var currentRound = (sp.round != null) ? Number(sp.round) : null;
+            if (currentRound !== lastCalcBestRound) {
+                lastCalcBestRound = currentRound;
+                lastCalcBestTypeSeen = incomingBest;
+                lastCalcBestTypeStable = incomingBest;
+            } else if (lastCalcBestTypeStable == null) {
+                lastCalcBestTypeSeen = incomingBest;
+                lastCalcBestTypeStable = incomingBest;
+            } else if (incomingBest === lastCalcBestTypeSeen) {
+                lastCalcBestTypeStable = incomingBest;
+            } else {
+                lastCalcBestTypeSeen = incomingBest;
+            }
+            var bestType = lastCalcBestTypeStable;
+            [mainCard, mainReverseCard, shapeCard, pongCard].forEach(function(c) { if (c) c.classList.remove('pred-pick-card-calc-best'); });
+            var bestCard = (bestType === 'main' && mainCard) || (bestType === 'main_reverse' && mainReverseCard) || (bestType === 'shape' && shapeCard) || (bestType === 'pong' && pongCard);
+            if (bestCard) bestCard.classList.add('pred-pick-card-calc-best');
+        }
+        
         function refreshPredictionPickOnly() {
             var pickContainer = document.getElementById('prediction-pick-container');
             if (!pickContainer) return;
@@ -10141,6 +10142,7 @@ RESULTS_HTML = '''
                         if (sp.shape_predicted === '정' || sp.shape_predicted === '꺽') lastPrediction.shape_predicted = sp.shape_predicted;
                         if (sp.calc_best_pred && sp.calc_best_color) { lastPrediction.calc_best_pred = sp.calc_best_pred; lastPrediction.calc_best_color = sp.calc_best_color; }
                         lastWarningU35 = !!(sp.warning_u35);
+                        updatePredictionPicksCards(sp);
                         refreshPredictionPickOnly();
                     }).catch(function() {});
                 }, 280);
