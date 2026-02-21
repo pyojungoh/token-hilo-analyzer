@@ -49,13 +49,13 @@ COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드"
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
 # 배팅 동작 간 지연(초). 픽 수신 즉시 사이트로 빠르게 배팅 — 최소화. 입력/확정이 안 먹으면 값을 늘리세요.
-BET_DELAY_BEFORE_EXECUTE = 0.15  # 배팅 실행 전 대기(초) — 픽 수신 즉시 배팅
+BET_DELAY_BEFORE_EXECUTE = 0.06  # 배팅 실행 전 대기(초) — 픽 수신 즉시 배팅
 BET_DELAY_AFTER_AMOUNT_TAP = 0.01  # 금액 칸 탭 후 포커스 대기 (자동 클리어됨)
 BET_DELAY_AFTER_INPUT = 0.01  # 금액 입력 후 바로 BACK
-BET_DELAY_AFTER_BACK = 0.12  # 키보드 닫힌 뒤 바로 레드/블랙 탭
+BET_DELAY_AFTER_BACK = 0.06  # 키보드 닫힌 뒤 바로 레드/블랙 탭
 BET_AMOUNT_CONFIRM_COUNT = 1  # 같은 (회차, 픽, 금액) 1회 수신 시 즉시 배팅 (2회는 서버 응답 변동으로 놓치는 경우 있음)
 PUSH_PICK_PORT = 8765  # 중간페이지→매크로 푸시 수신 포트. 푸시 시 3회확인 생략·즉시 ADB
-PUSH_BET_DELAY = 0.15  # 푸시 수신 시 배팅 전 대기(초) — 배팅시간 확보용 최소화
+PUSH_BET_DELAY = 0.06  # 푸시 수신 시 배팅 전 대기(초) — 배팅시간 확보용 최소화
 BET_DEL_COUNT = 8  # 기존 값 삭제용 DEL (8자리: 99999999까지. 탭 후 바로 입력 위해 최소화)
 BET_AMOUNT_DOUBLE_INPUT = False  # 금액 1회만 입력 (이중 입력 시 1000010000 중복 발생)
 BET_DELAY_AFTER_COLOR_TAP = 0.01
@@ -1125,8 +1125,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._analyzer_url = url
         self._calculator_id = self.calc_combo.currentData()
         self._device_id = self.device_edit.text().strip() or "127.0.0.1:5555"
-        # 배팅 중: 50ms 간격 — 픽 수신 즉시 배팅
-        self._poll_interval_sec = 0.05
+        # 배팅 중: 25ms 간격 — 픽 수신 즉시 배팅
+        self._poll_interval_sec = 0.025
         self._coords = load_coords()
         if not self._coords.get("bet_amount") or not self._coords.get("red") or not self._coords.get("black"):
             self._log("좌표를 먼저 설정하세요. coord_picker.py로 배팅금액/정정/레드/블랙 좌표를 잡으세요.")

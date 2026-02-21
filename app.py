@@ -10251,7 +10251,7 @@ RESULTS_HTML = '''
             
             // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·예측픽 먹통 발생
             var resultsInterval = isTabVisible ? 200 : 1200;
-            var calcStatusInterval = isTabVisible ? 50 : 1200;  // 픽 서버 전달 50ms — 자동배팅기 즉시 수신
+            var calcStatusInterval = isTabVisible ? 25 : 1200;  // 픽 서버 전달 25ms — 자동배팅기 빠른 수신
             var calcStateInterval = isTabVisible ? 2500 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
             var timerInterval = isTabVisible ? 250 : 1000;
             
@@ -11825,20 +11825,14 @@ def api_current_pick_relay():
                 threading.Thread(target=_relay_db_write_background, daemon=True,
                                  args=(calculator_id, pick_color, round_num, suggested_amount, running if running is not None else True)).start()
                 return jsonify({'ok': True}), 200
-            # 유효 픽: 서버 보정(마틴·모양) 적용 후 캐시 갱신
+            # 배팅중 금액 = 클라이언트 값 그대로 사용 (계산기 상단 표시와 동일). 서버 덮어쓰기 제거 — 빠르고 정확
+            # 모양·퐁당만 옵션만 서버 픽 사용 (클라이언트 calc_best=4카드와 다름)
             try:
                 state = get_calc_state('default') or {}
                 c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
-                if c and c.get('running'):
-                    srv_round = c.get('pending_round')
-                    srv_pick, srv_amt, _ = _server_calc_effective_pick_and_amount(c)
-                    if srv_round is not None and round_num is not None:
-                        try:
-                            if int(srv_round) == int(round_num) and srv_amt is not None and int(srv_amt) > 0:
-                                suggested_amount = int(srv_amt)
-                        except (TypeError, ValueError):
-                            pass
-                    if c.get('prediction_picks_shape_pong_only') and srv_pick is not None:
+                if c and c.get('running') and c.get('prediction_picks_shape_pong_only'):
+                    srv_pick, _, _ = _server_calc_effective_pick_and_amount(c)
+                    if srv_pick is not None:
                         pick_color = srv_pick
             except Exception:
                 pass

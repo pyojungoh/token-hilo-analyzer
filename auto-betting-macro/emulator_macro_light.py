@@ -36,10 +36,10 @@ COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드"
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
 # 배팅 지연 — 픽 수신 즉시 사이트로 빠르게 배팅 (입력 안 먹으면 늘리세요)
-D_BEFORE_EXECUTE = 0.4  # 배팅 실행 전 대기(초) — 최대한 빠르게
+D_BEFORE_EXECUTE = 0.06  # 배팅 실행 전 대기(초) — 픽 수신 즉시 배팅
 D_AMOUNT_TAP = 0.01  # 금액 칸 탭 후 포커스 대기 (자동 클리어됨)
 D_INPUT = 0.01  # 금액 입력 후 바로 BACK
-D_BACK = 0.12  # 키보드 닫힌 뒤 바로 레드/블랙 탭
+D_BACK = 0.06  # 키보드 닫힌 뒤 바로 레드/블랙 탭
 D_COLOR = 0.01
 D_CONFIRM = 0.01
 SWIPE_AMOUNT_MS = 50
@@ -424,9 +424,9 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
         self._last_seen_round = None  # 회차 역행 방지 초기화
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self._timer.start(80)
+        self._timer.start(25)  # 25ms 폴링 — 픽 빠른 수신
         self._log("시작 — 회차·픽·금액 %s회 연속 일치 시 배팅" % D_AMOUNT_CONFIRM_COUNT)
-        QTimer.singleShot(50, self._poll)
+        QTimer.singleShot(20, self._poll)
 
     def _on_stop(self):
         self._running = False

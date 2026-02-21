@@ -19,24 +19,19 @@ alwaysApply: true
 ```
 [계산기 배팅중]  getBetForRound(id, curRound) → suggested_amount
        │
-       │  postCurrentPickIfChanged (50ms마다 updateCalcStatus)
+       │  postCurrentPickIfChanged (25ms마다 updateCalcStatus)
        │  POST /api/current-pick-relay { round, pickColor, suggested_amount }
        ▼
-[서버 relay 캐시]  _update_current_pick_relay_cache ← POST 시 즉시 갱신
+[서버 relay 캐시]  _update_current_pick_relay_cache ← POST 시 즉시 갱신 (클라이언트 금액 그대로)
        │
-       │  매크로 GET /api/current-pick-relay?calculator=N (50ms 폴링)
+       │  매크로 GET /api/current-pick-relay?calculator=N (25ms 폴링)
        ▼
 [자동배팅기]  (회차, 픽, 금액) 1회 수신 → 검증 → ADB 배팅
 ```
 
 ## 금액 정확도 규칙
 
-| 상황 | 금액 출처 |
-|------|----------|
-| 서버 pending_round == 클라이언트 round | 서버 `_server_calc_effective_pick_and_amount` (마틴 보정) |
-| 클라이언트 round > 서버 pending_round | **클라이언트 suggested_amount** (배팅중 표시와 동일) |
-
-**클라이언트가 서버보다 회차가 앞설 때**: relay 캐시를 **반드시 갱신**해야 한다. 스킵하면 매크로가 새 회차 픽을 받지 못함.
+- **항상 클라이언트 suggested_amount 사용** — 계산기 상단 배팅중 표시와 동일. 서버 덮어쓰기 금지.
 
 ## 안정화 규칙 (들어왔다 보류떴다 방지)
 
