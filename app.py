@@ -1043,8 +1043,16 @@ def save_calc_state(session_id, state_dict):
     return True
 
 
+def _is_completed_actual(act):
+    """actual이 완료(승/패/조커)인지. pending·None·빈값이면 미완료."""
+    if act is None or act == '':
+        return False
+    s = str(act).strip().lower()
+    return s != 'pending'
+
+
 def _merge_calc_histories(client_hist, server_hist):
-    """회차별 병합: 서버 행 기준. 단 클라이언트가 해당 회차 픽(정/꺽)을 보냈으면 1열 저장값으로 간주해 픽만 클라이언트 유지 → 승패만 actual 기준."""
+    """회차별 병합: 서버 행 기준. 단 actual 완료 시 더 완전한 쪽 우선(마틴 단계·금액 정확도). 픽은 클라이언트 유지."""
     by_round = {}
     for h in (server_hist or []):
         if not isinstance(h, dict):
@@ -1067,11 +1075,22 @@ def _merge_calc_histories(client_hist, server_hist):
         if not isinstance(h, dict):
             continue
         rn = h.get('round')
-        if rn is not None and rn not in by_round:
+        if rn is None:
+            continue
+        if rn not in by_round:
             by_round[rn] = dict(h)
             if by_round[rn].get('no_bet') or (by_round[rn].get('betAmount') is not None and by_round[rn].get('betAmount') == 0):
                 by_round[rn]['no_bet'] = True
                 by_round[rn]['betAmount'] = 0
+        else:
+            # 서버가 pending인데 클라이언트가 완료(actual)를 가졌으면 클라이언트 행으로 교체 — 금액 정확도
+            srv_act = by_round[rn].get('actual')
+            cli_act = h.get('actual')
+            if not _is_completed_actual(srv_act) and _is_completed_actual(cli_act):
+                by_round[rn] = dict(h)
+                if by_round[rn].get('no_bet') or (by_round[rn].get('betAmount') is not None and by_round[rn].get('betAmount') == 0):
+                    by_round[rn]['no_bet'] = True
+                    by_round[rn]['betAmount'] = 0
     for rn, pick in client_pick_by_round.items():
         if rn in by_round and pick.get('predicted') in ('정', '꺽'):
             by_round[rn]['predicted'] = pick['predicted']
@@ -4349,13 +4368,13 @@ def _scheduler_trim_shape_tables():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.15, id='fetch_results', max_instances=1)
-    _scheduler.add_job(_scheduler_apply_results, 'interval', seconds=0.1, id='apply_results', max_instances=1)  # DB 갱신 시 0.1초 내 픽 반영
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.1, id='fetch_results', max_instances=1)  # 0.1초마다 fetch 시도 — 픽 지연 최소화
+    _scheduler.add_job(_scheduler_apply_results, 'interval', seconds=0.05, id='apply_results', max_instances=1)  # 0.05초마다 apply — 픽·금액 즉시 반영
     _scheduler.add_job(_scheduler_trim_shape_tables, 'interval', seconds=300, id='trim_shape', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (fetch 0.15초, apply 0.1초)")
+        print("[✅] 결과 수집 스케줄러 시작 (fetch 0.1초, apply 0.05초)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:
@@ -10116,7 +10135,7 @@ RESULTS_HTML = '''
             
             // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·예측픽 먹통 발생
             var resultsInterval = isTabVisible ? 200 : 1200;
-            var calcStatusInterval = isTabVisible ? 80 : 1200;  // 픽 서버 전달 80ms — 자동배팅기 즉시 수신
+            var calcStatusInterval = isTabVisible ? 50 : 1200;  // 픽 서버 전달 50ms — 자동배팅기 즉시 수신
             var calcStateInterval = isTabVisible ? 2500 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
             var timerInterval = isTabVisible ? 250 : 1000;
             
@@ -10127,7 +10146,7 @@ RESULTS_HTML = '''
                 const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
                 const criticalPhase = r <= 3 || r >= 8;
                 // 백그라운드일 때는 최소 1초 간격. 너무 짧으면 서버 부하로 예측픽 안 나옴
-                const baseInterval = allResults.length === 0 ? 320 : (anyRunning ? 100 : (criticalPhase ? 250 : 320));
+                const baseInterval = allResults.length === 0 ? 320 : (anyRunning ? 80 : (criticalPhase ? 250 : 320));
                 const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
                 if (Date.now() - lastResultsUpdate > interval) {
                     loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
