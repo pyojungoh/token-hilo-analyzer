@@ -11511,17 +11511,13 @@ def api_current_pick_relay():
             round_num = data.get('round')
             suggested_amount = data.get('suggested_amount')
             running = data.get('running')
-            # relay 캐시는 POST에서 갱신하지 않음 — 스케줄러가 서버 금액으로 갱신
-            # 마틴 끝 후 초기 금액: 서버에 직전 회차 결과가 있으면 서버 pending_bet_amount 우선 (클라이언트가 결과 반영 전에 보낸 잘못된 금액 방지)
+            # relay 캐시 금액: 서버 calc와 회차 일치 시 _server_calc_effective_pick_and_amount로 금액 계산 — 계산기 상단 배팅중과 동일
             try:
                 state = get_calc_state('default') or {}
                 c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
                 if c and c.get('running') and c.get('pending_round') == round_num:
-                    hist = c.get('history') or []
-                    prev_round = int(round_num) - 1 if round_num is not None else None
-                    has_prev_result = any(h and int(h.get('round') or 0) == prev_round and h.get('actual') and str(h.get('actual')) not in ('', 'pending') for h in hist)
-                    srv_amt = c.get('pending_bet_amount')
-                    if has_prev_result and srv_amt is not None and int(srv_amt) > 0:
+                    _, srv_amt, _ = _server_calc_effective_pick_and_amount(c)
+                    if srv_amt is not None and int(srv_amt) > 0:
                         suggested_amount = int(srv_amt)
             except Exception:
                 pass
