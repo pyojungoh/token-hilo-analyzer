@@ -403,32 +403,25 @@ def save_prediction_record(round_num, predicted, actual, probability=None, pick_
             r15_val, r30_val, r100_val, blended_val = comp
         
         # shape_signature·shape_predicted 계산 (results가 제공되고 충분한 길이일 때)
-        # shape_predicted = 모양판별 알고리즘(get_shape_prediction_hint) 결과. 모양판별반픽 도구로 사용.
+        # shape_predicted = 예측기표 모양픽. 모양판별 메뉴 "가장 최근 다음 픽"과 동일 출처만 사용. 클라이언트 param 무시.
         shape_sig = None
         shape_pred = None
         shape_pick_val = None
         pong_pick_val = None
-        if shape_predicted and str(shape_predicted).strip() in ('정', '꺽'):
-            shape_pred = str(shape_predicted).strip()
         prediction_details = None
         if results and len(results) >= 16:
             sig = _get_shape_signature(results)
             if sig:
                 shape_sig = sig
                 prediction_details = json.dumps({'shape_signature': shape_sig})
-            if shape_pred is None:
-                try:
-                    lose_streak = _get_recent_lose_streak(history_before)
-                    mul = 0.6 if lose_streak >= 2 else 1.0
-                    hint = get_shape_prediction_hint(results, history_before, shape_weight=mul, chunk_weight=mul, pong_weight=mul, symmetry_weight=mul)
-                    shape_pred = hint.get('value') if hint and hint.get('value') in ('정', '꺽') else None
-                except Exception:
-                    shape_pred = None
             try:
                 sp = _get_latest_next_pick_for_chunk(results, exclude_round=round_num)
                 shape_pick_val = sp if sp in ('정', '꺽') else None
             except Exception:
                 pass
+            # shape_predicted = 가장 최근 다음 픽 (모양판별 메뉴와 동일). get_shape_prediction_hint 사용 안 함.
+            if shape_pred is None and shape_pick_val:
+                shape_pred = shape_pick_val
         if results and len(results) >= 16:
             try:
                 pong_pick_val = _get_pong_pick_for_round(results, round_num)
@@ -2733,13 +2726,12 @@ def _backfill_shape_predicted_in_ph(ph, results, max_backfill=0, persist_to_db=F
         filtered = [r for r in results if int(str(r.get('gameID') or '0'), 10) < rnd_int]
         if len(filtered) < 16:
             continue
-        history_before = [ph_by_round[r] for r in sorted(ph_by_round.keys(), key=lambda x: int(str(x), 10) if x is not None else 0) if r is not None and int(str(r), 10) < rnd_int][-100:]
         try:
-            hint = get_shape_prediction_hint(filtered, history_before)
-            if hint and hint.get('value') in ('정', '꺽'):
-                h['shape_predicted'] = hint['value']
+            sp_val = _get_latest_next_pick_for_chunk(filtered, exclude_round=rnd_int)
+            if sp_val and sp_val in ('정', '꺽'):
+                h['shape_predicted'] = sp_val
                 if persist_to_db:
-                    _update_shape_predicted_in_db(rnd_int, hint['value'])
+                    _update_shape_predicted_in_db(rnd_int, sp_val)
                 filled += 1
         except Exception:
             pass
@@ -10383,19 +10375,18 @@ def _build_results_payload_db_only(hours=24, backfill=False):
                             'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
                             'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {},
                         }
-                        # 퐁당/덩어리 판별 메뉴용: 저장 픽은 유지하되 phase/debug만 계산. shape_predicted 추가(모양판별 반픽 옵션용).
+                        # 퐁당/덩어리 판별 메뉴용: 저장 픽은 유지하되 phase/debug만 계산. shape_predicted = 가장 최근 다음 픽.
                         try:
                             computed = compute_prediction(results, ph, shape_win_stats=None, chunk_profile_stats=None)
                             if computed:
                                 server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                 server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
-                                latest_next_pick = _get_latest_next_pick_for_chunk(results)
-                                if latest_next_pick:
-                                    server_pred['pong_chunk_debug'] = server_pred.get('pong_chunk_debug') or {}
-                                    server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
-                            hint = get_shape_prediction_hint(results, ph)
-                            if hint and hint.get('value') in ('정', '꺽'):
-                                server_pred['shape_predicted'] = hint['value']
+                            latest_next_pick = _get_latest_next_pick_for_chunk(results, exclude_round=predicted_round)
+                            if latest_next_pick:
+                                server_pred['pong_chunk_debug'] = server_pred.get('pong_chunk_debug') or {}
+                                server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
+                                if latest_next_pick in ('정', '꺽'):
+                                    server_pred['shape_predicted'] = latest_next_pick
                         except Exception:
                             pass
             except Exception as e:
@@ -10404,9 +10395,10 @@ def _build_results_payload_db_only(hours=24, backfill=False):
             server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}, 'shape_predicted': None}
         if len(results) >= 16 and server_pred.get('shape_predicted') is None:
             try:
-                hint = get_shape_prediction_hint(results, ph)
-                if hint and hint.get('value') in ('정', '꺽'):
-                    server_pred['shape_predicted'] = hint['value']
+                pred_rnd_fb = int(str(results[0].get('gameID') or '0'), 10) + 1
+                sp_fb = _get_latest_next_pick_for_chunk(results, exclude_round=pred_rnd_fb)
+                if sp_fb and sp_fb in ('정', '꺽'):
+                    server_pred['shape_predicted'] = sp_fb
             except Exception:
                 pass
         # 모양 옵션: server_pred가 기본값이어도 latest_next_pick 항상 포함 — 계산기 최상단 보류만 표시 버그 방지
@@ -10680,13 +10672,12 @@ def _build_results_payload():
                                 if computed:
                                     server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                     server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
-                                    latest_next_pick = _get_latest_next_pick_for_chunk(results)
-                                    if latest_next_pick:
-                                        server_pred['pong_chunk_debug'] = server_pred.get('pong_chunk_debug') or {}
-                                        server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
-                                hint = get_shape_prediction_hint(results, ph)
-                                if hint and hint.get('value') in ('정', '꺽'):
-                                    server_pred['shape_predicted'] = hint['value']
+                                latest_next_pick = _get_latest_next_pick_for_chunk(results, exclude_round=predicted_round)
+                                if latest_next_pick:
+                                    server_pred['pong_chunk_debug'] = server_pred.get('pong_chunk_debug') or {}
+                                    server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
+                                    if latest_next_pick in ('정', '꺽'):
+                                        server_pred['shape_predicted'] = latest_next_pick
                             except Exception:
                                 pass
                 except Exception as e:
@@ -10695,9 +10686,10 @@ def _build_results_payload():
                 server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}, 'shape_predicted': None}
             if len(results) >= 16 and server_pred.get('shape_predicted') is None:
                 try:
-                    hint = get_shape_prediction_hint(results, ph)
-                    if hint and hint.get('value') in ('정', '꺽'):
-                        server_pred['shape_predicted'] = hint['value']
+                    pred_rnd_fb = int(str(results[0].get('gameID') or '0'), 10) + 1
+                    sp_fb = _get_latest_next_pick_for_chunk(results, exclude_round=pred_rnd_fb)
+                    if sp_fb and sp_fb in ('정', '꺽'):
+                        server_pred['shape_predicted'] = sp_fb
                 except Exception:
                     pass
             # 모양 옵션: latest_next_pick 항상 포함 (계산기 최상단 보류만 표시 버그 방지)
@@ -10862,13 +10854,12 @@ def _build_results_payload():
                                 if computed:
                                     server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                     server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
-                                    latest_next_pick = _get_latest_next_pick_for_chunk(results)
-                                    if latest_next_pick:
-                                        server_pred['pong_chunk_debug'] = server_pred.get('pong_chunk_debug') or {}
-                                        server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
-                                hint = get_shape_prediction_hint(results, ph)
-                                if hint and hint.get('value') in ('정', '꺽'):
-                                    server_pred['shape_predicted'] = hint['value']
+                                latest_next_pick = _get_latest_next_pick_for_chunk(results, exclude_round=predicted_round)
+                                if latest_next_pick:
+                                    server_pred['pong_chunk_debug'] = server_pred.get('pong_chunk_debug') or {}
+                                    server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
+                                    if latest_next_pick in ('정', '꺽'):
+                                        server_pred['shape_predicted'] = latest_next_pick
                             except Exception:
                                 pass
                 except Exception as e:
@@ -10879,9 +10870,10 @@ def _build_results_payload():
                 server_pred = compute_prediction(results, ph, shape_win_stats=shape_stats, chunk_profile_stats=chunk_stats) if len(results) >= 16 else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}, 'shape_predicted': None}
             if len(results) >= 16 and server_pred.get('shape_predicted') is None:
                 try:
-                    hint = get_shape_prediction_hint(results, ph)
-                    if hint and hint.get('value') in ('정', '꺽'):
-                        server_pred['shape_predicted'] = hint['value']
+                    pred_rnd_fb2 = int(str(results[0].get('gameID') or '0'), 10) + 1
+                    sp_fb2 = _get_latest_next_pick_for_chunk(results, exclude_round=pred_rnd_fb2)
+                    if sp_fb2 and sp_fb2 in ('정', '꺽'):
+                        server_pred['shape_predicted'] = sp_fb2
                 except Exception:
                     pass
             # 모양 옵션: latest_next_pick 항상 포함 (계산기 최상단 보류만 표시 버그 방지)
