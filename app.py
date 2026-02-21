@@ -10090,9 +10090,8 @@ RESULTS_HTML = '''
             if (predictionPollIntervalId) clearInterval(predictionPollIntervalId);
             
             // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·예측픽 먹통 발생
-            // 중간페이지 사용 시 매크로는 푸시로 픽 수신 → relay 캐시(스케줄러)가 갱신하면 됨. 분석기 페이지 폴링 완화.
             var resultsInterval = isTabVisible ? 320 : 1200;
-            var calcStatusInterval = isTabVisible ? 550 : 1200;  // 픽 서버 전달 — 중간페이지 있으면 매크로는 푸시로 받으므로 550ms로 완화
+            var calcStatusInterval = isTabVisible ? 200 : 1200;  // 픽 서버 전달 200ms — 자동배팅기 즉시 수신·배팅 놓침 방지
             var calcStateInterval = isTabVisible ? 2500 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
             var timerInterval = isTabVisible ? 250 : 1000;
             
@@ -11531,6 +11530,8 @@ def api_current_pick_relay():
                     suggested_amount = int(suggested_amount) if suggested_amount != '' else None
                 except (TypeError, ValueError):
                     suggested_amount = None
+            # relay 캐시 즉시 갱신 — 매크로가 DB 쓰기 대기 없이 바로 픽 수신 (배팅 놓침 방지)
+            _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running if running is not None else True, None)
             threading.Thread(target=_relay_db_write_background, daemon=True,
                              args=(calculator_id, pick_color, round_num, suggested_amount, running)).start()
             return jsonify({'ok': True}), 200
@@ -11583,8 +11584,34 @@ def api_current_pick_relay():
                 return int(r) if r is not None else 0
             except (TypeError, ValueError):
                 return 0
-        # 계산기 상단 배팅중 = 유일 출처. 회차·픽은 서버, 금액은 클라이언트 POST(current_pick) — 조커/보류는 계산기에서 처리해 null 전송
-        if server_out and (server_out.get('round') or server_out.get('pick_color')):
+        rv_db = _round_val(db_out) if db_out else 0
+        rv_srv = _round_val(server_out) if server_out else 0
+        rv_cached = _round_val(cached_out) if cached_out else 0
+        # 캐시 최우선: POST가 방금 갱신했으면 DB 쓰기 대기 없이 즉시 반환 (배팅 놓침 방지)
+        if cached_out and (cached_out.get('round') or cached_out.get('pick_color')) and rv_cached >= rv_srv and rv_cached >= rv_db:
+            out = dict(empty_pick)
+            out['round'] = cached_out.get('round')
+            out['pick_color'] = cached_out.get('pick_color')
+            amt = cached_out.get('suggested_amount')
+            if server_out and rv_srv == rv_cached and server_out.get('suggested_amount') and int(server_out.get('suggested_amount') or 0) > 0:
+                amt = server_out.get('suggested_amount')
+            out['suggested_amount'] = int(amt) if amt is not None and int(amt) > 0 else None
+            out['running'] = cached_out.get('running', True)
+            out['probability'] = cached_out.get('probability')
+        elif db_out and rv_db >= rv_srv and (db_out.get('round') or db_out.get('pick_color')):
+            out = dict(empty_pick)
+            out['round'] = db_out.get('round')
+            out['pick_color'] = db_out.get('pick_color')
+            amt = db_out.get('suggested_amount')
+            # 회차 같으면 서버 금액(마틴 보정) 참고 — 서버가 더 정확할 수 있음
+            if server_out and rv_srv == rv_db and server_out.get('suggested_amount'):
+                srv_amt = server_out.get('suggested_amount')
+                if srv_amt and int(srv_amt) > 0:
+                    amt = srv_amt
+            out['suggested_amount'] = int(amt) if amt is not None and int(amt) > 0 else None
+            out['running'] = db_out.get('running', True)
+            out['probability'] = db_out.get('probability')
+        elif server_out and (server_out.get('round') or server_out.get('pick_color')):
             out = dict(empty_pick)
             out['round'] = server_out.get('round')
             out['pick_color'] = server_out.get('pick_color')
@@ -11594,7 +11621,7 @@ def api_current_pick_relay():
             out['suggested_amount'] = int(amt) if amt is not None and int(amt) > 0 else None
             out['running'] = server_out.get('running', True)
             out['probability'] = server_out.get('probability')
-        elif db_out and _round_val(db_out) > 0:
+        elif db_out and rv_db > 0:
             out = dict(db_out)
         elif cached_out and cached_out.get('round') is not None:
             out = dict(cached_out)

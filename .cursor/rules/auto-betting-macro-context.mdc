@@ -24,12 +24,12 @@ alwaysApply: false
 ## relay 캐시
 
 - **스케줄러**: 0.2초마다 `_update_current_pick_relay_cache` 호출
-- **웹 POST**: relay 캐시 갱신 안 함. DB만 저장.
+- **웹 POST**: relay 캐시 즉시 갱신 (매크로가 DB 쓰기 대기 없이 바로 픽 수신)
 
 ## 완료된 작업
 
 - 매크로 표시 안정화: `(회차, 픽, 금액)`이 2회 연속 동일할 때만 UI 갱신 (`emulator_macro.py`)
-- relay 캐시 단일 소스: 서버 스케줄러만 갱신, 웹 POST는 relay 갱신 제외
+- relay 캐시: POST 즉시 갱신 + 스케줄러 0.2초마다 갱신 (매크로 즉시 수신)
 
 ## 좌표 기능 (금액 테스트·탭 튕김 방지)
 
