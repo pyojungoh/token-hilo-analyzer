@@ -8985,9 +8985,14 @@ RESULTS_HTML = '''
                         var noRevByStreak5Card = !(calcState[id].streak_suppress_reverse && runLenCard >= 5);
                         var shapePredOn = !!(document.getElementById('calc-' + id + '-shape-prediction') && document.getElementById('calc-' + id + '-shape-prediction').checked);
                         var predPicksBestOn = !!(document.getElementById('calc-' + id + '-prediction-picks-best') && document.getElementById('calc-' + id + '-prediction-picks-best').checked);
-                        // 상단 예측픽: 예측기픽 메뉴 강조 픽 > 모양판별 > lastPrediction.value
-                        var predictionText = (predPicksBestOn && lastPrediction.calc_best_pred && (lastPrediction.calc_best_pred === '정' || lastPrediction.calc_best_pred === '꺽')) ? lastPrediction.calc_best_pred : (shapePredOn && (lastPrediction.shape_predicted === '정' || lastPrediction.shape_predicted === '꺽')) ? lastPrediction.shape_predicted : lastPrediction.value;
-                        var predColorNorm = (predPicksBestOn && lastPrediction.calc_best_color) ? normalizePickColor(lastPrediction.calc_best_color) : normalizePickColor(lastPrediction.color);
+                        var predPicksShapePongOnlyOn = !!(document.getElementById('calc-' + id + '-prediction-picks-shape-pong-only') && document.getElementById('calc-' + id + '-prediction-picks-shape-pong-only').checked);
+                        // 상단 예측픽: 예측기픽 메뉴 강조 픽 > 모양판별 > lastPrediction.value. 모양·퐁당만 시 서버 pending 사용(calc_best는 4카드 기준)
+                        var predFromBest = (predPicksBestOn && !predPicksShapePongOnlyOn && lastPrediction.calc_best_pred && (lastPrediction.calc_best_pred === '정' || lastPrediction.calc_best_pred === '꺽')) ? lastPrediction.calc_best_pred : null;
+                        var colorFromBest = (predPicksBestOn && !predPicksShapePongOnlyOn && lastPrediction.calc_best_color) ? normalizePickColor(lastPrediction.calc_best_color) : null;
+                        var predFromPending = (predPicksBestOn && predPicksShapePongOnlyOn && calcState[id] && (calcState[id].pending_predicted === '정' || calcState[id].pending_predicted === '꺽')) ? calcState[id].pending_predicted : null;
+                        var colorFromPending = (predPicksBestOn && predPicksShapePongOnlyOn && calcState[id] && calcState[id].pending_color) ? normalizePickColor(calcState[id].pending_color) : null;
+                        var predictionText = predFromPending || predFromBest || ((shapePredOn && (lastPrediction.shape_predicted === '정' || lastPrediction.shape_predicted === '꺽')) ? lastPrediction.shape_predicted : lastPrediction.value);
+                        var predColorNorm = colorFromPending || colorFromBest || ((shapePredOn && (lastPrediction.shape_predicted === '정' || lastPrediction.shape_predicted === '꺽')) ? normalizePickColor(lastPrediction.color) : normalizePickColor(lastPrediction.color));
                         var predictionIsRed = (predColorNorm === '빨강' || predColorNorm === '검정') ? (predColorNorm === '빨강') : (predictionText === '정');
                         var bettingText, bettingIsRed;
                         if (saved && (saved.value === '정' || saved.value === '꺽')) {
@@ -11712,6 +11717,7 @@ def api_current_pick_relay():
             suggested_amount = data.get('suggested_amount')
             running = data.get('running')
             # 픽 즉시 전달: POST 시 캐시 갱신. 클라이언트 회차 > 서버 회차면 스킵 — 마틴 끝난 뒤 잘못된 금액(이전 마틴금액) 캐시 방지
+            # 모양·퐁당만 옵션: 클라이언트는 calc_best(4카드)를 쓰므로 픽이 잘못됨 — 서버 계산값으로 덮어씀
             skip_cache = False
             try:
                 state = get_calc_state('default') or {}
@@ -11724,10 +11730,13 @@ def api_current_pick_relay():
                                 skip_cache = True  # 서버 미반영 구간 — 스케줄러가 올바른 금액으로 갱신할 때까지 대기
                         except (TypeError, ValueError):
                             pass
-                    if not skip_cache and srv_round == round_num:
-                        _, srv_amt, _ = _server_calc_effective_pick_and_amount(c)
-                        if srv_amt is not None and int(srv_amt) > 0:
+                    if not skip_cache:
+                        srv_pick, srv_amt, _ = _server_calc_effective_pick_and_amount(c)
+                        if srv_round == round_num and srv_amt is not None and int(srv_amt) > 0:
                             suggested_amount = int(srv_amt)
+                        # 모양·퐁당만: 클라이언트 픽(calc_best=4카드) 대신 서버 픽(shape_pong_only) 사용
+                        if c.get('prediction_picks_shape_pong_only') and srv_pick is not None:
+                            pick_color = srv_pick
             except Exception:
                 pass
             if suggested_amount is not None and not isinstance(suggested_amount, int):
