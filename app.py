@@ -2147,14 +2147,16 @@ def _apply_results_to_calcs(results):
                 save_calc_state(session_id, state)  # 먼저 저장 → POST /api/current-pick 시 get_calc_state가 새 상태를 읽어 금액 보정 가능
                 for calc_id, calc_c in to_push:
                     _push_current_pick_from_calc(calc_id, calc_c)
-            # relay 캐시: 실행 중인 계산기는 회차 반영 여부와 관계없이 항상 서버 금액으로 갱신 (웹·서버 교차 덮어쓰기로 5천↔1만 깜빡임 방지)
+            # relay 캐시: 클라이언트 유효 캐시 있으면 덮어쓰지 않음 (_should_skip). 새 회차만 갱신
             for cid in ('1', '2', '3'):
                 c = state.get(cid)
                 if not c or not isinstance(c, dict) or not c.get('running'):
                     continue
                 try:
-                    pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
                     pr = c.get('pending_round')
+                    if _should_skip_relay_cache_update(int(cid), pr):
+                        continue
+                    pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
                     if pick_color is not None or (c.get('streak_wait_enabled') and c.get('streak_wait_state') in ('waiting', 'paused')):
                         _update_current_pick_relay_cache(int(cid), pr, pick_color, suggested_amount if suggested_amount is not None else 0, c.get('running', True))
                 except Exception:
@@ -2510,18 +2512,26 @@ def _update_current_pick_relay_cache(calculator_id, round_num, pick_color, sugge
 
 
 def _should_skip_relay_cache_update(calculator_id, new_round):
-    """스케줄러가 클라이언트의 더 높은 회차를 덮어쓰지 않도록. new_round가 캐시 회차보다 낮으면 True(스킵)."""
+    """스케줄러가 클라이언트 유효 캐시를 덮어쓰지 않도록. new_round <= 캐시 회차이면 True(스킵). 색상·금액 오탐 방지."""
     try:
         cached = _current_pick_relay_cache.get(int(calculator_id))
         if not cached or not isinstance(cached, dict) or not cached.get('running'):
             return False
         cache_round = cached.get('round')
+        cache_pick = cached.get('pick_color')
+        cache_amt = cached.get('suggested_amount')
         if cache_round is None or new_round is None:
             return False
+        # 캐시에 유효 픽 있으면 같은/낮은 회차로 덮어쓰지 않음 (들어왔다 보류떴다·색상틀림 방지)
+        has_valid_cache = cache_pick and cache_amt and int(cache_amt or 0) > 0
         try:
-            return int(new_round) < int(cache_round)
+            if int(new_round) < int(cache_round):
+                return True
+            if has_valid_cache and int(new_round) == int(cache_round):
+                return True  # 같은 회차 — 클라이언트 유효 데이터 유지
         except (TypeError, ValueError):
             return False
+        return False
     except Exception:
         return False
 
@@ -11801,23 +11811,33 @@ def api_current_pick_relay():
             round_num = data.get('round')
             suggested_amount = data.get('suggested_amount')
             running = data.get('running')
-            # 픽 즉시 전달: POST 시 항상 캐시 갱신 — 배팅중 픽 들어오자마자 매크로에 전달 (규칙: betting-in-display-to-macro-rule.mdc)
-            # 금액: 서버 pending_round == round_num and srv_amt 있으면 서버 값(마틴 보정), 아니면 클라이언트 suggested_amount
-            # 모양·퐁당만 옵션: 클라이언트는 calc_best(4카드)를 쓰므로 픽이 잘못됨 — 서버 계산값으로 덮어씀
+            # 정지 시에만 캐시 비우기
+            if running is False:
+                _update_current_pick_relay_cache(calculator_id, None, None, None, False, None)
+                threading.Thread(target=_relay_db_write_background, daemon=True,
+                                 args=(calculator_id, None, None, None, False)).start()
+                return jsonify({'ok': True}), 200
+            # 유효한 픽만 캐시 갱신 — null/보류 수신 시 기존 유효 캐시 덮어쓰지 않음 (들어왔다 보류떴다 반복 방지)
+            is_valid_post = (round_num is not None and pick_color is not None and
+                            suggested_amount is not None and int(suggested_amount or 0) > 0)
+            if not is_valid_post:
+                # 보류·null 수신 — 캐시 유지, DB만 백그라운드 저장
+                threading.Thread(target=_relay_db_write_background, daemon=True,
+                                 args=(calculator_id, pick_color, round_num, suggested_amount, running if running is not None else True)).start()
+                return jsonify({'ok': True}), 200
+            # 유효 픽: 서버 보정(마틴·모양) 적용 후 캐시 갱신
             try:
                 state = get_calc_state('default') or {}
                 c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
                 if c and c.get('running'):
                     srv_round = c.get('pending_round')
                     srv_pick, srv_amt, _ = _server_calc_effective_pick_and_amount(c)
-                    # 서버 회차와 일치 시 서버 금액 우선 (마틴 승 후 리셋 보정)
                     if srv_round is not None and round_num is not None:
                         try:
                             if int(srv_round) == int(round_num) and srv_amt is not None and int(srv_amt) > 0:
                                 suggested_amount = int(srv_amt)
                         except (TypeError, ValueError):
                             pass
-                    # 모양·퐁당만: 클라이언트 픽(calc_best=4카드) 대신 서버 픽(shape_pong_only) 사용
                     if c.get('prediction_picks_shape_pong_only') and srv_pick is not None:
                         pick_color = srv_pick
             except Exception:
@@ -11827,10 +11847,12 @@ def api_current_pick_relay():
                     suggested_amount = int(suggested_amount) if suggested_amount != '' else None
                 except (TypeError, ValueError):
                     suggested_amount = None
-            # 항상 캐시 갱신 — 클라이언트가 앞서도 배팅중 표시=매크로 수신 (즉시 전달)
-            _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running if running is not None else True, None)
+            if not suggested_amount or int(suggested_amount) <= 0:
+                return jsonify({'ok': True}), 200
+            # 다음회차 유효 픽 — 딱 그대로 저장 후 매크로가 GET으로 수신
+            _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, True, None)
             threading.Thread(target=_relay_db_write_background, daemon=True,
-                             args=(calculator_id, pick_color, round_num, suggested_amount, running)).start()
+                             args=(calculator_id, pick_color, round_num, suggested_amount, running if running is not None else True)).start()
             return jsonify({'ok': True}), 200
         calculator_id = request.args.get('calculator', '1').strip()
         try:

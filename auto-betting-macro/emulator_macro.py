@@ -1213,16 +1213,19 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         except (TypeError, ValueError):
             amt_val = None
         key = (round_num, pick_color, amt_val)
-        # 유효한 픽만 표시 유지 — null 수신 시 기존 유효 표시 덮어쓰지 않음 (들어왔다 보류떴다 반복 방지)
-        is_valid = round_num is not None and pick_color is not None
+        # 유효한 픽만 표시 유지 — null/보류 수신 시 기존 유효 표시 절대 덮어쓰지 않음 (들어왔다 보류떴다 반복 방지)
+        is_valid = round_num is not None and pick_color is not None and amt_val is not None and amt_val > 0
         if is_valid:
             self._display_stable = key
         elif self._display_stable is not None and len(self._display_stable) >= 3:
-            prev_round = self._display_stable[0]
-            if round_num == prev_round:
-                pass  # 같은 회차인데 null → 이전 유효 표시 유지
+            prev_round, prev_color, prev_amt = self._display_stable[0], self._display_stable[1], self._display_stable[2]
+            # 기존에 유효 픽 있으면 null/보류로 덮어쓰지 않음 — 전회차·보류 깜빡임 방지
+            if prev_round is not None and prev_color is not None and prev_amt and int(prev_amt or 0) > 0:
+                pass  # 기존 유효 표시 유지
+            elif round_num is not None and round_num == prev_round:
+                pass  # 같은 회차인데 null → 이전 표시 유지
             else:
-                self._display_stable = key  # 새 회차(픽 대기) → 보류 표시
+                self._display_stable = key
         else:
             self._display_stable = key
         # 같은 회차에서 본 최고 금액 유지 — 오래된 5000이 다시 표시되는 것 방지
