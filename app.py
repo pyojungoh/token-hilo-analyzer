@@ -4320,8 +4320,11 @@ def _update_relay_cache_for_running_calcs():
                 try:
                     pr = c.get('pending_round')
                     pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
-                    if pick_color is not None or (c.get('streak_wait_enabled') and c.get('streak_wait_state') in ('waiting', 'paused')):
+                    # pick_color가 None이어도 streak_wait(대기/일시정지)면 업데이트 — 매크로가 배팅하지 않도록. 그 외는 유효 픽 있을 때만 덮어씀 (들어왔다 보류떴다 반복 방지)
+                    if pick_color is not None:
                         _update_current_pick_relay_cache(int(cid), pr, pick_color, suggested_amount if suggested_amount is not None else 0, True, None)
+                    elif c.get('streak_wait_enabled') and c.get('streak_wait_state') in ('waiting', 'paused'):
+                        _update_current_pick_relay_cache(int(cid), pr, None, 0, True, None)
                 except Exception:
                     pass
     except Exception:
