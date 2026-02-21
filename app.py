@@ -2099,8 +2099,19 @@ def _apply_results_to_calcs(results):
                     c['pending_predicted'] = stored_for_round['predicted']
                     c['pending_prob'] = stored_for_round.get('probability')
                     c['pending_color'] = stored_for_round.get('pick_color')
-                    # 모양판별 옵션: shape_only와 별도
-                    if c.get('shape_prediction') and not c.get('shape_only_latest_next_pick'):
+                    # 예측기픽: 모양·퐁당만 포함 시 shape_pong_only 적용 (회차 처리 후 다음 회차 준비 시에도 동일)
+                    if c.get('prediction_picks_best') and results and len(results) >= 16:
+                        try:
+                            shape_pong_only = bool(c.get('prediction_picks_shape_pong_only'))
+                            ph_best = get_prediction_history(100)
+                            best_pred, best_color, _ = _get_prediction_picks_best(results, predicted_round, ph_best, shape_pong_only=shape_pong_only)
+                            if best_pred and best_color:
+                                c['pending_predicted'] = best_pred
+                                c['pending_color'] = best_color
+                        except Exception:
+                            pass
+                    # 모양판별 옵션: shape_only와 별도. 예측기픽 사용 시 스킵
+                    elif c.get('shape_prediction') and not c.get('shape_only_latest_next_pick'):
                         try:
                             ph_hint = get_prediction_history(100)
                             lose_streak = _get_recent_lose_streak(ph_hint)
@@ -2121,8 +2132,8 @@ def _apply_results_to_calcs(results):
                             pass
                     eff_pick, next_amt, eff_pred = _server_calc_effective_pick_and_amount(c)
                     c['pending_bet_amount'] = (next_amt if next_amt is not None and next_amt > 0 else None) if is_running else None
-                    # 모양옵션 체크 시: 실제 배팅 픽(shape 기준)으로 pending_color·pending_predicted 보정 → 1열과 배팅중 색 일치
-                    if c.get('shape_only_latest_next_pick') and eff_pick and eff_pred:
+                    # 모양옵션 체크 시: 실제 배팅 픽(shape 기준)으로 pending_color·pending_predicted 보정 → 1열과 배팅중 색 일치. 예측기픽 사용 시 스킵
+                    if c.get('shape_only_latest_next_pick') and not c.get('prediction_picks_best') and eff_pick and eff_pred:
                         c['pending_predicted'] = eff_pred
                         c['pending_color'] = '빨강' if eff_pick == 'RED' else ('검정' if eff_pick == 'BLACK' else c.get('pending_color'))
                     updated = True
