@@ -11688,14 +11688,23 @@ def api_current_pick_relay():
             round_num = data.get('round')
             suggested_amount = data.get('suggested_amount')
             running = data.get('running')
-            # 픽 즉시 전달: POST 시 캐시 갱신 — 속도 우선. 금액은 서버 calc와 일치 시 서버 값, 아니면 클라이언트 값(스케줄러 50ms 내 갱신)
+            # 픽 즉시 전달: POST 시 캐시 갱신. 클라이언트 회차 > 서버 회차면 스킵 — 마틴 끝난 뒤 잘못된 금액(이전 마틴금액) 캐시 방지
+            skip_cache = False
             try:
                 state = get_calc_state('default') or {}
                 c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
-                if c and c.get('running') and c.get('pending_round') == round_num:
-                    _, srv_amt, _ = _server_calc_effective_pick_and_amount(c)
-                    if srv_amt is not None and int(srv_amt) > 0:
-                        suggested_amount = int(srv_amt)
+                if c and c.get('running'):
+                    srv_round = c.get('pending_round')
+                    if srv_round is not None and round_num is not None:
+                        try:
+                            if int(round_num) > int(srv_round):
+                                skip_cache = True  # 서버 미반영 구간 — 스케줄러가 올바른 금액으로 갱신할 때까지 대기
+                        except (TypeError, ValueError):
+                            pass
+                    if not skip_cache and srv_round == round_num:
+                        _, srv_amt, _ = _server_calc_effective_pick_and_amount(c)
+                        if srv_amt is not None and int(srv_amt) > 0:
+                            suggested_amount = int(srv_amt)
             except Exception:
                 pass
             if suggested_amount is not None and not isinstance(suggested_amount, int):
@@ -11703,7 +11712,8 @@ def api_current_pick_relay():
                     suggested_amount = int(suggested_amount) if suggested_amount != '' else None
                 except (TypeError, ValueError):
                     suggested_amount = None
-            _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running if running is not None else True, None)
+            if not skip_cache:
+                _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running if running is not None else True, None)
             threading.Thread(target=_relay_db_write_background, daemon=True,
                              args=(calculator_id, pick_color, round_num, suggested_amount, running)).start()
             return jsonify({'ok': True}), 200
