@@ -11662,7 +11662,8 @@ def api_current_pick_relay():
             round_num = data.get('round')
             suggested_amount = data.get('suggested_amount')
             running = data.get('running')
-            # 픽 즉시 전달: relay 캐시 갱신. 금액은 서버 calc와 회차 일치 시 서버 값 사용
+            # 픽 즉시 전달: relay 캐시 갱신은 서버 금액과 회차 일치 시에만 (잘못된 금액 캐시 방지)
+            cache_ok = False
             try:
                 state = get_calc_state('default') or {}
                 c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
@@ -11670,14 +11671,16 @@ def api_current_pick_relay():
                     _, srv_amt, _ = _server_calc_effective_pick_and_amount(c)
                     if srv_amt is not None and int(srv_amt) > 0:
                         suggested_amount = int(srv_amt)
+                        cache_ok = True
             except Exception:
                 pass
-            if suggested_amount is not None:
+            if suggested_amount is not None and not isinstance(suggested_amount, int):
                 try:
                     suggested_amount = int(suggested_amount) if suggested_amount != '' else None
                 except (TypeError, ValueError):
                     suggested_amount = None
-            _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running if running is not None else True, None)
+            if cache_ok:
+                _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running if running is not None else True, None)
             threading.Thread(target=_relay_db_write_background, daemon=True,
                              args=(calculator_id, pick_color, round_num, suggested_amount, running)).start()
             return jsonify({'ok': True}), 200
@@ -11686,7 +11689,20 @@ def api_current_pick_relay():
             calculator_id = int(calculator_id) if calculator_id in ('1', '2', '3') else 1
         except (TypeError, ValueError):
             calculator_id = 1
-        # 계산기 상단과 동일: _server_calc_effective_pick_and_amount로 항상 계산 (history 기반 마틴 단계 정확)
+        # 캐시 우선 — DB 없이 즉시 반환 (스케줄러 50ms마다 갱신, 금액은 서버 계산값)
+        cached = _current_pick_relay_cache.get(calculator_id)
+        if cached and isinstance(cached, dict):
+            if cached.get('running') is False:
+                return jsonify({'round': None, 'pick_color': None, 'suggested_amount': None, 'running': False, 'probability': None}), 200
+            out = dict(empty_pick)
+            out['round'] = cached.get('round')
+            out['pick_color'] = cached.get('pick_color')
+            amt = cached.get('suggested_amount')
+            out['suggested_amount'] = int(amt) if amt is not None and int(amt) > 0 else None
+            out['running'] = cached.get('running', True)
+            out['probability'] = cached.get('probability')
+            return jsonify(out), 200
+        # 캐시 없음: DB/계산 fallback
         server_out = None
         try:
             state = get_calc_state('default') or {}
