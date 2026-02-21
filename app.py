@@ -11665,8 +11665,7 @@ def api_current_pick_relay():
             round_num = data.get('round')
             suggested_amount = data.get('suggested_amount')
             running = data.get('running')
-            # 픽 즉시 전달: relay 캐시 갱신은 서버 금액과 회차 일치 시에만 (잘못된 금액 캐시 방지)
-            cache_ok = False
+            # 픽 즉시 전달: POST 시 캐시 갱신 — 속도 우선. 금액은 서버 calc와 일치 시 서버 값, 아니면 클라이언트 값(스케줄러 50ms 내 갱신)
             try:
                 state = get_calc_state('default') or {}
                 c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
@@ -11674,7 +11673,6 @@ def api_current_pick_relay():
                     _, srv_amt, _ = _server_calc_effective_pick_and_amount(c)
                     if srv_amt is not None and int(srv_amt) > 0:
                         suggested_amount = int(srv_amt)
-                        cache_ok = True
             except Exception:
                 pass
             if suggested_amount is not None and not isinstance(suggested_amount, int):
@@ -11682,8 +11680,7 @@ def api_current_pick_relay():
                     suggested_amount = int(suggested_amount) if suggested_amount != '' else None
                 except (TypeError, ValueError):
                     suggested_amount = None
-            if cache_ok:
-                _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running if running is not None else True, None)
+            _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running if running is not None else True, None)
             threading.Thread(target=_relay_db_write_background, daemon=True,
                              args=(calculator_id, pick_color, round_num, suggested_amount, running)).start()
             return jsonify({'ok': True}), 200
