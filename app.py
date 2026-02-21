@@ -2489,6 +2489,23 @@ def _update_current_pick_relay_cache(calculator_id, round_num, pick_color, sugge
         pass
 
 
+def _should_skip_relay_cache_update(calculator_id, new_round):
+    """스케줄러가 클라이언트의 더 높은 회차를 덮어쓰지 않도록. new_round가 캐시 회차보다 낮으면 True(스킵)."""
+    try:
+        cached = _current_pick_relay_cache.get(int(calculator_id))
+        if not cached or not isinstance(cached, dict) or not cached.get('running'):
+            return False
+        cache_round = cached.get('round')
+        if cache_round is None or new_round is None:
+            return False
+        try:
+            return int(new_round) < int(cache_round)
+        except (TypeError, ValueError):
+            return False
+    except Exception:
+        return False
+
+
 # 머지 캐시: 이미 머지한 회차 집합. 새 결과 회차가 생길 때만 머지해서 폴링 시 속도 향상
 _merge_rounds_cache = set()
 
@@ -4319,6 +4336,9 @@ def _update_relay_cache_for_running_calcs():
                     continue
                 try:
                     pr = c.get('pending_round')
+                    # 클라이언트가 이미 더 높은 회차로 POST했으면 덮어쓰지 않음 — 분석기 회차=매크로 회차 동시 변경
+                    if _should_skip_relay_cache_update(int(cid), pr):
+                        continue
                     pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
                     # pick_color가 None이어도 streak_wait(대기/일시정지)면 업데이트 — 매크로가 배팅하지 않도록. 그 외는 유효 픽 있을 때만 덮어씀 (들어왔다 보류떴다 반복 방지)
                     if pick_color is not None:
@@ -11733,6 +11753,8 @@ def api_current_pick_relay():
             if out.get('running') is False:
                 out = dict(out)
                 out['pick_color'] = out['round'] = out['suggested_amount'] = None
+            # 캐시 비었을 때 서버 계산값으로 채워서 다음 GET은 즉시 반환
+            _update_current_pick_relay_cache(calculator_id, out.get('round'), out.get('pick_color'), out.get('suggested_amount'), out.get('running', True), None)
             return jsonify(out), 200
         # 서버 calc 없음(웹 미접속·정지): DB fallback
         db_out = None
