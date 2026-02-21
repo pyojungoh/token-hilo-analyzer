@@ -6622,6 +6622,7 @@ RESULTS_HTML = '''
                             lastPrediction = { value: sp.value, round: sp.round, prob: sp.prob != null ? sp.prob : 0, color: normColor };
                             if (sp.shape_predicted === '정' || sp.shape_predicted === '꺽') lastPrediction.shape_predicted = sp.shape_predicted;
                             if (sp.calc_best_pred && sp.calc_best_color) { lastPrediction.calc_best_pred = sp.calc_best_pred; lastPrediction.calc_best_color = sp.calc_best_color; }
+                            if (sp.calc_best_shape_pong_pred && sp.calc_best_shape_pong_color) { lastPrediction.calc_best_shape_pong_pred = sp.calc_best_shape_pong_pred; lastPrediction.calc_best_shape_pong_color = sp.calc_best_shape_pong_color; }
                             setRoundPrediction(sp.round, lastPrediction);
                             if (lastServerPrediction) {
                                 fetch('/api/round-prediction', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ round: sp.round, predicted: sp.value, pickColor: normColor || sp.color, probability: sp.prob }) }).catch(function() {});
@@ -8986,13 +8987,13 @@ RESULTS_HTML = '''
                         var shapePredOn = !!(document.getElementById('calc-' + id + '-shape-prediction') && document.getElementById('calc-' + id + '-shape-prediction').checked);
                         var predPicksBestOn = !!(document.getElementById('calc-' + id + '-prediction-picks-best') && document.getElementById('calc-' + id + '-prediction-picks-best').checked);
                         var predPicksShapePongOnlyOn = !!(document.getElementById('calc-' + id + '-prediction-picks-shape-pong-only') && document.getElementById('calc-' + id + '-prediction-picks-shape-pong-only').checked);
-                        // 상단 예측픽: 예측기픽 메뉴 강조 픽 > 모양판별 > lastPrediction.value. 모양·퐁당만 시 서버 pending 사용(calc_best는 4카드 기준)
+                        // 상단 예측픽: 예측기픽 메뉴 강조 픽 > 모양판별 > lastPrediction.value. 모양·퐁당만 시 서버 calc_best_shape_pong 사용(4카드 calc_best와 별도)
                         var predFromBest = (predPicksBestOn && !predPicksShapePongOnlyOn && lastPrediction.calc_best_pred && (lastPrediction.calc_best_pred === '정' || lastPrediction.calc_best_pred === '꺽')) ? lastPrediction.calc_best_pred : null;
                         var colorFromBest = (predPicksBestOn && !predPicksShapePongOnlyOn && lastPrediction.calc_best_color) ? normalizePickColor(lastPrediction.calc_best_color) : null;
-                        var predFromPending = (predPicksBestOn && predPicksShapePongOnlyOn && calcState[id] && (calcState[id].pending_predicted === '정' || calcState[id].pending_predicted === '꺽')) ? calcState[id].pending_predicted : null;
-                        var colorFromPending = (predPicksBestOn && predPicksShapePongOnlyOn && calcState[id] && calcState[id].pending_color) ? normalizePickColor(calcState[id].pending_color) : null;
-                        var predictionText = predFromPending || predFromBest || ((shapePredOn && (lastPrediction.shape_predicted === '정' || lastPrediction.shape_predicted === '꺽')) ? lastPrediction.shape_predicted : lastPrediction.value);
-                        var predColorNorm = colorFromPending || colorFromBest || ((shapePredOn && (lastPrediction.shape_predicted === '정' || lastPrediction.shape_predicted === '꺽')) ? normalizePickColor(lastPrediction.color) : normalizePickColor(lastPrediction.color));
+                        var predFromShapePong = (predPicksBestOn && predPicksShapePongOnlyOn && lastPrediction.calc_best_shape_pong_pred && (lastPrediction.calc_best_shape_pong_pred === '정' || lastPrediction.calc_best_shape_pong_pred === '꺽')) ? lastPrediction.calc_best_shape_pong_pred : null;
+                        var colorFromShapePong = (predPicksBestOn && predPicksShapePongOnlyOn && lastPrediction.calc_best_shape_pong_color) ? normalizePickColor(lastPrediction.calc_best_shape_pong_color) : null;
+                        var predictionText = predFromShapePong || predFromBest || ((shapePredOn && (lastPrediction.shape_predicted === '정' || lastPrediction.shape_predicted === '꺽')) ? lastPrediction.shape_predicted : lastPrediction.value);
+                        var predColorNorm = colorFromShapePong || colorFromBest || ((shapePredOn && (lastPrediction.shape_predicted === '정' || lastPrediction.shape_predicted === '꺽')) ? normalizePickColor(lastPrediction.color) : normalizePickColor(lastPrediction.color));
                         var predictionIsRed = (predColorNorm === '빨강' || predColorNorm === '검정') ? (predColorNorm === '빨강') : (predictionText === '정');
                         var bettingText, bettingIsRed;
                         if (saved && (saved.value === '정' || saved.value === '꺽')) {
@@ -10282,6 +10283,7 @@ RESULTS_HTML = '''
                         lastPrediction = { value: sp.value, round: sp.round, prob: sp.prob != null ? sp.prob : 0, color: normColor };
                         if (sp.shape_predicted === '정' || sp.shape_predicted === '꺽') lastPrediction.shape_predicted = sp.shape_predicted;
                         if (sp.calc_best_pred && sp.calc_best_color) { lastPrediction.calc_best_pred = sp.calc_best_pred; lastPrediction.calc_best_color = sp.calc_best_color; }
+                        if (sp.calc_best_shape_pong_pred && sp.calc_best_shape_pong_color) { lastPrediction.calc_best_shape_pong_pred = sp.calc_best_shape_pong_pred; lastPrediction.calc_best_shape_pong_color = sp.calc_best_shape_pong_color; }
                         lastWarningU35 = !!(sp.warning_u35);
                         updatePredictionPicksCards(sp);
                         refreshPredictionPickOnly();
@@ -10457,10 +10459,18 @@ def _build_results_payload_db_only(hours=24, backfill=False):
                     server_pred['calc_best_pred'] = best_pred
                     server_pred['calc_best_color'] = best_color
                     server_pred['calc_best_type'] = best_type
+                    # 모양·퐁당만 옵션용 — 4카드 calc_best와 별도로 클라이언트가 사용
+                    best_sp_pred, best_sp_color, best_sp_type = _get_prediction_picks_best(results, pred_rnd, ph, shape_pong_only=True)
+                    server_pred['calc_best_shape_pong_pred'] = best_sp_pred
+                    server_pred['calc_best_shape_pong_color'] = best_sp_color
+                    server_pred['calc_best_shape_pong_type'] = best_sp_type
                 except Exception:
                     server_pred['calc_best_pred'] = None
                     server_pred['calc_best_color'] = None
                     server_pred['calc_best_type'] = None
+                    server_pred['calc_best_shape_pong_pred'] = None
+                    server_pred['calc_best_shape_pong_color'] = None
+                    server_pred['calc_best_shape_pong_type'] = None
             except Exception:
                 server_pred['shape_pick'] = None
                 server_pred['pong_pick'] = None
@@ -10475,6 +10485,9 @@ def _build_results_payload_db_only(hours=24, backfill=False):
                 server_pred['calc_best_pred'] = None
                 server_pred['calc_best_color'] = None
                 server_pred['calc_best_type'] = None
+                server_pred['calc_best_shape_pong_pred'] = None
+                server_pred['calc_best_shape_pong_color'] = None
+                server_pred['calc_best_shape_pong_type'] = None
         blended = _blended_win_rate(ph)
         # backfill=1일 때만 shape_predicted 보정 (get_shape_prediction_hint 비용 큼). 평소엔 round_actuals fallback만 사용
         ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=25 if backfill else 0, persist_to_db=bool(backfill))
@@ -10736,10 +10749,17 @@ def _build_results_payload():
                         server_pred['calc_best_pred'] = best_pred
                         server_pred['calc_best_color'] = best_color
                         server_pred['calc_best_type'] = best_type
+                        best_sp_pred, best_sp_color, best_sp_type = _get_prediction_picks_best(results, pred_rnd, ph, shape_pong_only=True)
+                        server_pred['calc_best_shape_pong_pred'] = best_sp_pred
+                        server_pred['calc_best_shape_pong_color'] = best_sp_color
+                        server_pred['calc_best_shape_pong_type'] = best_sp_type
                     except Exception:
                         server_pred['calc_best_pred'] = None
                         server_pred['calc_best_color'] = None
                         server_pred['calc_best_type'] = None
+                        server_pred['calc_best_shape_pong_pred'] = None
+                        server_pred['calc_best_shape_pong_color'] = None
+                        server_pred['calc_best_shape_pong_type'] = None
                 except Exception:
                     server_pred['shape_pick'] = None
                     server_pred['pong_pick'] = None
@@ -10754,6 +10774,9 @@ def _build_results_payload():
                     server_pred['calc_best_pred'] = None
                     server_pred['calc_best_color'] = None
                     server_pred['calc_best_type'] = None
+                    server_pred['calc_best_shape_pong_pred'] = None
+                    server_pred['calc_best_shape_pong_color'] = None
+                    server_pred['calc_best_shape_pong_type'] = None
             blended = _blended_win_rate(ph)
             ph = _backfill_shape_predicted_in_ph(ph, results_full, max_backfill=0, persist_to_db=False)
             for h in (ph or []):
@@ -10910,10 +10933,17 @@ def _build_results_payload():
                         server_pred['calc_best_pred'] = best_pred
                         server_pred['calc_best_color'] = best_color
                         server_pred['calc_best_type'] = best_type
+                        best_sp_pred, best_sp_color, best_sp_type = _get_prediction_picks_best(results, pred_rnd, ph, shape_pong_only=True)
+                        server_pred['calc_best_shape_pong_pred'] = best_sp_pred
+                        server_pred['calc_best_shape_pong_color'] = best_sp_color
+                        server_pred['calc_best_shape_pong_type'] = best_sp_type
                     except Exception:
                         server_pred['calc_best_pred'] = None
                         server_pred['calc_best_color'] = None
                         server_pred['calc_best_type'] = None
+                        server_pred['calc_best_shape_pong_pred'] = None
+                        server_pred['calc_best_shape_pong_color'] = None
+                        server_pred['calc_best_shape_pong_type'] = None
                 except Exception:
                     server_pred['shape_pick'] = None
                     server_pred['pong_pick'] = None
@@ -10928,6 +10958,9 @@ def _build_results_payload():
                     server_pred['calc_best_pred'] = None
                     server_pred['calc_best_color'] = None
                     server_pred['calc_best_type'] = None
+                    server_pred['calc_best_shape_pong_pred'] = None
+                    server_pred['calc_best_shape_pong_color'] = None
+                    server_pred['calc_best_shape_pong_type'] = None
             blended = _blended_win_rate(ph)
             round_actuals = _build_round_actuals(results)
             ph = _backfill_shape_predicted_in_ph(ph, results, max_backfill=0, persist_to_db=False)
