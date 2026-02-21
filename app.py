@@ -2427,6 +2427,15 @@ def _server_calc_effective_pick_and_amount(c):
         pick_color = 'RED' if color == '빨강' else ('BLACK' if color == '검정' else None)
     if c.get('paused'):
         return pick_color, 0, pred
+    # 매크로 금액 정확도: apply 시점에 계산해 둔 pending_bet_amount 우선 사용 (history 지연·덮어쓰기로 마틴 단계 어긋남 방지)
+    pba = c.get('pending_bet_amount')
+    if pba is not None and int(pba) > 0:
+        try:
+            amt = int(pba)
+            if amt > 0:
+                return pick_color, amt, pred
+        except (TypeError, ValueError):
+            pass
     # 조커 등은 계산기 상단에서 이미 보류 처리 → 클라이언트가 null 전송. 서버는 금액만 계산.
     dummy = {'round': pr, 'actual': 'pending'}
     _calculate_calc_profit_server(c, dummy)
