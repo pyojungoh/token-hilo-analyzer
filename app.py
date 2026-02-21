@@ -1306,16 +1306,19 @@ def _get_pong_15_win_rate_weighted(ph, decay=1.1):
     return _get_weighted_15_win_rate(last15, lambda h: h.get('pong_pick') == h.get('actual'), decay)
 
 
+PRED_PICKS_DECAY = 1.25  # 예측기픽 4카드 공통: 최근 회차 가중 (최신 회차가 더 많이 반영되어 잘 맞는 픽 쫒아감)
+
+
 def _get_prediction_picks_best(results, predicted_round, ph):
     """메인/메인반픽/모양/퐁당 4픽 중 15회 승률이 가장 높은 픽 선택. 예측기픽 메뉴 카드에 표시되는 승률과 동일하게 사용.
-    퐁당만 decay=1.25로 최근 승패 가중. 동점 시 메인>메인반픽>모양>퐁당."""
+    4카드 모두 decay=1.25로 최근 승패 가중 — 최신 회차가 더 반영되어 잘 맞는 픽 쫒아감. 동점 시 메인>메인반픽>모양>퐁당."""
     if not results or len(results) < 16 or not ph:
         return None, None
     # 예측기픽 메뉴(카드) 표시 승률과 동일 — 계산기는 이 승률 기반으로 픽 선택
-    main_rate = _get_main_recent15_win_rate(ph)
-    main_reverse_rate = _get_main_reverse_15_win_rate(ph)
-    shape_rate = _get_shape_15_win_rate(ph)
-    pong_rate = _get_pong_15_win_rate_weighted(ph, decay=1.25)  # 퐁당: 최근 승패 가중
+    main_rate = _get_main_recent15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY)
+    main_reverse_rate = _get_main_reverse_15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY)
+    shape_rate = _get_shape_15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY)
+    pong_rate = _get_pong_15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY)
     main_pred = None
     try:
         filtered = [r for r in results if int(str(r.get('gameID') or '0'), 10) < predicted_round]
@@ -10396,7 +10399,7 @@ def _build_results_payload_db_only(hours=24, backfill=False):
                         server_pred['shape_color'] = '검정' if sp == '정' else '빨강' if sp == '꺽' else None
                     else:
                         server_pred['shape_color'] = '빨강' if sp == '정' else '검정' if sp == '꺽' else None
-                    server_pred['shape_15_rate'] = _get_shape_15_win_rate(ph)
+                    server_pred['shape_15_rate'] = _get_shape_15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY)
                     if server_pred['shape_pick']:
                         _shape_pick_cache[pred_rnd] = {'shape_pick': server_pred['shape_pick'], 'shape_color': server_pred['shape_color'], 'shape_15_rate': server_pred.get('shape_15_rate')}
                         for k in list(_shape_pick_cache.keys()):
@@ -10410,11 +10413,11 @@ def _build_results_payload_db_only(hours=24, backfill=False):
                     server_pred['pong_color'] = '검정' if server_pred.get('pong_pick') == '정' else '빨강' if server_pred.get('pong_pick') == '꺽' else None
                 else:
                     server_pred['pong_color'] = '빨강' if server_pred.get('pong_pick') == '정' else '검정' if server_pred.get('pong_pick') == '꺽' else None
-                server_pred['main_15_rate'] = _get_main_recent15_win_rate(ph)
-                server_pred['pong_15_rate'] = _get_pong_15_win_rate_weighted(ph, decay=1.25)  # 퐁당: 최근 승패 가중
+                server_pred['main_15_rate'] = _get_main_recent15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY)
+                server_pred['pong_15_rate'] = _get_pong_15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY)
                 mv = server_pred.get('value')
                 server_pred['main_reverse'] = ('꺽' if mv == '정' else '정' if mv == '꺽' else None)
-                server_pred['main_reverse_15_rate'] = _get_main_reverse_15_win_rate(ph)
+                server_pred['main_reverse_15_rate'] = _get_main_reverse_15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY)
                 if server_pred.get('main_reverse') and is_15_red is True:
                     server_pred['main_reverse_color'] = '빨강' if server_pred['main_reverse'] == '정' else '검정'
                 elif server_pred.get('main_reverse') and is_15_red is False:
@@ -10676,7 +10679,7 @@ def _build_results_payload():
                             server_pred['shape_color'] = '검정' if sp == '정' else '빨강' if sp == '꺽' else None
                         else:
                             server_pred['shape_color'] = '빨강' if sp == '정' else '검정' if sp == '꺽' else None
-                        server_pred['shape_15_rate'] = _get_shape_15_win_rate(ph)
+                        server_pred['shape_15_rate'] = _get_shape_15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY)
                         if server_pred['shape_pick']:
                             _shape_pick_cache[pred_rnd] = {'shape_pick': server_pred['shape_pick'], 'shape_color': server_pred['shape_color'], 'shape_15_rate': server_pred.get('shape_15_rate')}
                             for k in list(_shape_pick_cache.keys()):
@@ -10690,11 +10693,11 @@ def _build_results_payload():
                         server_pred['pong_color'] = '검정' if server_pred.get('pong_pick') == '정' else '빨강' if server_pred.get('pong_pick') == '꺽' else None
                     else:
                         server_pred['pong_color'] = '빨강' if server_pred.get('pong_pick') == '정' else '검정' if server_pred.get('pong_pick') == '꺽' else None
-                    server_pred['main_15_rate'] = _get_main_recent15_win_rate(ph)
-                    server_pred['pong_15_rate'] = _get_pong_15_win_rate_weighted(ph, decay=1.25)  # 퐁당: 최근 승패 가중
+                    server_pred['main_15_rate'] = _get_main_recent15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY)
+                    server_pred['pong_15_rate'] = _get_pong_15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY)
                     mv = server_pred.get('value')
                     server_pred['main_reverse'] = ('꺽' if mv == '정' else '정' if mv == '꺽' else None)
-                    server_pred['main_reverse_15_rate'] = _get_main_reverse_15_win_rate(ph)
+                    server_pred['main_reverse_15_rate'] = _get_main_reverse_15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY)
                     if server_pred.get('main_reverse') and is_15_red is True:
                         server_pred['main_reverse_color'] = '빨강' if server_pred['main_reverse'] == '정' else '검정'
                     elif server_pred.get('main_reverse') and is_15_red is False:
@@ -10850,7 +10853,7 @@ def _build_results_payload():
                             server_pred['shape_color'] = '검정' if sp == '정' else '빨강' if sp == '꺽' else None
                         else:
                             server_pred['shape_color'] = '빨강' if sp == '정' else '검정' if sp == '꺽' else None
-                        server_pred['shape_15_rate'] = _get_shape_15_win_rate(ph)
+                        server_pred['shape_15_rate'] = _get_shape_15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY)
                         if server_pred['shape_pick']:
                             _shape_pick_cache[pred_rnd] = {'shape_pick': server_pred['shape_pick'], 'shape_color': server_pred['shape_color'], 'shape_15_rate': server_pred.get('shape_15_rate')}
                             for k in list(_shape_pick_cache.keys()):
@@ -10864,11 +10867,11 @@ def _build_results_payload():
                         server_pred['pong_color'] = '검정' if server_pred.get('pong_pick') == '정' else '빨강' if server_pred.get('pong_pick') == '꺽' else None
                     else:
                         server_pred['pong_color'] = '빨강' if server_pred.get('pong_pick') == '정' else '검정' if server_pred.get('pong_pick') == '꺽' else None
-                    server_pred['main_15_rate'] = _get_main_recent15_win_rate(ph)
-                    server_pred['pong_15_rate'] = _get_pong_15_win_rate_weighted(ph, decay=1.25)  # 퐁당: 최근 승패 가중
+                    server_pred['main_15_rate'] = _get_main_recent15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY)
+                    server_pred['pong_15_rate'] = _get_pong_15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY)
                     mv = server_pred.get('value')
                     server_pred['main_reverse'] = ('꺽' if mv == '정' else '정' if mv == '꺽' else None)
-                    server_pred['main_reverse_15_rate'] = _get_main_reverse_15_win_rate(ph)
+                    server_pred['main_reverse_15_rate'] = _get_main_reverse_15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY)
                     if server_pred.get('main_reverse') and is_15_red is True:
                         server_pred['main_reverse_color'] = '빨강' if server_pred['main_reverse'] == '정' else '검정'
                     elif server_pred.get('main_reverse') and is_15_red is False:
