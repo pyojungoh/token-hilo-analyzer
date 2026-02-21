@@ -4303,9 +4303,11 @@ def _update_relay_cache_for_running_calcs():
 
 
 def _scheduler_apply_results():
-    """DB 결과로 계산기 회차 반영 + relay + prediction_cache. 0.1초마다 독립 실행 — fetch 블로킹과 무관하게 픽 즉시 반영."""
+    """DB 결과로 계산기 회차 반영 + relay + prediction_cache. 0.1초마다 실행. fetch 완료 시 fetch 스레드에서도 즉시 호출."""
     t0 = time.time()
     if not DB_AVAILABLE or not DATABASE_URL:
+        return
+    if not _apply_lock.acquire(blocking=False):
         return
     try:
         results = get_recent_results(hours=24)
@@ -4318,6 +4320,10 @@ def _scheduler_apply_results():
     except Exception as e:
         print(f"[스케줄러] apply 오류: {str(e)[:100]}")
     finally:
+        try:
+            _apply_lock.release()
+        except Exception:
+            pass
         _perf_log('scheduler_apply', (time.time() - t0) * 1000)
 
 
@@ -10835,6 +10841,7 @@ def _build_results_payload():
 
 _results_refresh_lock = threading.Lock()
 _results_refreshing = False
+_apply_lock = threading.Lock()
 
 def _update_prediction_cache_from_db():
     """DB만 사용해 예측픽 캐시 갱신. load_results_data 호출 금지. 외부 fetch 대기 없이 예측픽 빠르게 표시."""
@@ -10862,6 +10869,21 @@ def _refresh_results_background():
         if payload is not None and payload.get('results'):
             results_cache = payload
             last_update_time = time.time() * 1000
+            # fetch 완료 직후 apply 즉시 실행 — 금액(마틴 단계) 정확도
+            if DB_AVAILABLE and DATABASE_URL and _apply_lock.acquire(blocking=False):
+                try:
+                    results = get_recent_results(hours=24)
+                    if results and len(results) >= 16:
+                        ensure_stored_prediction_for_current_round(results)
+                        _apply_results_to_calcs(results)
+                        _backfill_latest_round_to_prediction_history(results)
+                    _update_relay_cache_for_running_calcs()
+                    _update_prediction_cache_from_db()
+                finally:
+                    try:
+                        _apply_lock.release()
+                    except Exception:
+                        pass
     except Exception as e:
         print(f"[API] 백그라운드 갱신 오류: {str(e)[:150]}")
     finally:
@@ -11602,7 +11624,7 @@ def api_current_pick_relay():
             calculator_id = int(calculator_id) if calculator_id in ('1', '2', '3') else 1
         except (TypeError, ValueError):
             calculator_id = 1
-        # 계산기 상단과 동일: pending_bet_amount 우선(상단 표시와 1:1 일치), 없으면 _server_calc_effective_pick_and_amount
+        # 계산기 상단과 동일: _server_calc_effective_pick_and_amount로 항상 계산 (history 기반 마틴 단계 정확)
         server_out = None
         try:
             state = get_calc_state('default') or {}
@@ -11611,12 +11633,7 @@ def api_current_pick_relay():
                 if c.get('running'):
                     pick_color, computed_amt, _ = _server_calc_effective_pick_and_amount(c)
                     pr = c.get('pending_round')
-                    pba = c.get('pending_bet_amount')
-                    # 계산기 상단: pending_round·pending_bet_amount 일치 시 그대로 사용 (금액 정확도)
-                    if pr is not None and pba is not None and int(pba) > 0:
-                        suggested_amount = int(pba)
-                    else:
-                        suggested_amount = int(computed_amt) if computed_amt is not None and int(computed_amt) > 0 else None
+                    suggested_amount = int(computed_amt) if computed_amt is not None and int(computed_amt) > 0 else None
                     server_out = {
                         'round': pr,
                         'pick_color': pick_color,
