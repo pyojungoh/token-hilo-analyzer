@@ -11602,19 +11602,25 @@ def api_current_pick_relay():
             calculator_id = int(calculator_id) if calculator_id in ('1', '2', '3') else 1
         except (TypeError, ValueError):
             calculator_id = 1
-        # 계산기 상단과 동일: 서버 calc에서 직접 계산 — 캐시 없이 항상 최신 회차·픽·금액 반환
+        # 계산기 상단과 동일: pending_bet_amount 우선(상단 표시와 1:1 일치), 없으면 _server_calc_effective_pick_and_amount
         server_out = None
         try:
             state = get_calc_state('default') or {}
             c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
             if c:
                 if c.get('running'):
-                    pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
+                    pick_color, computed_amt, _ = _server_calc_effective_pick_and_amount(c)
                     pr = c.get('pending_round')
+                    pba = c.get('pending_bet_amount')
+                    # 계산기 상단: pending_round·pending_bet_amount 일치 시 그대로 사용 (금액 정확도)
+                    if pr is not None and pba is not None and int(pba) > 0:
+                        suggested_amount = int(pba)
+                    else:
+                        suggested_amount = int(computed_amt) if computed_amt is not None and int(computed_amt) > 0 else None
                     server_out = {
                         'round': pr,
                         'pick_color': pick_color,
-                        'suggested_amount': int(suggested_amount) if suggested_amount is not None and int(suggested_amount) > 0 else None,
+                        'suggested_amount': suggested_amount,
                         'running': True,
                         'probability': None,
                     }
