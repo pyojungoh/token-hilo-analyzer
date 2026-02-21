@@ -4038,6 +4038,7 @@ game_data_cache = None
 streaks_cache = None
 results_cache = None
 prediction_cache = None  # 예측픽만. DB 전용. 외부 fetch 대기 없이 빠르게 표시
+_shape_pick_cache = {}  # { round: {shape_pick, shape_color, shape_15_rate} } — 회차별 고정, 나중에 바뀌는 것 방지
 last_update_time = 0
 CACHE_TTL = 1000  # 결과 캐시 유효 시간 (ms). 1초 동안 동일 캐시 반환, 스케줄러가 1초마다 선제 갱신
 
@@ -5857,6 +5858,7 @@ RESULTS_HTML = '''
         var lastCalcBestTypeSeen = null;  // calc_best 디바운스: 직전 수신값
         var lastCalcBestTypeStable = null;  // calc_best 디바운스: 2회 연속 동일 시 적용값
         var lastCalcBestRound = null;     // calc_best 디바운스: 회차 변경 시 리셋용
+        var lastShapePickByRound = {};    // 모양 카드 회차별 고정: { round: { val, color, rate } } — 나중에 바뀌는 것 방지
         let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
         let lastLoseEffectRound = null;  // 실패 이펙트를 이미 보여준 회차 (한 번만 표시)
         var prevSymmetryCounts = { left: null, right: null };  // 이전 시점 20열 줄 개수 (새 구간 빨리 캐치용)
@@ -10006,16 +10008,32 @@ RESULTS_HTML = '''
             if (!cards || !sp) return;
             var mainVal = (sp.value === '정' || sp.value === '꺽') ? sp.value : null;
             var mainReverseVal = (sp.main_reverse === '정' || sp.main_reverse === '꺽') ? sp.main_reverse : null;
-            var shapeVal = (sp.shape_pick === '정' || sp.shape_pick === '꺽') ? sp.shape_pick : null;
+            var currentRound = (sp.round != null) ? Number(sp.round) : null;
+            var incomingShapeVal = (sp.shape_pick === '정' || sp.shape_pick === '꺽') ? sp.shape_pick : null;
+            var incomingShapeColor = sp.shape_color ? (String(sp.shape_color).toUpperCase().indexOf('RED') >= 0 || sp.shape_color === '빨강' ? 'RED' : 'BLACK') : null;
+            var incomingShapeRate = sp.shape_15_rate != null ? sp.shape_15_rate : null;
+            if (currentRound != null && incomingShapeVal) {
+                if (!lastShapePickByRound[currentRound]) {
+                    lastShapePickByRound[currentRound] = { val: incomingShapeVal, color: incomingShapeColor, rate: incomingShapeRate };
+                }
+                var keys = Object.keys(lastShapePickByRound).map(Number).filter(function(k) { return !isNaN(k); });
+                while (keys.length > 20) {
+                    var oldest = Math.min.apply(null, keys);
+                    delete lastShapePickByRound[oldest];
+                    keys = Object.keys(lastShapePickByRound).map(Number).filter(function(k) { return !isNaN(k); });
+                }
+            }
+            var frozen = currentRound != null ? lastShapePickByRound[currentRound] : null;
+            var shapeVal = frozen ? frozen.val : incomingShapeVal;
+            var shapeColor = frozen ? frozen.color : incomingShapeColor;
+            var shapeRate = frozen && frozen.rate != null ? frozen.rate : incomingShapeRate;
             var pongVal = (sp.pong_pick === '정' || sp.pong_pick === '꺽') ? sp.pong_pick : null;
             var mainColor = sp.color ? (String(sp.color).toUpperCase().indexOf('RED') >= 0 || sp.color === '빨강' ? 'RED' : 'BLACK') : null;
             var mainReverseColor = sp.main_reverse_color ? (String(sp.main_reverse_color).toUpperCase().indexOf('RED') >= 0 || sp.main_reverse_color === '빨강' ? 'RED' : 'BLACK') : null;
-            var shapeColor = sp.shape_color ? (String(sp.shape_color).toUpperCase().indexOf('RED') >= 0 || sp.shape_color === '빨강' ? 'RED' : 'BLACK') : null;
             var pongColor = sp.pong_color ? (String(sp.pong_color).toUpperCase().indexOf('RED') >= 0 || sp.pong_color === '빨강' ? 'RED' : 'BLACK') : null;
             var roundStr = (sp.round != null) ? String(sp.round) : '—';
             var mainRate = sp.main_15_rate != null ? sp.main_15_rate : null;
             var mainReverseRate = sp.main_reverse_15_rate != null ? sp.main_reverse_15_rate : null;
-            var shapeRate = sp.shape_15_rate != null ? sp.shape_15_rate : null;
             var pongRate = sp.pong_15_rate != null ? sp.pong_15_rate : null;
             function updateCard(card, val, color, rate) {
                 if (!card) return;
@@ -10048,7 +10066,6 @@ RESULTS_HTML = '''
             updateCard(shapeCard, shapeVal, shapeColor, shapeRate);
             updateCard(pongCard, pongVal, pongColor, pongRate);
             var incomingBest = sp.calc_best_type;
-            var currentRound = (sp.round != null) ? Number(sp.round) : null;
             if (currentRound !== lastCalcBestRound) {
                 lastCalcBestRound = currentRound;
                 lastCalcBestTypeSeen = incomingBest;
@@ -10275,25 +10292,41 @@ def _build_results_payload_db_only(hours=24, backfill=False):
                     server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
             except Exception:
                 pass
-        # 예측기픽 탭: shape_pick = 모양판별 메뉴의 "가장 최근 다음 픽"과 동일 (덩어리/시그니처 기반)
+        # 예측기픽 탭: shape_pick = 모양판별 메뉴의 "가장 최근 다음 픽". 회차별 캐시로 한 번 나온 값 고정(나중에 바뀌는 것 방지)
         if len(results) >= 16:
             try:
                 pred_rnd = int(str(results[0].get('gameID') or '0'), 10) + 1
-                sp = _get_latest_next_pick_for_chunk(results)
-                server_pred['shape_pick'] = sp if sp in ('정', '꺽') else None
+                cached = _shape_pick_cache.get(pred_rnd) if isinstance(_shape_pick_cache, dict) else None
+                if cached and cached.get('shape_pick') in ('정', '꺽'):
+                    sp = cached['shape_pick']
+                    server_pred['shape_pick'] = sp
+                    server_pred['shape_color'] = cached.get('shape_color')
+                    server_pred['shape_15_rate'] = cached.get('shape_15_rate')
+                else:
+                    sp = _get_latest_next_pick_for_chunk(results)
+                    server_pred['shape_pick'] = sp if sp in ('정', '꺽') else None
+                    is_15_red = _get_card_15_color_for_latest_round(results)
+                    if is_15_red is True:
+                        server_pred['shape_color'] = '빨강' if sp == '정' else '검정' if sp == '꺽' else None
+                    elif is_15_red is False:
+                        server_pred['shape_color'] = '검정' if sp == '정' else '빨강' if sp == '꺽' else None
+                    else:
+                        server_pred['shape_color'] = '빨강' if sp == '정' else '검정' if sp == '꺽' else None
+                    server_pred['shape_15_rate'] = _get_shape_15_win_rate(ph)
+                    if server_pred['shape_pick']:
+                        _shape_pick_cache[pred_rnd] = {'shape_pick': server_pred['shape_pick'], 'shape_color': server_pred['shape_color'], 'shape_15_rate': server_pred.get('shape_15_rate')}
+                        for k in list(_shape_pick_cache.keys()):
+                            if k != pred_rnd and (not isinstance(k, (int, float)) or k < pred_rnd - 5):
+                                del _shape_pick_cache[k]
                 server_pred['pong_pick'] = _get_pong_pick_for_round(results, pred_rnd)
                 is_15_red = _get_card_15_color_for_latest_round(results)
                 if is_15_red is True:
-                    server_pred['shape_color'] = '빨강' if sp == '정' else '검정' if sp == '꺽' else None
                     server_pred['pong_color'] = '빨강' if server_pred.get('pong_pick') == '정' else '검정' if server_pred.get('pong_pick') == '꺽' else None
                 elif is_15_red is False:
-                    server_pred['shape_color'] = '검정' if sp == '정' else '빨강' if sp == '꺽' else None
                     server_pred['pong_color'] = '검정' if server_pred.get('pong_pick') == '정' else '빨강' if server_pred.get('pong_pick') == '꺽' else None
                 else:
-                    server_pred['shape_color'] = '빨강' if sp == '정' else '검정' if sp == '꺽' else None
                     server_pred['pong_color'] = '빨강' if server_pred.get('pong_pick') == '정' else '검정' if server_pred.get('pong_pick') == '꺽' else None
                 server_pred['main_15_rate'] = _get_main_recent15_win_rate(ph)
-                server_pred['shape_15_rate'] = _get_shape_15_win_rate(ph)
                 server_pred['pong_15_rate'] = _get_pong_15_win_rate_weighted(ph, decay=1.25)  # 퐁당: 최근 승패 가중
                 mv = server_pred.get('value')
                 server_pred['main_reverse'] = ('꺽' if mv == '정' else '정' if mv == '꺽' else None)
@@ -10539,25 +10572,41 @@ def _build_results_payload():
                         server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
                 except Exception:
                     pass
-            # 예측기픽 탭: shape_pick = 모양판별 "가장 최근 다음 픽"과 동일, pong_pick, 색상, 15회 승률
+            # 예측기픽 탭: shape_pick = 모양판별 "가장 최근 다음 픽"과 동일. 회차별 캐시로 한 번 나온 값 고정(나중에 바뀌는 것 방지)
             if len(results) >= 16:
                 try:
                     pred_rnd = int(str(results[0].get('gameID') or '0'), 10) + 1
-                    sp = _get_latest_next_pick_for_chunk(results)
-                    server_pred['shape_pick'] = sp if sp in ('정', '꺽') else None
+                    cached = _shape_pick_cache.get(pred_rnd) if isinstance(_shape_pick_cache, dict) else None
+                    if cached and cached.get('shape_pick') in ('정', '꺽'):
+                        sp = cached['shape_pick']
+                        server_pred['shape_pick'] = sp
+                        server_pred['shape_color'] = cached.get('shape_color')
+                        server_pred['shape_15_rate'] = cached.get('shape_15_rate')
+                    else:
+                        sp = _get_latest_next_pick_for_chunk(results)
+                        server_pred['shape_pick'] = sp if sp in ('정', '꺽') else None
+                        is_15_red = _get_card_15_color_for_latest_round(results)
+                        if is_15_red is True:
+                            server_pred['shape_color'] = '빨강' if sp == '정' else '검정' if sp == '꺽' else None
+                        elif is_15_red is False:
+                            server_pred['shape_color'] = '검정' if sp == '정' else '빨강' if sp == '꺽' else None
+                        else:
+                            server_pred['shape_color'] = '빨강' if sp == '정' else '검정' if sp == '꺽' else None
+                        server_pred['shape_15_rate'] = _get_shape_15_win_rate(ph)
+                        if server_pred['shape_pick']:
+                            _shape_pick_cache[pred_rnd] = {'shape_pick': server_pred['shape_pick'], 'shape_color': server_pred['shape_color'], 'shape_15_rate': server_pred.get('shape_15_rate')}
+                            for k in list(_shape_pick_cache.keys()):
+                                if k != pred_rnd and (not isinstance(k, (int, float)) or k < pred_rnd - 5):
+                                    del _shape_pick_cache[k]
                     server_pred['pong_pick'] = _get_pong_pick_for_round(results, pred_rnd)
                     is_15_red = _get_card_15_color_for_latest_round(results)
                     if is_15_red is True:
-                        server_pred['shape_color'] = '빨강' if sp == '정' else '검정' if sp == '꺽' else None
                         server_pred['pong_color'] = '빨강' if server_pred.get('pong_pick') == '정' else '검정' if server_pred.get('pong_pick') == '꺽' else None
                     elif is_15_red is False:
-                        server_pred['shape_color'] = '검정' if sp == '정' else '빨강' if sp == '꺽' else None
                         server_pred['pong_color'] = '검정' if server_pred.get('pong_pick') == '정' else '빨강' if server_pred.get('pong_pick') == '꺽' else None
                     else:
-                        server_pred['shape_color'] = '빨강' if sp == '정' else '검정' if sp == '꺽' else None
                         server_pred['pong_color'] = '빨강' if server_pred.get('pong_pick') == '정' else '검정' if server_pred.get('pong_pick') == '꺽' else None
                     server_pred['main_15_rate'] = _get_main_recent15_win_rate(ph)
-                    server_pred['shape_15_rate'] = _get_shape_15_win_rate(ph)
                     server_pred['pong_15_rate'] = _get_pong_15_win_rate_weighted(ph, decay=1.25)  # 퐁당: 최근 승패 가중
                     mv = server_pred.get('value')
                     server_pred['main_reverse'] = ('꺽' if mv == '정' else '정' if mv == '꺽' else None)
@@ -10697,25 +10746,41 @@ def _build_results_payload():
                         server_pred['pong_chunk_debug']['latest_next_pick'] = latest_next_pick
                 except Exception:
                     pass
-            # 예측기픽 탭: shape_pick = 모양판별 "가장 최근 다음 픽"과 동일, pong_pick, 색상, 15회 승률
+            # 예측기픽 탭: shape_pick = 모양판별 "가장 최근 다음 픽"과 동일. 회차별 캐시로 한 번 나온 값 고정(나중에 바뀌는 것 방지)
             if len(results) >= 16:
                 try:
                     pred_rnd = int(str(results[0].get('gameID') or '0'), 10) + 1
-                    sp = _get_latest_next_pick_for_chunk(results)
-                    server_pred['shape_pick'] = sp if sp in ('정', '꺽') else None
+                    cached = _shape_pick_cache.get(pred_rnd) if isinstance(_shape_pick_cache, dict) else None
+                    if cached and cached.get('shape_pick') in ('정', '꺽'):
+                        sp = cached['shape_pick']
+                        server_pred['shape_pick'] = sp
+                        server_pred['shape_color'] = cached.get('shape_color')
+                        server_pred['shape_15_rate'] = cached.get('shape_15_rate')
+                    else:
+                        sp = _get_latest_next_pick_for_chunk(results)
+                        server_pred['shape_pick'] = sp if sp in ('정', '꺽') else None
+                        is_15_red = _get_card_15_color_for_latest_round(results)
+                        if is_15_red is True:
+                            server_pred['shape_color'] = '빨강' if sp == '정' else '검정' if sp == '꺽' else None
+                        elif is_15_red is False:
+                            server_pred['shape_color'] = '검정' if sp == '정' else '빨강' if sp == '꺽' else None
+                        else:
+                            server_pred['shape_color'] = '빨강' if sp == '정' else '검정' if sp == '꺽' else None
+                        server_pred['shape_15_rate'] = _get_shape_15_win_rate(ph)
+                        if server_pred['shape_pick']:
+                            _shape_pick_cache[pred_rnd] = {'shape_pick': server_pred['shape_pick'], 'shape_color': server_pred['shape_color'], 'shape_15_rate': server_pred.get('shape_15_rate')}
+                            for k in list(_shape_pick_cache.keys()):
+                                if k != pred_rnd and (not isinstance(k, (int, float)) or k < pred_rnd - 5):
+                                    del _shape_pick_cache[k]
                     server_pred['pong_pick'] = _get_pong_pick_for_round(results, pred_rnd)
                     is_15_red = _get_card_15_color_for_latest_round(results)
                     if is_15_red is True:
-                        server_pred['shape_color'] = '빨강' if sp == '정' else '검정' if sp == '꺽' else None
                         server_pred['pong_color'] = '빨강' if server_pred.get('pong_pick') == '정' else '검정' if server_pred.get('pong_pick') == '꺽' else None
                     elif is_15_red is False:
-                        server_pred['shape_color'] = '검정' if sp == '정' else '빨강' if sp == '꺽' else None
                         server_pred['pong_color'] = '검정' if server_pred.get('pong_pick') == '정' else '빨강' if server_pred.get('pong_pick') == '꺽' else None
                     else:
-                        server_pred['shape_color'] = '빨강' if sp == '정' else '검정' if sp == '꺽' else None
                         server_pred['pong_color'] = '빨강' if server_pred.get('pong_pick') == '정' else '검정' if server_pred.get('pong_pick') == '꺽' else None
                     server_pred['main_15_rate'] = _get_main_recent15_win_rate(ph)
-                    server_pred['shape_15_rate'] = _get_shape_15_win_rate(ph)
                     server_pred['pong_15_rate'] = _get_pong_15_win_rate_weighted(ph, decay=1.25)  # 퐁당: 최근 승패 가중
                     mv = server_pred.get('value')
                     server_pred['main_reverse'] = ('꺽' if mv == '정' else '정' if mv == '꺽' else None)

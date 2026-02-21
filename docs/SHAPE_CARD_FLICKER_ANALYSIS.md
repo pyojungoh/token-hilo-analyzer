@@ -19,10 +19,15 @@
 
 ## 적용된 해결
 
-### prediction_cache를 스케줄러 fetch 직후에만 갱신
+### 1. prediction_cache를 스케줄러 fetch 직후에만 갱신
 
 1. **별도 prediction_cache job 제거**
 2. **`_scheduler_fetch_results` 끝에서** `_update_prediction_cache_from_db()` 호출
 3. `_refresh_results_background` 완료 → DB 저장 → `get_recent_results`로 최신 데이터 → `_update_prediction_cache_from_db`로 갱신
 
 **효과**: prediction_cache는 **항상 최신 results 반영 직후**에만 갱신되므로, 처음 표시되는 shape_pick이 정확함
+
+### 2. _shape_pick_cache를 모든 페이로드 경로에 적용
+
+- **원인**: `_build_results_payload`(fetch 경로)는 `_shape_pick_cache`를 사용하지 않아, 스케줄러가 `_refresh_results_background`로 results_cache를 덮어쓸 때 shape_pick이 매번 재계산됨. `/api/current-prediction`이 results_cache를 폴백으로 사용하면 캐시되지 않은 값이 반환되어 모양 카드가 바뀜.
+- **조치**: `_build_results_payload` 내 shape_pick 계산 블록 2곳(DB+json 경로, DB 없음 경로) 모두에 `_shape_pick_cache` 로직 추가. `_build_results_payload_db_only`와 동일하게 회차별 캐시 사용.
