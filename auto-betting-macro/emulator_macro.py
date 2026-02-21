@@ -422,6 +422,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._round_prev = None  # 전회차 (배팅 완료)
         self._round_current = None  # 지금회차 (배팅 대기/진행)
         self._round_next = None  # 다음회차 (픽 수신 시 설정)
+        self._poll_in_flight = False  # 폴링 중복 방지 — 요청 완료 전 새 요청 시작 금지 (CPU 부하 감소)
         # 좌표 찾기 (한곳에 통합)
         self._coord_listener = None
         self._coord_capture_key = None
@@ -1121,8 +1122,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._analyzer_url = url
         self._calculator_id = self.calc_combo.currentData()
         self._device_id = self.device_edit.text().strip() or "127.0.0.1:5555"
-        # 배팅 중: 0.05초(50ms) 간격으로 픽 조회 — 픽 들어오자마자 즉시 배팅
-        self._poll_interval_sec = 0.05
+        # 배팅 중: 0.15초(150ms) 간격 — 서버 POST 캐시로 200ms 내 픽 반영, 150ms 폴링으로 충분. 50ms는 20req/s로 CPU 부하 과다
+        self._poll_interval_sec = 0.15
         self._coords = load_coords()
         if not self._coords.get("bet_amount") or not self._coords.get("red") or not self._coords.get("black"):
             self._log("좌표를 먼저 설정하세요. coord_picker.py로 배팅금액/정정/레드/블랙 좌표를 잡으세요.")
@@ -1148,6 +1149,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
 
     def _on_stop(self):
         self._running = False
+        self._poll_in_flight = False  # 정지 시 플래그 초기화
         if not self._connected:
             self._timer.stop()
         self.start_btn.setEnabled(True)
@@ -1158,6 +1160,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         """타이머에서 호출: 스레드에서 서버 요청 후 결과만 메인 스레드로 전달 (UI 멈춤 방지)."""
         if not self._running and not self._connected:
             return
+        if self._poll_in_flight:
+            return  # 이전 요청 완료 전 중복 방지 — CPU 부하 감소
         url = (self._analyzer_url or "").strip() or self.analyzer_url_edit.text().strip()
         if not url:
             return
@@ -1168,6 +1172,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             self._calculator_id = calc_id
         url_snap = url
         calc_snap = calc_id
+        self._poll_in_flight = True
 
         def do_fetch():
             """계산기에서 회차·배팅중 픽·배팅금액만 가져옴. 계산/승패는 분석기 가상배팅 계산기가 담당."""
@@ -1184,6 +1189,13 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
 
     def _on_poll_done(self, pick, results):
         """폴링 결과 수신: 회차·배팅중 픽·금액만 반영하고 배팅. 계산/승패는 분석기에서."""
+        try:
+            self._on_poll_done_impl(pick, results)
+        finally:
+            self._poll_in_flight = False  # 다음 폴링 허용 — CPU 부하 감소
+
+    def _on_poll_done_impl(self, pick, results):
+        """폴링 결과 처리 (내부)."""
         with self._lock:
             self._pick_data = pick if isinstance(pick, dict) else {}
             self._results_data = results if isinstance(results, dict) else {}

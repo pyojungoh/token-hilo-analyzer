@@ -1894,10 +1894,10 @@ def _apply_results_to_calcs(results):
                 if first_bet > 0 and pending_round < first_bet:
                     continue
                 # prediction_history(예측기표)에는 항상 예측기 픽만 저장. 계산기(반픽/승률반픽)는 calc history에만 반영.
-                # shape_prediction·shape_only_latest_next_pick 사용 시 pending_predicted는 모양픽이므로, 예측기표용으로는 메인 픽을 별도 계산.
+                # pending_predicted는 클라이언트가 보낸 배팅픽(반픽 적용)일 수 있으므로, compute_prediction으로 메인 픽을 항상 계산.
                 pred_for_record = pending_predicted
                 main_pred_for_record = None
-                if (c.get('shape_prediction') or c.get('shape_only_latest_next_pick')) and results and len(results) >= 16:
+                if results and len(results) >= 16:
                     filtered_for_main = [r for r in results if int(str(r.get('gameID') or '0'), 10) < pending_round]
                     if len(filtered_for_main) >= 16:
                         ph_rec = get_prediction_history(100)
@@ -1906,14 +1906,14 @@ def _apply_results_to_calcs(results):
                             pred_for_record = main_pred_for_record['value']
                 pick_color_for_record = _normalize_pick_color_value((main_pred_for_record.get('color') if main_pred_for_record else None) or c.get('pending_color'))
                 if pick_color_for_record is None:
-                    # pick-color-core-rule: 정/꺽→빨강/검정은 15번 카드 기준. 고정 매핑(정=빨강,꺽=검정) 금지.
+                    # pick-color-core-rule: 정/꺽→빨강/검정은 15번 카드 기준. pred_for_record(메인 픽) 사용 — pending_predicted는 배팅픽 오염 가능
                     is_15_red = _get_card_15_color_for_round(results, pending_round)
                     if is_15_red is True:
-                        pick_color_for_record = '빨강' if pending_predicted == '정' else '검정'
+                        pick_color_for_record = '빨강' if pred_for_record == '정' else '검정'
                     elif is_15_red is False:
-                        pick_color_for_record = '검정' if pending_predicted == '정' else '빨강'
+                        pick_color_for_record = '검정' if pred_for_record == '정' else '빨강'
                     else:
-                        pick_color_for_record = '빨강' if pending_predicted == '정' else '검정'  # 15번 미확인 시 최후 폴백
+                        pick_color_for_record = '빨강' if pred_for_record == '정' else '검정'  # 15번 미확인 시 최후 폴백
                 # 예측 시점의 shape_signature를 계산하기 위해 pending_round를 제외한 이전 결과 사용
                 results_for_shape = None
                 if results and len(results) >= 16:
