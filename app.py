@@ -2466,23 +2466,26 @@ def _server_calc_effective_pick_and_amount(c):
 
 
 def _push_current_pick_from_calc(calculator_id, c):
-    """서버에서 계산기 픽을 current_pick에 즉시 반영 — 매크로가 클라이언트를 기다리지 않고 픽 수신."""
+    """서버에서 계산기 픽을 current_pick DB·relay 캐시에 반영. 클라이언트 유효 시 덮어쓰지 않음 (5000 충돌 방지)."""
     if not bet_int or not DB_AVAILABLE or not DATABASE_URL:
         return
     pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
     if pick_color is None:
         return
+    calc_id = int(calculator_id) if calculator_id in (1, 2, 3) else 1
+    pr = c.get('pending_round')
+    # 클라이언트 유효 캐시 있으면 DB·relay 모두 덮어쓰지 않음 — 배팅중 금액 vs 서버 5000 충돌 방지
+    if _should_skip_relay_cache_update(calc_id, pr):
+        return
     conn = get_db_connection(statement_timeout_sec=3)
     if not conn:
         return
     try:
-        calc_id = int(calculator_id) if calculator_id in (1, 2, 3) else 1
-        pr = c.get('pending_round')
         ok = bet_int.set_current_pick(conn, pick_color=pick_color, round_num=pr,
                                        suggested_amount=suggested_amount, calculator_id=calc_id)
         if ok:
             conn.commit()
-            _update_current_pick_relay_cache(calc_id, pr, pick_color, suggested_amount, c.get('running', True))
+        _update_current_pick_relay_cache(calc_id, pr, pick_color, suggested_amount if suggested_amount is not None else 0, c.get('running', True))
     except Exception:
         pass
     finally:
