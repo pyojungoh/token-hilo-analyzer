@@ -1158,13 +1158,15 @@ def _blended_win_rate(prediction_history):
 
 
 def _blended_win_rate_components(prediction_history):
-    """예측 이력으로 15/30/100 승률 및 합산. (r15, r30, r100, blended). 가중치: 15회 65%, 30회 25%, 100회 10%."""
+    """예측 이력으로 15/30/100 승률 및 합산. (r15, r30, r100, blended). 가중치: 15회 65%, 30회 25%, 100회 10%.
+    predicted·actual이 정/꺽인 회차만 포함 (예측 없음/조커 제외)."""
     valid_hist = [h for h in (prediction_history or []) if h and isinstance(h, dict)]
     if not valid_hist:
         return None
-    v15 = [h for h in valid_hist[-15:] if h.get('actual') != 'joker']
-    v30 = [h for h in valid_hist[-30:] if h.get('actual') != 'joker']
-    v100 = [h for h in valid_hist[-100:] if h.get('actual') != 'joker']
+    vh = [h for h in valid_hist if h.get('predicted') in ('정', '꺽') and h.get('actual') in ('정', '꺽')]
+    v15 = vh[-15:] if len(vh) >= 15 else vh
+    v30 = vh[-30:] if len(vh) >= 30 else vh
+    v100 = vh[-100:] if len(vh) >= 100 else vh
     def rate(arr):
         hit = sum(1 for h in arr if h.get('predicted') == h.get('actual'))
         return 100 * hit / len(arr) if arr else 50
@@ -1177,10 +1179,10 @@ def _blended_win_rate_components(prediction_history):
 
 def _get_main_recent15_win_rate(ph):
     """메인 예측기(예측픽) 기준 최근 15경기 승률(%). 조커 제외. 5회 미만이면 None.
-    actual이 '정' 또는 '꺽'인 회차만 포함 (조커/None/빈값 제외)."""
+    predicted·actual이 '정' 또는 '꺽'인 회차만 포함 (예측 없음/조커 제외)."""
     if not ph or len(ph) < 5:
         return None
-    vh = [h for h in ph if h and h.get('actual') in ('정', '꺽')]
+    vh = [h for h in ph if h and h.get('predicted') in ('정', '꺽') and h.get('actual') in ('정', '꺽')]
     last15 = vh[-15:] if len(vh) >= 15 else vh
     if len(last15) < 5:
         return None
@@ -1214,10 +1216,10 @@ def _get_pong_15_win_rate(ph):
 
 def _get_main_reverse_15_win_rate(ph):
     """메인반픽(예측픽의 반대) 최근 15회 승률. predicted의 반대 vs actual, 조커 제외. 5회 미만이면 None.
-    actual이 '정' 또는 '꺽'인 회차만 포함."""
+    predicted·actual이 '정' 또는 '꺽'인 회차만 포함 (예측 없음/조커 제외)."""
     if not ph or len(ph) < 5:
         return None
-    vh = [h for h in ph if h and h.get('actual') in ('정', '꺽')]
+    vh = [h for h in ph if h and h.get('predicted') in ('정', '꺽') and h.get('actual') in ('정', '꺽')]
     last15 = vh[-15:] if len(vh) >= 15 else vh
     if len(last15) < 5:
         return None
@@ -1231,7 +1233,7 @@ def _get_main_reverse_15_win_rate_weighted(ph, decay=1.1):
     """메인반픽(예측픽의 반대) 최근 15회 지수가중 승률. predicted의 반대 vs actual, 조커 제외."""
     if not ph or len(ph) < 5:
         return None
-    vh = [h for h in ph if h and h.get('actual') not in ('joker', '조커')]
+    vh = [h for h in ph if h and h.get('predicted') in ('정', '꺽') and h.get('actual') in ('정', '꺽')]
     last15 = vh[-15:] if len(vh) >= 15 else vh
     if len(last15) < 5:
         return None
@@ -1260,7 +1262,7 @@ def _get_main_recent15_win_rate_weighted(ph, decay=1.1):
     """메인 예측기 최근 15회 지수가중 승률(%). 조커 제외. 5회 미만이면 None."""
     if not ph or len(ph) < 5:
         return None
-    vh = [h for h in ph if h and h.get('actual') not in ('joker', '조커')]
+    vh = [h for h in ph if h and h.get('predicted') in ('정', '꺽') and h.get('actual') in ('정', '꺽')]
     last15 = vh[-15:] if len(vh) >= 15 else vh
     if len(last15) < 5:
         return None
