@@ -725,13 +725,13 @@ def _get_latest_next_pick_for_chunk(results, exclude_round=None):
                     SELECT profile_json, next_actual, round_num FROM chunk_profile_occurrences
                     WHERE round_num < %s
                     ORDER BY round_num DESC
-                    LIMIT 150
+                    LIMIT 80
                 ''', (int(exclude_round),))
             else:
                 cur.execute('''
                     SELECT profile_json, next_actual, round_num FROM chunk_profile_occurrences
                     ORDER BY round_num DESC
-                    LIMIT 150
+                    LIMIT 80
                 ''')
             rows = cur.fetchall()
             CHUNK_SIM_THRESHOLD = 0.65
@@ -5950,6 +5950,8 @@ RESULTS_HTML = '''
         var lastCalcBestTypeStable = null;  // calc_best 디바운스: 2회 연속 동일 시 적용값
         var lastCalcBestRound = null;     // calc_best 디바운스: 회차 변경 시 리셋용
         var lastShapePickByRound = {};    // 모양 카드 회차별 고정: { round: { val, color, rate } } — 나중에 바뀌는 것 방지
+        var lastShapePickFromApi = null;  // shape-pick API 응답 — 모양 카드 빠른 표시용, 우선 사용
+        var lastSpForCards = null;        // updatePredictionPicksCards에 마지막 전달한 sp (shape-pick 갱신 시 재호출용)
         let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
         let lastLoseEffectRound = null;  // 실패 이펙트를 이미 보여준 회차 (한 번만 표시)
         var prevSymmetryCounts = { left: null, right: null };  // 이전 시점 20열 줄 개수 (새 구간 빨리 캐치용)
@@ -10118,18 +10120,21 @@ RESULTS_HTML = '''
         var calcStatePollIntervalId = null;
         var timerUpdateIntervalId = null;
         var predictionPollIntervalId = null;
+        var shapePollIntervalId = null;
         // 리셋/실행 직후에는 서버 폴링 스킵 (저장 반영 전에 예전 상태로 덮어쓰는 것 방지)
         var lastResetOrRunAt = 0;
         
         function updatePredictionPicksCards(sp) {
             var cards = document.getElementById('prediction-picks-cards');
             if (!cards || !sp) return;
+            lastSpForCards = sp;
             var mainVal = (sp.value === '정' || sp.value === '꺽') ? sp.value : null;
             var mainReverseVal = (sp.main_reverse === '정' || sp.main_reverse === '꺽') ? sp.main_reverse : null;
             var currentRound = (sp.round != null) ? Number(sp.round) : null;
-            var incomingShapeVal = (sp.shape_pick === '정' || sp.shape_pick === '꺽') ? sp.shape_pick : null;
-            var incomingShapeColor = sp.shape_color ? (String(sp.shape_color).toUpperCase().indexOf('RED') >= 0 || sp.shape_color === '빨강' ? 'RED' : 'BLACK') : null;
-            var incomingShapeRate = sp.shape_15_rate != null ? sp.shape_15_rate : null;
+            // shape-pick API 응답 우선 (모양 카드 빠른 표시)
+            var incomingShapeVal = (lastShapePickFromApi && lastShapePickFromApi.round === currentRound && (lastShapePickFromApi.shape_pick === '정' || lastShapePickFromApi.shape_pick === '꺽')) ? lastShapePickFromApi.shape_pick : ((sp.shape_pick === '정' || sp.shape_pick === '꺽') ? sp.shape_pick : null);
+            var incomingShapeColor = (lastShapePickFromApi && lastShapePickFromApi.round === currentRound && lastShapePickFromApi.shape_color) ? (String(lastShapePickFromApi.shape_color).toUpperCase().indexOf('RED') >= 0 || lastShapePickFromApi.shape_color === '빨강' ? 'RED' : 'BLACK') : (sp.shape_color ? (String(sp.shape_color).toUpperCase().indexOf('RED') >= 0 || sp.shape_color === '빨강' ? 'RED' : 'BLACK') : null);
+            var incomingShapeRate = (lastShapePickFromApi && lastShapePickFromApi.round === currentRound && lastShapePickFromApi.shape_15_rate != null) ? lastShapePickFromApi.shape_15_rate : (sp.shape_15_rate != null ? sp.shape_15_rate : null);
             if (currentRound != null && incomingShapeVal) {
                 if (!lastShapePickByRound[currentRound]) {
                     lastShapePickByRound[currentRound] = { val: incomingShapeVal, color: incomingShapeColor, rate: incomingShapeRate };
@@ -10232,6 +10237,7 @@ RESULTS_HTML = '''
             if (calcStatePollIntervalId) clearInterval(calcStatePollIntervalId);
             if (timerUpdateIntervalId) clearInterval(timerUpdateIntervalId);
             if (predictionPollIntervalId) clearInterval(predictionPollIntervalId);
+            if (shapePollIntervalId) clearInterval(shapePollIntervalId);
             
             // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·예측픽 먹통 발생
             var resultsInterval = isTabVisible ? 200 : 1200;
@@ -10292,6 +10298,16 @@ RESULTS_HTML = '''
                         refreshPredictionPickOnly();
                     }).catch(function() {});
                 }, 280);
+            }
+            // 모양판별 픽 전용 폴링 (120ms) — 예측기픽 모양 카드 빠른 표시
+            if (isTabVisible) {
+                shapePollIntervalId = setInterval(function() {
+                    fetch('/api/shape-pick?t=' + Date.now(), { cache: 'no-cache' }).then(function(r) { return r.json(); }).then(function(data) {
+                        if (!data || (data.shape_pick !== '정' && data.shape_pick !== '꺽')) return;
+                        lastShapePickFromApi = { round: data.round, shape_pick: data.shape_pick, shape_color: data.shape_color, shape_15_rate: data.shape_15_rate };
+                        if (lastSpForCards) updatePredictionPicksCards(lastSpForCards);
+                    }).catch(function() {});
+                }, 120);
             }
         }
         
@@ -11135,6 +11151,39 @@ def get_current_prediction():
         _update_prediction_cache_from_db()
         sp = prediction_cache if prediction_cache is not None else {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
     return jsonify({'server_prediction': sp})
+
+
+@app.route('/api/shape-pick', methods=['GET'])
+def get_shape_pick():
+    """모양판별 '가장 최근 다음 픽' 전용 경량 API. 예측기픽 모양 카드 빠른 표시용."""
+    try:
+        if not DB_AVAILABLE or not DATABASE_URL:
+            return jsonify({'shape_pick': None, 'shape_color': None, 'round': None, 'shape_15_rate': None}), 200
+        results = get_recent_results(hours=3)
+        results = _sort_results_newest_first(results) if results else []
+        if len(results) < 16:
+            return jsonify({'shape_pick': None, 'shape_color': None, 'round': None, 'shape_15_rate': None}), 200
+        pred_rnd = int(str(results[0].get('gameID') or '0'), 10) + 1
+        ph = get_prediction_history(100)
+        sp = _get_latest_next_pick_for_chunk(results, exclude_round=pred_rnd)
+        shape_pick = sp if sp in ('정', '꺽') else None
+        is_15_red = _get_card_15_color_for_latest_round(results)
+        if is_15_red is True:
+            shape_color = '빨강' if shape_pick == '정' else '검정' if shape_pick == '꺽' else None
+        elif is_15_red is False:
+            shape_color = '검정' if shape_pick == '정' else '빨강' if shape_pick == '꺽' else None
+        else:
+            shape_color = '빨강' if shape_pick == '정' else '검정' if shape_pick == '꺽' else None
+        shape_15_rate = _get_shape_15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY) if ph else None
+        return jsonify({
+            'shape_pick': shape_pick,
+            'shape_color': shape_color,
+            'round': pred_rnd,
+            'shape_15_rate': round(shape_15_rate, 1) if shape_15_rate is not None else None
+        }), 200
+    except Exception as e:
+        print(f"[경고] shape-pick API 오류: {str(e)[:80]}")
+        return jsonify({'shape_pick': None, 'shape_color': None, 'round': None, 'shape_15_rate': None}), 200
 
 
 @app.route('/api/calc-state', methods=['GET', 'POST'])
