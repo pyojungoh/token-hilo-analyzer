@@ -2406,15 +2406,7 @@ def _server_calc_effective_pick_and_amount(c):
         pick_color = 'RED' if color == '빨강' else ('BLACK' if color == '검정' else None)
     if c.get('paused'):
         return pick_color, 0, pred
-    # 15번 카드 조커 시 배팅 보류 — 매크로가 금액 0 수신해 배팅 스킵 (클라이언트와 동일)
-    try:
-        results = get_recent_results(hours=24)
-        if results and len(results) >= 15:
-            results = _sort_results_newest_first(results)
-            if results and bool(results[14].get('joker')):
-                return pick_color, 0, pred
-    except Exception:
-        pass
+    # 조커 등은 계산기 상단에서 이미 보류 처리 → 클라이언트가 null 전송. 서버는 금액만 계산.
     dummy = {'round': pr, 'actual': 'pending'}
     _calculate_calc_profit_server(c, dummy)
     amt = int(dummy.get('betAmount') or 0)
@@ -11587,12 +11579,15 @@ def api_current_pick_relay():
                 return int(r) if r is not None else 0
             except (TypeError, ValueError):
                 return 0
-        # 서버 계산 있으면 우선 사용 (마틴 끝 후 초기 금액 보장) — round·pick·amount 모두 서버 기준
+        # 계산기 상단 배팅중 = 유일 출처. 회차·픽은 서버, 금액은 클라이언트 POST(current_pick) — 조커/보류는 계산기에서 처리해 null 전송
         if server_out and (server_out.get('round') or server_out.get('pick_color')):
             out = dict(empty_pick)
             out['round'] = server_out.get('round')
             out['pick_color'] = server_out.get('pick_color')
-            out['suggested_amount'] = server_out.get('suggested_amount') if server_out.get('suggested_amount') and int(server_out.get('suggested_amount') or 0) > 0 else None
+            amt = server_out.get('suggested_amount')
+            if db_out and _round_val(db_out) == _round_val(server_out):
+                amt = db_out.get('suggested_amount')
+            out['suggested_amount'] = int(amt) if amt is not None and int(amt) > 0 else None
             out['running'] = server_out.get('running', True)
             out['probability'] = server_out.get('probability')
         elif db_out and _round_val(db_out) > 0:

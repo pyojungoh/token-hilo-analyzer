@@ -44,7 +44,7 @@ D_COLOR = 0.01
 D_CONFIRM = 0.01
 SWIPE_AMOUNT_MS = 50
 SWIPE_COLOR_MS = 50
-D_AMOUNT_CONFIRM_COUNT = 2  # 같은 (회차, 픽, 금액) 2회 연속 수신 시 즉시 배팅 (3회는 회차 변경 전에 놓치는 경우 많음)
+D_AMOUNT_CONFIRM_COUNT = 1  # 같은 (회차, 픽, 금액) 1회 수신 시 즉시 배팅 (2회는 서버 응답 변동으로 놓치는 경우 있음)
 D_DEL_COUNT = 8  # 기존 값 삭제용 DEL (8자리. 1회 ADB로 전송)
 D_AMOUNT_DOUBLE_INPUT = False  # 금액 1회만 입력 (이중 입력 시 1000010000 중복 발생)
 
