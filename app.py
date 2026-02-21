@@ -10117,7 +10117,7 @@ RESULTS_HTML = '''
             
             // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·예측픽 먹통 발생
             var resultsInterval = isTabVisible ? 320 : 1200;
-            var calcStatusInterval = isTabVisible ? 150 : 1200;  // 픽 서버 전달 150ms — 자동배팅기 즉시 수신·배팅 놓침 방지
+            var calcStatusInterval = isTabVisible ? 100 : 1200;  // 픽 서버 전달 100ms — 자동배팅기 즉시 수신·배팅 놓침 방지
             var calcStateInterval = isTabVisible ? 2500 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
             var timerInterval = isTabVisible ? 250 : 1000;
             
@@ -10128,7 +10128,7 @@ RESULTS_HTML = '''
                 const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
                 const criticalPhase = r <= 3 || r >= 8;
                 // 백그라운드일 때는 최소 1초 간격. 너무 짧으면 서버 부하로 예측픽 안 나옴
-                const baseInterval = allResults.length === 0 ? 320 : (anyRunning ? 220 : (criticalPhase ? 250 : 320));
+                const baseInterval = allResults.length === 0 ? 320 : (anyRunning ? 150 : (criticalPhase ? 250 : 320));
                 const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
                 if (Date.now() - lastResultsUpdate > interval) {
                     loadResults().catch(e => console.warn('결과 새로고침 실패:', e));

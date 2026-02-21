@@ -1122,8 +1122,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._analyzer_url = url
         self._calculator_id = self.calc_combo.currentData()
         self._device_id = self.device_edit.text().strip() or "127.0.0.1:5555"
-        # 배팅 중: 0.15초(150ms) 간격 — 서버 POST 캐시로 200ms 내 픽 반영, 150ms 폴링으로 충분. 50ms는 20req/s로 CPU 부하 과다
-        self._poll_interval_sec = 0.15
+        # 배팅 중: 0.1초(100ms) 간격 — 픽 수신·배팅 놓침 방지. 50ms는 20req/s로 CPU 부하 과다
+        self._poll_interval_sec = 0.1
         self._coords = load_coords()
         if not self._coords.get("bet_amount") or not self._coords.get("red") or not self._coords.get("black"):
             self._log("좌표를 먼저 설정하세요. coord_picker.py로 배팅금액/정정/레드/블랙 좌표를 잡으세요.")
@@ -1145,7 +1145,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self.stop_btn.setEnabled(True)
         self._log("시작 — 계산기 픽 바뀌는 즉시 사이트로 전송합니다.")
         self._timer.start(int(self._poll_interval_sec * 1000))
-        QTimer.singleShot(50, self._poll)   # 시작 직후 50ms 뒤 1회 폴링 (빠른 픽 확보)
+        QTimer.singleShot(30, self._poll)   # 시작 직후 30ms 뒤 1회 폴링 (빠른 픽 확보)
 
     def _on_stop(self):
         self._running = False
