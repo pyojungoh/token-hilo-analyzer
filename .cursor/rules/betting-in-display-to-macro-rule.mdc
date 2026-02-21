@@ -1,0 +1,49 @@
+---
+description: 계산기 배팅중 → 자동배팅기 즉시 전달 규칙. 코딩 전 반드시 파악할 것.
+globs: app.py, auto-betting-macro/**/*.py
+alwaysApply: true
+---
+
+# 배팅중 → 자동배팅기 즉시 전달 (절대 규칙)
+
+**코딩하기 전에 이 규칙을 반드시 파악할 것.**
+
+## 기본 원칙
+
+1. **계산기 상단 "배팅중"**에 픽이 들어오자마자 **자동배팅기에도 즉시** 픽이 전달되어야 한다.
+2. **회차·픽·배팅중 금액** 검증 후 **바로 ADB로 배팅**해야 한다.
+3. **배팅중 금액 = 계산기 표 1열(배팅중 행)과 동일** — `getBetForRound(id, curRound)` 출처만 사용.
+
+## 데이터 흐름 (변형 금지)
+
+```
+[계산기 배팅중]  getBetForRound(id, curRound) → suggested_amount
+       │
+       │  postCurrentPickIfChanged (50ms마다 updateCalcStatus)
+       │  POST /api/current-pick-relay { round, pickColor, suggested_amount }
+       ▼
+[서버 relay 캐시]  _update_current_pick_relay_cache ← POST 시 즉시 갱신
+       │
+       │  매크로 GET /api/current-pick-relay?calculator=N (50ms 폴링)
+       ▼
+[자동배팅기]  (회차, 픽, 금액) 1회 수신 → 검증 → ADB 배팅
+```
+
+## 금액 정확도 규칙
+
+| 상황 | 금액 출처 |
+|------|----------|
+| 서버 pending_round == 클라이언트 round | 서버 `_server_calc_effective_pick_and_amount` (마틴 보정) |
+| 클라이언트 round > 서버 pending_round | **클라이언트 suggested_amount** (배팅중 표시와 동일) |
+
+**클라이언트가 서버보다 회차가 앞설 때**: relay 캐시를 **반드시 갱신**해야 한다. 스킵하면 매크로가 새 회차 픽을 받지 못함.
+
+## 수정 시 금지
+
+- POST 시 `round_num > srv_round`일 때 캐시 갱신 스킵 금지
+- `_display_best_amount`를 배팅 금액으로 사용 금지 (표시용만)
+- `suggested_amount` 외 다른 필드로 금액 유도 금지
+
+---
+
+상세: `docs/AUTO_BETTING_AMOUNT_RULES.md`, `docs/AUTO_BETTING_DATA_FLOW.md`

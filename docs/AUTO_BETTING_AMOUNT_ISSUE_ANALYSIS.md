@@ -106,7 +106,9 @@ T=0.20: 스케줄러 → 캐시 (124, 5000) → 이미 배팅은 끝남
 
 ## 4. 적용된 해결책 (절대 똑같이 + 속도·부하 최적화)
 
-1. **GET 캐시 우선**: 스케줄러만 relay 캐시를 갱신하므로, 캐시에 데이터가 있으면 **즉시 반환** (DB/계산 없음)
+1. **GET 캐시 우선**: 캐시에 데이터가 있으면 **즉시 반환** (DB/계산 없음)
 2. **캐시 없을 때만**: `get_calc_state` + `_server_calc_effective_pick_and_amount` 직접 계산 (스케줄러 미실행·최초 요청)
-3. **POST relay 캐시 갱신 제거**: 클라이언트가 캐시를 덮어쓰지 않음
+3. **POST relay 캐시 항상 갱신**: 배팅중 픽 들어오자마자 매크로에 전달 (규칙: `.cursor/rules/betting-in-display-to-macro-rule.mdc`)
+   - 클라이언트 회차 > 서버 회차여도 캐시 갱신 (이전: 스킵 → 매크로가 새 회차 픽을 받지 못함)
+   - 금액: 서버 `pending_round == round_num` and `srv_amt` 있으면 서버 값(마틴 보정), 아니면 클라이언트 `suggested_amount`
 4. **정지 시 캐시 clear**: 스케줄러가 `running=False`인 calc의 캐시를 비워 오래된 값 반환 방지

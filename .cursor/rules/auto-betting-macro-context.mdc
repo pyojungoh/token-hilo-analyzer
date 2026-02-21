@@ -24,7 +24,7 @@ alwaysApply: false
 ## relay 캐시
 
 - **스케줄러**: 0.2초마다 `_update_current_pick_relay_cache` 호출
-- **웹 POST**: relay 캐시 즉시 갱신 (매크로가 DB 쓰기 대기 없이 바로 픽 수신)
+- **웹 POST**: relay 캐시 **항상** 즉시 갱신 (배팅중 픽 들어오자마자 매크로 전달 — 상세: `betting-in-display-to-macro-rule.mdc`)
 
 ## 완료된 작업
 

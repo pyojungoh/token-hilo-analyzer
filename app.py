@@ -11801,27 +11801,25 @@ def api_current_pick_relay():
             round_num = data.get('round')
             suggested_amount = data.get('suggested_amount')
             running = data.get('running')
-            # 픽 즉시 전달: POST 시 캐시 갱신. 클라이언트 회차 > 서버 회차면 스킵 — 마틴 끝난 뒤 잘못된 금액(이전 마틴금액) 캐시 방지
+            # 픽 즉시 전달: POST 시 항상 캐시 갱신 — 배팅중 픽 들어오자마자 매크로에 전달 (규칙: betting-in-display-to-macro-rule.mdc)
+            # 금액: 서버 pending_round == round_num and srv_amt 있으면 서버 값(마틴 보정), 아니면 클라이언트 suggested_amount
             # 모양·퐁당만 옵션: 클라이언트는 calc_best(4카드)를 쓰므로 픽이 잘못됨 — 서버 계산값으로 덮어씀
-            skip_cache = False
             try:
                 state = get_calc_state('default') or {}
                 c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
                 if c and c.get('running'):
                     srv_round = c.get('pending_round')
+                    srv_pick, srv_amt, _ = _server_calc_effective_pick_and_amount(c)
+                    # 서버 회차와 일치 시 서버 금액 우선 (마틴 승 후 리셋 보정)
                     if srv_round is not None and round_num is not None:
                         try:
-                            if int(round_num) > int(srv_round):
-                                skip_cache = True  # 서버 미반영 구간 — 스케줄러가 올바른 금액으로 갱신할 때까지 대기
+                            if int(srv_round) == int(round_num) and srv_amt is not None and int(srv_amt) > 0:
+                                suggested_amount = int(srv_amt)
                         except (TypeError, ValueError):
                             pass
-                    if not skip_cache:
-                        srv_pick, srv_amt, _ = _server_calc_effective_pick_and_amount(c)
-                        if srv_round == round_num and srv_amt is not None and int(srv_amt) > 0:
-                            suggested_amount = int(srv_amt)
-                        # 모양·퐁당만: 클라이언트 픽(calc_best=4카드) 대신 서버 픽(shape_pong_only) 사용
-                        if c.get('prediction_picks_shape_pong_only') and srv_pick is not None:
-                            pick_color = srv_pick
+                    # 모양·퐁당만: 클라이언트 픽(calc_best=4카드) 대신 서버 픽(shape_pong_only) 사용
+                    if c.get('prediction_picks_shape_pong_only') and srv_pick is not None:
+                        pick_color = srv_pick
             except Exception:
                 pass
             if suggested_amount is not None and not isinstance(suggested_amount, int):
@@ -11829,8 +11827,8 @@ def api_current_pick_relay():
                     suggested_amount = int(suggested_amount) if suggested_amount != '' else None
                 except (TypeError, ValueError):
                     suggested_amount = None
-            if not skip_cache:
-                _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running if running is not None else True, None)
+            # 항상 캐시 갱신 — 클라이언트가 앞서도 배팅중 표시=매크로 수신 (즉시 전달)
+            _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running if running is not None else True, None)
             threading.Thread(target=_relay_db_write_background, daemon=True,
                              args=(calculator_id, pick_color, round_num, suggested_amount, running)).start()
             return jsonify({'ok': True}), 200
