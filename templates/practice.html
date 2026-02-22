@@ -197,6 +197,7 @@
         } catch (e) {}
         var lastPushedKey = null;
         var lastAnalyzerRound = null;
+        var pushPickBackoffUntil = 0;  // 푸시 실패 시 30초간 재시도 안 함 (매크로 미사용 시 병목 방지)
         function pollAnalyzerPick() {
             fetch('/api/current-pick-relay?calculator=' + calcId, { cache: 'no-cache' }).then(function(r) { return r.json(); }).then(function(data) {
                 var color = data.pick_color || data.pickColor;
@@ -216,13 +217,13 @@
                     var pushUrl = (document.getElementById('push-url') || {}).value;
                     if (pushUrl && round != null && color && amt != null && amt > 0 && run !== false) {
                         var key = round + '|' + color + '|' + amt;
-                        if (key !== lastPushedKey) {
+                        if (key !== lastPushedKey && Date.now() >= pushPickBackoffUntil) {
                             lastPushedKey = key;
                             fetch((pushUrl.replace(/\/$/, '')) + '/push-pick', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ round: round, pick_color: color, suggested_amount: amt })
-                            }).catch(function() {});
+                            }).catch(function() { pushPickBackoffUntil = Date.now() + 30000; });
                         }
                     } else if (!pushUrl) lastPushedKey = null;
                 } else {
@@ -238,6 +239,10 @@
         }
         pollAnalyzerPick();
         setInterval(pollAnalyzerPick, 100);  // 100ms — 배팅중픽 나오면 바로 매크로로 푸시
+        (function() {
+            var el = document.getElementById('push-url');
+            if (el) el.addEventListener('change', function() { pushPickBackoffUntil = 0; });
+        })();
         function pollRecentResults() {
             fetch('/api/betting-helper-data', { cache: 'no-cache' }).then(function(r) { return r.json(); }).then(function(data) {
                 var results = data.recent_results || [];

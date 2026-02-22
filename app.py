@@ -5920,6 +5920,7 @@ RESULTS_HTML = '''
         var savedBetPickByRound = {};     // 배팅중 카드 그릴 때 걸은 픽 저장 (표에 넣을 때 이 값 사용 → 예측픽/재계산과 충돌 방지)
         var SAVED_BET_PICK_MAX = 50;
         var lastPostedCurrentPick = {};   // 계산기별 마지막으로 POST한 픽 — 같으면 재전송 안 함 (충돌·깜빡임 방지)
+        var pushPickBackoffUntil = 0;     // 푸시 실패 시 N초간 재시도 안 함 (매크로 미사용 시 병목 방지)
         function postCurrentPickIfChanged(id, payload) {
             var key = { round: payload.round ?? null, pickColor: payload.pickColor ?? null, suggested_amount: payload.suggested_amount ?? null, running: payload.running };
             var last = lastPostedCurrentPick[id];
@@ -5933,13 +5934,14 @@ RESULTS_HTML = '''
             if (!pushUrl) try { pushUrl = localStorage.getItem('macroPushUrl') || ''; } catch (e) {}
             pushUrl = (pushUrl || '').trim();
             if (pushUrl && payload.round != null && payload.pickColor && (payload.suggested_amount || 0) > 0 && payload.running !== false) {
+                if (Date.now() < pushPickBackoffUntil) return;  // 매크로 미실행 시 연속 실패 방지
                 try {
                     fetch((pushUrl.replace(/\\/$/, '')) + '/push-pick', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ round: payload.round, pick_color: payload.pickColor, suggested_amount: payload.suggested_amount })
-                    }).catch(function() {});
-                } catch (e) {}
+                    }).catch(function() { pushPickBackoffUntil = Date.now() + 30000; });
+                } catch (e) { pushPickBackoffUntil = Date.now() + 30000; }
             }
         }
         function setRoundPrediction(round, pred) {
@@ -9660,7 +9662,10 @@ RESULTS_HTML = '''
             var macroPushEl = document.getElementById('macro-push-url');
             if (macroPushEl) {
                 macroPushEl.value = localStorage.getItem('macroPushUrl') || '';
-                macroPushEl.addEventListener('change', function() { try { localStorage.setItem('macroPushUrl', (this.value || '').trim()); } catch (e) {} });
+                macroPushEl.addEventListener('change', function() {
+                    try { localStorage.setItem('macroPushUrl', (this.value || '').trim()); } catch (e) {}
+                    pushPickBackoffUntil = 0;
+                });
             }
             var macroCalcEl = document.getElementById('macro-push-calc');
             if (macroCalcEl) {
