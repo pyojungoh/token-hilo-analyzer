@@ -4386,7 +4386,7 @@ def _update_relay_cache_for_running_calcs():
 
 
 def _scheduler_apply_results():
-    """DB 결과로 계산기 회차 반영 + relay + prediction_cache. 0.1초마다 실행. fetch 완료 시 fetch 스레드에서도 즉시 호출."""
+    """DB 결과로 계산기 회차 반영 + relay + prediction_cache. 0.2초마다 실행. fetch 완료 시 fetch 스레드에서도 즉시 호출."""
     t0 = time.time()
     if not DB_AVAILABLE or not DATABASE_URL:
         return
@@ -4433,12 +4433,12 @@ def _scheduler_trim_shape_tables():
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
     _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.1, id='fetch_results', max_instances=1)  # 0.1초마다 fetch 시도 — 픽 지연 최소화
-    _scheduler.add_job(_scheduler_apply_results, 'interval', seconds=0.05, id='apply_results', max_instances=1)  # 0.05초마다 apply — 픽·금액 즉시 반영
+    _scheduler.add_job(_scheduler_apply_results, 'interval', seconds=0.2, id='apply_results', max_instances=1)  # 0.2초마다 apply — 10초 게임에 충분, 부하 1/4
     _scheduler.add_job(_scheduler_trim_shape_tables, 'interval', seconds=300, id='trim_shape', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (fetch 0.1초, apply 0.05초)")
+        print("[✅] 결과 수집 스케줄러 시작 (fetch 0.1초, apply 0.2초)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:
