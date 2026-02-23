@@ -5247,7 +5247,6 @@ RESULTS_HTML = '''
         .calc-buttons button.calc-run { background: #2e7d32; border-color: #4caf50; }
         .calc-buttons button.calc-stop { background: #c62828; border-color: #e57373; }
         .calc-buttons button.calc-reset { background: #455a64; }
-        .calc-buttons button.calc-save { background: #1565c0; border-color: #1976d2; }
         .calc-detail { font-size: 0.85em; color: #bbb; flex: 1 1 280px; min-width: 0; }
         /* 계산기 내 미니 그래프: 최근 25열, 작은 블록, 접기 가능 */
         .calc-mini-graph-collapse { margin-bottom: 6px; border: 1px solid #444; border-radius: 4px; overflow: hidden; background: rgba(255,255,255,0.02); }
@@ -5312,19 +5311,6 @@ RESULTS_HTML = '''
         .bet-calc-panel.active { display: block; }
         .bet-log-panel { display: none; padding: 10px; background: #1a1a1a; border-radius: 0 6px 6px 6px; border: 1px solid #444; border-top: none; }
         .bet-log-panel.active { display: block; }
-        .bet-calc-log { font-size: 0.8em; color: #aaa; max-height: 320px; overflow-y: auto; }
-        .bet-calc-log .log-entry { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid #333; }
-        .bet-calc-log .log-entry .log-text { flex: 1; min-width: 0; word-break: break-all; }
-        .bet-calc-log .log-entry .log-actions { flex-shrink: 0; display: flex; gap: 4px; }
-        .bet-calc-log .log-entry .log-actions button { padding: 2px 8px; font-size: 0.75em; border-radius: 4px; border: 1px solid #555; background: #2a2a2a; color: #bbb; cursor: pointer; }
-        .bet-calc-log .log-entry .log-actions button:hover { background: #333; color: #fff; }
-        .bet-calc-log .log-detail { margin-top: 6px; padding: 8px; background: #1a1a1a; border-radius: 4px; overflow-x: auto; display: none; }
-        .bet-calc-log .log-detail.open { display: block; }
-        .bet-calc-log .log-detail table { width: 100%; border-collapse: collapse; font-size: 0.75em; }
-        .bet-calc-log .log-detail th, .bet-calc-log .log-detail td { padding: 3px 6px; border: 1px solid #444; text-align: center; }
-        .bet-calc-log .log-detail td.win { color: #ffeb3b; }
-        .bet-calc-log .log-detail td.lose { color: #c62828; }
-        .bet-log-actions { margin-bottom: 8px; }
         .bet-log-actions button { padding: 4px 10px; font-size: 0.8em; border-radius: 4px; border: 1px solid #555; background: #2a2a2a; color: #bbb; cursor: pointer; }
         .pause-guide-desc { font-size: 0.85em; color: #aaa; margin: 0 0 10px; }
         .pause-guide-table-wrap { overflow-x: auto; margin-top: 8px; }
@@ -5519,7 +5505,6 @@ RESULTS_HTML = '''
             <h4>가상 배팅 계산기</h4>
             <div class="bet-calc-tabs">
                 <span class="tab active" data-tab="calc">계산기</span>
-                <span class="tab" data-tab="log">로그</span>
                 <span class="tab" data-tab="pause-guide">멈춤 기준 추천</span>
             </div>
             <div id="bet-calc-panel" class="bet-calc-panel active">
@@ -5565,7 +5550,6 @@ RESULTS_HTML = '''
                                     <button type="button" class="calc-run" data-calc="1">실행</button>
                                     <button type="button" class="calc-stop" data-calc="1">정지</button>
                                     <button type="button" class="calc-reset" data-calc="1">리셋</button>
-                                    <button type="button" class="calc-save" data-calc="1" style="display:none">저장</button>
             </div>
                             </div>
                             <div class="calc-detail" id="calc-1-detail">
@@ -5622,7 +5606,6 @@ RESULTS_HTML = '''
                                     <button type="button" class="calc-run" data-calc="2">실행</button>
                                     <button type="button" class="calc-stop" data-calc="2">정지</button>
                                     <button type="button" class="calc-reset" data-calc="2">리셋</button>
-                                    <button type="button" class="calc-save" data-calc="2" style="display:none">저장</button>
                                 </div>
                             </div>
                             <div class="calc-detail" id="calc-2-detail">
@@ -5679,7 +5662,6 @@ RESULTS_HTML = '''
                                     <button type="button" class="calc-run" data-calc="3">실행</button>
                                     <button type="button" class="calc-stop" data-calc="3">정지</button>
                                     <button type="button" class="calc-reset" data-calc="3">리셋</button>
-                                    <button type="button" class="calc-save" data-calc="3" style="display:none">저장</button>
                                 </div>
                             </div>
                             <div class="calc-detail" id="calc-3-detail">
@@ -5696,10 +5678,6 @@ RESULTS_HTML = '''
                         </div>
                     </div>
                 </div>
-            </div>
-            <div id="bet-log-panel" class="bet-log-panel">
-                <div class="bet-log-actions"><button type="button" id="bet-log-clear-all">전체 삭제</button></div>
-                <div id="bet-calc-log" class="bet-calc-log"></div>
             </div>
             <div id="bet-pause-guide-panel" class="bet-log-panel">
                 <p class="pause-guide-desc">각 기준(15회 승률 ≤ N%일 때 멈춤)으로 시뮬레이션했을 때, <strong>실제로 배팅했을 구간</strong>의 승률입니다. 조커는 패로 반영.</p>
@@ -6464,67 +6442,6 @@ RESULTS_HTML = '''
                 }
             } catch (e) { console.warn('계산기 상태 저장 실패:', e); }
         }
-        const BET_LOG_KEY = 'tokenHiloBetCalcLog';
-        let betCalcLog = [];  // [{ line, calcId, history }, ...] 또는 레거시 문자열
-        try {
-            const saved = localStorage.getItem(BET_LOG_KEY);
-            if (saved) {
-                const parsed = JSON.parse(saved);
-                if (Array.isArray(parsed)) betCalcLog = parsed;
-            }
-        } catch (e) { /* ignore */ }
-        function saveBetCalcLog() {
-            try { localStorage.setItem(BET_LOG_KEY, JSON.stringify(betCalcLog)); } catch (e) { /* ignore */ }
-        }
-        function buildLogDetailTable(hist, calcId) {
-            let rows = [];
-            for (let i = 0; i < hist.length; i++) {
-                const h = hist[i];
-                if (!h) continue;
-                const pred = h.predicted === '정' ? '정' : (h.predicted === '꺽' ? '꺽' : '-');
-                const res = h.actual === 'joker' ? '조' : (h.actual === '정' ? '정' : '꺽');
-                const outcome = h.actual === 'joker' ? '조' : (h.predicted === h.actual ? '승' : '패');
-                rows.push({ idx: i + 1, pick: pred, result: res, outcome: outcome });
-            }
-            let html = '<table><thead><tr><th>#</th><th>픽</th><th>결과</th><th>승패</th></tr></thead><tbody>';
-            rows.forEach(function(r) {
-                const c = r.outcome === '승' ? 'win' : r.outcome === '패' ? 'lose' : r.outcome === '조' ? 'joker' : 'skip';
-                html += '<tr><td>' + r.idx + '</td><td>' + r.pick + '</td><td>' + r.result + '</td><td class="' + c + '">' + r.outcome + '</td></tr>';
-            });
-            html += '</tbody></table>';
-            return html;
-        }
-        function renderBetCalcLog() {
-            const logEl = document.getElementById('bet-calc-log');
-            if (!logEl) return;
-            logEl.innerHTML = '';
-            betCalcLog.forEach(function(entry, idx) {
-                const isObj = entry && typeof entry === 'object' && !Array.isArray(entry) && Object.prototype.hasOwnProperty.call(entry, 'line');
-                const line = isObj ? entry.line : (typeof entry === 'string' ? entry : String(entry || ''));
-                const hist = isObj && Array.isArray(entry.history) ? entry.history : [];
-                const calcId = isObj ? entry.calcId : null;
-                const div = document.createElement('div');
-                div.className = 'log-entry';
-                div.setAttribute('data-idx', idx);
-                div.innerHTML = '<span class="log-text">' + String(line).replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</span><div class="log-actions"><button type="button" class="log-detail-btn">상세보기</button><button type="button" class="log-delete-btn">삭제</button></div>';
-                const detailDiv = document.createElement('div');
-                detailDiv.className = 'log-detail';
-                detailDiv.setAttribute('data-idx', idx);
-                if (hist.length > 0) detailDiv.innerHTML = buildLogDetailTable(hist, calcId);
-                div.appendChild(detailDiv);
-                logEl.appendChild(div);
-                div.querySelector('.log-detail-btn').addEventListener('click', function() {
-                    detailDiv.classList.toggle('open');
-                    this.textContent = detailDiv.classList.contains('open') ? '접기' : '상세보기';
-                });
-                div.querySelector('.log-delete-btn').addEventListener('click', function() {
-                    betCalcLog.splice(idx, 1);
-                    saveBetCalcLog();
-                    renderBetCalcLog();
-                });
-            });
-        }
-        
         async function loadResults() {
             // 한 번에 하나만 요청: 동시 요청이 쌓여 서버 먹통·pending 폭증 방지
             if (isLoadingResults) return;
@@ -9286,21 +9203,6 @@ RESULTS_HTML = '''
                 el.innerHTML = roundStr + iconHtml + ' <span class="calc-bet-copy-amount" data-amount="' + amountPlain + '" title="클릭하면 금액 복사">' + amountDisplay + '</span> <span class="calc-bet-copy-hint">[클릭 복사]</span>';
             } catch (e) { console.warn('updateCalcBetCopyLine', id, e); }
         }
-        function appendCalcLog(id) {
-            const state = calcState[id];
-            if (!state || !state.history || state.history.length === 0) return;
-            const now = new Date();
-            const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
-            const r = getCalcResult(id);
-            const rev = document.getElementById('calc-' + id + '-reverse')?.checked;
-            const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
-            const pickType = rev ? '반픽' : '정픽';
-            const logLine = dateStr + '_계산기' + id + '_' + pickType + '_배팅' + baseIn + '원_순익' + (r.profit >= 0 ? '+' : '') + r.profit + '원_승' + r.wins + '패' + r.losses + '_승률' + r.winRate + '%';
-            const histCopy = JSON.parse(JSON.stringify(state.history || []));
-            betCalcLog.unshift({ line: logLine, calcId: String(id), history: histCopy });
-            saveBetCalcLog();
-            renderBetCalcLog();
-        }
         function updateCalcDetail(id) {
             try {
             // 서버 prediction_history로 계산기 히스토리 동기화 (updateCalcDetail 실행 전에 강제 동기화)
@@ -9626,10 +9528,8 @@ RESULTS_HTML = '''
                 document.querySelectorAll('.bet-calc-tabs .tab').forEach(x => x.classList.remove('active'));
                 this.classList.add('active');
                 const calcPanel = document.getElementById('bet-calc-panel');
-                const logPanel = document.getElementById('bet-log-panel');
                 const pauseGuidePanel = document.getElementById('bet-pause-guide-panel');
                 if (calcPanel) calcPanel.classList.toggle('active', t === 'calc');
-                if (logPanel) logPanel.classList.toggle('active', t === 'log');
                 if (pauseGuidePanel) pauseGuidePanel.classList.toggle('active', t === 'pause-guide');
                 if (t === 'pause-guide' && typeof renderPauseGuideTable === 'function') renderPauseGuideTable();
             });
@@ -9673,14 +9573,6 @@ RESULTS_HTML = '''
                 macroCalcEl.addEventListener('change', function() { try { localStorage.setItem('macroPushCalc', this.value || '1'); } catch (e) {} });
             }
         } catch (e) {}
-        document.getElementById('bet-log-clear-all')?.addEventListener('click', function() {
-            if (betCalcLog.length === 0) return;
-            if (typeof confirm !== 'undefined' && !confirm('로그를 모두 삭제할까요?')) return;
-            betCalcLog = [];
-            saveBetCalcLog();
-            renderBetCalcLog();
-        });
-        renderBetCalcLog();
         setInterval(function() {
             const st = getServerTimeSec();
             CALC_IDS.forEach(id => {
@@ -9691,12 +9583,9 @@ RESULTS_HTML = '''
                 if (calcState[id].use_duration_limit && calcState[id].duration_limit > 0 && calcState[id].elapsed >= calcState[id].duration_limit) {
                     calcState[id].running = false;
                     calcState[id].timer_completed = true;
-                    if (calcState[id].history.length > 0) appendCalcLog(id);
                     saveCalcStateToServer({ immediate: true });
                     updateCalcSummary(id);
                     updateCalcStatus(id);
-                    const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
-                    if (saveBtn) saveBtn.style.display = 'none';
                 } else {
                     var targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
                     var targetAmountEl = document.getElementById('calc-' + id + '-target-amount');
@@ -9711,8 +9600,6 @@ RESULTS_HTML = '''
                             updateCalcSummary(id);
                             updateCalcStatus(id);
                             postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null });
-                            const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
-                            if (saveBtn) saveBtn.style.display = 'none';
                         }
                     }
                 }
@@ -9819,8 +9706,6 @@ RESULTS_HTML = '''
                 updateCalcDetail(id);
                 // 시작 시 픽/금액은 배팅중 표시될 때 타이머가 전달. running=true로 DB 반영해 다음 픽 POST 시 매크로가 픽 수신
                 postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null, running: true });
-                var saveBtnEl = document.querySelector('.calc-save[data-calc="' + id + '"]');
-                if (saveBtnEl) saveBtnEl.style.display = 'none';
                 } catch (err) {
                     console.warn('계산기 실행 중 오류:', id, err);
                     if (calcState[id]) {
@@ -9882,8 +9767,6 @@ RESULTS_HTML = '''
                 updateCalcStatus(id);
                 updateCalcDetail(id);
                 updateCalcBetCopyLine(id);
-                const saveBtn = document.querySelector('.calc-save[data-calc="' + id + '"]');
-                if (saveBtn) saveBtn.style.display = 'none';
                 postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null, running: false });
                 await saveCalcStateToServer({ skipApplyForIds: [id], immediate: true });
             });
@@ -9907,15 +9790,6 @@ RESULTS_HTML = '''
         }
         document.querySelectorAll('.calc-export-csv').forEach(btn => {
             btn.addEventListener('click', function() { var id = parseInt(this.getAttribute('data-calc'), 10); if (CALC_IDS.includes(id)) exportCalcHistoryToCsv(id); });
-        });
-        document.querySelectorAll('.calc-save').forEach(btn => {
-            btn.addEventListener('click', function() {
-                const id = parseInt(this.getAttribute('data-calc'), 10);
-                if (!CALC_IDS.includes(id) || !calcState[id]) return;
-                if (calcState[id].history.length === 0) return;
-                appendCalcLog(id);
-                this.style.display = 'none';
-            });
         });
         /** 게임 중 옵션 변경 시 calcState 동기화 — 배팅중 픽 즉시 반영 */
         function syncCalcOptionsFromUI(id) {
