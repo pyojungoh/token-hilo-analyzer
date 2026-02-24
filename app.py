@@ -6805,6 +6805,8 @@ RESULTS_HTML = '''
                 if (!resultsUpdated) {
                     return;
                 }
+                // DOM 분리 시(탭 닫기/이동) 갱신 스킵 — STATUS_ACCESS_VIOLATION 방지
+                if (!document.body || !document.body.isConnected) return;
                 
                 statusElement.textContent = `총 ${allResults.length}개 경기 결과 (표시: ${newResults.length}개)`;
                 
@@ -10390,8 +10392,9 @@ RESULTS_HTML = '''
         }
         
         function updateCalcJokerBadge() {
+            try {
             var el = document.getElementById('calc-joker-badge');
-            if (!el) return;
+            if (!el || !document.body || !document.body.isConnected) return;
             var js = typeof lastJokerStats !== 'undefined' && lastJokerStats ? lastJokerStats : {};
             var c15 = js.count_in_15 != null ? js.count_in_15 : '-', c30 = js.count_in_30 != null ? js.count_in_30 : '-';
             var avg = js.avg_interval != null ? js.avg_interval : '-', ago = js.last_joker_rounds_ago != null ? js.last_joker_rounds_ago : '-';
@@ -10400,7 +10403,8 @@ RESULTS_HTML = '''
             var jokerWarn = js.warning ? ' ⚠ ' + (js.warning_reason || '조커 주의') : '';
             el.textContent = '조커 15:' + c15 + ' 30:' + c30 + ' 평균:' + avg + '회 마지막:' + ago + '회 전' + next + jokerWarn;
             el.style.color = jokerColor;
-            updateCalcResultCardsJokerBadges();
+            try { updateCalcResultCardsJokerBadges(); } catch (e) {}
+            } catch (e) { console.warn('updateCalcJokerBadge:', e); }
         }
         function updateCalcResultCardsJokerBadges() {
             var js = typeof lastJokerStats !== 'undefined' && lastJokerStats ? lastJokerStats : {};
@@ -10411,8 +10415,9 @@ RESULTS_HTML = '''
             });
         }
         function refreshPredictionPickOnly() {
+            try {
             var pickContainer = document.getElementById('prediction-pick-container');
-            if (!pickContainer) return;
+            if (!pickContainer || !document.body || !document.body.isConnected) return;
             function dr(r) { return r != null ? String(r) : '-'; }
             var disp = allResults.slice(0, 15);
             var is15Joker = disp.length >= 15 && !!disp[14].joker;
@@ -10441,6 +10446,7 @@ RESULTS_HTML = '''
             pickContainer.innerHTML = leftBlock;
             pickContainer.setAttribute('data-section', '메인 예측기');
             try { if (typeof updateCalcJokerBadge === 'function') updateCalcJokerBadge(); } catch (e) {}
+            } catch (e) { console.warn('refreshPredictionPickOnly:', e); }
         }
         
         function setupIntervals() {
@@ -10454,28 +10460,34 @@ RESULTS_HTML = '''
             
             // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·예측픽 먹통 발생
             var resultsInterval = isTabVisible ? 120 : 1200;  // 120ms — 부하 완화
-            var calcStatusInterval = isTabVisible ? 50 : 1200;  // 50ms — 픽 서버 전달 (25→50 부하 완화)
+            var calcStatusInterval = isTabVisible ? 80 : 1200;  // 80ms — 픽 서버 전달 (50→80 STATUS_ACCESS_VIOLATION 완화)
             var calcStateInterval = isTabVisible ? 2500 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
             var timerInterval = isTabVisible ? 250 : 1000;
             
             // 결과 폴링: 분당 4게임(15초 사이클) 기준. 계산기 실행 중이면 빠르게 해서 회차 놓침 방지
             // 백그라운드일 때는 브라우저 제한(최소 1초)을 고려해 간격 조정
             resultsPollIntervalId = setInterval(() => {
-                const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
-                const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
-                const criticalPhase = r <= 3 || r >= 8;
-                // 백그라운드일 때는 최소 1초 간격. 너무 짧으면 서버 부하로 예측픽 안 나옴
-                const baseInterval = allResults.length === 0 ? 320 : (anyRunning ? 150 : (criticalPhase ? 250 : 320));
-                const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
-                if (Date.now() - lastResultsUpdate > interval) {
-                    loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
-                }
+                try {
+                    if (!document.body || !document.body.isConnected) return;
+                    const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
+                    const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
+                    const criticalPhase = r <= 3 || r >= 8;
+                    // 백그라운드일 때는 최소 1초 간격. 너무 짧으면 서버 부하로 예측픽 안 나옴
+                    const baseInterval = allResults.length === 0 ? 320 : (anyRunning ? 150 : (criticalPhase ? 250 : 320));
+                    const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
+                    if (Date.now() - lastResultsUpdate > interval) {
+                        loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
+                    }
+                } catch (e) {}
             }, resultsInterval);
             
-            // 계산기 실행 중: 픽을 서버로 전달 (50ms 간격 — 부하 완화)
+            // 계산기 실행 중: 픽을 서버로 전달 (80ms 간격 — STATUS_ACCESS_VIOLATION 완화)
             calcStatusPollIntervalId = setInterval(() => {
-                const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
-                if (anyRunning) CALC_IDS.forEach(id => { updateCalcStatus(id); });
+                try {
+                    if (!document.body || !document.body.isConnected) return;
+                    const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
+                    if (anyRunning) CALC_IDS.forEach(id => { try { updateCalcStatus(id); } catch (e) {} });
+                } catch (e) {}
             }, calcStatusInterval);
             
             // 계산기 실행 중일 때 서버 상태 주기적으로 가져와 UI 실시간 반영 (멈춰 보이는 현상 방지)
@@ -10495,7 +10507,10 @@ RESULTS_HTML = '''
             // 예측픽만 경량 폴링: 캐시 기반. 새 픽 수신 시 즉시 updateCalcStatus → 매크로로 빠른 전달
             if (isTabVisible) {
                 predictionPollIntervalId = setInterval(function() {
+                    try {
+                    if (!document.body || !document.body.isConnected) return;
                     fetch('/api/current-prediction?t=' + Date.now(), { cache: 'no-cache' }).then(function(r) { return r.json(); }).then(function(data) {
+                        if (!document.body || !document.body.isConnected) return;
                         var sp = data && data.server_prediction;
                         if (!sp || (sp.value !== '정' && sp.value !== '꺽')) return;
                         var newRound = sp.round != null ? Number(sp.round) : NaN;
@@ -10507,11 +10522,12 @@ RESULTS_HTML = '''
                         if (sp.calc_best_pred && sp.calc_best_color) { lastPrediction.calc_best_pred = sp.calc_best_pred; lastPrediction.calc_best_color = sp.calc_best_color; }
                         if (sp.calc_best_shape_pong_pred && sp.calc_best_shape_pong_color) { lastPrediction.calc_best_shape_pong_pred = sp.calc_best_shape_pong_pred; lastPrediction.calc_best_shape_pong_color = sp.calc_best_shape_pong_color; }
                         lastWarningU35 = !!(sp.warning_u35);
-                        updatePredictionPicksCards(sp);
-                        refreshPredictionPickOnly();
+                        try { updatePredictionPicksCards(sp); } catch (e) {}
+                        try { refreshPredictionPickOnly(); } catch (e) {}
                         // 새 픽 수신 즉시 배팅기로 전달 — 25ms 대기 없이
-                        try { CALC_IDS.forEach(function(id) { if (typeof updateCalcStatus === 'function') updateCalcStatus(id); }); } catch (e) {}
+                        try { if (document.body && document.body.isConnected) CALC_IDS.forEach(function(id) { if (typeof updateCalcStatus === 'function') updateCalcStatus(id); }); } catch (e) {}
                     }).catch(function() {});
+                    } catch (e) {}
                 }, 150);
             }
             // 모양판별 픽 전용 폴링 (180ms) — 부하 완화
