@@ -6427,10 +6427,10 @@ RESULTS_HTML = '''
                     } else {
                         calcState[id].history = serverDeduped;
                     }
-                    // 1열에 저장된 픽 그대로 유지: 서버 응답으로 predicted/pickColor 덮어쓰지 않음 → 승패만 actual 기준으로 일치
+                    // 1열(배팅중)에 저장된 픽만 로컬 유지: 완료 행은 서버 predicted(배팅픽) 그대로 사용 → 승패 정확도 보장
                     calcState[id].history.forEach(function(row) {
                         var rn = row.round != null ? Number(row.round) : NaN;
-                        if (!isNaN(rn) && localPickByRound[rn]) {
+                        if (!isNaN(rn) && localPickByRound[rn] && rn === currentPredRound) {
                             row.predicted = localPickByRound[rn].predicted;
                             if (localPickByRound[rn].pickColor != null) row.pickColor = localPickByRound[rn].pickColor;
                         }
