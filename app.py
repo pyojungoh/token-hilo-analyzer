@@ -9768,7 +9768,11 @@ RESULTS_HTML = '''
                 updateCalcDetail(id);
                 updateCalcBetCopyLine(id);
                 postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null, running: false });
-                await saveCalcStateToServer({ skipApplyForIds: [id], immediate: true });
+                try {
+                    await saveCalcStateToServer({ skipApplyForIds: [id], immediate: true });
+                } catch (e) {
+                    console.warn('계산기 리셋 저장 실패:', e);
+                }
             });
         });
         function exportCalcHistoryToCsv(id) {
@@ -10219,6 +10223,13 @@ RESULTS_HTML = '''
             
             if (isTabVisible && !wasVisible) {
                 // 탭이 다시 보일 때 즉시 동기화 및 interval 재설정
+                // 리셋/실행 직후 3초 이내면 loadCalcStateFromServer 스킵 — 저장 완료 전에 예전 상태로 덮어쓰는 것 방지
+                if (Date.now() - lastResetOrRunAt < 3000) {
+                    lastResultsUpdate = 0;
+                    setupIntervals();
+                    loadResults().catch(function(e) { console.warn('visibilitychange 결과 로드:', e); });
+                    return;
+                }
                 lastResultsUpdate = 0;
                 setupIntervals();  // 빠른 간격으로 재설정
                 loadResults().then(function() {
@@ -10238,6 +10249,14 @@ RESULTS_HTML = '''
             if (document.hidden) return;
             var now = Date.now();
             if (now - lastFocusSyncAt < 2500) return;
+            // 리셋/실행 직후 3초 이내면 loadCalcStateFromServer 스킵 — 저장 완료 전에 예전 상태로 덮어쓰는 것 방지
+            if (now - lastResetOrRunAt < 3000) {
+                lastFocusSyncAt = now;
+                lastResultsUpdate = 0;
+                setupIntervals();
+                loadResults().catch(function(e) { console.warn('focus 결과 로드:', e); });
+                return;
+            }
             lastFocusSyncAt = now;
             lastResultsUpdate = 0;
             setupIntervals();
