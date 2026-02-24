@@ -238,7 +238,7 @@
             });
         }
         pollAnalyzerPick();
-        setInterval(pollAnalyzerPick, 100);  // 100ms — 배팅중픽 나오면 바로 매크로로 푸시
+        setInterval(pollAnalyzerPick, 150);  // 150ms — 부하 완화
         (function() {
             var el = document.getElementById('push-url');
             if (el) el.addEventListener('change', function() { pushPickBackoffUntil = 0; });

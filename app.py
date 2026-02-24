@@ -3617,7 +3617,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
                 pong_w *= (1.0 - (1.0 - SYM_LOW_MUL) * sym_mul)
 
     first_is_line_col = (use_for_pattern[0] == use_for_pattern[1]) if len(use_for_pattern) >= 2 else True
-    u35_detected = False  # U자 패턴 제거 (단순화)
+    u35_detected = _detect_u_35_pattern(line_runs)  # U자+줄3~5: 예측 안정화·과신 방지
     # 퐁당 / 덩어리 / 줄 구간 보정: phase·chunk_shape에 따라 line_w·pong_w 조정
     pong_chunk_phase = None
     pong_chunk_debug = {}
@@ -3756,6 +3756,9 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     adj_change_n = adj_change / s
     predict = ('정' if last is True else '꺽') if adj_same_n >= adj_change_n else ('꺽' if last is True else '정')
     pred_prob = (adj_same_n if predict == ('정' if last is True else '꺽') else adj_change_n) * 100
+    # U+3~5 구간: 과신 방지 (예측 안정화·부하 완화)
+    if u35_detected and pred_prob > 58:
+        pred_prob = 58.0
     is_15_red = get_card_color_from_result(results[14]) if len(results) >= 15 else None
     if is_15_red is True:
         color_to_pick = '빨강' if predict == '정' else '검정'
@@ -4413,13 +4416,13 @@ def _scheduler_trim_shape_tables():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.1, id='fetch_results', max_instances=1)  # 0.1초마다 fetch 시도 — 픽 지연 최소화
-    _scheduler.add_job(_scheduler_apply_results, 'interval', seconds=0.2, id='apply_results', max_instances=1)  # 0.2초마다 apply — 10초 게임에 충분, 부하 1/4
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.2, id='fetch_results', max_instances=1)  # 0.2초마다 fetch — 부하 완화
+    _scheduler.add_job(_scheduler_apply_results, 'interval', seconds=0.3, id='apply_results', max_instances=1)  # 0.3초마다 apply — 부하 완화
     _scheduler.add_job(_scheduler_trim_shape_tables, 'interval', seconds=300, id='trim_shape', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (fetch 0.1초, apply 0.2초)")
+        print("[✅] 결과 수집 스케줄러 시작 (fetch 0.2초, apply 0.3초)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:
@@ -10123,8 +10126,8 @@ RESULTS_HTML = '''
             if (shapePollIntervalId) clearInterval(shapePollIntervalId);
             
             // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·예측픽 먹통 발생
-            var resultsInterval = isTabVisible ? 80 : 1200;  // 80ms — 새 픽 빠른 수신
-            var calcStatusInterval = isTabVisible ? 25 : 1200;  // 픽 서버 전달 25ms — 자동배팅기 빠른 수신
+            var resultsInterval = isTabVisible ? 120 : 1200;  // 120ms — 부하 완화
+            var calcStatusInterval = isTabVisible ? 50 : 1200;  // 50ms — 픽 서버 전달 (25→50 부하 완화)
             var calcStateInterval = isTabVisible ? 2500 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
             var timerInterval = isTabVisible ? 250 : 1000;
             
@@ -10135,14 +10138,14 @@ RESULTS_HTML = '''
                 const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
                 const criticalPhase = r <= 3 || r >= 8;
                 // 백그라운드일 때는 최소 1초 간격. 너무 짧으면 서버 부하로 예측픽 안 나옴
-                const baseInterval = allResults.length === 0 ? 320 : (anyRunning ? 50 : (criticalPhase ? 250 : 320));
+                const baseInterval = allResults.length === 0 ? 320 : (anyRunning ? 80 : (criticalPhase ? 250 : 320));
                 const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
                 if (Date.now() - lastResultsUpdate > interval) {
                     loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
                 }
             }, resultsInterval);
             
-            // 계산기 실행 중: 픽을 서버로 빠르게 전달해 매크로가 곧바로 받도록 150ms 간격 (배팅 연동 속도)
+            // 계산기 실행 중: 픽을 서버로 전달 (50ms 간격 — 부하 완화)
             calcStatusPollIntervalId = setInterval(() => {
                 const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
                 if (anyRunning) CALC_IDS.forEach(id => { updateCalcStatus(id); });
@@ -10182,9 +10185,9 @@ RESULTS_HTML = '''
                         // 새 픽 수신 즉시 배팅기로 전달 — 25ms 대기 없이
                         try { CALC_IDS.forEach(function(id) { if (typeof updateCalcStatus === 'function') updateCalcStatus(id); }); } catch (e) {}
                     }).catch(function() {});
-                }, 100);
+                }, 150);
             }
-            // 모양판별 픽 전용 폴링 (120ms) — 예측기픽 모양 카드 빠른 표시
+            // 모양판별 픽 전용 폴링 (180ms) — 부하 완화
             if (isTabVisible) {
                 shapePollIntervalId = setInterval(function() {
                     fetch('/api/shape-pick?t=' + Date.now(), { cache: 'no-cache' }).then(function(r) { return r.json(); }).then(function(data) {
@@ -10192,7 +10195,7 @@ RESULTS_HTML = '''
                         lastShapePickFromApi = { round: data.round, shape_pick: data.shape_pick, shape_color: data.shape_color, shape_15_rate: data.shape_15_rate };
                         if (lastSpForCards) updatePredictionPicksCards(lastSpForCards);
                     }).catch(function() {});
-                }, 120);
+                }, 180);
             }
         }
         
