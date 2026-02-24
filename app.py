@@ -3509,16 +3509,6 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
 
     use_for_pattern = graph_values[:30]
     line_runs, pong_runs = _get_line_pong_runs(use_for_pattern)
-    total_line_runs = len(line_runs)
-    total_pong_runs = len(pong_runs)
-    line_two_plus = sum(1 for l in line_runs if l >= 2) if total_line_runs else 0
-    line_one = sum(1 for l in line_runs if l == 1) if total_line_runs else 0
-    line_two = sum(1 for l in line_runs if l == 2) if total_line_runs else 0
-    pong_one = sum(1 for p in pong_runs if p == 1) if total_pong_runs else 0
-    chunk_idx = line_two_plus / total_line_runs if total_line_runs else 0
-    scatter_idx = (line_one / total_line_runs * pong_one / total_pong_runs) if (total_line_runs and total_pong_runs) else 0
-    two_one_idx = (line_two / total_line_runs * pong_one / total_pong_runs) if (total_line_runs and total_pong_runs) else 0
-
     pong_prev15 = 50.0
     if len(graph_values) >= 30:
         pong_prev15, _ = _pong_line_pct(graph_values[15:30])
@@ -3535,36 +3525,11 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     line_strong = line_strong_by_transition or line_strong_by_pong
     pong_strong = pong_strong_by_transition or pong_strong_by_pong
 
-    surge_unknown = False
-    ph = prediction_history or []
-    ph_valid = [h for h in ph if h and isinstance(h, dict)]
-    if len(ph_valid) >= 5:
-        rev_surge = list(reversed(ph_valid))
-        i, win_run, lose_run = 0, 0, 0
-        while i < len(rev_surge) and rev_surge[i] and rev_surge[i].get('actual') != 'joker':
-            is_win = rev_surge[i].get('predicted') == rev_surge[i].get('actual')
-            if is_win:
-                win_run += 1
-                i += 1
-            else:
-                break
-        while i < len(rev_surge) and rev_surge[i] and rev_surge[i].get('actual') != 'joker':
-            is_win = rev_surge[i].get('predicted') == rev_surge[i].get('actual')
-            if not is_win:
-                lose_run += 1
-                i += 1
-            else:
-                break
-        if win_run >= 2 and lose_run >= 3:
-            surge_unknown = True
-
     flow_state = ''
     if line_strong:
         flow_state = 'line_strong'
     elif pong_strong:
         flow_state = 'pong_strong'
-    elif surge_unknown:
-        flow_state = 'surge_unknown'
 
     # 15·20·30열 각각 계산 후 가중 평균(폭 넓힌 대칭·줄 반영). 최근 15열 가중치 상향 — 패턴 전환 빠를 때 반영.
     SYM_WINDOWS = (15, 20, 30)
@@ -3651,42 +3616,9 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
                 line_w *= (1.0 - (1.0 - SYM_LOW_MUL) * sym_mul)
                 pong_w *= (1.0 - (1.0 - SYM_LOW_MUL) * sym_mul)
 
-    line_w += chunk_idx * 0.2 + two_one_idx * 0.1
-    pong_w += scatter_idx * 0.2
-    # V자 패턴(긴 줄→퐁당 1~2→짧은 줄→…) 구간에서는 연패가 많으므로 퐁당(바뀜) 쪽 가중치 보정
-    if _detect_v_pattern(line_runs, pong_runs, use_for_pattern[:2] if len(use_for_pattern) >= 2 else None):
-        pong_w += 0.12
-        line_w = max(0.0, line_w - 0.06)
-    # U자 + 줄 3~5 구간: 연패가 많으므로 줄(유지) 가산·반전(퐁당) 축소. 멈춤 권장.
-    u35_detected = _detect_u_35_pattern(line_runs)
-    if u35_detected:
-        line_w += 0.14
-        pong_w = max(0.0, pong_w - 0.07)
-    # 줄 길이 보정: 같은 결과가 4개 이상 이어질 때. 줄=유지(정/꺽 구분 없음) → 줄 따라감.
-    current_run_len = 1
-    for ri in range(1, len(use_for_pattern)):
-        v = use_for_pattern[ri]
-        if v is True or v is False:
-            if v == last:
-                current_run_len += 1
-            else:
-                break
-    if current_run_len >= 4:
-        line_w += 0.12
-        pong_w = max(0.0, pong_w - 0.06)
-    # 최신열 가중치: 그래프 맨 왼쪽(최신) 열에 소폭 가산. 짧은줄2는 바뀜(퐁당) 쪽, 줄3은 유지 소폭, 퐁당 열이면 바뀜 쪽.
     first_is_line_col = (use_for_pattern[0] == use_for_pattern[1]) if len(use_for_pattern) >= 2 else True
-    if first_is_line_col and line_runs and line_runs[0] >= 2 and line_runs[0] <= 3:
-        if line_runs[0] == 2:
-            pong_w += 0.04
-            line_w = max(0.0, line_w - 0.02)
-        else:
-            line_w += 0.02
-            pong_w = max(0.0, pong_w - 0.01)
-    elif not first_is_line_col and pong_runs and pong_runs[0] >= 1:
-        pong_w += 0.03
-        line_w = max(0.0, line_w - 0.015)
-    # 퐁당 / 덩어리 / 줄 세 가지 구간 보정: phase·chunk_shape에 따라 line_w·pong_w 조정
+    u35_detected = False  # U자 패턴 제거 (단순화)
+    # 퐁당 / 덩어리 / 줄 구간 보정: phase·chunk_shape에 따라 line_w·pong_w 조정
     pong_chunk_phase = None
     pong_chunk_debug = {}
     phase, pong_chunk_debug = _detect_pong_chunk_phase(
@@ -3700,11 +3632,6 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     if phase == 'line_phase':
         line_w += 0.12
         pong_w = max(0.0, pong_w - 0.06)
-        pong_chunk_phase = phase
-    # 퐁당 구간: 번갈아 바뀜 → 바뀜 가중치 가산
-    elif phase == 'pong_phase' or phase == 'chunk_to_pong':
-        pong_w += 0.10 * pong_mul
-        line_w = max(0.0, line_w - 0.05 * pong_mul)
         pong_chunk_phase = phase
     # 덩어리 구간: 블록 반복·줄2~4. 줄2(짧은줄)는 바뀜(퐁당) 쪽, 줄3~4는 줄 가중치 우선. 321 끝이면 바뀜 소폭 가산
     elif phase in ('chunk_start', 'chunk_phase', 'pong_to_chunk'):
@@ -3733,14 +3660,6 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
                 pong_w += 0.04 * pong_mul
                 line_w = max(0.0, line_w - 0.02 * pong_mul)
         pong_chunk_phase = phase
-    # 밸런스 구간 전환점 보정: 서서히 올라갔다 최고점 후 내려가는 등 구간 전환 시 line_w/pong_w 소폭 반영
-    balance_phase = _balance_segment_phase(graph_values)
-    if balance_phase == 'transition_to_low':
-        pong_w += 0.06
-        line_w = max(0.0, line_w - 0.03)
-    elif balance_phase == 'transition_to_high':
-        line_w += 0.06
-        pong_w = max(0.0, pong_w - 0.03)
     # 저장된 모양 가중치: 그 모양 다음에 정/꺽이 많았으면 해당 예측 쪽 가산. 줄/퐁당은 last에 따라 결정.
     # 정 많음→정 예측: last 정이면 줄(유지), last 꺽이면 퐁당(바뀜). 꺽 많음→꺽 예측: last 꺽이면 줄, last 정이면 퐁당.
     # 강화: 과거에 자주 나온 모양일수록 가중치 상향 (0.04~0.10 → 0.08~0.20). 65% 이상 편향 시 추가 가산.
@@ -3844,9 +3763,6 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         color_to_pick = '검정' if predict == '정' else '빨강'
     else:
         color_to_pick = '빨강'
-    # U+3~5 구간이면 확률 상한 적용(과신 방지)
-    if u35_detected and pred_prob > 58:
-        pred_prob = 58.0
     if isinstance(pong_chunk_debug, dict):
         pong_chunk_debug = dict(pong_chunk_debug)
         pong_chunk_debug['overall_pong_dominant'] = overall_pong  # 전체 퐁당 우세·줄 낮음·덩어리 적음 (위에서 계산됨)
@@ -3857,8 +3773,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         pong_cols = sum(1 for h in col_heights if h == 1)
         pong_chunk_debug['long_short_stats'] = {'long': long_cols, 'short': short_cols, 'pong': pong_cols, 'total': len(col_heights)}  # 장줄(4+), 짧은줄(2~3), 퐁당(1)
         pong_chunk_debug['symmetry_windows_used'] = symmetry_windows_used
-        pong_chunk_debug['u_shape'] = u35_detected  # U자 구간(연패 많음): 유지 가중치 보정·멈춤 권장
-        pong_chunk_debug['balance_phase'] = balance_phase  # 밸런스 구간 전환(transition_to_low/high)
+        pong_chunk_debug['u_shape'] = u35_detected
         pong_chunk_debug['shape_signature'] = _get_shape_signature(results)  # 저장·대조용 모양 코드 (S/M/L 구간, 예: L,S,M)
         if shape_win_stats:
             pong_chunk_debug['shape_jung_count'] = shape_win_stats.get('jung_count')
