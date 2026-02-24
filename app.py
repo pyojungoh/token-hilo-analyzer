@@ -414,6 +414,13 @@ def save_prediction_record(round_num, predicted, actual, probability=None, pick_
             if sig:
                 shape_sig = sig
                 prediction_details = json.dumps({'shape_signature': shape_sig})
+            ga = _compute_graph_analysis_for_export(results)
+            if ga:
+                pd = json.loads(prediction_details) if prediction_details else {}
+                if not isinstance(pd, dict):
+                    pd = {}
+                pd['graph_analysis'] = ga
+                prediction_details = json.dumps(pd)
             try:
                 sp = _get_latest_next_pick_for_chunk(results, exclude_round=round_num)
                 shape_pick_val = sp if sp in ('정', '꺽') else None
@@ -2990,6 +2997,65 @@ def _detect_overall_pong_dominant(graph_values):
     )
 
 
+def _compute_graph_analysis_for_export(results):
+    """AI분석용 그래프 패턴 계산. results=예측 시점 결과(해당 회차 제외). 반환: dict 또는 None."""
+    if not results or len(results) < 16:
+        return None
+    try:
+        gv = _build_graph_values(results)
+        if len(gv) < 2:
+            return None
+        heights = _get_column_heights(gv, 30)
+        if not heights:
+            return None
+        line_runs, pong_runs = _get_line_pong_runs(gv[:30])
+        head = gv[:2] if len(gv) >= 2 else None
+        pong_pct, line_pct = _pong_line_pct(gv[:15]) if len([x for x in gv[:15] if x is True or x is False]) >= 2 else (50.0, 50.0)
+        pong_prev = _pong_line_pct(gv[15:30])[0] if len(gv) >= 30 else 50.0
+        phase, debug = _detect_pong_chunk_phase(line_runs, pong_runs, head, pong_pct, pong_prev)
+        seg_strs = []
+        filtered = [v for v in gv if v is True or v is False]
+        cur, cnt = None, 0
+        for v in filtered[:60]:
+            if v == cur:
+                cnt += 1
+            else:
+                if cur is not None:
+                    seg_strs.append(('J' if cur else 'K') + str(cnt))
+                cur, cnt = v, 1
+        if cur is not None:
+            seg_strs.append(('J' if cur else 'K') + str(cnt))
+        seg = ','.join(seg_strs[:30])
+        h = ','.join(str(x) for x in heights[:30])
+        phase_ko = {'line_phase': '줄구간', 'pong_phase': '퐁당구간', 'chunk_phase': '덩어리구간', 'chunk_start': '덩어리시작', 'pong_to_chunk': '퐁당→덩어리', 'chunk_to_pong': '덩어리→퐁당'}.get(phase, phase or ('퐁당구간' if pong_pct >= 60 else '-'))
+        chunk_shape = (debug or {}).get('chunk_shape') or '-'
+        long_cols = sum(1 for x in heights if x >= 4)
+        short_cols = sum(1 for x in heights if 2 <= x <= 3)
+        pong_cols = sum(1 for x in heights if x == 1)
+        total = len(heights)
+        if phase_ko and '덩어리' in str(phase_ko):
+            if pong_cols >= total * 0.4:
+                chunk_type = '띄엄띄엄'
+            elif long_cols >= total * 0.5:
+                chunk_type = '높은덩어리'
+            elif short_cols >= total * 0.5:
+                chunk_type = '낮은덩어리'
+            else:
+                chunk_type = '혼합덩어리'
+        else:
+            chunk_type = '-'
+        return {
+            'h': h, 'seg': seg,
+            'line_cnt': len(line_runs), 'pong_cnt': len(pong_runs),
+            'line_runs': ','.join(str(x) for x in line_runs[:15]),
+            'pong_runs': ','.join(str(x) for x in pong_runs[:15]),
+            'phase': phase_ko, 'chunk_shape': chunk_shape, 'chunk_type': chunk_type,
+            'pong_pct': round(pong_pct, 1), 'line_pct': round(line_pct, 1),
+        }
+    except Exception:
+        return None
+
+
 def _get_column_heights(graph_values, max_cols=30):
     """그래프 열 높이(세그먼트 길이) 리스트. 맨 앞=최신. 퐁당(1)/짧은줄(2~3)/장줄(4+) 파악용."""
     if not graph_values or len(graph_values) < 2:
@@ -4742,6 +4808,12 @@ RESULTS_HTML = '''
             background: #f44336;
         }
         .jung-kkuk-graph .graph-column-num { font-size: 12px; font-weight: 600; color: #bbb; margin-top: 3px; }
+        .graph-ai-export-wrap { margin-top: 4px; padding: 4px 8px; background: #1a1a2e; border-radius: 4px; font-size: 0.75em; color: #90a4ae; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; max-width: 100%; overflow-x: auto; }
+        .graph-ai-export-wrap code { flex: 1; min-width: 0; word-break: break-all; font-family: monospace; }
+        .graph-ai-export-copy { padding: 2px 8px; font-size: 0.85em; border-radius: 4px; border: 1px solid #37474f; background: #263238; color: #90a4ae; cursor: pointer; flex-shrink: 0; }
+        .graph-ai-export-copy:hover { background: #37474f; color: #fff; }
+        .graph-ai-export-csv { padding: 2px 8px; font-size: 0.85em; border-radius: 4px; border: 1px solid #37474f; background: #263238; color: #90a4ae; text-decoration: none; flex-shrink: 0; }
+        .graph-ai-export-csv:hover { background: #37474f; color: #fff; }
         .graph-stats {
             margin-top: 0;
             font-size: clamp(12px, 2vw, 14px);
@@ -5349,6 +5421,11 @@ RESULTS_HTML = '''
         </div>
         <div class="cards-container" id="cards"></div>
         <div id="jung-kkuk-graph" class="jung-kkuk-graph"></div>
+        <div id="graph-ai-export" class="graph-ai-export-wrap" title="AI 분석용: 회차·픽·줄높이·구간·덩어리유형. 복사 또는 CSV 다운로드">
+            <code id="graph-ai-export-text">—</code>
+            <button type="button" class="graph-ai-export-copy">복사</button>
+            <a href="/api/export-graph-analysis" class="graph-ai-export-csv" download>CSV 다운로드</a>
+        </div>
         <div class="prediction-result-section">
             <div id="prediction-result-bar" class="prediction-result-bar-wrap"></div>
         </div>
@@ -6790,6 +6867,17 @@ RESULTS_HTML = '''
                         col.appendChild(numSpan);
                         graphDiv.appendChild(col);
                     });
+                    // AI분석용: 회차|픽|h:높이들|seg:J4,K2,J1... (J=정,K=꺽, 좌=최신)
+                    var exportEl = document.getElementById('graph-ai-export-text');
+                    var exportWrap = document.getElementById('graph-ai-export');
+                    if (exportEl && exportWrap && segments.length > 0) {
+                        var rnd = (displayResults.length > 0 && displayResults[0] && displayResults[0].gameID) ? (Number(displayResults[0].gameID) + 1) : '-';
+                        var pick = (lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) ? lastPrediction.value : '-';
+                        var take = Math.min(30, segments.length);
+                        var h = segments.slice(0, take).map(function(s) { return s.count; }).join(',');
+                        var seg = segments.slice(0, take).map(function(s) { return (s.type === true ? 'J' : 'K') + s.count; }).join(',');
+                        exportEl.textContent = 'r:' + rnd + ' p:' + pick + ' h:' + h + ' seg:' + seg;
+                    } else if (exportEl) { exportEl.textContent = '—'; }
                 }
                 // 계산기 내 미니 그래프: 최근 25열, 작은 블록 (메인과 동일 데이터)
                 [1, 2, 3].forEach(function(id) {
@@ -8844,6 +8932,13 @@ RESULTS_HTML = '''
             }
         }
         document.getElementById('pause-guide-calc')?.addEventListener('click', function() { renderPauseGuideTable(); });
+        document.querySelector('.graph-ai-export-copy')?.addEventListener('click', function() {
+            var el = document.getElementById('graph-ai-export-text');
+            var btn = this;
+            if (el && el.textContent && el.textContent !== '—') {
+                navigator.clipboard.writeText(el.textContent).then(function() { btn.textContent = '복사됨'; setTimeout(function() { btn.textContent = '복사'; }, 800); }).catch(function() {});
+            }
+        });
         function updateCalcStatus(id) {
             try {
             const statusId = 'calc-' + id + '-status';
@@ -11935,6 +12030,75 @@ def api_betting_history_export():
         print(f"[API] betting-history-export 오류: {str(e)[:150]}")
         from flask import Response
         return Response('오류 발생', status=500, mimetype='text/plain')
+
+
+@app.route('/api/export-graph-analysis', methods=['GET'])
+def api_export_graph_analysis():
+    """AI분석용 그래프 패턴 CSV 다운로드. 회차·픽·결과·승패 + 줄개수·퐁당개수·구간·덩어리유형·높이·세그먼트."""
+    try:
+        import csv
+        from io import StringIO
+        from flask import Response
+        if not DB_AVAILABLE or not DATABASE_URL:
+            return Response('DB 없음', status=500, mimetype='text/plain')
+        conn = get_db_connection(statement_timeout_sec=10)
+        if not conn:
+            return Response('DB 연결 실패', status=500, mimetype='text/plain')
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('''
+            SELECT round_num, predicted, actual, probability, blended_win_rate, prediction_details
+            FROM prediction_history
+            ORDER BY round_num DESC
+            LIMIT 2000
+        ''')
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        header = ['회차', '픽', '실제', '승패', '경고승률', '줄개수', '퐁당개수', '구간', '덩어리유형', '덩어리모양', '줄run', '퐁당run', '줄%', '퐁당%', '높이', '세그먼트']
+        out_rows = [header]
+        for r in reversed(rows):
+            rnd = r.get('round_num')
+            pred = r.get('predicted') or ''
+            act = str(r.get('actual') or '').strip()
+            if act == 'joker':
+                outcome = '조'
+            elif pred in ('정', '꺽') and act in ('정', '꺽'):
+                outcome = '승' if pred == act else '패'
+            else:
+                outcome = '조' if act == 'joker' else ('승' if pred == act else '패') if act else '—'
+            blended = r.get('blended_win_rate')
+            blended_str = (str(round(blended, 1)) + '%') if blended is not None else '-'
+            ga = None
+            pd = r.get('prediction_details')
+            if pd:
+                if isinstance(pd, str):
+                    try:
+                        pd = json.loads(pd)
+                    except Exception:
+                        pd = {}
+                ga = (pd or {}).get('graph_analysis') if isinstance(pd, dict) else None
+            if ga:
+                out_rows.append([
+                    rnd, pred, act, outcome, blended_str,
+                    ga.get('line_cnt', '-'), ga.get('pong_cnt', '-'),
+                    ga.get('phase', '-'), ga.get('chunk_type', '-'), ga.get('chunk_shape', '-'),
+                    ga.get('line_runs', '-'), ga.get('pong_runs', '-'),
+                    str(ga.get('line_pct', '-')), str(ga.get('pong_pct', '-')),
+                    ga.get('h', '-'), ga.get('seg', '-')
+                ])
+            else:
+                out_rows.append([rnd, pred, act, outcome, blended_str, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-'])
+        si = StringIO()
+        w = csv.writer(si)
+        for row in out_rows:
+            w.writerow(row)
+        resp = Response('\ufeff' + si.getvalue(), mimetype='text/csv; charset=utf-8-sig')
+        resp.headers['Content-Disposition'] = 'attachment; filename=graph_analysis_' + datetime.now().strftime('%Y-%m-%d') + '.csv'
+        return resp
+    except Exception as e:
+        print(f"[API] export-graph-analysis 오류: {str(e)[:200]}")
+        from flask import Response
+        return Response('오류: ' + str(e)[:200], status=500, mimetype='text/plain')
 
 
 @app.route('/betting-helper', methods=['GET'])
