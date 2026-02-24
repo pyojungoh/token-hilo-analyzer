@@ -12155,9 +12155,22 @@ def api_betting_history_export():
         return Response('오류 발생', status=500, mimetype='text/plain')
 
 
+# AI분석용 CSV 다운로드 시 상단에 고정으로 포함되는 분석 지시 프롬프트
+GRAPH_ANALYSIS_CSV_PROMPT = [
+    '# 분석지시:',
+    '# 1. 최근 회차에서 가까운 픽들의 모양을 외워 학습한다.',
+    '# 2. 정과 꺽의 줄의 갯수와 각자의 간격별 모양 등을 학습해야 한다.',
+    '# 3. 퐁당이 길게 나올 것을 대비해야 한다.',
+    '# 4. 그래프에서 덩어리가 많이나올 때와 퐁당이 많이나올 때의 간격을 확인해서, 모양이 바뀔쯤을 예측할 수 있어야 한다.',
+    '# 5. 스마트반픽 옵션에 유리한 승율을 파악한다.',
+    '# 6. 연패 3회 이상 손실 구간, 줄 4+ 꺽 예측 과다, 승률 50% 이하 반대픽 효과 검증.',
+    '# 7. 위 분석 결과로 app.py 예측 공식·가중치 수정. .cursor/rules 준수.',
+]
+
+
 @app.route('/api/export-graph-analysis', methods=['GET'])
 def api_export_graph_analysis():
-    """AI분석용 그래프 패턴 CSV 다운로드. 회차·픽·결과·승패 + 줄개수·퐁당개수·구간·덩어리유형·높이·세그먼트."""
+    """AI분석용 그래프 패턴 CSV 다운로드. 회차·픽·결과·승패 + 줄개수·퐁당개수·구간·덩어리유형·높이·세그먼트. 상단에 분석지시 프롬프트 포함."""
     try:
         import csv
         from io import StringIO
@@ -12213,6 +12226,8 @@ def api_export_graph_analysis():
                 out_rows.append([rnd, pred, act, outcome, blended_str, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-'])
         si = StringIO()
         w = csv.writer(si)
+        for line in GRAPH_ANALYSIS_CSV_PROMPT:
+            w.writerow([line])
         for row in out_rows:
             w.writerow(row)
         resp = Response('\ufeff' + si.getvalue(), mimetype='text/csv; charset=utf-8-sig')
