@@ -16,14 +16,14 @@ alwaysApply: false
 
 | 구성 요소 | 설명 | 설정값 |
 |-----------|------|--------|
-| **승률반픽** | 모양승률(예측기표 모양픽 최근 50회)이 설정값 이하일 때 반대픽 | `smart_reverse_threshold` (기본 45%) |
+| **승률반픽** | 메인 픽 승률(경고 합산승률)이 설정값 이하일 때 반대픽 | `smart_reverse_threshold` (기본 40%) |
 | **연패반픽** | N연패 이상 **그리고** 실제 경고 합산승률이 설정값 이하일 때 반대픽 | `smart_reverse_min_streak` (기본 3회), `smart_reverse_threshold` |
 | **승률방향반픽** | 롤링 100회 승률 구간이 고점→저점(high_falling)일 때 반대픽. 저점→고점(low_rising)은 정픽. 정체(mid_flat) 시 직전 방향 참조 | `.cursor/rules/win-rate-direction.mdc` 포인트값 |
 
 ### UI 옵션 (계산기당)
 
 - **스마트 반픽** 체크박스: `calc-N-smart-reverse`
-- **승률≤** 입력: `calc-N-smart-reverse-threshold` (0~100, 기본 45)
+- **승률≤** 입력: `calc-N-smart-reverse-threshold` (0~100, 기본 40)
 - **연패≥** 입력: `calc-N-smart-reverse-min-streak` (2~15, 기본 3)
 - **줄 5 이상 반픽 억제**: `calc-N-streak-suppress-reverse` — 5연승/5연패일 때 스마트 반픽 미적용
 - **연패 중 방향 고정**: `calc-N-lock-direction-on-lose-streak` — 연패 중에는 방향 전환 안 함 (기본 켜짐)
@@ -55,7 +55,7 @@ alwaysApply: false
 1. **반픽** 체크 시: 무조건 반대픽 (스마트 반픽보다 우선)
 2. **줄 5 이상 반픽 억제** 켜고 5연승/5연패일 때: 스마트 반픽 **미적용**
 3. **스마트 반픽** 체크 시, 아래 조건 **OR**로 판정:
-   - **승률반픽**: `_get_shape_50_win_rate()` ≤ threshold **그리고** 메인 15경기 승률 < 53%
+   - **승률반픽**: `_blended_win_rate()` ≤ threshold **그리고** 메인 15경기 승률 < 53%
    - **연패반픽**: `lose_streak` ≥ min_streak **그리고** `_blended_win_rate()` ≤ threshold **그리고** 메인 15경기 승률 < 53%
    - **승률방향반픽**: `_effective_win_rate_direction_zone()` == `high_falling` 또는 (`mid_flat` **그리고** `last_trend_direction` == 'down')
 
@@ -63,8 +63,7 @@ alwaysApply: false
 
 | 항목 | 출처 |
 |------|------|
-| 모양승률 50회 | `_get_shape_50_win_rate()` — prediction_history의 shape_predicted vs actual |
-| 경고 합산승률 | `_blended_win_rate()` — 15/30/100 가중 (0.6·0.25·0.15) |
+| 메인 픽 승률(경고 합산) | `_blended_win_rate()` — 15/30/100 가중 (승률반픽·연패반픽 공통 기준) |
 | 메인 15경기 승률 | `_get_main_recent15_win_rate()` — 예측픽 vs actual |
 | 연패 | `_get_lose_streak_from_history(c['history'])` — 조커·패·no_bet 포함 |
 
