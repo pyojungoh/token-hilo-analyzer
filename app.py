@@ -4808,11 +4808,8 @@ RESULTS_HTML = '''
             background: #f44336;
         }
         .jung-kkuk-graph .graph-column-num { font-size: 12px; font-weight: 600; color: #bbb; margin-top: 3px; }
-        .graph-ai-export-wrap { margin-top: 4px; padding: 4px 8px; background: #1a1a2e; border-radius: 4px; font-size: 0.75em; color: #90a4ae; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; max-width: 100%; overflow-x: auto; }
-        .graph-ai-export-wrap code { flex: 1; min-width: 0; word-break: break-all; font-family: monospace; }
-        .graph-ai-export-copy { padding: 2px 8px; font-size: 0.85em; border-radius: 4px; border: 1px solid #37474f; background: #263238; color: #90a4ae; cursor: pointer; flex-shrink: 0; }
-        .graph-ai-export-copy:hover { background: #37474f; color: #fff; }
-        .graph-ai-export-csv { padding: 2px 8px; font-size: 0.85em; border-radius: 4px; border: 1px solid #37474f; background: #263238; color: #90a4ae; text-decoration: none; flex-shrink: 0; }
+        .graph-ai-export-wrap { margin-top: 4px; padding: 4px 8px; background: #1a1a2e; border-radius: 4px; font-size: 0.85em; }
+        .graph-ai-export-csv { padding: 4px 12px; font-size: 0.9em; border-radius: 4px; border: 1px solid #37474f; background: #263238; color: #90a4ae; text-decoration: none; display: inline-block; }
         .graph-ai-export-csv:hover { background: #37474f; color: #fff; }
         .graph-stats {
             margin-top: 0;
@@ -5421,10 +5418,8 @@ RESULTS_HTML = '''
         </div>
         <div class="cards-container" id="cards"></div>
         <div id="jung-kkuk-graph" class="jung-kkuk-graph"></div>
-        <div id="graph-ai-export" class="graph-ai-export-wrap" title="AI 분석용: 회차·픽·줄높이·구간·덩어리유형. 복사 또는 CSV 다운로드">
-            <code id="graph-ai-export-text">—</code>
-            <button type="button" class="graph-ai-export-copy">복사</button>
-            <a href="/api/export-graph-analysis" class="graph-ai-export-csv" download>CSV 다운로드</a>
+        <div id="graph-ai-export" class="graph-ai-export-wrap" title="AI 분석용: 회차·픽·줄높이·구간·덩어리유형. CSV 다운로드">
+            <a href="/api/export-graph-analysis" class="graph-ai-export-csv" download>AI분석용 CSV 다운로드</a>
         </div>
         <div class="prediction-result-section">
             <div id="prediction-result-bar" class="prediction-result-bar-wrap"></div>
@@ -6867,17 +6862,6 @@ RESULTS_HTML = '''
                         col.appendChild(numSpan);
                         graphDiv.appendChild(col);
                     });
-                    // AI분석용: 회차|픽|h:높이들|seg:J4,K2,J1... (J=정,K=꺽, 좌=최신)
-                    var exportEl = document.getElementById('graph-ai-export-text');
-                    var exportWrap = document.getElementById('graph-ai-export');
-                    if (exportEl && exportWrap && segments.length > 0) {
-                        var rnd = (displayResults.length > 0 && displayResults[0] && displayResults[0].gameID) ? (Number(displayResults[0].gameID) + 1) : '-';
-                        var pick = (lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) ? lastPrediction.value : '-';
-                        var take = Math.min(30, segments.length);
-                        var h = segments.slice(0, take).map(function(s) { return s.count; }).join(',');
-                        var seg = segments.slice(0, take).map(function(s) { return (s.type === true ? 'J' : 'K') + s.count; }).join(',');
-                        exportEl.textContent = 'r:' + rnd + ' p:' + pick + ' h:' + h + ' seg:' + seg;
-                    } else if (exportEl) { exportEl.textContent = '—'; }
                 }
                 // 계산기 내 미니 그래프: 최근 25열, 작은 블록 (메인과 동일 데이터)
                 [1, 2, 3].forEach(function(id) {
@@ -8932,13 +8916,6 @@ RESULTS_HTML = '''
             }
         }
         document.getElementById('pause-guide-calc')?.addEventListener('click', function() { renderPauseGuideTable(); });
-        document.querySelector('.graph-ai-export-copy')?.addEventListener('click', function() {
-            var el = document.getElementById('graph-ai-export-text');
-            var btn = this;
-            if (el && el.textContent && el.textContent !== '—') {
-                navigator.clipboard.writeText(el.textContent).then(function() { btn.textContent = '복사됨'; setTimeout(function() { btn.textContent = '복사'; }, 800); }).catch(function() {});
-            }
-        });
         function updateCalcStatus(id) {
             try {
             const statusId = 'calc-' + id + '-status';
