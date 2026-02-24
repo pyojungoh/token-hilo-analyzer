@@ -2727,6 +2727,57 @@ def _get_recent_lose_streak(ph):
     return streak
 
 
+def _compute_joker_stats(results):
+    """15카드 내 조커 개수, 조커 간격, 경고 여부 계산. results는 최신순.
+    반환: {count_in_15, count_in_30, intervals, avg_interval, last_joker_rounds_ago, warning, warning_reason, skip_bet}"""
+    out = {"count_in_15": 0, "count_in_30": 0, "intervals": [], "avg_interval": None,
+           "last_joker_rounds_ago": None, "warning": False, "warning_reason": "", "skip_bet": False}
+    if not results or len(results) < 15:
+        return out
+    # 15카드 내 조커 개수 (화면에 보이는 카드)
+    count = sum(1 for i in range(min(15, len(results))) if results[i].get('joker'))
+    out["count_in_15"] = count
+    # 30카드 내 조커 개수
+    out["count_in_30"] = sum(1 for i in range(min(30, len(results))) if results[i].get('joker'))
+    # 조커 위치(인덱스) 수집
+    joker_indices = [i for i in range(min(100, len(results))) if results[i].get('joker')]
+    # 마지막 조커가 몇 회차 전인지 (0 = 최신 회차가 조커)
+    out["last_joker_rounds_ago"] = joker_indices[0] if joker_indices else None
+    # 간격 계산 (연속된 조커 인덱스 차이)
+    if len(joker_indices) >= 2:
+        intervals = [joker_indices[j] - joker_indices[j + 1] for j in range(len(joker_indices) - 1)]
+        out["intervals"] = intervals[:10]
+        out["avg_interval"] = round(sum(intervals) / len(intervals), 1) if intervals else None
+    # 경고 조건: 15번 카드 조커는 compute_prediction에서 이미 처리.
+    # 15카드 내 조커 2개 이상 → 조커 다발 구간, 배팅 보류
+    if count >= 2:
+        out["warning"] = True
+        out["warning_reason"] = f"15카드 내 조커 {count}개 (다발 구간)"
+        out["skip_bet"] = True
+    # 15카드 내 조커 1개 + 15번 카드가 조커면 이미 skip됨. 15번이 조커가 아닌데 1개만 있으면 경고만(배팅 가능)
+    elif count == 1:
+        out["warning"] = True
+        out["warning_reason"] = "15카드 내 조커 1개"
+        # 1개만 있으면 skip_bet=False (15번이 조커면 compute_prediction에서 이미 None 반환)
+    # 최근 30카드 내 조커 3개 이상 → 조커 빈발 구간
+    if out["count_in_30"] >= 3 and not out["skip_bet"]:
+        out["warning"] = True
+        if out["warning_reason"]:
+            out["warning_reason"] += f" · 30카드 내 조커 {out['count_in_30']}개"
+        else:
+            out["warning_reason"] = f"30카드 내 조커 {out['count_in_30']}개 (빈발 구간)"
+        out["skip_bet"] = True
+    # 평균 간격이 15 이하이고, 마지막 조커가 5회 이내 → 조커 임박 가능성
+    if out["avg_interval"] is not None and out["avg_interval"] <= 15 and out["last_joker_rounds_ago"] is not None:
+        if out["last_joker_rounds_ago"] <= 5 and out["last_joker_rounds_ago"] > 0 and not out["skip_bet"]:
+            out["warning"] = True
+            if out["warning_reason"]:
+                out["warning_reason"] += f" · 조커 간격 평균 {out['avg_interval']}회, {out['last_joker_rounds_ago']}회 전 조커"
+            else:
+                out["warning_reason"] = f"조커 임박 가능성 (평균 {out['avg_interval']}회 간격, {out['last_joker_rounds_ago']}회 전 조커)"
+    return out
+
+
 def _backfill_shape_predicted_in_ph(ph, results, max_backfill=0, persist_to_db=False):
     """prediction_history 중 shape_predicted가 null인 회차에 대해 results로 보정.
     기본 비활성화(max_backfill=0): 매 요청마다 50회×(DB 2회+저장 1회)=150회 DB 작업으로 API 지연 발생.
@@ -6074,6 +6125,7 @@ RESULTS_HTML = '''
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         var lastServerPrediction = null;  // 서버 예측 (있으면 표시·pending 동기화용)
         var lastIs15Joker = false;  // 15번 카드 조커 여부 (계산기 예측픽에 보류 반영용)
+        var lastJokerStats = {};    // 조커 통계 (15카드 내 개수, 간격, 경고 등)
         /** 승률 방향 메뉴: 최근 100회 기준 고점/저점/방향. { round, rate50 } 최대 300개 */
         var winRate50History = [];
         var lastWinRateDirectionRef = null;  // 정체 시 '기존 전략 유지 (오름/반대)' 표시용
@@ -6751,7 +6803,9 @@ RESULTS_HTML = '''
                 const displayResults = allResults.slice(0, 15);
                 const results = allResults;  // 비교를 위해 전체 결과 사용
                 // 픽/보류 깜빡임 방지: lastIs15Joker를 먼저 갱신한 뒤 계산기 카드·POST 갱신 (이전 값으로 보류/픽 뒤바뀌는 것 방지)
-                lastIs15Joker = (displayResults.length >= 15 && !!displayResults[14].joker);
+                const jokerStats = (data.joker_stats && typeof data.joker_stats === 'object') ? data.joker_stats : {};
+                lastJokerStats = jokerStats;
+                lastIs15Joker = (displayResults.length >= 15 && !!displayResults[14].joker) || !!(jokerStats.skip_bet);
                 try { CALC_IDS.forEach(function(id) { updateCalcStatus(id); }); } catch (e) {}
                 
                 // 이전회차·상태를 맨 앞에서 먼저 적용 (아래 예측/그래프 블록에서 예외 나도 화면에 현재 회차 반영)
@@ -7879,14 +7933,28 @@ RESULTS_HTML = '''
                     const u35WarningBlock = lastWarningU35 ? ('<div class="prediction-warning-u35">⚠ U자+줄 3~5 구간 · 줄(유지) 보정 적용</div>') : '';
                     const displayRoundNum = (lastPrediction && lastPrediction.round) ? lastPrediction.round : predictedRoundFull;
                     const roundIconMain = getRoundIcon(displayRoundNum);
-                    const showHold = is15Joker || predict === '보류';
+                    const jokerSkipBet = typeof lastJokerStats !== 'undefined' && lastJokerStats && lastJokerStats.skip_bet;
+                    const jokerWarningReason = (lastJokerStats && lastJokerStats.warning_reason) ? lastJokerStats.warning_reason : '';
+                    const showHold = is15Joker || jokerSkipBet || predict === '보류';
+                    const holdMessage = is15Joker ? '15번 카드 조커 · 배팅하지 마세요' : (jokerSkipBet && jokerWarningReason ? '조커 주의 · ' + jokerWarningReason : (jokerSkipBet ? '조커 주의 구간 · 배팅 보류' : '서버 예측 대기 중'));
+                    const jokerBadge = (function() {
+                        var js = typeof lastJokerStats !== 'undefined' && lastJokerStats ? lastJokerStats : {};
+                        var c15 = js.count_in_15 != null ? js.count_in_15 : '-';
+                        var c30 = js.count_in_30 != null ? js.count_in_30 : '-';
+                        var avg = js.avg_interval != null ? js.avg_interval : '-';
+                        var ago = js.last_joker_rounds_ago != null ? js.last_joker_rounds_ago : '-';
+                        var color = js.warning ? '#ffb74d' : '#64b5f6';
+                        var warn = js.warning ? ' ⚠ ' + (js.warning_reason || '조커 주의') : '';
+                        return '<div class="prediction-joker-badge" style="font-size:0.75em;color:' + color + ';margin-top:4px;line-height:1.3">조커 15:' + c15 + ' 30:' + c30 + ' 평균:' + avg + '회 마지막:' + ago + '회 전' + warn + '</div>';
+                    })();
                     const leftBlock = showHold ? ('<div class="prediction-pick">' +
                         '<div class="prediction-pick-title">예측 픽</div>' +
                         '<div class="prediction-card" style="background:#455a64;border-color:#78909c">' +
                         '<span class="pred-value-big" style="color:#fff;font-size:1.2em">보류</span>' +
                         '</div>' +
-                        '<div class="prediction-prob-under" style="color:#ffb74d">' + (is15Joker ? '15번 카드 조커 · 배팅하지 마세요' : '서버 예측 대기 중') + '</div>' +
+                        '<div class="prediction-prob-under" style="color:#ffb74d">' + holdMessage + '</div>' +
                         '<div class="pred-round">' + displayRound(displayRoundNum) + '회 ' + roundIconMain + '</div>' +
+                        jokerBadge +
                         '</div>') : ('<div class="' + pickWrapClass + '">' +
                         '<div class="prediction-pick-title prediction-pick-title-betting">배팅중<br>' + (colorToPick === '빨강' ? 'RED' : 'BLACK') + '</div>' +
                         '<div class="prediction-card card-' + colorClass + '">' +
@@ -7894,6 +7962,7 @@ RESULTS_HTML = '''
                         '</div>' +
                         '<div class="prediction-prob-under">예측 확률 ' + predProb.toFixed(1) + '%</div>' +
                         '<div class="pred-round">' + displayRound(displayRoundNum) + '회 ' + roundIconMain + '</div>' +
+                        jokerBadge +
                         u35WarningBlock +
                         '</div>');
                     if (pickContainer) { pickContainer.innerHTML = leftBlock; pickContainer.setAttribute('data-section', '메인 예측기'); }
@@ -10493,6 +10562,7 @@ def _build_results_payload_db_only(hours=24, backfill=False):
             results = results[:RESULTS_PAYLOAD_LIMIT]
         round_actuals = _build_round_actuals(results)
         _merge_round_predictions_into_history(round_actuals, results=results)
+        joker_stats = _compute_joker_stats(results) if results else {"count_in_15": 0, "count_in_30": 0, "warning": False, "skip_bet": False, "warning_reason": ""}
         # 100회 승률방향용: 클라이언트에 수백 회 내려줘야 함 (DB는 수백 회 저장됨)
         ph = get_prediction_history(300)
         # 안정화: 서버에 저장된 예측만 불러옴. 계산/저장은 스케줄러에서만(ensure_stored_prediction_for_current_round).
@@ -10528,6 +10598,12 @@ def _build_results_payload_db_only(hours=24, backfill=False):
                 print(f"[API] server_pred 조회 오류: {str(e)[:100]}")
         if server_pred is None:
             server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}, 'shape_predicted': None}
+        # 조커 주의 구간: skip_bet이면 배팅 보류 (value/color None)
+        if joker_stats.get('skip_bet') and server_pred:
+            server_pred['value'] = None
+            server_pred['color'] = None
+            server_pred['joker_warning'] = True
+            server_pred['joker_warning_reason'] = joker_stats.get('warning_reason', '')
         if len(results) >= 16 and server_pred.get('shape_predicted') is None:
             try:
                 pred_rnd_fb = int(str(results[0].get('gameID') or '0'), 10) + 1
@@ -10644,7 +10720,8 @@ def _build_results_payload_db_only(hours=24, backfill=False):
             'prediction_history': ph,
             'server_prediction': server_pred,
             'blended_win_rate': round(blended, 1) if blended is not None else None,
-            'round_actuals': round_actuals
+            'round_actuals': round_actuals,
+            'joker_stats': joker_stats
         }
     except Exception as e:
         print(f"[API] DB 전용 페이로드 오류: {str(e)[:150]}")
@@ -11205,7 +11282,7 @@ def get_results():
                 payload = {
                     'results': [], 'count': 0, 'timestamp': datetime.now().isoformat(),
                     'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}},
-                    'blended_win_rate': None, 'round_actuals': {}
+                    'blended_win_rate': None, 'round_actuals': {}, 'joker_stats': {}
                 }
         if not _results_refreshing:
             threading.Thread(target=_refresh_results_background, daemon=True).start()
@@ -11250,7 +11327,8 @@ def get_results():
             'prediction_history': [],
             'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}},
             'blended_win_rate': None,
-            'round_actuals': {}
+            'round_actuals': {},
+            'joker_stats': {}
         })
         err_resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
         return err_resp, 200
