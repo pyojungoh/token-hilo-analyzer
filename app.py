@@ -2775,6 +2775,10 @@ def _compute_joker_stats(results):
                 out["warning_reason"] += f" · 조커 간격 평균 {out['avg_interval']}회, {out['last_joker_rounds_ago']}회 전 조커"
             else:
                 out["warning_reason"] = f"조커 임박 가능성 (평균 {out['avg_interval']}회 간격, {out['last_joker_rounds_ago']}회 전 조커)"
+    # 다음 조커까지 예상 남은 회차 (평균 간격 - 마지막 조커 경과)
+    if out["avg_interval"] is not None and out["last_joker_rounds_ago"] is not None:
+        est = max(0, round(out["avg_interval"]) - out["last_joker_rounds_ago"])
+        out["next_joker_rounds_est"] = est
     return out
 
 
@@ -5746,6 +5750,7 @@ RESULTS_HTML = '''
                 <span class="tab" data-tab="pause-guide">멈춤 기준 추천</span>
             </div>
             <div id="bet-calc-panel" class="bet-calc-panel active">
+                <div id="calc-joker-badge" class="calc-joker-badge" style="font-size:0.8em;color:#64b5f6;margin-bottom:6px;line-height:1.3">조커 15:- 30:- 평균:-회 마지막:-회 전</div>
                 <div class="calc-dropdowns">
                     <div class="calc-dropdown collapsed" data-calc="1">
                         <div class="calc-dropdown-header">
@@ -6806,6 +6811,7 @@ RESULTS_HTML = '''
                 const jokerStats = (data.joker_stats && typeof data.joker_stats === 'object') ? data.joker_stats : {};
                 lastJokerStats = jokerStats;
                 lastIs15Joker = (displayResults.length >= 15 && !!displayResults[14].joker) || !!(jokerStats.skip_bet);
+                try { if (typeof updateCalcJokerBadge === 'function') updateCalcJokerBadge(); } catch (e) {}
                 try { CALC_IDS.forEach(function(id) { updateCalcStatus(id); }); } catch (e) {}
                 
                 // 이전회차·상태를 맨 앞에서 먼저 적용 (아래 예측/그래프 블록에서 예외 나도 화면에 현재 회차 반영)
@@ -7943,9 +7949,10 @@ RESULTS_HTML = '''
                         var c30 = js.count_in_30 != null ? js.count_in_30 : '-';
                         var avg = js.avg_interval != null ? js.avg_interval : '-';
                         var ago = js.last_joker_rounds_ago != null ? js.last_joker_rounds_ago : '-';
+                        var next = js.next_joker_rounds_est != null ? (js.next_joker_rounds_est === 0 ? ' · 다음 조커 임박' : ' · 다음 ' + js.next_joker_rounds_est + '회 남음') : '';
                         var color = js.warning ? '#ffb74d' : '#64b5f6';
                         var warn = js.warning ? ' ⚠ ' + (js.warning_reason || '조커 주의') : '';
-                        return '<div class="prediction-joker-badge" style="font-size:0.75em;color:' + color + ';margin-top:4px;line-height:1.3">조커 15:' + c15 + ' 30:' + c30 + ' 평균:' + avg + '회 마지막:' + ago + '회 전' + warn + '</div>';
+                        return '<div class="prediction-joker-badge" style="font-size:0.75em;color:' + color + ';margin-top:4px;line-height:1.3">조커 15:' + c15 + ' 30:' + c30 + ' 평균:' + avg + '회 마지막:' + ago + '회 전' + next + warn + '</div>';
                     })();
                     const leftBlock = showHold ? ('<div class="prediction-pick">' +
                         '<div class="prediction-pick-title">예측 픽</div>' +
@@ -10378,6 +10385,18 @@ RESULTS_HTML = '''
             if (bestCard) bestCard.classList.add('pred-pick-card-calc-best');
         }
         
+        function updateCalcJokerBadge() {
+            var el = document.getElementById('calc-joker-badge');
+            if (!el) return;
+            var js = typeof lastJokerStats !== 'undefined' && lastJokerStats ? lastJokerStats : {};
+            var c15 = js.count_in_15 != null ? js.count_in_15 : '-', c30 = js.count_in_30 != null ? js.count_in_30 : '-';
+            var avg = js.avg_interval != null ? js.avg_interval : '-', ago = js.last_joker_rounds_ago != null ? js.last_joker_rounds_ago : '-';
+            var next = js.next_joker_rounds_est != null ? (js.next_joker_rounds_est === 0 ? ' · 다음 조커 임박' : ' · 다음 ' + js.next_joker_rounds_est + '회 남음') : '';
+            var jokerColor = js.warning ? '#ffb74d' : '#64b5f6';
+            var jokerWarn = js.warning ? ' ⚠ ' + (js.warning_reason || '조커 주의') : '';
+            el.textContent = '조커 15:' + c15 + ' 30:' + c30 + ' 평균:' + avg + '회 마지막:' + ago + '회 전' + next + jokerWarn;
+            el.style.color = jokerColor;
+        }
         function refreshPredictionPickOnly() {
             var pickContainer = document.getElementById('prediction-pick-container');
             if (!pickContainer) return;
@@ -10401,12 +10420,14 @@ RESULTS_HTML = '''
             var js = typeof lastJokerStats !== 'undefined' && lastJokerStats ? lastJokerStats : {};
             var c15 = js.count_in_15 != null ? js.count_in_15 : '-', c30 = js.count_in_30 != null ? js.count_in_30 : '-';
             var avg = js.avg_interval != null ? js.avg_interval : '-', ago = js.last_joker_rounds_ago != null ? js.last_joker_rounds_ago : '-';
+            var next = js.next_joker_rounds_est != null ? (js.next_joker_rounds_est === 0 ? ' · 다음 조커 임박' : ' · 다음 ' + js.next_joker_rounds_est + '회 남음') : '';
             var jokerColor = js.warning ? '#ffb74d' : '#64b5f6';
             var jokerWarn = js.warning ? ' ⚠ ' + (js.warning_reason || '조커 주의') : '';
-            var jokerBadge = '<div class="prediction-joker-badge" style="font-size:0.75em;color:' + jokerColor + ';margin-top:4px;line-height:1.3">조커 15:' + c15 + ' 30:' + c30 + ' 평균:' + avg + '회 마지막:' + ago + '회 전' + jokerWarn + '</div>';
+            var jokerBadge = '<div class="prediction-joker-badge" style="font-size:0.75em;color:' + jokerColor + ';margin-top:4px;line-height:1.3">조커 15:' + c15 + ' 30:' + c30 + ' 평균:' + avg + '회 마지막:' + ago + '회 전' + next + jokerWarn + '</div>';
             var leftBlock = showHold ? ('<div class="prediction-pick"><div class="prediction-pick-title">예측 픽</div><div class="prediction-card" style="background:#455a64;border-color:#78909c"><span class="pred-value-big" style="color:#fff;font-size:1.2em">보류</span></div><div class="prediction-prob-under" style="color:#ffb74d">' + holdMsg + '</div><div class="pred-round">' + dr(displayRoundNum) + '회 ' + roundIconMain + '</div>' + jokerBadge + '</div>') : ('<div class="prediction-pick"><div class="prediction-pick-title prediction-pick-title-betting">배팅중<br>' + (colorToPick === '빨강' ? 'RED' : 'BLACK') + '</div><div class="prediction-card card-' + colorClass + '"><span class="pred-value-big">' + predict + '</span></div><div class="prediction-prob-under">예측 확률 ' + (typeof predProb === 'number' ? predProb.toFixed(1) : '0') + '%</div><div class="pred-round">' + dr(displayRoundNum) + '회 ' + roundIconMain + '</div>' + jokerBadge + u35WarningBlock + '</div>');
             pickContainer.innerHTML = leftBlock;
             pickContainer.setAttribute('data-section', '메인 예측기');
+            try { if (typeof updateCalcJokerBadge === 'function') updateCalcJokerBadge(); } catch (e) {}
         }
         
         function setupIntervals() {
