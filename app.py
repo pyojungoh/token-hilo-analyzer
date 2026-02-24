@@ -10056,21 +10056,20 @@ RESULTS_HTML = '''
             });
         });
         function exportCalcHistoryToCsv(id) {
-            try {
-                var rows = (window.__calcDetailRows && window.__calcDetailRows[id]) ? window.__calcDetailRows[id] : [];
-                if (!rows || rows.length === 0) { alert('내보낼 내역이 없습니다. 표를 한 번 갱신한 뒤 시도해 주세요.'); return; }
-                var esc = function(s) { var t = String(s == null ? '' : s); if (t.indexOf(',') >= 0 || t.indexOf('"') >= 0 || t.indexOf('\\n') >= 0) return '"' + t.replace(/"/g, '""') + '"'; return t; };
-                var header = '회차,픽,경고승률,모양적중률,15회승률,배팅금액,수익,승패';
-                var lines = [header].concat(rows.map(function(r) { return esc(r.roundStr) + ',' + esc(r.pick) + ',' + esc(r.warningWinRate) + ',' + esc(r.shapeWinRate || '-') + ',' + esc(r.rate15 || '-') + ',' + esc(r.betAmount) + ',' + esc(r.profit) + ',' + esc(r.outcome); }));
-                var csv = lines.join('\\n');
+            var sid = (typeof localStorage !== 'undefined' && localStorage.getItem) ? (localStorage.getItem(CALC_SESSION_KEY) || 'default') : 'default';
+            var url = '/api/export-calc-history?calculator=' + id + '&session_id=' + encodeURIComponent(sid);
+            fetch(url).then(function(r) {
+                if (!r.ok) return r.text().then(function(t) { alert(t || '내보내기 실패'); });
+                return r.text();
+            }).then(function(csv) {
+                if (!csv) return;
                 var blob = new Blob(['\\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
-                var url = URL.createObjectURL(blob);
                 var a = document.createElement('a');
-                a.href = url;
+                a.href = URL.createObjectURL(blob);
                 a.download = 'calc-' + id + '-history-' + (new Date().toISOString().slice(0, 10)) + '.csv';
                 a.click();
-                URL.revokeObjectURL(url);
-            } catch (err) { console.warn('exportCalcHistoryToCsv', err); alert('내보내기 실패'); }
+                URL.revokeObjectURL(a.href);
+            }).catch(function(err) { console.warn('exportCalcHistoryToCsv', err); alert('내보내기 실패'); });
         }
         document.querySelectorAll('.calc-export-csv').forEach(btn => {
             btn.addEventListener('click', function() { var id = parseInt(this.getAttribute('data-calc'), 10); if (CALC_IDS.includes(id)) exportCalcHistoryToCsv(id); });
@@ -12361,6 +12360,156 @@ def api_export_graph_analysis():
         return resp
     except Exception as e:
         print(f"[API] export-graph-analysis 오류: {str(e)[:200]}")
+        from flask import Response
+        return Response('오류: ' + str(e)[:200], status=500, mimetype='text/plain')
+
+
+def _build_calc_options_header(calc_state):
+    """계산기 옵션을 CSV 상단용 텍스트로 변환. 문제점 파악·개선에 활용."""
+    if not calc_state or not isinstance(calc_state, dict):
+        return []
+    lines = ['# 계산기 옵션 (CSV 내보내기 시점):']
+    opts = [
+        ('reverse', '반픽'),
+        ('smart_reverse', '스마트반픽'),
+        ('smart_reverse_threshold', '스마트반픽_임계값'),
+        ('smart_reverse_min_streak', '스마트반픽_최소연패'),
+        ('streak_suppress_reverse', '연패5이상_반픽억제'),
+        ('lock_direction_on_lose_streak', '연패중_방향고정'),
+        ('prediction_picks_best', '예측픽_베스트'),
+        ('shape_only_latest_next_pick', '모양_최신다음픽'),
+        ('shape_prediction', '모양예측'),
+        ('shape_prediction_reverse', '모양예측_반픽'),
+        ('shape_weight', '모양가중치'),
+        ('chunk_weight', '덩어리가중치'),
+        ('pong_weight', '퐁당가중치'),
+        ('symmetry_weight', '대칭가중치'),
+        ('martingale', '마틴적용'),
+        ('martingale_type', '마틴방식'),
+        ('target_enabled', '목표적용'),
+        ('target_amount', '목표금액'),
+        ('pause_low_win_rate_enabled', '멈춤_저승률'),
+        ('pause_win_rate_threshold', '멈춤_승률임계값'),
+        ('streak_wait_enabled', '연패대기'),
+        ('streak_wait_target', '연패대기_목표연패'),
+        ('capital', '자본'),
+        ('base', '기본배팅'),
+        ('odds', '배당'),
+    ]
+    for key, label in opts:
+        v = calc_state.get(key)
+        if v is not None:
+            lines.append(f'#   {label}={v}')
+    return lines
+
+
+@app.route('/api/export-calc-history', methods=['GET'])
+def api_export_calc_history():
+    """계산기 히스토리 CSV 다운로드. 그래프 CSV와 동일 형식 + 배팅금액·수익. 상단에 사용 옵션 기록."""
+    try:
+        import csv
+        from io import StringIO
+        from flask import Response
+        session_id = request.args.get('session_id') or 'default'
+        calculator = request.args.get('calculator', '1')
+        if calculator not in ('1', '2', '3'):
+            calculator = '1'
+        state = get_calc_state(session_id)
+        if not state or not isinstance(state, dict):
+            return Response('계산기 세션 없음', status=404, mimetype='text/plain')
+        c = state.get(calculator)
+        if not c or not isinstance(c, dict):
+            return Response('계산기 없음', status=404, mimetype='text/plain')
+        history = c.get('history') or []
+        completed = [h for h in history if h.get('round') is not None and h.get('actual') and str(h.get('actual')).strip() not in ('', 'pending')]
+        if not completed:
+            return Response('완료된 내역이 없습니다.', status=400, mimetype='text/plain')
+        by_round = {}
+        for h in completed:
+            rn = h.get('round')
+            try:
+                rn_int = int(rn)
+            except (TypeError, ValueError):
+                continue
+            if rn_int not in by_round:
+                by_round[rn_int] = h
+        sorted_rounds = sorted(by_round.keys())
+        ph_by_round = {}
+        if DB_AVAILABLE and DATABASE_URL and sorted_rounds:
+            conn = get_db_connection(statement_timeout_sec=10)
+            if conn:
+                try:
+                    cur = conn.cursor(cursor_factory=RealDictCursor)
+                    placeholders = ','.join(['%s'] * min(len(sorted_rounds), 500))
+                    cur.execute(
+                        f'SELECT round_num, blended_win_rate, prediction_details FROM prediction_history WHERE round_num IN ({placeholders})',
+                        tuple(sorted_rounds[:500])
+                    )
+                    for row in cur.fetchall():
+                        ph_by_round[row['round_num']] = row
+                    cur.close()
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+        header = ['회차', '픽', '실제', '승패', '경고승률', '줄개수', '퐁당개수', '구간', '덩어리유형', '덩어리모양', '줄run', '퐁당run', '줄%', '퐁당%', '높이', '세그먼트', '배팅금액', '수익']
+        out_rows = [header]
+        for rnd in sorted_rounds:
+            h = by_round[rnd]
+            pred = h.get('predicted') or ''
+            act = str(h.get('actual') or '').strip()
+            if act == 'joker':
+                outcome = '조'
+            elif pred in ('정', '꺽') and act in ('정', '꺽'):
+                outcome = '승' if pred == act else '패'
+            else:
+                outcome = '조' if act == 'joker' else ('승' if pred == act else '패') if act else '—'
+            wr = h.get('warningWinRate')
+            blended_str = (str(round(float(wr), 1)) + '%') if wr is not None and not isinstance(wr, str) else '-'
+            ph_row = ph_by_round.get(rnd)
+            if ph_row and blended_str == '-':
+                b = ph_row.get('blended_win_rate')
+                blended_str = (str(round(b, 1)) + '%') if b is not None else '-'
+            ga = None
+            if ph_row:
+                pd = ph_row.get('prediction_details')
+                if pd:
+                    if isinstance(pd, str):
+                        try:
+                            pd = json.loads(pd)
+                        except Exception:
+                            pd = {}
+                    ga = (pd or {}).get('graph_analysis') if isinstance(pd, dict) else None
+            bet_amt = h.get('betAmount')
+            bet_str = str(int(bet_amt)) if bet_amt is not None and not isinstance(bet_amt, str) and not (isinstance(bet_amt, bool)) else (str(bet_amt) if bet_amt is not None else '-')
+            prof = h.get('profit')
+            prof_str = str(int(prof)) if prof is not None and not isinstance(prof, str) and not (isinstance(prof, bool)) else (str(prof) if prof is not None else '-')
+            if ga:
+                out_rows.append([
+                    rnd, pred, act, outcome, blended_str,
+                    ga.get('line_cnt', '-'), ga.get('pong_cnt', '-'),
+                    ga.get('phase', '-'), ga.get('chunk_type', '-'), ga.get('chunk_shape', '-'),
+                    ga.get('line_runs', '-'), ga.get('pong_runs', '-'),
+                    str(ga.get('line_pct', '-')), str(ga.get('pong_pct', '-')),
+                    ga.get('h', '-'), ga.get('seg', '-'),
+                    bet_str, prof_str
+                ])
+            else:
+                out_rows.append([rnd, pred, act, outcome, blended_str, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', bet_str, prof_str])
+        si = StringIO()
+        w = csv.writer(si)
+        for line in _build_calc_options_header(c):
+            w.writerow([line])
+        for line in GRAPH_ANALYSIS_CSV_PROMPT:
+            w.writerow([line])
+        for row in out_rows:
+            w.writerow(row)
+        resp = Response('\ufeff' + si.getvalue(), mimetype='text/csv; charset=utf-8-sig')
+        resp.headers['Content-Disposition'] = 'attachment; filename=calc_' + calculator + '_history_' + datetime.now().strftime('%Y-%m-%d') + '.csv'
+        return resp
+    except Exception as e:
+        print(f"[API] export-calc-history 오류: {str(e)[:200]}")
         from flask import Response
         return Response('오류: ' + str(e)[:200], status=500, mimetype='text/plain')
 
