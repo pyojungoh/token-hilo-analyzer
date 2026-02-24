@@ -5519,6 +5519,7 @@ RESULTS_HTML = '''
         .calc-result-cards-wrap .calc-mini-card.empty { background: #333; color: #666; border-style: dashed; }
         .calc-result-cards-wrap .calc-mini-card .calc-mini-suit { font-size: 7px; line-height: 1; }
         .calc-result-cards-wrap .calc-mini-card .calc-mini-value { font-size: 9px; font-weight: bold; line-height: 1; }
+        .calc-result-cards-joker { font-size: 0.75em; color: #ffb74d; margin-bottom: 4px; line-height: 1.3; min-height: 1.3em; }
         .calc-round-table-wrap { margin-bottom: 6px; overflow-x: auto; max-height: 32em; overflow-y: auto; contain: paint; will-change: scroll-position; -webkit-overflow-scrolling: touch; }
         .calc-round-table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
         .calc-round-table th, .calc-round-table td { padding: 4px 6px; border: 1px solid #444; text-align: center; }
@@ -5795,6 +5796,7 @@ RESULTS_HTML = '''
             </div>
                             </div>
                             <div class="calc-detail" id="calc-1-detail">
+                                <div id="calc-1-result-cards-joker" class="calc-result-cards-joker"></div>
                                 <div class="calc-result-cards-wrap" id="calc-1-result-cards" title="최근 15회 결과 (좌=최신)"></div>
                                 <div class="calc-mini-graph-collapse" id="calc-1-mini-graph-collapse" data-calc="1">
                                     <div class="calc-mini-graph-header">그래프</div>
@@ -5850,6 +5852,7 @@ RESULTS_HTML = '''
                                 </div>
                             </div>
                             <div class="calc-detail" id="calc-2-detail">
+                                <div id="calc-2-result-cards-joker" class="calc-result-cards-joker"></div>
                                 <div class="calc-result-cards-wrap" id="calc-2-result-cards" title="최근 15회 결과 (좌=최신)"></div>
                                 <div class="calc-mini-graph-collapse" id="calc-2-mini-graph-collapse" data-calc="2">
                                     <div class="calc-mini-graph-header">그래프</div>
@@ -5905,6 +5908,7 @@ RESULTS_HTML = '''
                                 </div>
                             </div>
                             <div class="calc-detail" id="calc-3-detail">
+                                <div id="calc-3-result-cards-joker" class="calc-result-cards-joker"></div>
                                 <div class="calc-result-cards-wrap" id="calc-3-result-cards" title="최근 15회 결과 (좌=최신)"></div>
                                 <div class="calc-mini-graph-collapse" id="calc-3-mini-graph-collapse" data-calc="3">
                                     <div class="calc-mini-graph-header">그래프</div>
@@ -10396,6 +10400,15 @@ RESULTS_HTML = '''
             var jokerWarn = js.warning ? ' ⚠ ' + (js.warning_reason || '조커 주의') : '';
             el.textContent = '조커 15:' + c15 + ' 30:' + c30 + ' 평균:' + avg + '회 마지막:' + ago + '회 전' + next + jokerWarn;
             el.style.color = jokerColor;
+            updateCalcResultCardsJokerBadges();
+        }
+        function updateCalcResultCardsJokerBadges() {
+            var js = typeof lastJokerStats !== 'undefined' && lastJokerStats ? lastJokerStats : {};
+            var txt = (js.warning || js.skip_bet) ? ('⚠ 조커 경고: ' + (js.warning_reason || '조커 주의 구간 · 배팅 보류')) : '';
+            [1, 2, 3].forEach(function(cid) {
+                var el = document.getElementById('calc-' + cid + '-result-cards-joker');
+                if (el) { el.textContent = txt; el.style.display = txt ? '' : 'none'; }
+            });
         }
         function refreshPredictionPickOnly() {
             var pickContainer = document.getElementById('prediction-pick-container');
