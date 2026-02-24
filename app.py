@@ -7953,7 +7953,7 @@ RESULTS_HTML = '''
                         var c30 = js.count_in_30 != null ? js.count_in_30 : '-';
                         var avg = js.avg_interval != null ? js.avg_interval : '-';
                         var ago = js.last_joker_rounds_ago != null ? js.last_joker_rounds_ago : '-';
-                        var next = js.next_joker_rounds_est != null ? (js.next_joker_rounds_est === 0 ? ' · 다음 조커 임박' : ' · 다음 ' + js.next_joker_rounds_est + '회 남음') : '';
+                        var next = js.next_joker_rounds_est != null ? (js.next_joker_rounds_est === 0 ? ' · 조커 임박!' : (js.next_joker_rounds_est <= 5 ? ' · 조커 임박 ' + js.next_joker_rounds_est + '회' : ' · 다음 ' + js.next_joker_rounds_est + '회 남음')) : '';
                         var color = js.warning ? '#ffb74d' : '#64b5f6';
                         var warn = js.warning ? ' ⚠ ' + (js.warning_reason || '조커 주의') : '';
                         return '<div class="prediction-joker-badge" style="font-size:0.75em;color:' + color + ';margin-top:4px;line-height:1.3">조커 15:' + c15 + ' 30:' + c30 + ' 평균:' + avg + '회 마지막:' + ago + '회 전' + next + warn + '</div>';
@@ -10395,7 +10395,7 @@ RESULTS_HTML = '''
             var js = typeof lastJokerStats !== 'undefined' && lastJokerStats ? lastJokerStats : {};
             var c15 = js.count_in_15 != null ? js.count_in_15 : '-', c30 = js.count_in_30 != null ? js.count_in_30 : '-';
             var avg = js.avg_interval != null ? js.avg_interval : '-', ago = js.last_joker_rounds_ago != null ? js.last_joker_rounds_ago : '-';
-            var next = js.next_joker_rounds_est != null ? (js.next_joker_rounds_est === 0 ? ' · 다음 조커 임박' : ' · 다음 ' + js.next_joker_rounds_est + '회 남음') : '';
+            var next = js.next_joker_rounds_est != null ? (js.next_joker_rounds_est === 0 ? ' · 조커 임박!' : (js.next_joker_rounds_est <= 5 ? ' · 조커 임박 ' + js.next_joker_rounds_est + '회' : ' · 다음 ' + js.next_joker_rounds_est + '회 남음')) : '';
             var jokerColor = js.warning ? '#ffb74d' : '#64b5f6';
             var jokerWarn = js.warning ? ' ⚠ ' + (js.warning_reason || '조커 주의') : '';
             el.textContent = '조커 15:' + c15 + ' 30:' + c30 + ' 평균:' + avg + '회 마지막:' + ago + '회 전' + next + jokerWarn;
@@ -10433,7 +10433,7 @@ RESULTS_HTML = '''
             var js = typeof lastJokerStats !== 'undefined' && lastJokerStats ? lastJokerStats : {};
             var c15 = js.count_in_15 != null ? js.count_in_15 : '-', c30 = js.count_in_30 != null ? js.count_in_30 : '-';
             var avg = js.avg_interval != null ? js.avg_interval : '-', ago = js.last_joker_rounds_ago != null ? js.last_joker_rounds_ago : '-';
-            var next = js.next_joker_rounds_est != null ? (js.next_joker_rounds_est === 0 ? ' · 다음 조커 임박' : ' · 다음 ' + js.next_joker_rounds_est + '회 남음') : '';
+            var next = js.next_joker_rounds_est != null ? (js.next_joker_rounds_est === 0 ? ' · 조커 임박!' : (js.next_joker_rounds_est <= 5 ? ' · 조커 임박 ' + js.next_joker_rounds_est + '회' : ' · 다음 ' + js.next_joker_rounds_est + '회 남음')) : '';
             var jokerColor = js.warning ? '#ffb74d' : '#64b5f6';
             var jokerWarn = js.warning ? ' ⚠ ' + (js.warning_reason || '조커 주의') : '';
             var jokerBadge = '<div class="prediction-joker-badge" style="font-size:0.75em;color:' + jokerColor + ';margin-top:4px;line-height:1.3">조커 15:' + c15 + ' 30:' + c30 + ' 평균:' + avg + '회 마지막:' + ago + '회 전' + next + jokerWarn + '</div>';
