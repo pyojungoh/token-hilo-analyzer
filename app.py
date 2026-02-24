@@ -3687,6 +3687,12 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     prob_change = Pkkuk if last is True else Pjung
     line_w = line_pct / 100.0
     pong_w = pong_pct / 100.0
+    # 긴줄/2개짜리 짧은줄 조기 판별: 긴줄 있으면 끊김 예측 억제, chunk_2pair일 때만 끊김 고려
+    col_heights_break = _get_column_heights(graph_values, 30)
+    dyn_thresh_break = _get_dynamic_line_threshold(col_heights_break, 20) if col_heights_break else 4
+    chunk_sub_break = _detect_chunk_subpattern(col_heights_break, 15) if col_heights_break else None
+    has_long_line = any(h >= dyn_thresh_break for h in (col_heights_break[:20] if col_heights_break else []))
+    allow_break_consideration = (chunk_sub_break == 'chunk_2pair')
     if flow_state == 'line_strong':
         line_w = min(1.0, line_w + 0.25)
         pong_w = max(0.0, 1.0 - line_w)
@@ -3694,10 +3700,12 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         pong_w = min(1.0, pong_w + 0.25)
         line_w = max(0.0, 1.0 - pong_w)
     # 전체 그림: 퐁당 자주·줄 낮음·덩어리 적음 → 올리려고만 하면 연패하므로 퐁당 가중치 가산
+    # 단, 긴줄 있고 2개짜리 짧은줄 연속 아닐 때는 끊김 예측 억제 → overall_pong 미적용
     overall_pong = _detect_overall_pong_dominant(graph_values)
     if overall_pong:
-        pong_w = min(1.0, pong_w + 0.14)
-        line_w = max(0.0, 1.0 - pong_w)
+        if not (has_long_line and not allow_break_consideration):
+            pong_w = min(1.0, pong_w + 0.14)
+            line_w = max(0.0, 1.0 - pong_w)
 
     if symmetry_line_data:
         lc = symmetry_line_data['leftLineCount']
@@ -3718,7 +3726,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
             if lc <= 3:
                 line_w = min(1.0, line_w + SYM_LINE_PONG_BOOST * sym_mul)
                 pong_w = max(0.0, 1.0 - line_w)
-            elif lc >= 5:
+            elif lc >= 5 and not (has_long_line and not allow_break_consideration):
                 max_run = symmetry_line_data.get('maxLeftRunLength', 4)
                 recent_run = symmetry_line_data.get('recentRunLength', 0)
                 calm_or_run_start = (max_run <= 3) or (recent_run >= 2)
@@ -3751,39 +3759,40 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     # 덩어리 구간: 블록 반복·줄2~4. 줄2(짧은줄)는 바뀜(퐁당) 쪽, 줄3~4는 줄 가중치 우선. 321 끝이면 바뀜 소폭 가산
     elif phase in ('chunk_start', 'chunk_phase', 'pong_to_chunk'):
         curr_line_len = line_runs[0] if (first_is_line_col and line_runs) else 0
+        suppress_break = has_long_line and not allow_break_consideration  # 긴줄일 때 끊김 예측 억제
         if use_shape_adjustments:
-            if curr_line_len == 2:
+            if curr_line_len == 2 and not suppress_break:
                 pong_w += 0.05
                 line_w = max(0.0, line_w - 0.025)
             else:
                 line_w += 0.05  # 덩어리 기본 가중치 축소 (위로만 쏠림 완화)
                 pong_w = max(0.0, pong_w - 0.025)
-            if chunk_shape == '321':
+            if chunk_shape == '321' and not suppress_break:
                 pong_w += 0.08 * pong_mul  # 321(줄어듦) 구간 퐁당 가산
                 line_w = max(0.0, line_w - 0.04 * pong_mul)
             elif chunk_shape == '123':
                 line_w += 0.06 * pong_mul  # 123(늘어남) 구간: 줄 유지 쪽 가산 — 덩어리시작+123 연패 구간 보정
                 pong_w = max(0.0, pong_w - 0.03 * pong_mul)
-            elif _detect_line1_pong1_pattern(line_runs, pong_runs, (use_for_pattern[0] == use_for_pattern[1]) if len(use_for_pattern) >= 2 else True):
+            elif not suppress_break and _detect_line1_pong1_pattern(line_runs, pong_runs, (use_for_pattern[0] == use_for_pattern[1]) if len(use_for_pattern) >= 2 else True):
                 pong_w += 0.05 * pong_mul  # 줄1퐁당1 패턴 퐁당 반영
                 line_w = max(0.0, line_w - 0.025 * pong_mul)
             # 덩어리 내부 패턴: 2개씩 끈김(정정꺽꺽)=줄, 1개씩 끈김(정꺽정꺽)=퐁당
-            col_heights_for_sub = _get_column_heights(graph_values, 30)
-            chunk_sub = _detect_chunk_subpattern(col_heights_for_sub, 15)
+            chunk_sub = chunk_sub_break  # col_heights_break로 이미 계산됨
             if chunk_sub == 'chunk_2pair':
                 line_w += 0.04 * pong_mul
                 pong_w = max(0.0, pong_w - 0.02 * pong_mul)
-            elif chunk_sub == 'chunk_1pair':
+            elif chunk_sub == 'chunk_1pair' and not suppress_break:
                 pong_w += 0.04 * pong_mul
                 line_w = max(0.0, line_w - 0.02 * pong_mul)
         else:
-            if curr_line_len == 2:
+            if curr_line_len == 2 and not suppress_break:
                 pong_w += 0.08
                 line_w = max(0.0, line_w - 0.04)
             else:
                 line_w += 0.10
-                pong_w = max(0.0, pong_w - 0.05)
-            if chunk_shape == '321':
+                if not suppress_break:
+                    pong_w = max(0.0, pong_w - 0.05)
+            if chunk_shape == '321' and not suppress_break:
                 pong_w += 0.04 * pong_mul
                 line_w = max(0.0, line_w - 0.02 * pong_mul)
             elif chunk_shape == '123':
@@ -3794,6 +3803,14 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     if first_is_line_col and line_runs and line_runs[0] >= 6:
         line_w = min(1.0, line_w + 0.08)
         pong_w = max(0.0, pong_w - 0.04)
+    # 긴줄 구간 끊김 예측 억제: col_heights_break·has_long_line·allow_break_consideration은 위(3691~3695)에서 이미 계산됨
+    suppress_break = has_long_line and not allow_break_consideration
+    if suppress_break:
+        line_w = min(1.0, line_w + 0.12)
+        pong_w = max(0.0, pong_w - 0.12)
+    if isinstance(pong_chunk_debug, dict):
+        pong_chunk_debug['has_long_line'] = has_long_line
+        pong_chunk_debug['allow_break_consideration'] = allow_break_consideration
     # 저장된 모양 가중치: 그 모양 다음에 정/꺽이 많았으면 해당 예측 쪽 가산. 줄/퐁당은 last에 따라 결정.
     # 정 많음→정 예측: last 정이면 줄(유지), last 꺽이면 퐁당(바뀜). 꺽 많음→꺽 예측: last 꺽이면 줄, last 정이면 퐁당.
     # 강화: 과거에 자주 나온 모양일수록 가중치 상향 (0.04~0.10 → 0.08~0.20). 65% 이상 편향 시 추가 가산.
@@ -3819,14 +3836,14 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
                 if last is True:
                     line_w += w
                     pong_w = max(0.0, pong_w - w * 0.5)
-                else:
+                elif not suppress_break:
                     pong_w += w
                     line_w = max(0.0, line_w - w * 0.5)
             elif kr >= 0.55:
                 if last is False:
                     line_w += w
                     pong_w = max(0.0, pong_w - w * 0.5)
-                else:
+                elif not suppress_break:
                     pong_w += w
                     line_w = max(0.0, line_w - w * 0.5)
     # 유사 덩어리 가중치: 정/꺽→줄/퐁당 매핑은 last 반영 (위 shape_win_stats와 동일).
@@ -3853,14 +3870,14 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
                 if last is True:
                     line_w += w
                     pong_w = max(0.0, pong_w - w * 0.5)
-                else:
+                elif not suppress_break:
                     pong_w += w
                     line_w = max(0.0, line_w - w * 0.5)
             elif kr >= 0.55:
                 if last is False:
                     line_w += w
                     pong_w = max(0.0, pong_w - w * 0.5)
-                else:
+                elif not suppress_break:
                     pong_w += w
                     line_w = max(0.0, line_w - w * 0.5)
             elif jr >= 0.52 and jr < 0.55:
@@ -3868,7 +3885,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
                 if last is True:
                     line_w += w2
                     pong_w = max(0.0, pong_w - w2 * 0.5)
-                else:
+                elif not suppress_break:
                     pong_w += w2
                     line_w = max(0.0, line_w - w2 * 0.5)
             elif kr >= 0.52 and kr < 0.55:
@@ -3876,7 +3893,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
                 if last is False:
                     line_w += w2
                     pong_w = max(0.0, pong_w - w2 * 0.5)
-                else:
+                elif not suppress_break:
                     pong_w += w2
                     line_w = max(0.0, line_w - w2 * 0.5)
     # 패턴 매칭: 최근 시퀀스와 동일한 과거 패턴의 다음 결과 집계. 최신일수록 가중치 높게 (정/꺽 규칙성 캐치)
@@ -3895,10 +3912,10 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         if pattern_jung_w > pattern_kkeok_w:
             if last is True:
                 line_w += boost * (pattern_jung_w - pattern_kkeok_w) / total_p
-            else:
+            elif not suppress_break:
                 pong_w += boost * (pattern_jung_w - pattern_kkeok_w) / total_p
         else:
-            if last is True:
+            if last is True and not suppress_break:
                 pong_w += boost * (pattern_kkeok_w - pattern_jung_w) / total_p
             else:
                 line_w += boost * (pattern_kkeok_w - pattern_jung_w) / total_p
@@ -3910,10 +3927,10 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         if ngram_jung > ngram_kkeok:
             if last is True:
                 line_w += ngram_boost * (ngram_jung - ngram_kkeok) / total_ng
-            else:
+            elif not suppress_break:
                 pong_w += ngram_boost * (ngram_jung - ngram_kkeok) / total_ng
         else:
-            if last is True:
+            if last is True and not suppress_break:
                 pong_w += ngram_boost * (ngram_kkeok - ngram_jung) / total_ng
             else:
                 line_w += ngram_boost * (ngram_kkeok - ngram_jung) / total_ng
@@ -7684,7 +7701,24 @@ RESULTS_HTML = '''
                         }
                         lineW += chunkIdx * 0.2 + twoOneIdx * 0.1;
                         pongW += scatterIdx * 0.2;
-                        if (detectVPattern(lineRuns, pongRuns, useForPattern.slice(0, 2), vPatternThresh)) {
+                        var hasLongLine = colHeights && colHeights.slice(0, 20).some(function(h) { return h >= vPatternThresh; });
+                        function getChunkSubClient(h, w) {
+                            if (!h || h.length < 6) return null;
+                            var arr = h.slice(0, w);
+                            var ones = arr.filter(function(x) { return x === 1; }).length;
+                            var twos = arr.filter(function(x) { return x === 2; }).length;
+                            var total = ones + twos;
+                            if (total < 6) return null;
+                            if (twos >= total * 0.5) return 'chunk_2pair';
+                            if (ones >= total * 0.5) return 'chunk_1pair';
+                            return 'chunk_mixed';
+                        }
+                        var chunkSubClient = getChunkSubClient(colHeights, 15);
+                        var allowBreakConsideration = (chunkSubClient === 'chunk_2pair');
+                        if (hasLongLine && !allowBreakConsideration) {
+                            lineW = Math.min(1, lineW + 0.12);
+                            pongW = Math.max(0, pongW - 0.12);
+                        } else if (detectVPattern(lineRuns, pongRuns, useForPattern.slice(0, 2), vPatternThresh)) {
                             pongW += 0.12;
                             lineW = Math.max(0, lineW - 0.06);
                         }
