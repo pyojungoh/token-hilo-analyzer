@@ -5267,7 +5267,7 @@ RESULTS_HTML = '''
         .calc-result-cards-wrap .calc-mini-card.empty { background: #333; color: #666; border-style: dashed; }
         .calc-result-cards-wrap .calc-mini-card .calc-mini-suit { font-size: 7px; line-height: 1; }
         .calc-result-cards-wrap .calc-mini-card .calc-mini-value { font-size: 9px; font-weight: bold; line-height: 1; }
-        .calc-round-table-wrap { margin-bottom: 6px; overflow-x: auto; max-height: 32em; overflow-y: auto; }
+        .calc-round-table-wrap { margin-bottom: 6px; overflow-x: auto; max-height: 32em; overflow-y: auto; contain: paint; will-change: scroll-position; -webkit-overflow-scrolling: touch; }
         .calc-round-table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
         .calc-round-table th, .calc-round-table td { padding: 4px 6px; border: 1px solid #444; text-align: center; }
         .calc-round-table th { background: #333; color: #81c784; }
@@ -9595,10 +9595,20 @@ RESULTS_HTML = '''
                 }
             });
             }, 1000);
+        var _updateAllCalcsDebounceId = null;
+        var _updateAllCalcsDebounceMs = 120;
         function updateAllCalcs() {
+            if (_updateAllCalcsDebounceId) clearTimeout(_updateAllCalcsDebounceId);
+            _updateAllCalcsDebounceId = setTimeout(function() {
+                _updateAllCalcsDebounceId = null;
+                CALC_IDS.forEach(id => { updateCalcStatus(id); updateCalcDetail(id); updateCalcSummary(id); });
+            }, _updateAllCalcsDebounceMs);
+        }
+        function updateAllCalcsImmediate() {
+            if (_updateAllCalcsDebounceId) { clearTimeout(_updateAllCalcsDebounceId); _updateAllCalcsDebounceId = null; }
             CALC_IDS.forEach(id => { updateCalcStatus(id); updateCalcDetail(id); updateCalcSummary(id); });
         }
-        try { updateAllCalcs(); } catch (e) { console.warn('초기 계산기 상태:', e); }
+        try { updateAllCalcsImmediate(); } catch (e) { console.warn('초기 계산기 상태:', e); }
         document.querySelectorAll('.calc-run').forEach(btn => {
             btn.addEventListener('click', async function() {
                 const rawId = this.getAttribute('data-calc');
@@ -9987,7 +9997,7 @@ RESULTS_HTML = '''
         async function initialLoad() {
             try {
                 await loadCalcStateFromServer();
-                updateAllCalcs();
+                updateAllCalcsImmediate();
             } catch (e) { console.warn('계산기 상태 로드:', e); }
             try {
                 await loadResults().catch(e => console.warn('초기 결과 로드 실패:', e));
@@ -10138,7 +10148,7 @@ RESULTS_HTML = '''
                 const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
                 const criticalPhase = r <= 3 || r >= 8;
                 // 백그라운드일 때는 최소 1초 간격. 너무 짧으면 서버 부하로 예측픽 안 나옴
-                const baseInterval = allResults.length === 0 ? 320 : (anyRunning ? 80 : (criticalPhase ? 250 : 320));
+                const baseInterval = allResults.length === 0 ? 320 : (anyRunning ? 150 : (criticalPhase ? 250 : 320));
                 const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
                 if (Date.now() - lastResultsUpdate > interval) {
                     loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
