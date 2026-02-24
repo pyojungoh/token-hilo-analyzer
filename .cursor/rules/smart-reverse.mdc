@@ -1,0 +1,101 @@
+---
+description: 스마트 반픽 구성·효과·작용 — 계산기 반픽 옵션 기준
+globs: app.py, **/CALCULATOR_GUIDE.md
+alwaysApply: false
+---
+
+# 스마트 반픽 (규칙)
+
+스마트 반픽 관련 코드 수정 시 이 규칙을 참고한다. 상세 구현은 `_server_calc_effective_pick_and_amount`, 클라이언트 `calcState[id].smart_reverse` 블록을 따른다.
+
+---
+
+## 1. 구성
+
+스마트 반픽은 **세 가지 반픽 조건을 통합**한 옵션이다. 조건 중 **하나라도 만족**하면 예측픽의 반대로 배팅한다.
+
+| 구성 요소 | 설명 | 설정값 |
+|-----------|------|--------|
+| **승률반픽** | 모양승률(예측기표 모양픽 최근 50회)이 설정값 이하일 때 반대픽 | `smart_reverse_threshold` (기본 45%) |
+| **연패반픽** | N연패 이상 **그리고** 실제 경고 합산승률이 설정값 이하일 때 반대픽 | `smart_reverse_min_streak` (기본 3회), `smart_reverse_threshold` |
+| **승률방향반픽** | 롤링 100회 승률 구간이 고점→저점(high_falling)일 때 반대픽. 저점→고점(low_rising)은 정픽. 정체(mid_flat) 시 직전 방향 참조 | `.cursor/rules/win-rate-direction.mdc` 포인트값 |
+
+### UI 옵션 (계산기당)
+
+- **스마트 반픽** 체크박스: `calc-N-smart-reverse`
+- **승률≤** 입력: `calc-N-smart-reverse-threshold` (0~100, 기본 45)
+- **연패≥** 입력: `calc-N-smart-reverse-min-streak` (2~15, 기본 3)
+- **줄 5 이상 반픽 억제**: `calc-N-streak-suppress-reverse` — 5연승/5연패일 때 스마트 반픽 미적용
+- **연패 중 방향 고정**: `calc-N-lock-direction-on-lose-streak` — 연패 중에는 방향 전환 안 함 (기본 켜짐)
+
+### calc_sessions 저장 키
+
+- `smart_reverse`, `smart_reverse_threshold`, `smart_reverse_min_streak`
+- `streak_suppress_reverse`, `lock_direction_on_lose_streak`
+- `last_trend_direction`, `last_win_rate_zone`, `last_win_rate_zone_on_win`
+
+---
+
+## 2. 효과
+
+| 효과 | 설명 |
+|------|------|
+| **예측 부진 시 반대픽** | 모양픽 승률이 낮을 때(50% 이하 등) 예측 반대로 배팅해 손실 구간 회피 |
+| **연패+저승률 시 반대픽** | 연패가 길고 경고 합산승률이 낮을 때 반대픽으로 전환해 추세 역전 활용 |
+| **고점→저점 시 반대픽** | 롤링 100회 승률이 고점에서 내려올 때 반대픽. 저점에서 오를 때는 정픽 유지 |
+| **과신 억제** | 메인 예측기 최근 15경기 승률 ≥ 53%이면 승률반픽·연패반픽 미적용 (예측이 잘 맞으면 반대픽 덜 감) |
+| **정픽 억제** | 메인 예측기 최근 10경기 승률 ≤ 50%이면 low_rising(정픽) → mid_flat 완화 (예측이 안 맞으면 정픽 고집 덜 함) |
+
+---
+
+## 3. 작용 (동작 흐름)
+
+### 판정 순서
+
+1. **반픽** 체크 시: 무조건 반대픽 (스마트 반픽보다 우선)
+2. **줄 5 이상 반픽 억제** 켜고 5연승/5연패일 때: 스마트 반픽 **미적용**
+3. **스마트 반픽** 체크 시, 아래 조건 **OR**로 판정:
+   - **승률반픽**: `_get_shape_50_win_rate()` ≤ threshold **그리고** 메인 15경기 승률 < 53%
+   - **연패반픽**: `lose_streak` ≥ min_streak **그리고** `_blended_win_rate()` ≤ threshold **그리고** 메인 15경기 승률 < 53%
+   - **승률방향반픽**: `_effective_win_rate_direction_zone()` == `high_falling` 또는 (`mid_flat` **그리고** `last_trend_direction` == 'down')
+
+### 승률 기준 출처
+
+| 항목 | 출처 |
+|------|------|
+| 모양승률 50회 | `_get_shape_50_win_rate()` — prediction_history의 shape_predicted vs actual |
+| 경고 합산승률 | `_blended_win_rate()` — 15/30/100 가중 (0.6·0.25·0.15) |
+| 메인 15경기 승률 | `_get_main_recent15_win_rate()` — 예측픽 vs actual |
+| 연패 | `_get_lose_streak_from_history(c['history'])` — 조커·패·no_bet 포함 |
+
+### 연패 중 방향 고정
+
+- `lock_direction_on_lose_streak` 켜면: 연패 ≥ 1일 때 마지막 승 직후 zone(`last_win_rate_zone_on_win`) 유지
+- 연패 중에는 승률방향반픽으로 방향을 바꾸지 않음
+
+---
+
+## 4. 구현 위치
+
+| 위치 | 역할 |
+|------|------|
+| **서버** `_server_calc_effective_pick_and_amount` | 스마트 반픽 판정·배팅 픽 계산. 매크로 current_pick 반영 |
+| **서버** `_effective_win_rate_direction_zone` | 연패 중 방향 고정, zone 히스테리시스 |
+| **서버** `_server_win_rate_direction_zone` | raw zone (low_rising/high_falling/mid_flat) 계산 |
+| **클라이언트** `calcState[id].smart_reverse` 블록 | 배팅중 카드·표시·옵션 동기화 |
+| **클라이언트** `getWinRateDirectionZone`, `getEffectiveWinRateDirectionZone` | 승률방향 패널·zone 계산 (서버와 동일 공식) |
+
+---
+
+## 5. 참고 규칙
+
+- **승률방향 포인트값** 수정: `.cursor/rules/win-rate-direction.mdc` — DELTA4, DELTA5, R_LOW, R_HIGH만 수정
+- **계산기 전반**: `.cursor/rules/calculator-guide.mdc`
+- **예측기표 = 메인 픽 고정**: 스마트 반픽 적용 픽은 **계산기 history에만** 저장. prediction_history에는 예측픽만 저장.
+
+---
+
+## 6. 스마트 반픽에 유리한 승률 (분석용)
+
+- CSV 분석 시 "스마트반픽 옵션에 유리한 승율" 파악: 모양승률 50% 이하, 연패+저승률 구간, 고점→저점 구간에서 반대픽 적용 시 승률 개선 여부 확인
+- `GRAPH_ANALYSIS_CSV_PROMPT`에 해당 지시 포함됨
