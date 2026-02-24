@@ -2946,6 +2946,64 @@ def _pattern_match_prediction(graph_values, pattern_len=5, recency_decay=0.92):
     return jung_w, kkeok_w, match_count
 
 
+def _compute_ngram_pattern_weights(graph_values, window=60, n_min=2, n_max=5, min_matches=5):
+    """
+    N-gram 패턴 학습: 최근 시퀀스에서 길이 2~5 패턴의 '다음 결과' 전이 확률 집계.
+    정정꺽꺽, 정꺽정꺽 등 반복 패턴이 과거에 어떻게 이어졌는지 학습.
+    반환: (jung_w, kkeok_w, match_count) — 적용 시 match_count >= min_matches일 때만 사용.
+    """
+    if not graph_values or len(graph_values) < n_max + 2:
+        return 0.0, 0.0, 0
+    filtered = [v for v in graph_values[:window] if v is True or v is False]
+    if len(filtered) < n_max + 2:
+        return 0.0, 0.0, 0
+    jung_w = kkeok_w = 0.0
+    best_matches = 0
+    best_jung = best_kkeok = 0.0
+    for n in range(n_max, n_min - 1, -1):
+        if len(filtered) < n + 1:
+            continue
+        current = tuple(filtered[:n])
+        jw = kw = 0.0
+        mc = 0
+        for i in range(n + 1, len(filtered)):
+            past = tuple(filtered[i - n:i])
+            if past != current:
+                continue
+            next_val = filtered[i - n - 1]
+            w = 0.92 ** (i - n)
+            if next_val is True:
+                jw += w
+            else:
+                kw += w
+            mc += 1
+        if mc >= min_matches and mc > best_matches and (jw + kw) > 0:
+            best_matches = mc
+            best_jung, best_kkeok = jw, kw
+    return best_jung, best_kkeok, best_matches
+
+
+def _detect_chunk_subpattern(col_heights, window=15):
+    """
+    덩어리 구간 내부 패턴: 2개씩 끈김(정정꺽꺽) vs 1개씩 끈김(정꺽정꺽).
+    col_heights: 세그먼트 높이 리스트. 2가 많으면 chunk_2pair(줄), 1이 많으면 chunk_1pair(퐁당).
+    반환: 'chunk_2pair' | 'chunk_1pair' | 'chunk_mixed' | None
+    """
+    if not col_heights or len(col_heights) < 6:
+        return None
+    h = col_heights[:window]
+    ones = sum(1 for x in h if x == 1)
+    twos = sum(1 for x in h if x == 2)
+    total = ones + twos
+    if total < 6:
+        return None
+    if twos >= total * 0.5:
+        return 'chunk_2pair'
+    if ones >= total * 0.5:
+        return 'chunk_1pair'
+    return 'chunk_mixed'
+
+
 def _balance_raw_series(graph_values, window=10):
     """
     구간별 '같은 게 나온 비율' 리스트. docs/BALANCE_SEGMENT_SPEC.md 참고.
@@ -3709,6 +3767,15 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
             elif _detect_line1_pong1_pattern(line_runs, pong_runs, (use_for_pattern[0] == use_for_pattern[1]) if len(use_for_pattern) >= 2 else True):
                 pong_w += 0.05 * pong_mul  # 줄1퐁당1 패턴 퐁당 반영
                 line_w = max(0.0, line_w - 0.025 * pong_mul)
+            # 덩어리 내부 패턴: 2개씩 끈김(정정꺽꺽)=줄, 1개씩 끈김(정꺽정꺽)=퐁당
+            col_heights_for_sub = _get_column_heights(graph_values, 30)
+            chunk_sub = _detect_chunk_subpattern(col_heights_for_sub, 15)
+            if chunk_sub == 'chunk_2pair':
+                line_w += 0.04 * pong_mul
+                pong_w = max(0.0, pong_w - 0.02 * pong_mul)
+            elif chunk_sub == 'chunk_1pair':
+                pong_w += 0.04 * pong_mul
+                line_w = max(0.0, line_w - 0.02 * pong_mul)
         else:
             if curr_line_len == 2:
                 pong_w += 0.08
@@ -3835,6 +3902,21 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
                 pong_w += boost * (pattern_kkeok_w - pattern_jung_w) / total_p
             else:
                 line_w += boost * (pattern_kkeok_w - pattern_jung_w) / total_p
+    # N-gram 패턴 학습: 정정꺽꺽·정꺽정꺽 등 반복 패턴의 과거 전이 확률 반영
+    ngram_jung, ngram_kkeok, ngram_matches = _compute_ngram_pattern_weights(graph_values, window=60, min_matches=5)
+    if ngram_matches >= 5 and (ngram_jung + ngram_kkeok) > 0:
+        total_ng = ngram_jung + ngram_kkeok
+        ngram_boost = 0.04 * min(1.0, ngram_matches / 8)
+        if ngram_jung > ngram_kkeok:
+            if last is True:
+                line_w += ngram_boost * (ngram_jung - ngram_kkeok) / total_ng
+            else:
+                pong_w += ngram_boost * (ngram_jung - ngram_kkeok) / total_ng
+        else:
+            if last is True:
+                pong_w += ngram_boost * (ngram_kkeok - ngram_jung) / total_ng
+            else:
+                line_w += ngram_boost * (ngram_kkeok - ngram_jung) / total_ng
     total_w = line_w + pong_w
     if total_w > 0:
         line_w /= total_w
@@ -3870,6 +3952,8 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         short_cols = sum(1 for h in col_heights if 2 <= h < dyn_thresh)
         pong_cols = sum(1 for h in col_heights if h == 1)
         pong_chunk_debug['dynamic_line_threshold'] = dyn_thresh
+        pong_chunk_debug['chunk_subpattern'] = _detect_chunk_subpattern(col_heights, 15)
+        pong_chunk_debug['ngram_matches'] = ngram_matches
         pong_chunk_debug['long_short_stats'] = {'long': long_cols, 'short': short_cols, 'pong': pong_cols, 'total': len(col_heights), 'threshold': dyn_thresh}  # 장줄(threshold+), 짧은줄(2~threshold-1), 퐁당(1)
         pong_chunk_debug['symmetry_windows_used'] = symmetry_windows_used
         pong_chunk_debug['u_shape'] = u35_detected
