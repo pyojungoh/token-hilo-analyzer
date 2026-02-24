@@ -3646,6 +3646,9 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
             if chunk_shape == '321':
                 pong_w += 0.08 * pong_mul  # 321(줄어듦) 구간 퐁당 가산
                 line_w = max(0.0, line_w - 0.04 * pong_mul)
+            elif chunk_shape == '123':
+                line_w += 0.06 * pong_mul  # 123(늘어남) 구간: 줄 유지 쪽 가산 — 덩어리시작+123 연패 구간 보정
+                pong_w = max(0.0, pong_w - 0.03 * pong_mul)
             elif _detect_line1_pong1_pattern(line_runs, pong_runs, (use_for_pattern[0] == use_for_pattern[1]) if len(use_for_pattern) >= 2 else True):
                 pong_w += 0.05 * pong_mul  # 줄1퐁당1 패턴 퐁당 반영
                 line_w = max(0.0, line_w - 0.025 * pong_mul)
@@ -3659,7 +3662,14 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
             if chunk_shape == '321':
                 pong_w += 0.04 * pong_mul
                 line_w = max(0.0, line_w - 0.02 * pong_mul)
+            elif chunk_shape == '123':
+                line_w += 0.06
+                pong_w = max(0.0, pong_w - 0.03)
         pong_chunk_phase = phase
+    # 장줄(6+) 이후 끊김 예측 완화: 6연속 이상일 때 꺽(끊김) 과대 예측 방지 — 10연패 분석 반영
+    if first_is_line_col and line_runs and line_runs[0] >= 6:
+        line_w = min(1.0, line_w + 0.08)
+        pong_w = max(0.0, pong_w - 0.04)
     # 저장된 모양 가중치: 그 모양 다음에 정/꺽이 많았으면 해당 예측 쪽 가산. 줄/퐁당은 last에 따라 결정.
     # 정 많음→정 예측: last 정이면 줄(유지), last 꺽이면 퐁당(바뀜). 꺽 많음→꺽 예측: last 꺽이면 줄, last 정이면 퐁당.
     # 강화: 과거에 자주 나온 모양일수록 가중치 상향 (0.04~0.10 → 0.08~0.20). 65% 이상 편향 시 추가 가산.
