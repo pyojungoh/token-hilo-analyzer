@@ -10384,6 +10384,7 @@ RESULTS_HTML = '''
             function dr(r) { return r != null ? String(r) : '-'; }
             var disp = allResults.slice(0, 15);
             var is15Joker = disp.length >= 15 && !!disp[14].joker;
+            var jokerSkipBet = typeof lastJokerStats !== 'undefined' && lastJokerStats && lastJokerStats.skip_bet;
             var predict = '보류', predProb = 0, colorToPick = '-', colorClass = 'black';
             if (lastPrediction && (lastPrediction.value === '정' || lastPrediction.value === '꺽')) {
                 predict = lastPrediction.value;
@@ -10392,11 +10393,18 @@ RESULTS_HTML = '''
                 colorToPick = (sc === '빨강' || sc === '검정') ? sc : (lastPrediction.value === '정' ? '빨강' : '검정');
                 colorClass = colorToPick === '빨강' ? 'red' : 'black';
             }
-            var showHold = is15Joker || predict === '보류';
+            var showHold = is15Joker || jokerSkipBet || predict === '보류';
+            var holdMsg = is15Joker ? '15번 카드 조커 · 배팅하지 마세요' : (jokerSkipBet && lastJokerStats && lastJokerStats.warning_reason ? '조커 주의 · ' + lastJokerStats.warning_reason : (jokerSkipBet ? '조커 주의 구간 · 배팅 보류' : '서버 예측 대기 중'));
             var displayRoundNum = (lastPrediction && lastPrediction.round) ? lastPrediction.round : (allResults.length > 0 && allResults[0].gameID != null ? Number(allResults[0].gameID) + 1 : 0);
             var roundIconMain = getRoundIcon(displayRoundNum);
             var u35WarningBlock = lastWarningU35 ? ('<div class="prediction-warning-u35">⚠ U자+줄 3~5 구간 · 줄(유지) 보정 적용</div>') : '';
-            var leftBlock = showHold ? ('<div class="prediction-pick"><div class="prediction-pick-title">예측 픽</div><div class="prediction-card" style="background:#455a64;border-color:#78909c"><span class="pred-value-big" style="color:#fff;font-size:1.2em">보류</span></div><div class="prediction-prob-under" style="color:#ffb74d">' + (is15Joker ? '15번 카드 조커 · 배팅하지 마세요' : '서버 예측 대기 중') + '</div><div class="pred-round">' + dr(displayRoundNum) + '회 ' + roundIconMain + '</div></div>') : ('<div class="prediction-pick"><div class="prediction-pick-title prediction-pick-title-betting">배팅중<br>' + (colorToPick === '빨강' ? 'RED' : 'BLACK') + '</div><div class="prediction-card card-' + colorClass + '"><span class="pred-value-big">' + predict + '</span></div><div class="prediction-prob-under">예측 확률 ' + (typeof predProb === 'number' ? predProb.toFixed(1) : '0') + '%</div><div class="pred-round">' + dr(displayRoundNum) + '회 ' + roundIconMain + '</div>' + u35WarningBlock + '</div>');
+            var js = typeof lastJokerStats !== 'undefined' && lastJokerStats ? lastJokerStats : {};
+            var c15 = js.count_in_15 != null ? js.count_in_15 : '-', c30 = js.count_in_30 != null ? js.count_in_30 : '-';
+            var avg = js.avg_interval != null ? js.avg_interval : '-', ago = js.last_joker_rounds_ago != null ? js.last_joker_rounds_ago : '-';
+            var jokerColor = js.warning ? '#ffb74d' : '#64b5f6';
+            var jokerWarn = js.warning ? ' ⚠ ' + (js.warning_reason || '조커 주의') : '';
+            var jokerBadge = '<div class="prediction-joker-badge" style="font-size:0.75em;color:' + jokerColor + ';margin-top:4px;line-height:1.3">조커 15:' + c15 + ' 30:' + c30 + ' 평균:' + avg + '회 마지막:' + ago + '회 전' + jokerWarn + '</div>';
+            var leftBlock = showHold ? ('<div class="prediction-pick"><div class="prediction-pick-title">예측 픽</div><div class="prediction-card" style="background:#455a64;border-color:#78909c"><span class="pred-value-big" style="color:#fff;font-size:1.2em">보류</span></div><div class="prediction-prob-under" style="color:#ffb74d">' + holdMsg + '</div><div class="pred-round">' + dr(displayRoundNum) + '회 ' + roundIconMain + '</div>' + jokerBadge + '</div>') : ('<div class="prediction-pick"><div class="prediction-pick-title prediction-pick-title-betting">배팅중<br>' + (colorToPick === '빨강' ? 'RED' : 'BLACK') + '</div><div class="prediction-card card-' + colorClass + '"><span class="pred-value-big">' + predict + '</span></div><div class="prediction-prob-under">예측 확률 ' + (typeof predProb === 'number' ? predProb.toFixed(1) : '0') + '%</div><div class="pred-round">' + dr(displayRoundNum) + '회 ' + roundIconMain + '</div>' + jokerBadge + u35WarningBlock + '</div>');
             pickContainer.innerHTML = leftBlock;
             pickContainer.setAttribute('data-section', '메인 예측기');
         }
