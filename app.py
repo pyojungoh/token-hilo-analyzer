@@ -3025,10 +3025,12 @@ def _detect_overall_pong_dominant(graph_values):
     avg_line = sum(line_runs) / total_line if total_line else 0
     max_line = max(line_runs) if line_runs else 0
     chunk_ratio = line_two_plus / total_line if total_line else 0
+    heights = _get_column_heights(use, 30)
+    dyn_thresh = _get_dynamic_line_threshold(heights, 20) if heights else 4
     return (
         pong_pct >= 55 and
         avg_line <= 2.2 and
-        max_line <= 4 and
+        max_line <= dyn_thresh and
         chunk_ratio <= 0.5
     )
 
@@ -3065,8 +3067,9 @@ def _compute_graph_analysis_for_export(results):
         h = ','.join(str(x) for x in heights[:30])
         phase_ko = {'line_phase': '줄구간', 'pong_phase': '퐁당구간', 'chunk_phase': '덩어리구간', 'chunk_start': '덩어리시작', 'pong_to_chunk': '퐁당→덩어리', 'chunk_to_pong': '덩어리→퐁당'}.get(phase, phase or ('퐁당구간' if pong_pct >= 60 else '-'))
         chunk_shape = (debug or {}).get('chunk_shape') or '-'
-        long_cols = sum(1 for x in heights if x >= 4)
-        short_cols = sum(1 for x in heights if 2 <= x <= 3)
+        dyn_thresh = _get_dynamic_line_threshold(heights, 20)
+        long_cols = sum(1 for x in heights if x >= dyn_thresh)
+        short_cols = sum(1 for x in heights if 2 <= x < dyn_thresh)
         pong_cols = sum(1 for x in heights if x == 1)
         total = len(heights)
         if phase_ko and '덩어리' in str(phase_ko):
@@ -3087,9 +3090,25 @@ def _compute_graph_analysis_for_export(results):
             'pong_runs': ','.join(str(x) for x in pong_runs[:15]),
             'phase': phase_ko, 'chunk_shape': chunk_shape, 'chunk_type': chunk_type,
             'pong_pct': round(pong_pct, 1), 'line_pct': round(line_pct, 1),
+            'line_threshold': dyn_thresh,
         }
     except Exception:
         return None
+
+
+def _get_dynamic_line_threshold(heights, window=20):
+    """
+    최근 window개 열 높이에서 줄(2+)의 평균을 보고 장줄 기준을 동적으로 계산.
+    평균이 높으면 임계값 상향(예: 4→5), 낮으면 하향(예: 4→3). 3~6 범위, fallback 4.
+    """
+    if not heights:
+        return 4
+    line_heights = [h for h in heights[:window] if h >= 2]
+    if len(line_heights) < 5:
+        return 4
+    avg = sum(line_heights) / len(line_heights)
+    raw = round(avg + 0.5)
+    return max(3, min(6, raw))
 
 
 def _get_column_heights(graph_values, max_cols=30):
@@ -3137,13 +3156,15 @@ def _get_line_pong_runs(arr):
     return line_runs, pong_runs
 
 
-def _detect_v_pattern(line_runs, pong_runs, graph_values_head=None):
+def _detect_v_pattern(line_runs, pong_runs, graph_values_head=None, line_threshold=None):
     """
     V자 패턴 감지: 긴 줄 → 한두 개 퐁당 → 짧은 줄 → 퐁당 → … → 다시 긴 줄로 가는 그래프.
     이 구간에서는 연패가 많아서, 퐁당(바뀜) 쪽 가중치를 올려서 넘기기 쉽게 함.
     graph_values_head: [v0, v1] 최신 2개 (같으면 첫 run이 줄, 다르면 퐁당). 없으면 줄 먼저로 가정.
+    line_threshold: 장줄 기준. None이면 4. 동적 임계값 사용 시 heights로 _get_dynamic_line_threshold 호출 후 전달.
     반환: (bool) V자 밸런스 구간에 해당하면 True.
     """
+    thresh = line_threshold if line_threshold is not None else 4
     if not line_runs or not pong_runs:
         return False
     first_is_line = True
@@ -3153,14 +3174,14 @@ def _detect_v_pattern(line_runs, pong_runs, graph_values_head=None):
             first_is_line = (a == b)
     # 시간 순서(최신→과거): 첫 run이 줄이면 [line0, pong0, line1, pong1, ...], 퐁당이면 [pong0, line0, pong1, line1, ...]
     if first_is_line:
-        long_line = line_runs[0] >= 4
+        long_line = line_runs[0] >= thresh
         short_pong_after = len(pong_runs) >= 1 and 1 <= pong_runs[0] <= 2
         short_line_after = len(line_runs) >= 2 and line_runs[1] <= 2
         return long_line and short_pong_after and short_line_after
     else:
         if len(line_runs) < 2 or len(pong_runs) < 2:
             return False
-        long_line = line_runs[0] >= 4
+        long_line = line_runs[0] >= thresh
         short_pong_after = 1 <= pong_runs[1] <= 2
         short_line_after = line_runs[1] <= 2
         return long_line and short_pong_after and short_line_after
@@ -3844,10 +3865,12 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         pong_chunk_debug['pattern_len_used'] = pattern_len_used
         col_heights = _get_column_heights(graph_values, 30)
         pong_chunk_debug['column_heights'] = col_heights  # 열 높이 (장줄/짧은줄 파악용)
-        long_cols = sum(1 for h in col_heights if h >= 4)
-        short_cols = sum(1 for h in col_heights if 2 <= h <= 3)
+        dyn_thresh = _get_dynamic_line_threshold(col_heights, 20)
+        long_cols = sum(1 for h in col_heights if h >= dyn_thresh)
+        short_cols = sum(1 for h in col_heights if 2 <= h < dyn_thresh)
         pong_cols = sum(1 for h in col_heights if h == 1)
-        pong_chunk_debug['long_short_stats'] = {'long': long_cols, 'short': short_cols, 'pong': pong_cols, 'total': len(col_heights)}  # 장줄(4+), 짧은줄(2~3), 퐁당(1)
+        pong_chunk_debug['dynamic_line_threshold'] = dyn_thresh
+        pong_chunk_debug['long_short_stats'] = {'long': long_cols, 'short': short_cols, 'pong': pong_cols, 'total': len(col_heights), 'threshold': dyn_thresh}  # 장줄(threshold+), 짧은줄(2~threshold-1), 퐁당(1)
         pong_chunk_debug['symmetry_windows_used'] = symmetry_windows_used
         pong_chunk_debug['u_shape'] = u35_detected
         pong_chunk_debug['shape_signature'] = _get_shape_signature(results)  # 저장·대조용 모양 코드 (S/M/L 구간, 예: L,S,M)
@@ -6820,6 +6843,16 @@ RESULTS_HTML = '''
                         }
                     });
                     if (current !== null) segments.push({ type: current, count: count });
+                    const heights = segments.map(s => s.count);
+                    function getDynamicLineThreshold(h, w) {
+                        if (!h || h.length === 0) return 4;
+                        const lineHeights = h.slice(0, w).filter(x => x >= 2);
+                        if (lineHeights.length < 5) return 4;
+                        const avg = lineHeights.reduce((a, b) => a + b, 0) / lineHeights.length;
+                        const raw = Math.round(avg + 0.5);
+                        return Math.max(3, Math.min(6, raw));
+                    }
+                    const dynThresh = getDynamicLineThreshold(heights, 20);
                     segments.forEach(seg => {
                         const col = document.createElement('div');
                         col.className = 'graph-column';
@@ -6832,7 +6865,7 @@ RESULTS_HTML = '''
                         const numSpan = document.createElement('span');
                         numSpan.className = 'graph-column-num';
                         numSpan.textContent = seg.count;
-                        numSpan.title = seg.count >= 4 ? '장줄' : (seg.count == 1 ? '퐁당' : '짧은줄');
+                        numSpan.title = seg.count >= dynThresh ? '장줄' : (seg.count == 1 ? '퐁당' : '짧은줄');
                         col.appendChild(numSpan);
                         graphDiv.appendChild(col);
                     });
@@ -7336,13 +7369,35 @@ RESULTS_HTML = '''
                     }
                     const useForPattern = graphValues.slice(0, 30);  // 최근 30회 = 30개 값 → 29쌍
                     const { lineRuns, pongRuns } = getLinePongRuns(useForPattern);
-                    function detectVPattern(lineRuns, pongRuns, head) {
+                    const colHeights = (() => {
+                        const f = useForPattern.filter(v => v === true || v === false);
+                        const segs = []; let cur = null, cnt = 0;
+                        f.forEach(v => {
+                            if (v === cur) cnt++; else {
+                                if (cur !== null) segs.push(cnt);
+                                cur = v; cnt = 1;
+                            }
+                        });
+                        if (cur !== null) segs.push(cnt);
+                        return segs;
+                    })();
+                    function getDynamicLineThresholdForPattern(h, w) {
+                        if (!h || h.length === 0) return 4;
+                        const lineHeights = h.slice(0, w).filter(x => x >= 2);
+                        if (lineHeights.length < 5) return 4;
+                        const avg = lineHeights.reduce((a, b) => a + b, 0) / lineHeights.length;
+                        const raw = Math.round(avg + 0.5);
+                        return Math.max(3, Math.min(6, raw));
+                    }
+                    const vPatternThresh = getDynamicLineThresholdForPattern(colHeights, 20);
+                    function detectVPattern(lineRuns, pongRuns, head, thresh) {
+                        thresh = thresh != null ? thresh : 4;
                         if (!lineRuns || !lineRuns.length || !pongRuns || !pongRuns.length) return false;
                         const firstIsLine = !head || head.length < 2 ? true : (head[0] === true || head[0] === false) && (head[0] === head[1]);
                         if (firstIsLine) {
-                            return lineRuns[0] >= 4 && pongRuns[0] >= 1 && pongRuns[0] <= 2 && lineRuns.length >= 2 && lineRuns[1] <= 2;
+                            return lineRuns[0] >= thresh && pongRuns[0] >= 1 && pongRuns[0] <= 2 && lineRuns.length >= 2 && lineRuns[1] <= 2;
                         }
-                        return lineRuns.length >= 2 && pongRuns.length >= 2 && lineRuns[0] >= 4 && pongRuns[1] >= 1 && pongRuns[1] <= 2 && lineRuns[1] <= 2;
+                        return lineRuns.length >= 2 && pongRuns.length >= 2 && lineRuns[0] >= thresh && pongRuns[1] >= 1 && pongRuns[1] <= 2 && lineRuns[1] <= 2;
                     }
                     const totalLineRuns = lineRuns.length;
                     const totalPongRuns = pongRuns.length;
@@ -7545,7 +7600,7 @@ RESULTS_HTML = '''
                         }
                         lineW += chunkIdx * 0.2 + twoOneIdx * 0.1;
                         pongW += scatterIdx * 0.2;
-                        if (detectVPattern(lineRuns, pongRuns, useForPattern.slice(0, 2))) {
+                        if (detectVPattern(lineRuns, pongRuns, useForPattern.slice(0, 2), vPatternThresh)) {
                             pongW += 0.12;
                             lineW = Math.max(0, lineW - 0.06);
                         }
