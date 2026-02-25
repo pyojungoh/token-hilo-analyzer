@@ -690,7 +690,7 @@ def _get_shape_only_pick_with_phase(results, exclude_round=None, calc_state=None
         use_for_pattern[:2] if len(use_for_pattern) >= 2 else None,
         pong_pct, pong_prev15
     )
-    # 퐁당 구간 감지 비활성화 — 덩어리 위주. pong_phase/chunk_to_pong은 더 이상 반환되지 않음
+    # 퐁당 구간: chunk_to_pong(덩어리→퐁당) 반환 시 is_pong. pong_phase는 미반환
     is_pong = phase in ('pong_phase', 'chunk_to_pong')
     if is_pong:
         c = calc_state or {}
@@ -3446,7 +3446,7 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
     덩어리 / 줄 구간 판별. 시각화·예측픽 가중치에 사용. (퐁당 구간 감지 비활성화 — 덩어리 위주)
     - 줄 구간: 한쪽으로 길게 이어짐 (line run >= 5).
     - 덩어리 구간: 꺽줄-정-꺽줄-정 블록 반복, 줄1퐁당1, 또는 줄 2~4. debug에 chunk_shape(321/123/block_repeat) 추가.
-    - 퐁당 구간(pong_phase, chunk_to_pong)은 반환하지 않음 → None.
+    - 덩어리→퐁당(chunk_to_pong): 최근 15 퐁당%가 직전 15보다 20%p 이상 높을 때 반환.
     """
     debug = {'first_run_type': None, 'first_run_len': 0, 'pong_pct_short': pong_pct_short, 'pong_pct_prev': pong_pct_prev, 'segment_type': None, 'chunk_shape': None}
     if not line_runs and not pong_runs:
@@ -3480,9 +3480,11 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
         debug['segment_type'] = 'chunk'
         debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, True)
         return 'pong_to_chunk', debug
-    # 퐁당 구간 감지 비활성화 — 덩어리 위주로만 감지 (chunk_to_pong → None)
+    # 덩어리→퐁당 전환: 최근 15 퐁당%가 직전 15보다 20%p 이상 높음 → 퐁당 가중치 가산
     if diff_short_prev >= 20:
-        return None, debug
+        debug['segment_type'] = 'pong'
+        debug['chunk_shape'] = 'chunk_to_pong'
+        return 'chunk_to_pong', debug
     # 덩어리 직후 퐁당 진입: 퐁당 구간 감지 비활성화 — None 반환
     if not first_is_line and pong_runs and line_runs and len(pong_runs) >= 1 and line_runs[0] >= 2:
         return None, debug
@@ -3813,6 +3815,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     elif phase in ('chunk_start', 'chunk_phase', 'pong_to_chunk'):
         curr_line_len = line_runs[0] if (first_is_line_col and line_runs) else 0
         suppress_break = has_long_line and not allow_break_consideration  # 긴줄일 때 끊김 예측 억제
+        is_321_bottom = (chunk_shape == '321' and curr_line_len <= 3 and line_runs and len(line_runs) >= 2 and line_runs[1] <= curr_line_len)
         if phase == 'pong_to_chunk':
             line_w += 0.04
             pong_w = max(0.0, pong_w - 0.02)  # 퐁당→덩어리 전환: CSV 49.8% 승률, 꺽 과다 완화
@@ -3824,11 +3827,19 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
                 line_w += 0.05  # 덩어리 기본 가중치 축소 (위로만 쏠림 완화)
                 pong_w = max(0.0, pong_w - 0.025)
             if chunk_shape == '321' and not suppress_break:
-                pong_w += 0.05 * pong_mul  # 321(줄어듦) 구간 퐁당 가산 — CSV 연패분석: 꺽 과다(49.2%) 완화
-                line_w = max(0.0, line_w - 0.025 * pong_mul)
+                # 321 바닥(2~3): 쭉 내려왔다 쭉 올라가는 전환점 — 반픽 과다 방지
+                if is_321_bottom:
+                    line_w += 0.04 * pong_mul  # 긴줄 돌입 가능성 반영
+                    pong_w = max(0.0, pong_w - 0.02 * pong_mul)
+                else:
+                    pong_w += 0.05 * pong_mul  # 321(줄어듦) 구간 퐁당 가산 — CSV 연패분석: 꺽 과다(49.2%) 완화
+                    line_w = max(0.0, line_w - 0.025 * pong_mul)
             elif chunk_shape == '123':
                 line_w += 0.06 * pong_mul  # 123(늘어남) 구간: 줄 유지 쪽 가산 — 덩어리시작+123 연패 구간 보정
                 pong_w = max(0.0, pong_w - 0.03 * pong_mul)
+                if curr_line_len >= 3:
+                    line_w += 0.04 * pong_mul  # 짧은줄→2~3연속→긴줄 전환 임박: 줄 가산 추가
+                    pong_w = max(0.0, pong_w - 0.02 * pong_mul)
             elif not suppress_break and _detect_line1_pong1_pattern(line_runs, pong_runs, (use_for_pattern[0] == use_for_pattern[1]) if len(use_for_pattern) >= 2 else True):
                 pong_w += 0.05 * pong_mul  # 줄1퐁당1 패턴 퐁당 반영
                 line_w = max(0.0, line_w - 0.025 * pong_mul)
@@ -3849,11 +3860,22 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
                 if not suppress_break:
                     pong_w = max(0.0, pong_w - 0.05)
             if chunk_shape == '321' and not suppress_break:
-                pong_w += 0.03 * pong_mul  # 꺽 과다 완화
-                line_w = max(0.0, line_w - 0.015 * pong_mul)
+                if is_321_bottom:
+                    line_w += 0.03 * pong_mul
+                    pong_w = max(0.0, pong_w - 0.015 * pong_mul)
+                else:
+                    pong_w += 0.03 * pong_mul  # 꺽 과다 완화
+                    line_w = max(0.0, line_w - 0.015 * pong_mul)
             elif chunk_shape == '123':
                 line_w += 0.06
                 pong_w = max(0.0, pong_w - 0.03)
+                if curr_line_len >= 3:
+                    line_w += 0.04
+                    pong_w = max(0.0, pong_w - 0.02)
+        pong_chunk_phase = phase
+    elif phase == 'chunk_to_pong':
+        pong_w = min(1.0, pong_w + 0.12)  # 덩어리→퐁당 전환: 퐁당 길게 늘리는 구간
+        line_w = max(0.0, 1.0 - pong_w)
         pong_chunk_phase = phase
     elif phase is None:
         line_w += 0.04
@@ -3870,6 +3892,8 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     if isinstance(pong_chunk_debug, dict):
         pong_chunk_debug['has_long_line'] = has_long_line
         pong_chunk_debug['allow_break_consideration'] = allow_break_consideration
+        if phase in ('chunk_start', 'chunk_phase', 'pong_to_chunk'):
+            pong_chunk_debug['321_bottom'] = is_321_bottom
     # 저장된 모양 가중치: 그 모양 다음에 정/꺽이 많았으면 해당 예측 쪽 가산. 줄/퐁당은 last에 따라 결정.
     # 정 많음→정 예측: last 정이면 줄(유지), last 꺽이면 퐁당(바뀜). 꺽 많음→꺽 예측: last 꺽이면 줄, last 정이면 퐁당.
     # 강화: 과거에 자주 나온 모양일수록 가중치 상향 (0.04~0.10 → 0.08~0.20). 65% 이상 편향 시 추가 가산.
@@ -8155,10 +8179,11 @@ RESULTS_HTML = '''
                             var phaseLabels = { 'line_phase': '줄 구간', 'pong_phase': '퐁당 구간', 'chunk_start': '덩어리 막 시작', 'chunk_phase': '덩어리 만드는 중', 'pong_to_chunk': '퐁당→덩어리 전환', 'chunk_to_pong': '덩어리→퐁당 전환' };
                             var phaseLabel = (lastPongChunkPhase && phaseLabels[lastPongChunkPhase]) ? phaseLabels[lastPongChunkPhase] : (lastPongChunkPhase || '—');
                             var segmentLabels = { 'line': '줄', 'pong': '퐁당', 'chunk': '덩어리' };
-                            var chunkShapeLabels = { '321': '321 (줄어듦)', '123': '123 (늘어남)', 'block_repeat': '블록 반복' };
+                            var chunkShapeLabels = { '321': '321 (줄어듦)', '123': '123 (늘어남)', 'block_repeat': '블록 반복', 'chunk_to_pong': '덩어리→퐁당' };
                             var d = lastPongChunkDebug || {};
                             var segmentLabel = (d.segment_type && segmentLabels[d.segment_type]) ? segmentLabels[d.segment_type] : (d.segment_type || '—');
                             var chunkShapeLabel = (d.chunk_shape && chunkShapeLabels[d.chunk_shape]) ? chunkShapeLabels[d.chunk_shape] : (d.chunk_shape || '—');
+                            var i321BottomLabel = (d['321_bottom'] === true) ? '감지됨 (쭉 내려왔다 쭉 올라가는 전환점 → 줄 가산)' : '—';
                             var uShapeLabel = (d.u_shape === true) ? '감지됨 (유지 가중치↑, 멈춤 권장)' : '—';
                             var chunkProfileStatsLabel = '—';
                             if (d.chunk_profile_jung != null && d.chunk_profile_kkeok != null) {
@@ -8191,6 +8216,7 @@ RESULTS_HTML = '''
                             var rows = '<tr><td>판별 구간</td><td>' + phaseLabel + '</td></tr>' +
                                 '<tr><td>구간 유형</td><td>' + segmentLabel + '</td></tr>' +
                                 '<tr><td>덩어리 모양</td><td>' + chunkShapeLabel + '</td></tr>' +
+                                '<tr><td>321 바닥</td><td>' + i321BottomLabel + '</td></tr>' +
                                 '<tr><td>U자 구간</td><td>' + uShapeLabel + '</td></tr>' +
                                 '<tr><td>전체 퐁당 우세</td><td>' + overallPongLabel + '</td></tr>' +
                                 '<tr><td>열 높이 (최근)</td><td>' + colHeightsLabel + '</td></tr>' +
