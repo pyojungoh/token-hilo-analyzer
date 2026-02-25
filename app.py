@@ -4046,6 +4046,12 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     adj_same_n = adj_same / s
     adj_change_n = adj_change / s
     predict = ('정' if last is True else '꺽') if adj_same_n >= adj_change_n else ('꺽' if last is True else '정')
+    # 히스테리시스: 가중치가 비슷할 때(5%p 이내) 직전 예측 유지 — 메인픽 왔다갔다 감소
+    diff = abs(adj_same_n - adj_change_n)
+    if diff < 0.05 and prediction_history:
+        last_ph = next((h for h in reversed(prediction_history) if h and h.get('predicted') in ('정', '꺽')), None)
+        if last_ph and last_ph.get('predicted') in ('정', '꺽'):
+            predict = last_ph['predicted']
     pred_prob = (adj_same_n if predict == ('정' if last is True else '꺽') else adj_change_n) * 100
     # U+3~5 구간: 과신 방지 (예측 안정화·부하 완화)
     if u35_detected and pred_prob > 58:
