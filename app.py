@@ -3836,8 +3836,15 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         suppress_break = has_long_line and not allow_break_consideration  # 긴줄일 때 끊김 예측 억제
         is_321_bottom = (chunk_shape == '321' and curr_line_len <= 3 and line_runs and len(line_runs) >= 2 and line_runs[1] <= curr_line_len)
         if phase == 'pong_to_chunk':
-            line_w += 0.04
-            pong_w = max(0.0, pong_w - 0.02)  # 퐁당→덩어리 전환: CSV 49.8% 승률, 꺽 과다 완화
+            # 퐁당→덩어리 전환: CSV 46.9% — 꺽 과다. block_repeat 41.9%, 123 46.8%
+            line_w += 0.08
+            pong_w = max(0.0, pong_w - 0.04)
+            if chunk_shape == 'block_repeat':
+                line_w += 0.06
+                pong_w = max(0.0, pong_w - 0.03)
+            elif chunk_shape == '123':
+                line_w += 0.04  # 123(늘어남) 전환 시 꺽 과다(46.8%) 보정
+                pong_w = max(0.0, pong_w - 0.02)
         if use_shape_adjustments:
             if curr_line_len == 2 and not suppress_break:
                 pong_w += 0.05
@@ -3897,8 +3904,17 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         line_w = max(0.0, 1.0 - pong_w)
         pong_chunk_phase = phase
     elif phase is None:
-        line_w += 0.04
-        pong_w = max(0.0, pong_w - 0.02)  # 미분류 구간: CSV 49% 승률, 꺽 과다 완화
+        # 미분류/퐁당구간: CSV 퐁당 65%+ 51%, 퐁당<45% 46%, 미분류(-) 45.1%
+        # pong_pct 기준 분기 — 퐁당구간이면 꺽(바뀜) 가산, 덩어리/줄이면 정(유지) 가산
+        if pong_pct >= 55:
+            pong_w = min(1.0, pong_w + 0.10)
+            line_w = max(0.0, 1.0 - pong_w)
+        elif pong_pct <= 42:
+            line_w = min(1.0, line_w + 0.10)
+            pong_w = max(0.0, pong_w - 0.05)
+        else:
+            line_w += 0.04
+            pong_w = max(0.0, pong_w - 0.02)
     # 장줄(5+) 이후 끊김 예측 완화: 5연속 이상일 때 꺽(끊김) 과대 예측 방지 — 5에서 끊김 과다 방지
     if first_is_line_col and line_runs and line_runs[0] >= 5:
         line_w = min(1.0, line_w + 0.08)
