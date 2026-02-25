@@ -3743,7 +3743,9 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     dyn_thresh_break = _get_dynamic_line_threshold(col_heights_break, 20) if col_heights_break else 4
     chunk_sub_break = _detect_chunk_subpattern(col_heights_break, 15) if col_heights_break else None
     has_long_line = any(h >= dyn_thresh_break for h in (col_heights_break[:20] if col_heights_break else []))
-    allow_break_consideration = (chunk_sub_break == 'chunk_2pair')
+    # 현재 줄이 5 이상이면 chunk_2pair여도 끊김 억제 유지 (5에서 끊김 과다 방지)
+    current_seg_5plus = bool(col_heights_break and col_heights_break[0] >= 5)
+    allow_break_consideration = (chunk_sub_break == 'chunk_2pair') and not current_seg_5plus
     if flow_state == 'line_strong':
         line_w = min(1.0, line_w + 0.25)
         pong_w = max(0.0, 1.0 - line_w)
@@ -3856,8 +3858,8 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     elif phase is None:
         line_w += 0.04
         pong_w = max(0.0, pong_w - 0.02)  # 미분류 구간: CSV 49% 승률, 꺽 과다 완화
-    # 장줄(6+) 이후 끊김 예측 완화: 6연속 이상일 때 꺽(끊김) 과대 예측 방지 — 10연패 분석 반영
-    if first_is_line_col and line_runs and line_runs[0] >= 6:
+    # 장줄(5+) 이후 끊김 예측 완화: 5연속 이상일 때 꺽(끊김) 과대 예측 방지 — 5에서 끊김 과다 방지
+    if first_is_line_col and line_runs and line_runs[0] >= 5:
         line_w = min(1.0, line_w + 0.08)
         pong_w = max(0.0, pong_w - 0.04)
     # 긴줄 구간 끊김 예측 억제: col_heights_break·has_long_line·allow_break_consideration은 위(3691~3695)에서 이미 계산됨
@@ -7778,7 +7780,8 @@ RESULTS_HTML = '''
                             return 'chunk_mixed';
                         }
                         var chunkSubClient = getChunkSubClient(colHeights, 15);
-                        var allowBreakConsideration = (chunkSubClient === 'chunk_2pair');
+                        var currentSeg5Plus = colHeights && colHeights[0] >= 5;
+                        var allowBreakConsideration = (chunkSubClient === 'chunk_2pair') && !currentSeg5Plus;
                         if (hasLongLine && !allowBreakConsideration) {
                             lineW = Math.min(1, lineW + 0.12);
                             pongW = Math.max(0, pongW - 0.12);
