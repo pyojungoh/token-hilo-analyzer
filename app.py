@@ -1996,7 +1996,7 @@ def _apply_results_to_calcs(results):
                 use_smart = c.get('smart_reverse') or c.get('win_rate_reverse') or c.get('lose_streak_reverse') or c.get('win_rate_direction_reverse')
                 ph = get_prediction_history(150)
                 run_length = _get_current_result_run_length(ph)
-                no_reverse_in_streak = bool(c.get('streak_suppress_reverse', False)) and run_length >= 5
+                no_reverse_in_streak = bool(c.get('streak_suppress_reverse', False)) and run_length >= 4
                 main_rate15 = _get_main_recent15_win_rate(ph)
                 if use_smart and not no_reverse_in_streak:
                     thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 50)))
@@ -2016,6 +2016,9 @@ def _apply_results_to_calcs(results):
                             c['last_trend_direction'] = 'up'
                         elif zone == 'mid_flat' and c.get('last_trend_direction') == 'down':
                             do_reverse = True
+                    res_for_phase = results_for_shape if (results_for_shape and len(results_for_shape) >= 16) else results
+                    if do_reverse and res_for_phase and _suppress_smart_reverse_by_phase(res_for_phase):
+                        do_reverse = False
                     if do_reverse:
                         pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
                         bet_color_for_history = _flip_pick_color(bet_color_for_history)
@@ -2367,8 +2370,8 @@ def _server_calc_effective_pick_and_amount(c):
     main_rate15 = _get_main_recent15_win_rate(ph)
     run_length = _get_current_result_run_length(ph)
     streak_suppress = bool(c.get('streak_suppress_reverse', False))
-    # 줄 5 이상(5연승/5연패)일 때 반픽 억제
-    no_reverse_in_streak = streak_suppress and run_length >= 5
+    # 줄 4 이상(4연승/4연패)일 때 반픽 억제 — 퐁당→긴줄 갑작스런 전환 시 연패 감소
+    no_reverse_in_streak = streak_suppress and run_length >= 4
     # 반픽/승률반픽/연패반픽/승률방향 반픽 적용 (클라이언트와 동일). 메인 15경기 승률 좋으면(53% 이상) 반픽 억제.
     if c.get('reverse'):
         pred = '꺽' if pred == '정' else '정'
@@ -2395,6 +2398,16 @@ def _server_calc_effective_pick_and_amount(c):
                 c['last_trend_direction'] = 'up'
             elif zone == 'mid_flat' and c.get('last_trend_direction') == 'down':
                 do_reverse = True
+        # 패턴 기반 억제: 긴줄·긴 퐁당 구간에서는 승률만 보고 반픽하지 않음 (계속 틀리다 방향 바꿔서 또 틀림 방지)
+        if do_reverse:
+            try:
+                results_sr = get_recent_results(hours=24)
+                if results_sr:
+                    results_sr = _sort_results_newest_first(results_sr)
+                    if _suppress_smart_reverse_by_phase(results_sr):
+                        do_reverse = False
+            except Exception:
+                pass
         if do_reverse:
             pred = '꺽' if pred == '정' else '정'
             color = _flip_pick_color(color)
@@ -2454,6 +2467,8 @@ def _server_calc_effective_pick_and_amount(c):
                     c['last_trend_direction'] = 'up'
                 elif zone == 'mid_flat' and c.get('last_trend_direction') == 'down':
                     do_reverse = True
+            if do_reverse and _suppress_smart_reverse_by_phase(results):
+                do_reverse = False
             if do_reverse:
                 pred = '꺽' if pred == '정' else '정'
                 color = _flip_pick_color(color)
@@ -3509,6 +3524,34 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
         return None, debug
 
 
+def _suppress_smart_reverse_by_phase(results):
+    """
+    스마트 반픽 패턴 기반 억제. 승률만 보고 반픽하면 '계속 틀리다 방향 바꿔서 또 계속 틀림'을 방지.
+    - line_phase(긴줄): line_runs[0] >= 5 → 반픽 억제 (정픽 유지)
+    - chunk_to_pong + pong_pct >= 55 (긴 퐁당): 반픽 억제
+    반환: True면 승률/연패/방향 기반 반픽을 적용하지 않음.
+    """
+    if not results or len(results) < 16:
+        return False
+    try:
+        gv = _build_graph_values(results)
+        if len(gv) < 4:
+            return False
+        use = gv[:30]
+        line_runs, pong_runs = _get_line_pong_runs(use)
+        head = gv[:2] if len(gv) >= 2 else None
+        pong_pct, _ = _pong_line_pct(gv[:15]) if len([x for x in gv[:15] if x is True or x is False]) >= 2 else (50.0, 50.0)
+        pong_prev = _pong_line_pct(gv[15:30])[0] if len(gv) >= 30 else 50.0
+        phase, _ = _detect_pong_chunk_phase(line_runs, pong_runs, head, pong_pct, pong_prev)
+        if phase == 'line_phase':
+            return True
+        if phase == 'chunk_to_pong' and pong_pct >= 55:
+            return True
+        return False
+    except Exception:
+        return False
+
+
 def _compute_blend_data(prediction_history):
     """예측 이력(actual!=joker)으로 15/30/100 구간 반영 확률."""
     valid = [h for h in (prediction_history or []) if h and isinstance(h, dict)]
@@ -3759,8 +3802,13 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     overall_pong = _detect_overall_pong_dominant(graph_values)
     if overall_pong:
         if not (has_long_line and not allow_break_consideration):
-            pong_w = min(1.0, pong_w + 0.14)
-            line_w = max(0.0, 1.0 - pong_w)
+            # 퐁당→긴줄 전환: 짧은 퐁당(2,3) 후 줄이 3+ 쌓이면 긴줄 돌입 가능 — 줄 가산
+            if first_is_line_col and line_runs and line_runs[0] >= 3:
+                line_w = min(1.0, line_w + 0.10)
+                pong_w = max(0.0, pong_w - 0.05)
+            else:
+                pong_w = min(1.0, pong_w + 0.14)
+                line_w = max(0.0, 1.0 - pong_w)
 
     if symmetry_line_data:
         lc = symmetry_line_data['leftLineCount']
@@ -5803,7 +5851,7 @@ RESULTS_HTML = '''
                                     <div class="calc-options-body">
                                         <table class="calc-settings-table">
                                             <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-smart-reverse" title="승률반픽+연패반픽+승률방향반픽 통합. 조건 하나라도 만족 시 반픽" checked> 스마트 반픽</label> <label title="승률 이 값 이하일 때 반픽">승률≤<input type="number" id="calc-1-smart-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%</label> <label title="이 값 이상 연패+승률≤%일 때 반픽">연패≥<input type="number" id="calc-1-smart-reverse-min-streak" min="2" max="15" value="3" class="calc-threshold-input">회</label></td></tr>
-                                            <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제" checked> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-1-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
+                                            <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-streak-suppress-reverse" title="4연승 또는 4연패일 때 반픽 억제 (퐁당→긴줄 전환 시 연패 감소)" checked> 줄 4 이상 반픽 억제</label> <label><input type="checkbox" id="calc-1-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>예측기픽</td><td><label><input type="checkbox" id="calc-1-prediction-picks-best" title="예측기픽 메뉴에서 강조된 카드(15회 승률 최고) 픽으로 배팅"> 예측기픽 메뉴 강조 픽으로 배팅</label> <label><input type="checkbox" id="calc-1-prediction-picks-shape-pong-only" title="예측기픽 사용 시 모양·퐁당만 사용 (메인·메인반픽 제외)"> 모양·퐁당만</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-1-shape-only-latest-next-pick" title="퐁당 구간→모양판별 픽, 덩어리/줄 구간→가장 최근 다음 픽. 자동 스위칭. 값 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
                                             <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-1-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-1-shape-prediction-reverse"> 모양판별반픽</label> <label title="메인 예측기표 모양판별 픽 최신 15회 승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-1-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label> <label title="모양판별 계산식 내 shape/chunk/퐁당/대칭 배율(0~3, 기본 1)">shape×<input type="number" id="calc-1-shape-weight" min="0" max="3" step="0.1" value="1.1" class="calc-threshold-input" style="width:3em"> chunk×<input type="number" id="calc-1-chunk-weight" min="0" max="3" step="0.1" value="1.2" class="calc-threshold-input" style="width:3em"> 퐁당×<input type="number" id="calc-1-pong-weight" min="0" max="3" step="0.1" value="0.9" class="calc-threshold-input" style="width:3em"> 대칭×<input type="number" id="calc-1-symmetry-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"></label></td></tr>
@@ -5859,7 +5907,7 @@ RESULTS_HTML = '''
                                     <div class="calc-options-body">
                                         <table class="calc-settings-table">
                                             <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-smart-reverse" title="승률반픽+연패반픽+승률방향반픽 통합. 조건 하나라도 만족 시 반픽"> 스마트 반픽</label> <label title="승률 이 값 이하일 때 반픽">승률≤<input type="number" id="calc-2-smart-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%</label> <label title="이 값 이상 연패+승률≤%일 때 반픽">연패≥<input type="number" id="calc-2-smart-reverse-min-streak" min="2" max="15" value="3" class="calc-threshold-input">회</label></td></tr>
-                                            <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-2-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
+                                            <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-streak-suppress-reverse" title="4연승 또는 4연패일 때 반픽 억제"> 줄 4 이상 반픽 억제</label> <label><input type="checkbox" id="calc-2-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>예측기픽</td><td><label><input type="checkbox" id="calc-2-prediction-picks-best" title="예측기픽 메뉴에서 강조된 카드(15회 승률 최고) 픽으로 배팅"> 예측기픽 메뉴 강조 픽으로 배팅</label> <label><input type="checkbox" id="calc-2-prediction-picks-shape-pong-only" title="예측기픽 사용 시 모양·퐁당만 사용 (메인·메인반픽 제외)"> 모양·퐁당만</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-2-shape-only-latest-next-pick" title="퐁당 구간→모양판별 픽, 덩어리/줄 구간→가장 최근 다음 픽. 자동 스위칭. 값 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
                                             <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-2-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-2-shape-prediction-reverse"> 모양판별반픽</label> <label title="메인 예측기표 모양판별 픽 최신 15회 승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-2-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label> <label title="모양판별 계산식 내 shape/chunk/퐁당/대칭 배율(0~3, 기본 1)">shape×<input type="number" id="calc-2-shape-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> chunk×<input type="number" id="calc-2-chunk-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 퐁당×<input type="number" id="calc-2-pong-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 대칭×<input type="number" id="calc-2-symmetry-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"></label></td></tr>
@@ -5915,7 +5963,7 @@ RESULTS_HTML = '''
                                     <div class="calc-options-body">
                                         <table class="calc-settings-table">
                                             <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-smart-reverse" title="승률반픽+연패반픽+승률방향반픽 통합. 조건 하나라도 만족 시 반픽"> 스마트 반픽</label> <label title="승률 이 값 이하일 때 반픽">승률≤<input type="number" id="calc-3-smart-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%</label> <label title="이 값 이상 연패+승률≤%일 때 반픽">연패≥<input type="number" id="calc-3-smart-reverse-min-streak" min="2" max="15" value="3" class="calc-threshold-input">회</label></td></tr>
-                                            <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-streak-suppress-reverse" title="5연승 또는 5연패일 때 반픽 억제"> 줄 5 이상 반픽 억제</label> <label><input type="checkbox" id="calc-3-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
+                                            <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-streak-suppress-reverse" title="4연승 또는 4연패일 때 반픽 억제"> 줄 4 이상 반픽 억제</label> <label><input type="checkbox" id="calc-3-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>예측기픽</td><td><label><input type="checkbox" id="calc-3-prediction-picks-best" title="예측기픽 메뉴에서 강조된 카드(15회 승률 최고) 픽으로 배팅"> 예측기픽 메뉴 강조 픽으로 배팅</label> <label><input type="checkbox" id="calc-3-prediction-picks-shape-pong-only" title="예측기픽 사용 시 모양·퐁당만 사용 (메인·메인반픽 제외)"> 모양·퐁당만</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-3-shape-only-latest-next-pick" title="퐁당 구간→모양판별 픽, 덩어리/줄 구간→가장 최근 다음 픽. 자동 스위칭. 값 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
                                             <tr><td>모양판별</td><td><label><input type="checkbox" id="calc-3-shape-prediction" title="덩어리 끝 변형 허용·퐁당 가중치 등 개선된 모양 판별로 픽. 기존 모양옵션과 별도."> 모양판별 픽 사용</label> <label><input type="checkbox" id="calc-3-shape-prediction-reverse"> 모양판별반픽</label> <label title="메인 예측기표 모양판별 픽 최신 15회 승률 이 값 이하일 때 반픽">모양판별승률≤<input type="number" id="calc-3-shape-prediction-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%일 때 반픽</label> <label title="모양판별 계산식 내 shape/chunk/퐁당/대칭 배율(0~3, 기본 1)">shape×<input type="number" id="calc-3-shape-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> chunk×<input type="number" id="calc-3-chunk-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 퐁당×<input type="number" id="calc-3-pong-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"> 대칭×<input type="number" id="calc-3-symmetry-weight" min="0" max="3" step="0.1" value="1" class="calc-threshold-input" style="width:3em"></label></td></tr>
@@ -7241,7 +7289,7 @@ RESULTS_HTML = '''
                                     var smartThr = (smartThrEl && !isNaN(parseFloat(smartThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrEl.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 50);
                                     var streakSuppress = !!(calcState[id] && calcState[id].streak_suppress_reverse);
                                     var noRevByMain15 = (r15 == null || r15 < 53);
-                                    var noRevByStreak5 = !(streakSuppress && runLen >= 5);
+                                    var noRevByStreak5 = !(streakSuppress && runLen >= 4);
                                     betColor = normalizePickColor(predForRound.color);
                                     if (baseForPred !== predForRound.value) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
@@ -7314,7 +7362,7 @@ RESULTS_HTML = '''
                                     var smartThrA = (smartThrElA && !isNaN(parseFloat(smartThrElA.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrElA.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 50);
                                     var streakSuppressA = !!(calcState[id] && calcState[id].streak_suppress_reverse);
                                     var noRevByMain15A = (r15 == null || r15 < 53);
-                                    var noRevByStreak5A = !(streakSuppressA && runLen >= 5);
+                                    var noRevByStreak5A = !(streakSuppressA && runLen >= 4);
                                     var shapePredRevA = !!(calcState[id] && calcState[id].shape_prediction_reverse);
                                     var shapePredRevThrA = (calcState[id] != null && typeof calcState[id].shape_prediction_reverse_threshold === 'number') ? calcState[id].shape_prediction_reverse_threshold : 50;
                                     if (!!(calcState[id] && calcState[id].shape_prediction) && shapePredRevA && typeof getShapePredictionWinRate15 === 'function') {
@@ -7412,7 +7460,7 @@ RESULTS_HTML = '''
                                     var smartThr2 = (smartThrEl2 && !isNaN(parseFloat(smartThrEl2.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrEl2.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 50);
                                     var streakSuppress2 = !!(calcState[id] && calcState[id].streak_suppress_reverse);
                                     var noRevByMain152 = (r15 == null || r15 < 53);
-                                    var noRevByStreak52 = !(streakSuppress2 && runLen >= 5);
+                                    var noRevByStreak52 = !(streakSuppress2 && runLen >= 4);
                                     betColor = normalizePickColor(predForRound.color);
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     var doRev2 = false;
@@ -7471,7 +7519,7 @@ RESULTS_HTML = '''
                                     var smartThr3 = (smartThrEl3 && !isNaN(parseFloat(smartThrEl3.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrEl3.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 50);
                                     var streakSuppress3 = !!(calcState[id] && calcState[id].streak_suppress_reverse);
                                     var noRevByMain153 = (r15 == null || r15 < 53);
-                                    var noRevByStreak53 = !(streakSuppress3 && runLen >= 5);
+                                    var noRevByStreak53 = !(streakSuppress3 && runLen >= 4);
                                     betColorActual = normalizePickColor(predForRound.color);
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     var doRev3 = false;
@@ -9183,7 +9231,7 @@ RESULTS_HTML = '''
                 var statusTxt = '실행중';
                 if (!!(state.reverse)) statusTxt += ' · 반픽';
                 if (!!(state.smart_reverse)) statusTxt += ' · 스마트 반픽';
-                if (!!(state.streak_suppress_reverse)) statusTxt += ' · 줄5억제';
+                if (!!(state.streak_suppress_reverse)) statusTxt += ' · 줄4억제';
                 if (!!(state.shape_prediction) && !!(state.shape_prediction_reverse)) statusTxt += ' · 반픽중';
                 el.textContent = statusTxt;
             } else if (state.timer_completed) {
@@ -9239,7 +9287,7 @@ RESULTS_HTML = '''
                         } catch (e2) {}
                         var runLenCard = getCurrentResultRunLength(typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory) ? predictionHistory : []);
                         var noRevByMain15Card = (r15Card == null || r15Card < 53);
-                        var noRevByStreak5Card = !(calcState[id].streak_suppress_reverse && runLenCard >= 5);
+                        var noRevByStreak5Card = !(calcState[id].streak_suppress_reverse && runLenCard >= 4);
                         var shapePredOn = !!(document.getElementById('calc-' + id + '-shape-prediction') && document.getElementById('calc-' + id + '-shape-prediction').checked);
                         var predPicksBestOn = !!(document.getElementById('calc-' + id + '-prediction-picks-best') && document.getElementById('calc-' + id + '-prediction-picks-best').checked);
                         var predPicksShapePongOnlyOn = !!(document.getElementById('calc-' + id + '-prediction-picks-shape-pong-only') && document.getElementById('calc-' + id + '-prediction-picks-shape-pong-only').checked);
