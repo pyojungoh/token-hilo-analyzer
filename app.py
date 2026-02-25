@@ -3432,7 +3432,7 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
     덩어리 / 줄 구간 판별. 시각화·예측픽 가중치에 사용. (퐁당 구간 감지 비활성화 — 덩어리 위주)
     - 줄 구간: 한쪽으로 길게 이어짐 (line run >= 5).
     - 덩어리 구간: 꺽줄-정-꺽줄-정 블록 반복, 줄1퐁당1, 또는 줄 2~4. debug에 chunk_shape(321/123/block_repeat) 추가.
-    - 덩어리→퐁당(chunk_to_pong): 최근 15 퐁당%가 직전 15보다 20%p 이상 높을 때 반환.
+    - 덩어리→퐁당(chunk_to_pong): 최근 15 퐁당%가 직전 15보다 12%p 이상 높을 때 반환 (조기 감지).
     """
     debug = {'first_run_type': None, 'first_run_len': 0, 'pong_pct_short': pong_pct_short, 'pong_pct_prev': pong_pct_prev, 'segment_type': None, 'chunk_shape': None}
     if not line_runs and not pong_runs:
@@ -3466,8 +3466,8 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
         debug['segment_type'] = 'chunk'
         debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, True)
         return 'pong_to_chunk', debug
-    # 덩어리→퐁당 전환: 최근 15 퐁당%가 직전 15보다 20%p 이상 높음 → 퐁당 가중치 가산
-    if diff_short_prev >= 20:
+    # 덩어리→퐁당 전환: 최근 15 퐁당%가 직전 15보다 12%p 이상 높음 → 조기 감지 (덩어리 직후 긴퐁당 대응)
+    if diff_short_prev >= 12:
         debug['segment_type'] = 'pong'
         debug['chunk_shape'] = 'chunk_to_pong'
         return 'chunk_to_pong', debug
@@ -3499,7 +3499,7 @@ def _suppress_smart_reverse_by_phase(results):
     """
     스마트 반픽 패턴 기반 억제. 승률만 보고 반픽하면 '계속 틀리다 방향 바꿔서 또 계속 틀림'을 방지.
     - line_phase(긴줄): line_runs[0] >= 5 → 반픽 억제 (정픽 유지)
-    - chunk_to_pong + pong_pct >= 55 (긴 퐁당): 반픽 억제
+    - chunk_to_pong + pong_pct >= 50 (덩어리→긴퐁당): 반픽 억제
     반환: True면 승률/연패/방향 기반 반픽을 적용하지 않음.
     """
     if not results or len(results) < 16:
@@ -3516,7 +3516,7 @@ def _suppress_smart_reverse_by_phase(results):
         phase, _ = _detect_pong_chunk_phase(line_runs, pong_runs, head, pong_pct, pong_prev)
         if phase == 'line_phase':
             return True
-        if phase == 'chunk_to_pong' and pong_pct >= 55:
+        if phase == 'chunk_to_pong' and pong_pct >= 50:  # 50% 이상: 덩어리→긴퐁당 조기 억제
             return True
         return False
     except Exception:
@@ -3703,7 +3703,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         if long_same - short_same >= 15:
             pong_strong_by_transition = True
     line_strong_by_pong = (pong_prev15 - pong_pct >= 20)
-    pong_strong_by_pong = (len(graph_values) >= 30 and pong_pct - pong_prev15 >= 20)
+    pong_strong_by_pong = (len(graph_values) >= 30 and pong_pct - pong_prev15 >= 12)  # 12%p: 덩어리→긴퐁당 조기 감지
     line_strong = line_strong_by_transition or line_strong_by_pong
     pong_strong = pong_strong_by_transition or pong_strong_by_pong
 
@@ -3893,7 +3893,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
                     pong_w = max(0.0, pong_w - 0.02)
         pong_chunk_phase = phase
     elif phase == 'chunk_to_pong':
-        pong_w = min(1.0, pong_w + 0.08)  # 덩어리→퐁당 전환: CSV 47% 승률로 퐁당 가산 완화
+        pong_w = min(1.0, pong_w + 0.15)  # 덩어리→긴퐁당: 퐁당 가산 강화 (덩어리 꺽 고집→퐁당 전환 빠르게)
         line_w = max(0.0, 1.0 - pong_w)
         pong_chunk_phase = phase
     elif phase is None:
@@ -7630,7 +7630,7 @@ RESULTS_HTML = '''
                     }
                     // 퐁당% 추이: 이전 15회 대비 최근 15회 퐁당이 크게 떨어지면 줄 강함, 크게 올라가면 퐁당 강함
                     const lineStrongByPong = (pongPrev15 - pongPct >= 20);
-                    const pongStrongByPong = (graphValues.length >= 30 && pongPct - pongPrev15 >= 20);
+                    const pongStrongByPong = (graphValues.length >= 30 && pongPct - pongPrev15 >= 12);  // 12%p: 덩어리→긴퐁당 조기 감지
                     const lineStrong = lineStrongByTransition || lineStrongByPong;
                     const pongStrong = pongStrongByTransition || pongStrongByPong;
                     
