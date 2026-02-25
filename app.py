@@ -1992,7 +1992,7 @@ def _apply_results_to_calcs(results):
                     pred_for_calc = '꺽' if pending_predicted == '정' else '정'
                     bet_color_for_history = _flip_pick_color(bet_color_for_history)
                 blended = _blended_win_rate(get_prediction_history(100))
-                # 스마트 반픽: 승률반픽+연패반픽+승률방향반픽 통합 (히스토리 기록용, _server_calc_effective_pick_and_amount와 동일)
+                # 스마트 반픽: 승률반픽+연패반픽만 (zone 제거). 히스토리 기록용
                 use_smart = c.get('smart_reverse') or c.get('win_rate_reverse') or c.get('lose_streak_reverse') or c.get('win_rate_direction_reverse')
                 ph = get_prediction_history(150)
                 run_length = _get_current_result_run_length(ph)
@@ -2007,15 +2007,6 @@ def _apply_results_to_calcs(results):
                         do_reverse = True
                     if lose_streak >= min_streak and blended is not None and blended <= thr and (main_rate15 is None or main_rate15 < 53):
                         do_reverse = True
-                    if not do_reverse:
-                        zone = _effective_win_rate_direction_zone(ph, c, pending_round)
-                        if zone == 'high_falling':
-                            do_reverse = True
-                            c['last_trend_direction'] = 'down'
-                        elif zone == 'low_rising':
-                            c['last_trend_direction'] = 'up'
-                        elif zone == 'mid_flat' and c.get('last_trend_direction') == 'down':
-                            do_reverse = True
                     res_for_phase = results_for_shape if (results_for_shape and len(results_for_shape) >= 16) else results
                     if do_reverse and res_for_phase and _suppress_smart_reverse_by_phase(res_for_phase):
                         do_reverse = False
@@ -2377,7 +2368,7 @@ def _server_calc_effective_pick_and_amount(c):
         pred = '꺽' if pred == '정' else '정'
         color = _flip_pick_color(color)
     blended = _blended_win_rate(ph or get_prediction_history(100))
-    # 스마트 반픽: 승률반픽+연패반픽+승률방향반픽 통합. 조건 하나라도 만족 시 반픽
+    # 스마트 반픽: 승률반픽+연패반픽만. zone(승률방향) 제거 — 예상 기반 꺽기가 틀리면 연패로 이어짐
     use_smart = c.get('smart_reverse') or c.get('win_rate_reverse') or c.get('lose_streak_reverse') or c.get('win_rate_direction_reverse')
     if use_smart and not no_reverse_in_streak:
         thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 50)))
@@ -2388,16 +2379,6 @@ def _server_calc_effective_pick_and_amount(c):
             do_reverse = True
         if lose_streak >= min_streak and blended is not None and blended <= thr and (main_rate15 is None or main_rate15 < 53):
             do_reverse = True
-        if not do_reverse:
-            current_round = ph[-1]['round'] if ph else None
-            zone = _effective_win_rate_direction_zone(ph, c, current_round)
-            if zone == 'high_falling':
-                do_reverse = True
-                c['last_trend_direction'] = 'down'
-            elif zone == 'low_rising':
-                c['last_trend_direction'] = 'up'
-            elif zone == 'mid_flat' and c.get('last_trend_direction') == 'down':
-                do_reverse = True
         # 패턴 기반 억제: 긴줄·긴 퐁당 구간에서는 승률만 보고 반픽하지 않음 (계속 틀리다 방향 바꿔서 또 틀림 방지)
         if do_reverse:
             try:
@@ -2457,16 +2438,6 @@ def _server_calc_effective_pick_and_amount(c):
                 do_reverse = True
             if lose_streak >= min_streak and blended is not None and blended <= thr and (main_rate15 is None or main_rate15 < 53):
                 do_reverse = True
-            if not do_reverse:
-                current_round = ph[-1]['round'] if ph else None
-                zone = _effective_win_rate_direction_zone(ph, c, current_round)
-                if zone == 'high_falling':
-                    do_reverse = True
-                    c['last_trend_direction'] = 'down'
-                elif zone == 'low_rising':
-                    c['last_trend_direction'] = 'up'
-                elif zone == 'mid_flat' and c.get('last_trend_direction') == 'down':
-                    do_reverse = True
             if do_reverse and _suppress_smart_reverse_by_phase(results):
                 do_reverse = False
             if do_reverse:
@@ -7297,13 +7268,6 @@ RESULTS_HTML = '''
                                     if (useSmart && noRevByStreak5) {
                                         if (typeof blended === 'number' && blended <= smartThr && noRevByMain15) doRev = true;
                                         if (!doRev && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= smartThr && noRevByMain15) doRev = true;
-                                        if (!doRev && typeof getEffectiveWinRateDirectionZone === 'function') {
-                                            var phForZone = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
-                                            var zone = getEffectiveWinRateDirectionZone(phForZone, id, currentRoundNum);
-                                            if (zone === 'high_falling') { doRev = true; calcState[id].last_trend_direction = 'down'; }
-                                            else if (zone === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
-                                            else if (zone === 'mid_flat' && calcState[id].last_trend_direction === 'down') doRev = true;
-                                        }
                                         if (doRev) { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
                                     }
                                     var shapePredRev = !!(calcState[id] && calcState[id].shape_prediction_reverse);
@@ -7376,13 +7340,6 @@ RESULTS_HTML = '''
                                     if (useSmartA && noRevByStreak5A) {
                                         if (typeof blended === 'number' && blended <= smartThrA && noRevByMain15A) doRevA = true;
                                         if (!doRevA && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= smartThrA && noRevByMain15A) doRevA = true;
-                                        if (!doRevA && typeof getEffectiveWinRateDirectionZone === 'function') {
-                                            var phForZoneA = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
-                                            var zoneA = getEffectiveWinRateDirectionZone(phForZoneA, id, currentRoundNum);
-                                            if (zoneA === 'high_falling') { doRevA = true; calcState[id].last_trend_direction = 'down'; }
-                                            else if (zoneA === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
-                                            else if (zoneA === 'mid_flat' && calcState[id].last_trend_direction === 'down') doRevA = true;
-                                        }
                                         if (doRevA) { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; }
                                     }
                                     if (!!(calcState[id] && calcState[id].shape_prediction) && shapePredRevA && typeof getShapePredictionWinRate15 === 'function' && sp15A != null && sp15A <= shapePredRevThrA) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
@@ -7467,13 +7424,6 @@ RESULTS_HTML = '''
                                     if (useSmart2 && noRevByStreak52) {
                                         if (typeof blended === 'number' && blended <= smartThr2 && noRevByMain152) doRev2 = true;
                                         if (!doRev2 && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= smartThr2 && noRevByMain152) doRev2 = true;
-                                        if (!doRev2 && typeof getEffectiveWinRateDirectionZone === 'function') {
-                                            var phForZone2 = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
-                                            var zone2 = getEffectiveWinRateDirectionZone(phForZone2, id, currentRoundNum);
-                                            if (zone2 === 'high_falling') { doRev2 = true; calcState[id].last_trend_direction = 'down'; }
-                                            else if (zone2 === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
-                                            else if (zone2 === 'mid_flat' && calcState[id].last_trend_direction === 'down') doRev2 = true;
-                                        }
                                         if (doRev2) { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
                                     }
                                 }
@@ -7526,13 +7476,6 @@ RESULTS_HTML = '''
                                     if (useSmart3 && noRevByStreak53) {
                                         if (typeof blended === 'number' && blended <= smartThr3 && noRevByMain153) doRev3 = true;
                                         if (!doRev3 && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= smartThr3 && noRevByMain153) doRev3 = true;
-                                        if (!doRev3 && typeof getEffectiveWinRateDirectionZone === 'function') {
-                                            var phForZone3 = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
-                                            var zone3 = getEffectiveWinRateDirectionZone(phForZone3, id, currentRoundNum);
-                                            if (zone3 === 'high_falling') { doRev3 = true; calcState[id].last_trend_direction = 'down'; }
-                                            else if (zone3 === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
-                                            else if (zone3 === 'mid_flat' && calcState[id].last_trend_direction === 'down') doRev3 = true;
-                                        }
                                         if (doRev3) { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; }
                                     }
                                 }
@@ -9316,13 +9259,6 @@ RESULTS_HTML = '''
                             if (useSmartCard && noRevByStreak5Card) {
                                 if (typeof blendedCard === 'number' && blendedCard <= smartThrCard && noRevByMain15Card) doRevCard = true;
                                 if (!doRevCard && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blendedCard === 'number' && blendedCard <= smartThrCard && noRevByMain15Card) doRevCard = true;
-                                if (!doRevCard && typeof getEffectiveWinRateDirectionZone === 'function') {
-                                    var phCard = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
-                                    var zoneCard = getEffectiveWinRateDirectionZone(phCard, id, curRound);
-                                    if (zoneCard === 'high_falling') { doRevCard = true; calcState[id].last_trend_direction = 'down'; }
-                                    else if (zoneCard === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
-                                    else if (zoneCard === 'mid_flat' && calcState[id].last_trend_direction === 'down') doRevCard = true;
-                                }
                                 if (doRevCard) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                             }
                             var shapePredRev = !!(document.getElementById('calc-' + id + '-shape-prediction-reverse') && document.getElementById('calc-' + id + '-shape-prediction-reverse').checked);
@@ -9355,13 +9291,6 @@ RESULTS_HTML = '''
                                 if (useSmartCard2 && noRevByStreak5Card) {
                                     if (typeof blendedCard === 'number' && blendedCard <= smartThrCard2 && noRevByMain15Card) doRevCard2 = true;
                                     if (!doRevCard2 && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blendedCard === 'number' && blendedCard <= smartThrCard2 && noRevByMain15Card) doRevCard2 = true;
-                                    if (!doRevCard2 && typeof getEffectiveWinRateDirectionZone === 'function') {
-                                        var phCard2 = (typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory)) ? predictionHistory : [];
-                                        var zoneCard2 = getEffectiveWinRateDirectionZone(phCard2, id, curRound);
-                                        if (zoneCard2 === 'high_falling') { doRevCard2 = true; calcState[id].last_trend_direction = 'down'; }
-                                        else if (zoneCard2 === 'low_rising') { calcState[id].last_trend_direction = 'up'; }
-                                        else if (zoneCard2 === 'mid_flat' && calcState[id].last_trend_direction === 'down') doRevCard2 = true;
-                                    }
                                     if (doRevCard2) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                                 }
                                 if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
