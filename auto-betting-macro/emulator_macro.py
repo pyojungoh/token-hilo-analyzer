@@ -411,8 +411,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._last_bet_round = None  # 마지막으로 배팅한 회차 — 다음회차(이 값+1) 픽만 배팅
         self._last_bet_amount = None  # 직전 배팅 금액 — 마틴 연속 동일금액 검증용
         self._pending_bet_rounds = {}  # round_num -> { pick_color, amount } — 같은 회차 중복 호출 방지
-        self._bet_confirm_key = None  # (round, pick_color, amount) — 2회 연속 일치 시 배팅 (금액 안정화 대기)
+        self._bet_confirm_key = None  # (round, pick_color, amount) — 2회 연속 일치 시 배팅
         self._bet_confirm_count = 0
+        self._display_amount_locked = {}  # round -> amount. 같은 회차에 먼저 받은 금액 고정 (5천→1만 덮어쓰기 방지)
         self._pick_data = {}
         self._results_data = {}
         self._lock = threading.Lock()
@@ -1117,6 +1118,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._last_bet_round = None
         self._last_bet_amount = None
         self._pick_data = {}
+        self._display_amount_locked.clear()
         self._bet_confirm_key = None
         self._bet_confirm_count = 0
         self.start_btn.setEnabled(False)
@@ -1215,23 +1217,32 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             round_num = int(round_num)
         except (TypeError, ValueError):
             return
-        # 배팅중 금액 그대로 표시. 서버가 2회 전송 → 두 값 일치 시 배팅
+        # 현재픽 표시: 같은 회차에 먼저 받은 금액 고정 — 5천→1만 덮어쓰기 방지
         with self._lock:
+            if amt_val <= 0:
+                self._display_amount_locked.pop(round_num, None)  # 정지 시 lock 해제
+            locked = self._display_amount_locked.get(round_num)
+            if locked is not None and amt_val != locked:
+                use_amt = locked  # 이미 표시한 금액 유지
+            else:
+                use_amt = amt_val
+                if amt_val > 0:
+                    self._display_amount_locked[round_num] = amt_val
             self._pick_data = {
                 'round': round_num,
                 'pick_color': raw_color or pick_color,
-                'suggested_amount': amt_val,
+                'suggested_amount': use_amt,
                 'running': True,
             }
-            if pick_color and amt_val > 0:
+            if pick_color and (use_amt or amt_val) > 0:
                 self._recent_picks.append((round_num, pick_color))
         self._update_display()
         if not self._running:
             return
-        if amt_val <= 0:
+        if use_amt <= 0:
             self._log("[푸시] 금액 없음 — %s회 %s 스킵" % (round_num, pick_color))
             return
-        if not _validate_bet_amount(amt_val):
+        if not _validate_bet_amount(use_amt):
             return
         # 배팅했던 회차는 딱 한 번만. 다음회차(마지막배팅회차+1) 픽이 왔을 때만 배팅
         if self._last_bet_round is not None:
@@ -1242,22 +1253,23 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         with self._lock:
             if round_num in self._pending_bet_rounds:
                 return  # 같은 회차 중복 호출 방지
-        # 금액 2회 연속 일치 시에만 배팅 — 서버에서 받은 amt_val 그대로 사용
-        key = (round_num, pick_color, amt_val)
+        # 금액 2회 연속 일치 시 배팅 — use_amt(고정된 금액) 사용
+        key = (round_num, pick_color, use_amt)
         if key == self._bet_confirm_key:
             self._bet_confirm_count += 1
         else:
             self._bet_confirm_key = key
             self._bet_confirm_count = 1
         if self._bet_confirm_count < 2:
-            self._log("[푸시] %s회 %s %s원 (%s/2회 확인 대기)" % (round_num, pick_color, amt_val, self._bet_confirm_count))
+            self._log("[푸시] %s회 %s %s원 (%s/2회 확인 대기)" % (round_num, pick_color, use_amt, self._bet_confirm_count))
             return
         self._bet_confirm_key = None
         self._bet_confirm_count = 0
+        self._display_amount_locked.pop(round_num, None)  # 배팅 완료 시 해제
         self._round_next = round_num
-        self._log("[푸시] %s회 %s %s원 수신 — 2회 일치, 즉시 ADB" % (round_num, pick_color, amt_val))
+        self._log("[푸시] %s회 %s %s원 수신 — 2회 일치, 즉시 ADB" % (round_num, pick_color, use_amt))
         self._coords = load_coords()
-        self._run_bet(round_num, pick_color, amt_val, from_push=True)
+        self._run_bet(round_num, pick_color, use_amt, from_push=True)
 
     def _run_bet(self, round_num, pick_color, amount, from_push=False):
         """배팅 실행. from_push면 PUSH_BET_DELAY, 아니면 BET_DELAY_BEFORE_EXECUTE 후 ADB 전송."""
