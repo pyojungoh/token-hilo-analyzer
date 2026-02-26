@@ -4884,12 +4884,12 @@ def _scheduler_trim_shape_tables():
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
     _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.2, id='fetch_results', max_instances=1)  # 0.2초마다 fetch — 부하 완화
-    _scheduler.add_job(_scheduler_apply_results, 'interval', seconds=0.3, id='apply_results', max_instances=1)  # 0.3초마다 apply — 부하 완화
+    _scheduler.add_job(_scheduler_apply_results, 'interval', seconds=0.2, id='apply_results', max_instances=1)  # 0.2초마다 apply — 예측픽 갱신 가속
     _scheduler.add_job(_scheduler_trim_shape_tables, 'interval', seconds=300, id='trim_shape', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (fetch 0.2초, apply 0.3초)")
+        print("[✅] 결과 수집 스케줄러 시작 (fetch 0.2초, apply 0.2초)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
 else:
@@ -10707,7 +10707,7 @@ RESULTS_HTML = '''
                         try { if (document.body && document.body.isConnected) CALC_IDS.forEach(function(id) { if (typeof updateCalcStatus === 'function') updateCalcStatus(id); }); } catch (e) {}
                     }).catch(function() {});
                     } catch (e) {}
-                }, 300);
+                }, 200);
             }
             // 모양판별 픽 전용 폴링 (400ms) — shape-pick API가 DB 쿼리하므로 간격 완화
             if (isTabVisible) {
@@ -11444,6 +11444,7 @@ def _build_results_payload():
 
 _results_refresh_lock = threading.Lock()
 _results_refreshing = False
+_last_refresh_trigger_at = 0.0  # /api/results에서 refresh 트리거 스로틀 (1.5초)
 _apply_lock = threading.Lock()
 
 def _update_prediction_cache_from_db(results=None):
@@ -11512,7 +11513,7 @@ def _refresh_results_background():
 def get_results():
     """경기 결과 API. 화면 송출 보장: 매 요청마다 DB에서 결과 생성(워커/캐시 무관)."""
     try:
-        global results_cache, last_update_time
+        global results_cache, last_update_time, _last_refresh_trigger_at
         result_source = request.args.get('result_source', '').strip()
         do_backfill = request.args.get('backfill') == '1'
 
@@ -11535,7 +11536,10 @@ def get_results():
                     'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}},
                     'blended_win_rate': None, 'round_actuals': {}, 'joker_stats': {}
                 }
-        if not _results_refreshing:
+        # refresh 트리거: 스케줄러(0.2초)가 이미 fetch하므로, /api/results 연속 호출 시 1.5초 스로틀로 부하 완화
+        now_tr = time.time()
+        if not _results_refreshing and (now_tr - _last_refresh_trigger_at) >= 1.5:
+            _last_refresh_trigger_at = now_tr
             threading.Thread(target=_refresh_results_background, daemon=True).start()
         
         # result_source 지정 시: 베팅 사이트와 동일한 결과 소스에서 round_actuals 재조회
