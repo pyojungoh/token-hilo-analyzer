@@ -6880,10 +6880,10 @@ RESULTS_HTML = '''
                 // 맨 왼쪽 = 최신 회차: 서버·클라이언트 모두 gameID 내림차순 정렬 완료. index 0이 최신.
                 const displayResults = allResults.slice(0, 15);
                 const results = allResults;  // 비교를 위해 전체 결과 사용
-                // 픽/보류 깜빡임 방지: lastIs15Joker를 먼저 갱신한 뒤 계산기 카드·POST 갱신 (이전 값으로 보류/픽 뒤바뀌는 것 방지)
+                // 픽/보류: 15번 카드 조커만 보류. skip_bet(조커 다발)은 경고만 — 보류로 픽 가리지 않음
                 const jokerStats = (data.joker_stats && typeof data.joker_stats === 'object') ? data.joker_stats : {};
                 lastJokerStats = jokerStats;
-                lastIs15Joker = (displayResults.length >= 15 && !!displayResults[14].joker) || !!(jokerStats.skip_bet);
+                lastIs15Joker = (displayResults.length >= 15 && !!displayResults[14].joker);
                 try { if (typeof updateCalcJokerBadge === 'function') updateCalcJokerBadge(); } catch (e) {}
                 try { CALC_IDS.forEach(function(id) { updateCalcStatus(id); }); } catch (e) {}
                 
