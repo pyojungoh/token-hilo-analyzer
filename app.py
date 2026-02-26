@@ -62,7 +62,7 @@ except ImportError:
 
 
 def _ws_emit_pick_update(calculator_id, round_num, pick_color, suggested_amount, running):
-    """WebSocket으로 픽 갱신 푸시. calc_N room에 emit."""
+    """WebSocket으로 픽 갱신 푸시. calc_N room에 emit. 2회 전송으로 매크로 검증용."""
     if not _HAS_SOCKETIO or not _socketio:
         return
     try:
@@ -76,6 +76,14 @@ def _ws_emit_pick_update(calculator_id, round_num, pick_color, suggested_amount,
             'calculator': cid,
         }
         _socketio.emit('pick_update', data, room=room)
+        # 50ms 후 2회 전송 — 매크로에서 두 값 일치 검증 후 배팅
+        def _emit_second():
+            time.sleep(0.05)
+            try:
+                _socketio.emit('pick_update', data, room=room)
+            except Exception:
+                pass
+        threading.Thread(target=_emit_second, daemon=True).start()
     except Exception:
         pass
 

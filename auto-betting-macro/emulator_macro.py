@@ -411,6 +411,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._last_bet_round = None  # 마지막으로 배팅한 회차 — 다음회차(이 값+1) 픽만 배팅
         self._last_bet_amount = None  # 직전 배팅 금액 — 마틴 연속 동일금액 검증용
         self._pending_bet_rounds = {}  # round_num -> { pick_color, amount } — 같은 회차 중복 호출 방지
+        self._bet_confirm_key = None  # (round, pick_color, amount) — 2회 연속 일치 시 배팅 (금액 안정화 대기)
+        self._bet_confirm_count = 0
         self._pick_data = {}
         self._results_data = {}
         self._lock = threading.Lock()
@@ -1115,6 +1117,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._last_bet_round = None
         self._last_bet_amount = None
         self._pick_data = {}
+        self._bet_confirm_key = None
+        self._bet_confirm_count = 0
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self._log("시작 — WebSocket으로 회차·픽·금액 수신 즉시 배팅")
@@ -1211,18 +1215,15 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             round_num = int(round_num)
         except (TypeError, ValueError):
             return
-        # 들어온 값 그대로 표시. 단, 배팅 대기 중인 회차에 다른 금액(예: 1만)이 들어오면 기존 금액 유지 — 5천→1만 덮어쓰기 방지
+        # 배팅중 금액 그대로 표시. 서버가 2회 전송 → 두 값 일치 시 배팅
         with self._lock:
-            pending = self._pending_bet_rounds.get(round_num, {})
-            pending_amt = pending.get("amount") if isinstance(pending, dict) else None
-            use_amt = pending_amt if (round_num in self._pending_bet_rounds and pending_amt is not None) else amt_val
             self._pick_data = {
                 'round': round_num,
                 'pick_color': raw_color or pick_color,
-                'suggested_amount': use_amt,
+                'suggested_amount': amt_val,
                 'running': True,
             }
-            if pick_color and (use_amt or amt_val) > 0:
+            if pick_color and amt_val > 0:
                 self._recent_picks.append((round_num, pick_color))
         self._update_display()
         if not self._running:
@@ -1241,8 +1242,20 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         with self._lock:
             if round_num in self._pending_bet_rounds:
                 return  # 같은 회차 중복 호출 방지
+        # 금액 2회 연속 일치 시에만 배팅 — 서버에서 받은 amt_val 그대로 사용
+        key = (round_num, pick_color, amt_val)
+        if key == self._bet_confirm_key:
+            self._bet_confirm_count += 1
+        else:
+            self._bet_confirm_key = key
+            self._bet_confirm_count = 1
+        if self._bet_confirm_count < 2:
+            self._log("[푸시] %s회 %s %s원 (%s/2회 확인 대기)" % (round_num, pick_color, amt_val, self._bet_confirm_count))
+            return
+        self._bet_confirm_key = None
+        self._bet_confirm_count = 0
         self._round_next = round_num
-        self._log("[푸시] %s회 %s %s원 수신 — 다음회차 일치, 즉시 ADB" % (round_num, pick_color, amt_val))
+        self._log("[푸시] %s회 %s %s원 수신 — 2회 일치, 즉시 ADB" % (round_num, pick_color, amt_val))
         self._coords = load_coords()
         self._run_bet(round_num, pick_color, amt_val, from_push=True)
 
