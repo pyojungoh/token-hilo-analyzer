@@ -39,11 +39,11 @@ except ImportError:
 COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
-# 배팅 탭 지연 (초) — 좌표 오탭 방지. 느린 기기면 값 늘리세요
-D_AFTER_AMOUNT_TAP = 0.08   # 금액 칸 탭 후 포커스 대기
-D_AFTER_INPUT = 0.04        # 금액 입력 후 레드/블랙 탭 전 대기 (키보드 닫기 없음)
-D_AFTER_COLOR = 0.05        # 레드/블랙 탭 후
-D_BET_COOLDOWN = 1.2        # 배팅 완료 후 최소 대기(초) — 2번행 중복 배팅 방지
+# 배팅 탭 지연 (초) — 10초 게임 8초 내 배팅. 느린 기기면 값 늘리세요
+D_AFTER_AMOUNT_TAP = 0.05   # 금액 칸 탭 후 포커스 대기
+D_AFTER_INPUT = 0.03        # 금액 입력 후 레드/블랙 탭 전 대기 (키보드 닫기 없음)
+D_AFTER_COLOR = 0.03        # 레드/블랙 탭 후
+D_BET_COOLDOWN = 0.8        # 배팅 완료 후 최소 대기(초) — 2번행 중복 배팅 방지
 
 # 일반마틴 9단계 (2배: 1,2,4,8,16,32,64,128,256 × base)
 MARTIN_RATIOS_NORMAL = [1, 2, 4, 8, 16, 32, 64, 128, 256]
@@ -91,7 +91,7 @@ def _ws_url_from_analyzer(base_url, calculator_id=1):
     return ws_base + "?calculator=" + str(int(calculator_id) if calculator_id in (1, 2, 3) else 1)
 
 
-def fetch_current_pick(analyzer_url, calculator_id=1, timeout=5):
+def fetch_current_pick(analyzer_url, calculator_id=1, timeout=2):
     """GET /api/current-pick-relay?calculator=N — 기존 emulator_macro와 동일. 계산기 배팅중 픽 직접 수신."""
     base = normalize_analyzer_url(analyzer_url)
     if not base:
@@ -110,7 +110,7 @@ def fetch_current_pick(analyzer_url, calculator_id=1, timeout=5):
         return {"pick_color": None, "round": None}, str(e)[:100]
 
 
-def fetch_macro_data(analyzer_url, calculator_id=1, timeout=10):
+def fetch_macro_data(analyzer_url, calculator_id=1, timeout=3):
     """GET /api/macro-data?calculator=N → round_actuals, graph_values, cards. 픽은 절대 사용 안 함 — 배팅중만 current-pick-relay에서."""
     base = normalize_analyzer_url(analyzer_url)
     if not base:
@@ -1290,7 +1290,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                     pick = dict(self._pick)
                     pick["calculator"] = calc_id  # WebSocket에서 이미 수신 중 — relay 생략
             else:
-                pick_relay, pick_err = fetch_current_pick(url, calculator_id=calc_id, timeout=5)
+                pick_relay, pick_err = fetch_current_pick(url, calculator_id=calc_id, timeout=2)
                 if not pick_err and pick_relay and pick_relay.get("running") is not False:
                     pc_raw = pick_relay.get("pick_color")
                     pc = _normalize_pick_color(pc_raw) if pc_raw else None
@@ -1547,7 +1547,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         if not self._ws_connected:
             self._poll_once()  # WebSocket 미연결 시에만 폴링 (픽·결과 모두 WS로 전달 시 생략)
         if self._poll_timer:
-            QTimer.singleShot(2000, self._poll_loop)
+            QTimer.singleShot(300, self._poll_loop)  # 0.3초 — 10초 게임 8초 내 배팅
 
     def _on_calc_combo_changed(self):
         """계산기 선택 변경 시 WebSocket 재연결 — 선택한 계산기 픽만 수신하도록."""
