@@ -17,12 +17,12 @@ alwaysApply: true
 ## 데이터 흐름 (변형 금지)
 
 ```
-[계산기 배팅중]  getBetForRound(id, curRound) → suggested_amount
+[서버 calc 상태]  _server_calc_effective_pick_and_amount → suggested_amount (마틴·멈춤 반영)
        │
-       │  postCurrentPickIfChanged (25ms마다 updateCalcStatus)
-       │  POST /api/current-pick-relay { round, pickColor, suggested_amount }
+       ├─ POST /api/current-pick-relay 시: 서버 금액으로 덮어쓰기 (클라이언트 값 무시)
+       ├─ _push_current_pick_from_calc (스케줄러): 결과 반영 시 relay 캐시 갱신
        ▼
-[서버 relay 캐시]  _update_current_pick_relay_cache ← POST 시 즉시 갱신 (클라이언트 금액 그대로)
+[서버 relay 캐시]  _update_current_pick_relay_cache ← 서버 계산 금액만 사용
        │
        │  매크로 GET /api/current-pick-relay?calculator=N (25ms 폴링)
        ▼
@@ -31,7 +31,7 @@ alwaysApply: true
 
 ## 금액 정확도 규칙
 
-- **항상 클라이언트 suggested_amount 사용** — 계산기 상단 배팅중 표시와 동일. 서버 덮어쓰기 금지.
+- **금액은 서버가 직접 계산** — `_server_calc_effective_pick_and_amount` 결과만 사용. 클라이언트 동기화 지연·마틴 승 후 잘못된 금액 방지.
 
 ## 안정화 규칙 (들어왔다 보류떴다 방지)
 

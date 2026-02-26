@@ -2505,7 +2505,7 @@ def _server_calc_effective_pick_and_amount(c):
 
 
 def _push_current_pick_from_calc(calculator_id, c):
-    """서버에서 계산기 픽을 current_pick DB에만 반영. relay 캐시는 오직 클라이언트 POST에서만 갱신."""
+    """서버에서 계산기 픽을 current_pick DB·relay 캐시에 반영. 금액은 서버 계산값만 사용."""
     if not bet_int or not DB_AVAILABLE or not DATABASE_URL:
         return
     pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
@@ -2521,7 +2521,9 @@ def _push_current_pick_from_calc(calculator_id, c):
                                        suggested_amount=suggested_amount, calculator_id=calc_id)
         if ok:
             conn.commit()
-        # relay 캐시는 갱신하지 않음 — 매크로 금액은 오직 계산기 상단(클라이언트 POST)에서만
+        # relay 캐시도 서버 금액으로 갱신 — 마틴 승 후 등 클라이언트 지연 없이 정확한 금액 전달
+        if pr is not None and suggested_amount and int(suggested_amount) > 0:
+            _update_current_pick_relay_cache(calc_id, pr, pick_color, int(suggested_amount), c.get('running', True), None)
     except Exception:
         pass
     finally:
@@ -12152,15 +12154,31 @@ def api_current_pick_relay():
                 threading.Thread(target=_relay_db_write_background, daemon=True,
                                  args=(calculator_id, pick_color, round_num, suggested_amount, running if running is not None else True)).start()
                 return jsonify({'ok': True}), 200
-            # 배팅중 금액 = 클라이언트 값 그대로 사용 (계산기 상단 표시와 동일). 서버 덮어쓰기 제거 — 빠르고 정확
-            # 모양·퐁당만 옵션만 서버 픽 사용 (클라이언트 calc_best=4카드와 다름)
+            # 방법1: 금액은 서버가 직접 계산 — 클라이언트 동기화 지연·마틴 승 후 잘못된 금액 방지
             try:
                 state = get_calc_state('default') or {}
                 c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
-                if c and c.get('running') and c.get('prediction_picks_shape_pong_only'):
-                    srv_pick, _, _ = _server_calc_effective_pick_and_amount(c)
-                    if srv_pick is not None:
-                        pick_color = srv_pick
+                if c and c.get('running') and c.get('pending_round') is not None:
+                    srv_pick, server_amt, _ = _server_calc_effective_pick_and_amount(c)
+                    pr = c.get('pending_round')
+                    # 클라이언트 회차가 서버보다 앞서면(결과 반영 전) 클라이언트 값 사용
+                    try:
+                        pr_int = int(pr) if pr is not None else None
+                        cr_int = int(round_num) if round_num is not None else None
+                        client_ahead = cr_int is not None and pr_int is not None and cr_int > pr_int
+                    except (TypeError, ValueError):
+                        client_ahead = False
+                    if not client_ahead:
+                        round_num = pr
+                        if srv_pick is not None:
+                            pick_color = srv_pick
+                        # 서버 금액 우선 — 마틴 승 후 5천원 등 정확한 값
+                        if server_amt is not None and int(server_amt) > 0:
+                            suggested_amount = int(server_amt)
+                        elif c.get('paused'):
+                            suggested_amount = 0
+                elif c and c.get('paused'):
+                    suggested_amount = 0
             except Exception:
                 pass
             if suggested_amount is not None and not isinstance(suggested_amount, int):
@@ -12170,7 +12188,7 @@ def api_current_pick_relay():
                     suggested_amount = None
             if not suggested_amount or int(suggested_amount) <= 0:
                 return jsonify({'ok': True}), 200
-            # 다음회차 유효 픽 — 딱 그대로 저장 후 매크로가 GET으로 수신
+            # 다음회차 유효 픽 — 서버 계산 금액으로 저장 후 매크로가 GET으로 수신
             _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, True, None)
             threading.Thread(target=_relay_db_write_background, daemon=True,
                              args=(calculator_id, pick_color, round_num, suggested_amount, running if running is not None else True)).start()
