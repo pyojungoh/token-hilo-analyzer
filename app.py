@@ -4427,6 +4427,9 @@ game_data_cache = None
 streaks_cache = None
 results_cache = None
 prediction_cache = None  # 예측픽만. DB 전용. 외부 fetch 대기 없이 빠르게 표시
+_shape_pick_cache = None
+_shape_pick_cache_at = 0
+SHAPE_PICK_CACHE_TTL_SEC = 0.35  # 350ms — 폴링 400ms와 맞춰 DB 부하 완화
 _shape_pick_cache = {}  # { round: {shape_pick, shape_color, shape_15_rate} } — 회차별 고정, 나중에 바뀌는 것 방지
 last_update_time = 0
 CACHE_TTL = 1000  # 결과 캐시 유효 시간 (ms). 1초 동안 동일 캐시 반환, 스케줄러가 1초마다 선제 갱신
@@ -10483,11 +10486,11 @@ RESULTS_HTML = '''
             if (predictionPollIntervalId) clearInterval(predictionPollIntervalId);
             if (shapePollIntervalId) clearInterval(shapePollIntervalId);
             
-            // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·예측픽 먹통 발생
-            var resultsInterval = isTabVisible ? 120 : 1200;  // 120ms — 부하 완화
-            var calcStatusInterval = isTabVisible ? 80 : 1200;  // 80ms — 픽 서버 전달 (50→80 STATUS_ACCESS_VIOLATION 완화)
-            var calcStateInterval = isTabVisible ? 2500 : 4000;  // 계산기 상태 GET 간격 완화(리소스 절약)
-            var timerInterval = isTabVisible ? 250 : 1000;
+            // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·버벅임 발생
+            var resultsInterval = isTabVisible ? 200 : 1200;   // 200ms — 결과 체크 주기
+            var calcStatusInterval = isTabVisible ? 200 : 1200; // 200ms — 픽 서버 전달 (80ms→200ms 부하 완화)
+            var calcStateInterval = isTabVisible ? 3000 : 5000; // 계산기 상태 GET 간격
+            var timerInterval = isTabVisible ? 300 : 1000;
             
             // 결과 폴링: 분당 4게임(15초 사이클) 기준. 계산기 실행 중이면 빠르게 해서 회차 놓침 방지
             // 백그라운드일 때는 브라우저 제한(최소 1초)을 고려해 간격 조정
@@ -10506,12 +10509,13 @@ RESULTS_HTML = '''
                 } catch (e) {}
             }, resultsInterval);
             
-            // 계산기 실행 중: 픽을 서버로 전달 (80ms 간격 — STATUS_ACCESS_VIOLATION 완화)
+            // 계산기 실행 중: 픽을 서버로 전달 (200ms 간격 — 부하 완화). 실행 중인 계산기만 갱신
             calcStatusPollIntervalId = setInterval(() => {
                 try {
                     if (!document.body || !document.body.isConnected) return;
-                    const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
-                    if (anyRunning) CALC_IDS.forEach(id => { try { updateCalcStatus(id); } catch (e) {} });
+                    CALC_IDS.forEach(id => {
+                        if (calcState[id] && calcState[id].running) { try { updateCalcStatus(id); } catch (e) {} }
+                    });
                 } catch (e) {}
             }, calcStatusInterval);
             
@@ -10553,9 +10557,9 @@ RESULTS_HTML = '''
                         try { if (document.body && document.body.isConnected) CALC_IDS.forEach(function(id) { if (typeof updateCalcStatus === 'function') updateCalcStatus(id); }); } catch (e) {}
                     }).catch(function() {});
                     } catch (e) {}
-                }, 150);
+                }, 300);
             }
-            // 모양판별 픽 전용 폴링 (180ms) — 부하 완화
+            // 모양판별 픽 전용 폴링 (400ms) — shape-pick API가 DB 쿼리하므로 간격 완화
             if (isTabVisible) {
                 shapePollIntervalId = setInterval(function() {
                     fetch('/api/shape-pick?t=' + Date.now(), { cache: 'no-cache' }).then(function(r) { return r.json(); }).then(function(data) {
@@ -10563,7 +10567,7 @@ RESULTS_HTML = '''
                         lastShapePickFromApi = { round: data.round, shape_pick: data.shape_pick, shape_color: data.shape_color, shape_15_rate: data.shape_15_rate };
                         if (lastSpForCards) updatePredictionPicksCards(lastSpForCards);
                     }).catch(function() {});
-                }, 180);
+                }, 400);
             }
         }
         
@@ -11474,8 +11478,12 @@ def get_current_prediction():
 
 @app.route('/api/shape-pick', methods=['GET'])
 def get_shape_pick():
-    """모양판별 '가장 최근 다음 픽' 전용 경량 API. 예측기픽 모양 카드 빠른 표시용."""
+    """모양판별 '가장 최근 다음 픽' 전용 경량 API. 예측기픽 모양 카드 빠른 표시용. 350ms 캐시로 DB 부하 완화."""
+    global _shape_pick_cache, _shape_pick_cache_at
     try:
+        now = time.time()
+        if _shape_pick_cache is not None and (now - _shape_pick_cache_at) < SHAPE_PICK_CACHE_TTL_SEC:
+            return jsonify(_shape_pick_cache), 200
         if not DB_AVAILABLE or not DATABASE_URL:
             return jsonify({'shape_pick': None, 'shape_color': None, 'round': None, 'shape_15_rate': None}), 200
         results = get_recent_results(hours=3)
@@ -11494,12 +11502,15 @@ def get_shape_pick():
         else:
             shape_color = '빨강' if shape_pick == '정' else '검정' if shape_pick == '꺽' else None
         shape_15_rate = _get_shape_15_win_rate_weighted(ph, decay=PRED_PICKS_DECAY) if ph else None
-        return jsonify({
+        out = {
             'shape_pick': shape_pick,
             'shape_color': shape_color,
             'round': pred_rnd,
             'shape_15_rate': round(shape_15_rate, 1) if shape_15_rate is not None else None
-        }), 200
+        }
+        _shape_pick_cache = out
+        _shape_pick_cache_at = time.time()
+        return jsonify(out), 200
     except Exception as e:
         print(f"[경고] shape-pick API 오류: {str(e)[:80]}")
         return jsonify({'shape_pick': None, 'shape_color': None, 'round': None, 'shape_15_rate': None}), 200

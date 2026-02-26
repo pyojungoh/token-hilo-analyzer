@@ -525,7 +525,7 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
                 self._log("[금액검증] %s회 %s원 스킵 — 마틴 연속 동일금액 오탐" % (round_num, amt_val))
                 self._pending_bet_rounds.pop(round_num, None)
                 return
-            # 배팅 직전: 회차·금액 재조회 — 회차 불일치 시 스킵
+            # 배팅 직전: 회차만 재조회 — 회차 불일치 시 스킵. 금액은 처음 받은 값 유지 (5천→1만 덮어쓰기 방지)
             final_amt = amt_val
             recheck_round_match = None
             try:
@@ -536,11 +536,6 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
                     if pick and isinstance(pick, dict):
                         srv_round = int(pick.get("round") or 0)
                         recheck_round_match = (srv_round == round_num)
-                        if recheck_round_match:
-                            amt = pick.get("suggested_amount") or pick.get("suggestedAmount")
-                            if amt is not None and int(amt) > 0:
-                                final_amt = int(amt)
-                                self._log("배팅 직전 %s회 금액 재조회: %s원" % (round_num, final_amt))
             except Exception:
                 pass
             if recheck_round_match is False:

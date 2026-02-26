@@ -1211,15 +1211,18 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             round_num = int(round_num)
         except (TypeError, ValueError):
             return
-        # 들어온 값 그대로 표시. 덮어쓰기·비교 로직 없음.
+        # 들어온 값 그대로 표시. 단, 배팅 대기 중인 회차에 다른 금액(예: 1만)이 들어오면 기존 금액 유지 — 5천→1만 덮어쓰기 방지
         with self._lock:
+            pending = self._pending_bet_rounds.get(round_num, {})
+            pending_amt = pending.get("amount") if isinstance(pending, dict) else None
+            use_amt = pending_amt if (round_num in self._pending_bet_rounds and pending_amt is not None) else amt_val
             self._pick_data = {
                 'round': round_num,
                 'pick_color': raw_color or pick_color,
-                'suggested_amount': amt_val,
+                'suggested_amount': use_amt,
                 'running': True,
             }
-            if pick_color and amt_val > 0:
+            if pick_color and (use_amt or amt_val) > 0:
                 self._recent_picks.append((round_num, pick_color))
         self._update_display()
         if not self._running:
