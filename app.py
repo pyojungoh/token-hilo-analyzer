@@ -2196,15 +2196,7 @@ def _apply_results_to_calcs(results):
                 c = state.get(cid)
                 if not c or not isinstance(c, dict) or not c.get('running'):
                     continue
-                try:
-                    pr = c.get('pending_round')
-                    pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
-                    if _should_skip_relay_cache_update(int(cid), pr, pick_color, suggested_amount):
-                        continue
-                    if pick_color is not None or (c.get('streak_wait_enabled') and c.get('streak_wait_state') in ('waiting', 'paused')):
-                        _update_current_pick_relay_cache(int(cid), pr, pick_color, suggested_amount if suggested_amount is not None else 0, c.get('running', True))
-                except Exception:
-                    pass
+                # relay 금액은 오직 클라이언트 POST(계산기 상단 배팅중)에서만. 서버가 덮어쓰지 않음.
     except Exception as e:
         print(f"[스케줄러] 회차 반영 오류: {str(e)[:200]}")
     finally:
@@ -2505,7 +2497,7 @@ def _server_calc_effective_pick_and_amount(c):
 
 
 def _push_current_pick_from_calc(calculator_id, c):
-    """서버에서 계산기 픽을 current_pick DB·relay 캐시에 반영. 클라이언트 유효 시 덮어쓰지 않음 (5000 충돌 방지)."""
+    """서버에서 계산기 픽을 current_pick DB에만 반영. relay 캐시는 오직 클라이언트 POST에서만 갱신."""
     if not bet_int or not DB_AVAILABLE or not DATABASE_URL:
         return
     pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
@@ -2513,9 +2505,6 @@ def _push_current_pick_from_calc(calculator_id, c):
         return
     calc_id = int(calculator_id) if calculator_id in (1, 2, 3) else 1
     pr = c.get('pending_round')
-    # 클라이언트 유효 캐시 있으면 DB·relay 모두 덮어쓰지 않음 — 배팅중 금액 vs 서버 5000 충돌 방지
-    if _should_skip_relay_cache_update(calc_id, pr, pick_color, suggested_amount):
-        return
     conn = get_db_connection(statement_timeout_sec=3)
     if not conn:
         return
@@ -2524,7 +2513,7 @@ def _push_current_pick_from_calc(calculator_id, c):
                                        suggested_amount=suggested_amount, calculator_id=calc_id)
         if ok:
             conn.commit()
-        _update_current_pick_relay_cache(calc_id, pr, pick_color, suggested_amount if suggested_amount is not None else 0, c.get('running', True))
+        # relay 캐시는 갱신하지 않음 — 매크로 금액은 오직 계산기 상단(클라이언트 POST)에서만
     except Exception:
         pass
     finally:
@@ -2534,7 +2523,7 @@ def _push_current_pick_from_calc(calculator_id, c):
             pass
 
 
-# Relay 캐시: 매크로 폴링 시 DB 없이 즉시 반환. 계산기 POST·스케줄러 푸시 시 갱신.
+# Relay 캐시: 매크로 GET 시 즉시 반환. 오직 클라이언트 POST(계산기 상단 배팅중)에서만 갱신.
 _current_pick_relay_cache = {1: None, 2: None, 3: None}
 
 
@@ -2552,38 +2541,6 @@ def _update_current_pick_relay_cache(calculator_id, round_num, pick_color, sugge
         _ws_emit_pick_update(cid, round_num, pick_color, suggested_amount, running)
     except (TypeError, ValueError):
         pass
-
-
-def _should_skip_relay_cache_update(calculator_id, new_round, new_pick=None, new_amount=None):
-    """스케줄러가 클라이언트 유효 캐시를 덮어쓰지 않도록. new_round < 캐시 회차이면 True(스킵).
-    같은 회차: 픽만 바뀌었으면 업데이트(스마트반픽 등). 금액만 다르면 스킵 — 클라이언트 금액 보호(서버 base 불일치 시 덮어쓰기 방지)."""
-    try:
-        cached = _current_pick_relay_cache.get(int(calculator_id))
-        if not cached or not isinstance(cached, dict) or not cached.get('running'):
-            return False
-        cache_round = cached.get('round')
-        cache_pick = cached.get('pick_color')
-        cache_amt = cached.get('suggested_amount')
-        if cache_round is None or new_round is None:
-            return False
-        # 낮은 회차로 덮어쓰지 않음
-        try:
-            if int(new_round) < int(cache_round):
-                return True
-            # 같은 회차: 픽이 바뀌었으면 업데이트 (매크로에 픽 변경 반영)
-            if int(new_round) == int(cache_round):
-                has_valid_cache = cache_pick and cache_amt and int(cache_amt or 0) > 0
-                if not has_valid_cache:
-                    return False
-                if new_pick is not None and str(new_pick).strip() != str(cache_pick or '').strip():
-                    return False  # 픽 바뀜 — 업데이트 (스마트반픽 등). 금액은 서버값 사용(픽과 함께)
-                # 금액만 다르면 스킵 — 클라이언트 POST 금액이 정확(배팅중 표시와 동일). 서버 base 불일치 시 덮어쓰기 방지
-                return True  # 동일 픽 — 클라이언트 캐시 유지
-        except (TypeError, ValueError):
-            return False
-        return False
-    except Exception:
-        return False
 
 
 # 머지 캐시: 이미 머지한 회차 집합. 새 결과 회차가 생길 때만 머지해서 폴링 시 속도 향상
@@ -4721,19 +4678,7 @@ def _update_relay_cache_for_running_calcs():
                 if not c.get('running'):
                     _update_current_pick_relay_cache(int(cid), None, None, None, False, None)  # 정지 시 clear
                     continue
-                try:
-                    pr = c.get('pending_round')
-                    # 클라이언트가 이미 더 높은 회차로 POST했으면 덮어쓰지 않음 — 분석기 회차=매크로 회차 동시 변경
-                    pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
-                    if _should_skip_relay_cache_update(int(cid), pr, pick_color, suggested_amount):
-                        continue
-                    # pick_color가 None이어도 streak_wait(대기/일시정지)면 업데이트 — 매크로가 배팅하지 않도록. 그 외는 유효 픽 있을 때만 덮어씀 (들어왔다 보류떴다 반복 방지)
-                    if pick_color is not None:
-                        _update_current_pick_relay_cache(int(cid), pr, pick_color, suggested_amount if suggested_amount is not None else 0, True, None)
-                    elif c.get('streak_wait_enabled') and c.get('streak_wait_state') in ('waiting', 'paused'):
-                        _update_current_pick_relay_cache(int(cid), pr, None, 0, True, None)
-                except Exception:
-                    pass
+                # relay 금액은 오직 클라이언트 POST(계산기 상단 배팅중)에서만. 서버가 덮어쓰지 않음.
     except Exception:
         pass
     finally:
@@ -12154,7 +12099,7 @@ def _relay_db_write_background(calculator_id, pick_color, round_num, suggested_a
 
 @app.route('/api/current-pick-relay', methods=['GET', 'POST'])
 def api_current_pick_relay():
-    """매크로 전용: POST 시 relay 캐시 즉시 갱신(픽 빠른 전달), GET은 캐시 우선. 금액은 서버 calc와 회차 일치 시 서버 값."""
+    """매크로 전용: POST 시 relay 캐시 즉시 갱신. GET은 캐시만 반환. 금액은 오직 계산기 상단(클라이언트 POST)에서만."""
     empty_pick = {'pick_color': None, 'round': None, 'probability': None, 'suggested_amount': None, 'running': True}
     try:
         if request.method == 'POST':
@@ -12223,83 +12168,8 @@ def api_current_pick_relay():
             out['running'] = cached.get('running', True)
             out['probability'] = cached.get('probability')
             return jsonify(out), 200
-        # 캐시 없음: DB/계산 fallback
-        server_out = None
-        try:
-            state = get_calc_state('default') or {}
-            c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
-            if c:
-                if c.get('running'):
-                    pick_color, computed_amt, _ = _server_calc_effective_pick_and_amount(c)
-                    pr = c.get('pending_round')
-                    suggested_amount = int(computed_amt) if computed_amt is not None and int(computed_amt) > 0 else None
-                    server_out = {
-                        'round': pr,
-                        'pick_color': pick_color,
-                        'suggested_amount': suggested_amount,
-                        'running': True,
-                        'probability': None,
-                    }
-                else:
-                    return jsonify({'round': None, 'pick_color': None, 'suggested_amount': None, 'running': False, 'probability': None}), 200
-        except Exception:
-            pass
-        if server_out is not None:
-            out = dict(empty_pick)
-            out['round'] = server_out.get('round')
-            out['pick_color'] = server_out.get('pick_color')
-            out['suggested_amount'] = server_out.get('suggested_amount')
-            out['running'] = server_out.get('running', True)
-            out['probability'] = server_out.get('probability')
-            # 금액: DB(클라이언트 POST) 우선 — 서버 계산값(5000)이 잘못 들어가는 충돌 방지
-            if bet_int and DB_AVAILABLE and DATABASE_URL:
-                try:
-                    conn = get_db_connection(statement_timeout_sec=2)
-                    if conn:
-                        try:
-                            db_row = bet_int.get_current_pick(conn, calculator_id=calculator_id)
-                            if db_row and db_row.get('round') == out.get('round') and db_row.get('suggested_amount') and int(db_row.get('suggested_amount')) > 0:
-                                out['suggested_amount'] = int(db_row.get('suggested_amount'))
-                        finally:
-                            try: conn.close()
-                            except Exception: pass
-                except Exception:
-                    pass
-            if out.get('running') is False:
-                out = dict(out)
-                out['pick_color'] = out['round'] = out['suggested_amount'] = None
-            # 캐시 비었을 때 채워서 다음 GET은 즉시 반환 (금액은 위에서 DB 우선 적용됨)
-            _update_current_pick_relay_cache(calculator_id, out.get('round'), out.get('pick_color'), out.get('suggested_amount'), out.get('running', True), None)
-            return jsonify(out), 200
-        # 서버 calc 없음(웹 미접속·정지): DB fallback
-        db_out = None
-        if bet_int and DB_AVAILABLE and DATABASE_URL:
-            conn = get_db_connection(statement_timeout_sec=3)
-            if conn:
-                try:
-                    ensure_current_pick_table(conn)
-                    conn.commit()
-                    db_out = bet_int.get_current_pick(conn, calculator_id=calculator_id)
-                finally:
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
-        if db_out and (db_out.get('round') or db_out.get('pick_color')):
-            out = dict(empty_pick)
-            out['round'] = db_out.get('round')
-            out['pick_color'] = db_out.get('pick_color')
-            out['suggested_amount'] = int(db_out.get('suggested_amount')) if db_out.get('suggested_amount') and int(db_out.get('suggested_amount')) > 0 else None
-            out['running'] = db_out.get('running', True)
-            out['probability'] = db_out.get('probability')
-        elif db_out:
-            out = dict(db_out)
-        else:
-            out = empty_pick
-        if out and out.get('running') is False:
-            out = dict(out)
-            out['pick_color'] = out['round'] = out['suggested_amount'] = None
-        return jsonify(out if out else empty_pick), 200
+        # 캐시 없음: 금액은 오직 클라이언트 POST에서만. 서버/DB fallback 사용 안 함 — 충돌 제거
+        return jsonify({'round': None, 'pick_color': None, 'suggested_amount': None, 'running': True, 'probability': None}), 200
     except Exception as e:
         print(f"[경고] current-pick-relay 실패: {str(e)[:100]}")
         return jsonify(empty_pick), 200
