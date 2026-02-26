@@ -12261,7 +12261,7 @@ def api_current_pick_relay():
                 round_num = int(round_num) if round_num is not None else None
             except (TypeError, ValueError):
                 round_num = None
-            if round_num is not None and pick_color is not None and amt_int > 0:
+            if round_num is not None and pick_color is not None:
                 _last_post_time_per_calc[int(calculator_id)] = time.time()
                 _write_macro_pick_transmit(calculator_id, round_num, pick_color, amt_int, True)
                 _update_current_pick_relay_cache(calculator_id, round_num, pick_color, amt_int, True, None)
@@ -12337,15 +12337,25 @@ def api_macro_data():
                 'joker': bool(r.get('joker')),
                 'color': color,
             })
-        # 픽: calculator 지정 시 해당 계산기 1행, 아니면 메인 예측
+        # 픽: 계산기 배팅중 픽과 동일 출처 — relay 캐시 우선(클라이언트 POST 즉시 반영), DB(macro_pick_transmit) 폴백
         pick = {'round': None, 'pick_color': None, 'calculator': calculator_id}
-        state = get_calc_state('default') or {}
-        c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
-        if c and c.get('running'):
-            pr, srv_pick, _ = _get_calc_row1_bundle(c)
-            if pr is not None and srv_pick is not None:
-                pick['round'] = pr
-                pick['pick_color'] = srv_pick
+        cached = _current_pick_relay_cache.get(calculator_id)
+        if cached and isinstance(cached, dict) and cached.get('running') is not False and cached.get('round') is not None and cached.get('pick_color'):
+            pick['round'] = cached.get('round')
+            pick['pick_color'] = cached.get('pick_color')
+        else:
+            row = _read_macro_pick_transmit(calculator_id)
+            if row and row.get('running') is not False and row.get('round') is not None and row.get('pick_color'):
+                pick['round'] = row.get('round')
+                pick['pick_color'] = row.get('pick_color')
+        if pick.get('round') is None:
+            state = get_calc_state('default') or {}
+            c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
+            if c and c.get('running'):
+                pr, srv_pick, _ = _get_calc_row1_bundle(c)
+                if pr is not None and srv_pick is not None:
+                    pick['round'] = pr
+                    pick['pick_color'] = srv_pick
         if pick.get('round') is None and len(results) >= 16:
             pred = compute_prediction(results, get_prediction_history(100) or [], shape_win_stats=None, chunk_profile_stats=None)
             if pred and pred.get('value') in ('정', '꺽'):

@@ -30,8 +30,8 @@ try:
         QScrollArea, QGridLayout, QTableWidget, QTableWidgetItem, QHeaderView,
         QCheckBox, QComboBox,
     )
-    from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-    from PyQt5.QtGui import QFont, QColor
+    from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QPointF
+    from PyQt5.QtGui import QFont, QColor, QBrush, QPainter, QPen, QPolygonF
     HAS_PYQT = True
 except ImportError:
     HAS_PYQT = False
@@ -39,11 +39,9 @@ except ImportError:
 COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
-# 표마틴 9단계
-MARTIN_PYO_TABLE = [5000, 10000, 15000, 30000, 55000, 105000, 200000, 380000, 600000]
+# 표마틴 9단계 (비율: 1,2,3,6,11,21,40,76,120 × base)
+MARTIN_RATIOS = [1, 2, 3, 6, 11, 21, 40, 76, 120]
 ODDS = 1.97
-CAPITAL = 1000000
-BASE = 10000
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 COORDS_PATH = os.path.join(SCRIPT_DIR, "emulator_coords.json")
@@ -66,6 +64,22 @@ def normalize_analyzer_url(s):
         return base.rstrip("/")
     except Exception:
         return s.split("/")[0] if s else ""
+
+
+def _ws_url_from_analyzer(base_url, calculator_id=1):
+    """분석기 base URL → WebSocket 연결 URL (wss/https, ?calculator=N)."""
+    if not base_url or not base_url.strip():
+        return ""
+    s = base_url.strip().rstrip("/")
+    if "://" not in s:
+        s = "https://" + s
+    if s.startswith("https://"):
+        ws_base = "https://" + s[8:]
+    elif s.startswith("http://"):
+        ws_base = "http://" + s[7:]
+    else:
+        ws_base = s
+    return ws_base + "?calculator=" + str(int(calculator_id) if calculator_id in (1, 2, 3) else 1)
 
 
 def fetch_macro_data(analyzer_url, calculator_id=1, timeout=10):
@@ -248,14 +262,25 @@ def _apply_window_offset(coords, x, y, key=None):
     return rx, ry
 
 
-def calc_martingale_step_and_bet(history, base=BASE, martin_table=None):
+def build_martin_table(base_amount):
+    """1단계 배팅 금액으로 마틴 테이블 생성."""
+    try:
+        b = int(base_amount)
+        if b <= 0:
+            b = 5000
+    except (TypeError, ValueError):
+        b = 5000
+    return [b * r for r in MARTIN_RATIOS]
+
+
+def calc_martingale_step_and_bet(history, martin_table=None):
     """
     history: [{round, predicted, actual, ...}] 완료된 순서.
     predicted: 정/꺽 (RED→정, BLACK→꺽)
     actual: 정/꺽/joker
     반환: (martingale_step, next_bet_amount)
     """
-    martin_table = martin_table or MARTIN_PYO_TABLE
+    martin_table = martin_table or build_martin_table(5000)
     step = 0
     for h in (history or []):
         act = (h.get("actual") or "").strip()
@@ -272,11 +297,22 @@ def calc_martingale_step_and_bet(history, base=BASE, martin_table=None):
     return step, bet
 
 
+def _normalize_pick_color(pc):
+    """RED/BLACK/빨강/검정 → RED 또는 BLACK. None/미인식 시 None."""
+    s = (pc or "").strip().upper()
+    if s in ("RED", "빨강"):
+        return "RED"
+    if s in ("BLACK", "검정"):
+        return "BLACK"
+    return None
+
+
 def pick_color_to_pred(pick_color):
-    """RED→정, BLACK→꺽"""
-    if (pick_color or "").upper() == "RED":
+    """RED→정, BLACK→꺽 (15번 카드 빨강 기준. 검정이면 반대이나 매크로는 RED/BLACK만 사용)"""
+    n = _normalize_pick_color(pick_color)
+    if n == "RED":
         return "정"
-    if (pick_color or "").upper() == "BLACK":
+    if n == "BLACK":
         return "꺽"
     return None
 
@@ -290,7 +326,71 @@ def pred_to_pick_color(pred):
     return None
 
 
+class JungKkukGraphWidget(QWidget if HAS_PYQT else object):
+    """메인예측기 상단 정/꺽 블록 그래프. 같은 타입끼리 세로로 쌓인 열."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(100)
+        self.setMaximumHeight(140)
+        self._values = []
+        self._layout = QHBoxLayout(self) if HAS_PYQT else None
+        if HAS_PYQT:
+            self.setMinimumWidth(200)
+            self._layout.setContentsMargins(4, 4, 4, 4)
+            self._layout.setSpacing(4)
+            self._layout.setAlignment(Qt.AlignBottom)
+
+    def set_values(self, values):
+        self._values = list(values) if values else []
+        if not HAS_PYQT:
+            return
+        # 기존 위젯 제거
+        while self._layout.count():
+            child = self._layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        filtered = list(reversed([v for v in self._values[:50] if v is True or v is False]))
+        if not filtered:
+            return
+        segments = []
+        current, count = None, 0
+        for v in filtered:
+            if v == current:
+                count += 1
+            else:
+                if current is not None:
+                    segments.append({"type": current, "count": count})
+                current, count = v, 1
+        if current is not None:
+            segments.append({"type": current, "count": count})
+        for seg in segments:
+            col = QWidget()
+            col_layout = QVBoxLayout(col)
+            col_layout.setContentsMargins(0, 0, 0, 0)
+            col_layout.setSpacing(2)
+            col_layout.addStretch(1)
+            txt = "정" if seg["type"] is True else "꺽"
+            bg = "#4caf50" if seg["type"] is True else "#f44336"
+            for _ in range(seg["count"]):
+                lb = QLabel(txt)
+                lb.setAlignment(Qt.AlignCenter)
+                lb.setStyleSheet("background: %s; color: #fff; font-weight: bold; padding: 2px 6px; border-radius: 3px; font-size: 11px;" % bg)
+                lb.setMinimumHeight(18)
+                col_layout.addWidget(lb)
+            num_lb = QLabel(str(seg["count"]))
+            num_lb.setAlignment(Qt.AlignCenter)
+            num_lb.setStyleSheet("font-size: 10px; color: #666;")
+            col_layout.addWidget(num_lb)
+            self._layout.addWidget(col)
+        self.setMinimumWidth(max(200, len(segments) * 28))
+
+
 class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
+    _test_done_signal = pyqtSignal(str, str) if HAS_PYQT else None  # (which, msg) — API/ADB 테스트 완료
+    _adb_device_suggested = pyqtSignal(str) if HAS_PYQT else None  # 연결된 기기 ID 자동 채움
+    _ws_pick_received = pyqtSignal(object) if HAS_PYQT else None  # WebSocket 픽 수신 → 즉시 배팅
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("매크로 독립형 — 픽+결과 수신, 직접 계산")
@@ -302,6 +402,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self._running = False
         self._coords = {}
         self._last_bet_round = None
+        self._first_bet_round = None  # 첫 ADB 배팅 회차 — 이 회차부터만 금액·수익 표시
         self._pending_bet_rounds = {}
         self._lock = threading.Lock()
 
@@ -315,13 +416,46 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self._coord_listener = None
         self._coord_capture_key = None
         self._pending_coord_click = None
+        self._ws_client = None
+        self._ws_thread = None
+        self._ws_connected = False
+        self._flip_pick = False
 
         self._build_ui()
         self._load_coords()
+        if HAS_PYQT and self._test_done_signal is not None:
+            self._test_done_signal.connect(self._on_test_done)
+        if HAS_PYQT and self._adb_device_suggested is not None:
+            self._adb_device_suggested.connect(self._on_adb_device_suggested)
+        if HAS_PYQT and self._ws_pick_received is not None:
+            self._ws_pick_received.connect(self._on_ws_pick_received)
+
+    def _get_macro_settings(self):
+        """매크로 설정: 시작 금액, 마틴 테이블."""
+        try:
+            cap = int(self.capital_edit.text().strip() or 0)
+            if cap <= 0:
+                cap = 1000000
+        except (TypeError, ValueError):
+            cap = 1000000
+        try:
+            base = int(self.base_bet_edit.text().strip() or 0)
+            if base <= 0:
+                base = 5000
+        except (TypeError, ValueError):
+            base = 5000
+        return cap, build_martin_table(base)
 
     def _load_coords(self):
         self._coords = load_coords()
         self._refresh_coord_labels()
+        if hasattr(self, "capital_edit") and self.capital_edit:
+            self.capital_edit.setText(str(self._coords.get("macro_capital") or 1000000))
+        if hasattr(self, "base_bet_edit") and self.base_bet_edit:
+            self.base_bet_edit.setText(str(self._coords.get("macro_base") or 5000))
+        self._flip_pick = bool(self._coords.get("macro_flip_pick", False))
+        if hasattr(self, "flip_pick_check") and self.flip_pick_check:
+            self.flip_pick_check.setChecked(self._flip_pick)
         if hasattr(self, "window_left_edit") and self.window_left_edit:
             self.window_left_edit.setText(str(self._coords.get("window_left") or ""))
             self.window_top_edit.setText(str(self._coords.get("window_top") or ""))
@@ -343,43 +477,139 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             self._coord_status_labels[key].setText(text)
             self._coord_status_labels[key].setStyleSheet("color: %s; font-size: 11px;" % color)
 
+    def _on_flip_pick_changed(self, state):
+        self._flip_pick = bool(state)
+        self._coords = load_coords()
+        self._coords["macro_flip_pick"] = self._flip_pick
+        save_coords(self._coords)
+
+    def _get_effective_pick_color(self, raw_pc):
+        """정규화 후 픽 반대로 옵션 적용. RED/BLACK 반환 또는 None."""
+        n = _normalize_pick_color(raw_pc)
+        if n is None:
+            return None
+        if self._flip_pick:
+            return "BLACK" if n == "RED" else "RED"
+        return n
+
     def _on_analyzer_nick_changed(self, nick):
         if nick and nick in self._analyzer_nick_urls:
             self.analyzer_url_edit.setText(self._analyzer_nick_urls[nick])
 
+    def _on_test_done(self, which, msg):
+        """시그널로 메인 스레드에서 호출 — API/ADB 테스트 완료."""
+        if which == "api":
+            self.api_test_btn.setEnabled(True)
+            self.api_test_btn.setText("API 연결 확인")
+            if "API 연결됨" in (msg or ""):
+                QTimer.singleShot(0, self._poll_once)
+                self._start_ws_client()
+                self._poll_timer = True
+                self._poll_loop()
+                self._log("픽/카드/그래프 수신 중. 시작 버튼으로 배팅 활성화.")
+        elif which == "ws":
+            self._log(msg or "")
+        elif which == "adb":
+            self.adb_devices_btn.setEnabled(True)
+            self.adb_devices_btn.setText("ADB 연결 확인")
+        elif which == "adb_bet":
+            self.adb_bet_btn.setEnabled(True)
+            self.adb_bet_btn.setText("배팅금액 테스트 (5000원)")
+        self._log(msg)
+
     def _on_api_test(self):
+        url = self.analyzer_url_edit.text().strip()
+        calc_id = self.calc_combo.currentData()
         self.api_test_btn.setEnabled(False)
         self.api_test_btn.setText("확인 중...")
+
         def run():
-            url = self.analyzer_url_edit.text().strip()
-            calc_id = self.calc_combo.currentData()
-            data, err = fetch_macro_data(url, calculator_id=calc_id)
-            msg = "API 연결됨 (계산기 %s)" % calc_id if not err and data else ("API 실패: %s" % (err or "응답 없음"))
-            QTimer.singleShot(0, lambda: self._api_test_done(msg))
+            try:
+                data, err = fetch_macro_data(url, calculator_id=calc_id)
+                msg = "API 연결됨 (계산기 %s)" % calc_id if not err and data else ("API 실패: %s" % (err or "응답 없음"))
+            except Exception as e:
+                msg = "API 오류: %s" % str(e)[:80]
+            if self._test_done_signal:
+                self._test_done_signal.emit("api", msg)
+
         threading.Thread(target=run, daemon=True).start()
 
-    def _api_test_done(self, msg):
-        self.api_test_btn.setEnabled(True)
-        self.api_test_btn.setText("API 연결 확인")
-        self._log(msg)
+    def _on_adb_device_suggested(self, device_id):
+        """ADB 연결 확인 시 동작하는 기기 ID로 ADB 기기 칸 자동 채움 (emulator_macro와 동일)."""
+        if device_id and hasattr(self, "device_edit"):
+            self.device_edit.setText(device_id)
+            self._log("ADB 기기 칸을 [%s] 로 자동 채움." % device_id)
 
     def _on_adb_devices(self):
+        """CMD와 동일한 방식으로 adb 실행 후 기기 목록·실제 연결 테스트 (emulator_macro와 동일)."""
+        user_device = (self.device_edit.text().strip() or "").strip() or "127.0.0.1:5555"
         self.adb_devices_btn.setEnabled(False)
         self.adb_devices_btn.setText("확인 중...")
-        def run():
-            device = self.device_edit.text().strip() or "127.0.0.1:5555"
-            _run_adb_shell_cmd(None, "start-server")
-            time.sleep(0.3)
-            code, out, err = _run_adb_shell_cmd(None, "devices")
-            rc, _, _ = _run_adb_shell_cmd(device, "shell", "echo", "ok")
-            msg = "ADB 연결됨 [%s]" % device if rc == 0 else "ADB 실패. devices:\n%s\nLDPlayer 실행·ADB 디버깅 확인" % (out or err or "(없음)")
-            QTimer.singleShot(0, lambda: self._adb_test_done(msg))
-        threading.Thread(target=run, daemon=True).start()
+        self._log("ADB 연결 확인 중... (CMD와 동일한 방식으로 실행)")
 
-    def _adb_test_done(self, msg):
-        self.adb_devices_btn.setEnabled(True)
-        self.adb_devices_btn.setText("ADB 연결 확인")
-        self._log(msg)
+        def run():
+            msg = ""
+            try:
+                _run_adb_shell_cmd(None, "start-server")
+                time.sleep(0.3)
+                code, out, err = _run_adb_shell_cmd(None, "devices")
+                out = out or ""
+                err = err or ""
+                msg = "ADB devices (원본):\n" + (out if out else "(stdout 없음)")
+                if err:
+                    msg += "\n[stderr] " + err
+                raw_lines = out.replace("\r", "").split("\n")
+                device_ids = []
+                for line in raw_lines:
+                    line = line.strip()
+                    if "\t" in line and line.endswith("device"):
+                        device_ids.append(line.split("\t")[0].strip())
+
+                def test_connection(dev):
+                    rc, o, e = _run_adb_shell_cmd(dev, "shell", "echo", "ok")
+                    return rc == 0
+
+                ok_user = test_connection(user_device)
+                if ok_user:
+                    msg += "\n→ 연결됨. [%s] 로 실제 명령 전송 확인됨." % user_device
+                elif not device_ids:
+                    common_ports = [5554, 5555, 5556, 5557, 62001]
+                    tried = []
+                    connected_device = None
+                    for port in common_ports:
+                        addr = "127.0.0.1:%s" % port
+                        tried.append(addr)
+                        _run_adb_shell_cmd(None, "connect", addr)
+                        time.sleep(0.2)
+                        if test_connection(addr):
+                            connected_device = addr
+                            break
+                    if connected_device:
+                        msg += "\n→ 기기 목록 비었으나 포트 자동 시도 → [%s] 연결됨. ADB 기기 칸 채움." % connected_device
+                        if self._adb_device_suggested:
+                            self._adb_device_suggested.emit(connected_device)
+                    else:
+                        msg += "\n→ 기기 목록 비어 있음. 시도한 주소: " + ", ".join(tried)
+                        msg += "\n   LDPlayer가 실행 중인지, 설정 → 기타 설정 → ADB 디버깅 켜기 확인."
+                        if err:
+                            msg += "\n   [원인 추정] stderr: " + err[:200]
+                else:
+                    working = []
+                    for did in device_ids:
+                        if test_connection(did):
+                            working.append(did)
+                    if working:
+                        msg += "\n→ [%s] 로는 실패. [%s] 로 연결됨 → ADB 기기 칸 자동 채움." % (user_device, working[0])
+                        if self._adb_device_suggested:
+                            self._adb_device_suggested.emit(working[0])
+                    else:
+                        msg += "\n→ 기기는 보이지만 shell 명령 실패. stderr 확인."
+            except Exception as e:
+                msg += "\n예외: " + str(e)
+            if self._test_done_signal:
+                self._test_done_signal.emit("adb", msg)
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _on_adb_bet_test(self):
         self._coords = load_coords()
@@ -402,13 +632,9 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                 msg = "배팅금액 테스트 완료 (5000 입력)"
             except Exception as e:
                 msg = "배팅금액 테스트 실패: %s" % str(e)[:80]
-            QTimer.singleShot(0, lambda: self._adb_bet_done(msg))
+            if self._test_done_signal:
+                self._test_done_signal.emit("adb_bet", msg)
         threading.Thread(target=run, daemon=True).start()
-
-    def _adb_bet_done(self, msg):
-        self.adb_bet_btn.setEnabled(True)
-        self.adb_bet_btn.setText("배팅금액 테스트")
-        self._log(msg)
 
     def _on_adb_color_tap(self, key):
         self._coords = load_coords()
@@ -576,6 +802,25 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self.calc_combo.addItem("계산기 3", 3)
         fl.addRow("계산기 선택:", self.calc_combo)
 
+        self.capital_edit = QLineEdit()
+        self.capital_edit.setPlaceholderText("1000000")
+        self.capital_edit.setText("1000000")
+        self.capital_edit.setMaximumWidth(120)
+        self.capital_edit.setToolTip("시작 자본금 (마틴 상한)")
+        fl.addRow("시작 금액 (원):", self.capital_edit)
+
+        self.base_bet_edit = QLineEdit()
+        self.base_bet_edit.setPlaceholderText("5000")
+        self.base_bet_edit.setText("5000")
+        self.base_bet_edit.setMaximumWidth(120)
+        self.base_bet_edit.setToolTip("1단계 배팅 금액")
+        fl.addRow("1단계 배팅 (원):", self.base_bet_edit)
+
+        self.flip_pick_check = QCheckBox("픽 반대로 (RED↔BLACK)")
+        self.flip_pick_check.setToolTip("분석기와 픽이 반대로 들어올 때 체크. 레드/블랙 좌표가 바뀐 경우 등.")
+        self.flip_pick_check.stateChanged.connect(self._on_flip_pick_changed)
+        fl.addRow("", self.flip_pick_check)
+
         api_row = QHBoxLayout()
         self.api_test_btn = QPushButton("API 연결 확인")
         self.api_test_btn.setMinimumHeight(28)
@@ -706,13 +951,22 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         g_cards.setLayout(self.cards_layout)
         layout.addWidget(g_cards)
 
-        # 그래프 (정/꺽)
-        g_graph = QGroupBox("그래프")
-        self.graph_label = QLabel("—")
-        self.graph_label.setWordWrap(True)
-        self.graph_label.setStyleSheet("font-family: monospace; font-size: 12px;")
-        g_graph_layout = QVBoxLayout()
-        g_graph_layout.addWidget(self.graph_label)
+        # 그래프 (메인예측기 상단 정/꺽 블록 — jung-kkuk-graph)
+        g_graph = QGroupBox("그래프 (정/꺽 블록)")
+        self.graph_widget = JungKkukGraphWidget(self) if HAS_PYQT else QLabel("—")
+        self.graph_widget.setStyleSheet("background: #f5f5f5; border: 1px solid #ccc; border-radius: 4px;")
+        if HAS_PYQT:
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(False)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            scroll.setWidget(self.graph_widget)
+            scroll.setMinimumHeight(120)
+            scroll.setMaximumHeight(150)
+            g_graph_layout = QVBoxLayout()
+            g_graph_layout.addWidget(scroll)
+        else:
+            g_graph_layout = QVBoxLayout()
+            g_graph_layout.addWidget(self.graph_widget)
         g_graph.setLayout(g_graph_layout)
         layout.addWidget(g_graph)
 
@@ -728,8 +982,9 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         g_calc.setLayout(g_calc_layout)
         layout.addWidget(g_calc)
 
-        # 배팅중
+        # 배팅중 (분석기 계산기 상단 배팅픽과 동일 출처 — macro_pick_transmit)
         g_bet = QGroupBox("배팅중")
+        g_bet.setToolTip("분석기 계산기 상단 배팅픽과 동일. 픽 반대로 옵션 적용 시 RED↔BLACK 반전.")
         bet_row = QHBoxLayout()
         self.pick_label = QLabel("—")
         self.pick_label.setStyleSheet("font-size: 14px; font-weight: bold;")
@@ -826,7 +1081,8 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         """현재 픽을 pending 회차로 history에 반영 (아직 결과 없음)."""
         pick = self._pick
         rnd = pick.get("round")
-        pred = pick_color_to_pred(pick.get("pick_color"))
+        eff = self._get_effective_pick_color(pick.get("pick_color"))
+        pred = pick_color_to_pred(eff)
         if rnd is None or pred is None:
             return
         with self._lock:
@@ -872,79 +1128,106 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                 lb.setText("—")
                 lb.setStyleSheet("padding: 4px; border: 1px solid #ccc; border-radius: 4px;")
 
-        # 그래프
-        gv_str = "".join("O" if v is True else ("X" if v is False else "·") for v in gv[:30])
-        self.graph_label.setText(gv_str or "—")
+        # 그래프 (위아래 누적 라인)
+        if hasattr(self, "graph_widget") and hasattr(self.graph_widget, "set_values"):
+            self.graph_widget.set_values(gv)
 
-        # 마틴 시뮬레이션으로 betAmount, profit 채우기
-        step, next_bet = calc_martingale_step_and_bet(
-            [h for h in hist if (h.get("actual") or "") not in ("pending", "")]
-        )
-        cap = CAPITAL
+        # 마틴 시뮬레이션: 시작 후 첫 ADB 배팅 회차(_first_bet_round)부터만 금액·수익 표시. API 연결만 시 전부 "-"
         round_to_bet_profit = {}
-        for h in sorted(hist, key=lambda x: x["round"]):
-            rn = h["round"]
-            act = (h.get("actual") or "").strip()
-            pred = (h.get("predicted") or "").strip()
-            if act in ("pending", ""):
-                round_to_bet_profit[rn] = {"bet": next_bet, "profit": None}
-                continue
-            is_joker = act in ("joker", "조커")
-            is_win = not is_joker and pred in ("정", "꺽") and pred == act
-            bet = min(next_bet, int(cap))
-            if is_joker:
-                profit = -bet
-                step = min(step + 1, len(MARTIN_PYO_TABLE) - 1)
-                next_bet = MARTIN_PYO_TABLE[step]
-            elif is_win:
-                profit = int(bet * (ODDS - 1))
-                step = 0
-                next_bet = MARTIN_PYO_TABLE[0]
-            else:
-                profit = -bet
-                step = min(step + 1, len(MARTIN_PYO_TABLE) - 1)
-                next_bet = MARTIN_PYO_TABLE[step]
-            cap += profit
-            round_to_bet_profit[rn] = {"bet": bet, "profit": profit}
+        if self._running:
+            capital, martin_table = self._get_macro_settings()
+            first = self._first_bet_round
+            completed = [h for h in hist if (h.get("actual") or "").strip() not in ("pending", "") and first is not None and (h.get("round") or 0) >= first]
+            step, next_bet = calc_martingale_step_and_bet(completed, martin_table=martin_table)
+            cap = capital
+            for h in sorted(completed, key=lambda x: x["round"]):
+                rn = h["round"]
+                act = (h.get("actual") or "").strip()
+                pred = (h.get("predicted") or "").strip()
+                is_joker = act in ("joker", "조커")
+                is_win = not is_joker and pred in ("정", "꺽") and pred == act
+                bet = min(next_bet, int(cap))
+                if is_joker:
+                    profit = -bet
+                    step = min(step + 1, len(martin_table) - 1)
+                    next_bet = martin_table[step]
+                elif is_win:
+                    profit = int(bet * (ODDS - 1))
+                    step = 0
+                    next_bet = martin_table[0]
+                else:
+                    profit = -bet
+                    step = min(step + 1, len(martin_table) - 1)
+                    next_bet = martin_table[step]
+                cap += profit
+                round_to_bet_profit[rn] = {"bet": bet, "profit": profit}
+            for h in hist:
+                rn = h.get("round")
+                if rn is not None and rn not in round_to_bet_profit:
+                    act = (h.get("actual") or "").strip()
+                    if act in ("pending", ""):
+                        if first is not None:
+                            comp = [x for x in hist if (x.get("actual") or "").strip() not in ("pending", "") and (x.get("round") or 0) >= first and (x.get("round") or 0) < rn]
+                        else:
+                            comp = []
+                        _, nb = calc_martingale_step_and_bet(comp, martin_table=martin_table)
+                        round_to_bet_profit[rn] = {"bet": nb, "profit": None}
 
-        # 계산기 표
-        self.calc_table.setRowCount(len(hist))
-        for row, h in enumerate(hist):
+        # 계산기 표 — 최신회차가 제일 위에, 승/패/조커 배경색 (분석기와 동일)
+        BG_WIN = QColor("#c8e6c9")
+        BG_LOSE = QColor("#ffcdd2")
+        BG_JOKER = QColor("#bbdefb")
+        sorted_hist = sorted(hist, key=lambda x: (x.get("round") or 0))
+        display_hist = list(reversed(sorted_hist))
+        self.calc_table.setRowCount(len(display_hist))
+        for row, h in enumerate(display_hist):
             rn = h.get("round")
             rp = round_to_bet_profit.get(rn, {})
-            self.calc_table.setItem(row, 0, QTableWidgetItem(str(rn) if rn is not None else ""))
-            pred = h.get("predicted") or ""
-            self.calc_table.setItem(row, 1, QTableWidgetItem(pred))
-            act = (h.get("actual") or "").strip()
-            self.calc_table.setItem(row, 2, QTableWidgetItem(act))
-            res = h.get("result") or ""
-            self.calc_table.setItem(row, 3, QTableWidgetItem(res))
-            bet_val = rp.get("bet")
-            self.calc_table.setItem(row, 4, QTableWidgetItem(str(bet_val) if bet_val is not None and bet_val > 0 else "-"))
-            prof_val = rp.get("profit")
-            prof_item = QTableWidgetItem(str(prof_val) if prof_val is not None else "-")
-            if prof_val is not None:
-                prof_item.setForeground(QColor("green") if prof_val > 0 else QColor("red"))
-            self.calc_table.setItem(row, 5, prof_item)
+            res = (h.get("result") or "").strip()
+            row_bg = BG_WIN if res == "승" else (BG_LOSE if res == "패" else (BG_JOKER if res == "조커" else None))
+            for col in range(6):
+                if col == 0:
+                    it = QTableWidgetItem(str(rn) if rn is not None else "")
+                elif col == 1:
+                    it = QTableWidgetItem(h.get("predicted") or "")
+                elif col == 2:
+                    it = QTableWidgetItem((h.get("actual") or "").strip())
+                elif col == 3:
+                    it = QTableWidgetItem(res)
+                elif col == 4:
+                    bet_val = rp.get("bet")
+                    it = QTableWidgetItem(str(bet_val) if bet_val is not None and bet_val > 0 else "-")
+                else:
+                    prof_val = rp.get("profit")
+                    it = QTableWidgetItem(str(prof_val) if prof_val is not None else "-")
+                    if prof_val is not None:
+                        it.setForeground(QColor("green") if prof_val > 0 else QColor("red"))
+                if row_bg is not None:
+                    it.setBackground(QBrush(row_bg))
+                self.calc_table.setItem(row, col, it)
 
-        # 배팅중
+        # 배팅중 (분석기 계산기 상단 배팅픽과 동일 출처. 픽 반대로 옵션 적용)
         rnd = pick.get("round")
-        pc = pick.get("pick_color")
+        pc = self._get_effective_pick_color(pick.get("pick_color"))
         pending_rnd = rnd
         if pending_rnd is not None and pc:
             pred = pick_color_to_pred(pc)
-            completed = [h for h in hist if (h.get("actual") or "").strip() not in ("pending", "")]
-            step, amt = calc_martingale_step_and_bet(completed)
             calc_id = self.calc_combo.currentData() if hasattr(self, "calc_combo") else 1
             self.pick_label.setText(f"{pending_rnd}회 {pc} ({pred}) [계산기 {calc_id}]")
-            self.amount_label.setText(f"금액: {amt}원")
+            if self._running:
+                _, martin_table = self._get_macro_settings()
+                completed = [h for h in hist if (h.get("actual") or "").strip() not in ("pending", "")]
+                step, amt = calc_martingale_step_and_bet(completed, martin_table=martin_table)
+                self.amount_label.setText(f"금액: {amt}원")
+            else:
+                self.amount_label.setText("금액: —")
         else:
             self.pick_label.setText("보류")
             self.amount_label.setText("금액: —")
 
     def _poll_loop(self):
         self._poll_once()
-        if self._running and self._poll_timer:
+        if self._poll_timer:
             QTimer.singleShot(1000, self._poll_loop)
 
     def _on_start(self):
@@ -955,19 +1238,117 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self._analyzer_url = url
         self._device_id = self.device_edit.text().strip() or "127.0.0.1:5555"
         self._coords = load_coords()
+        try:
+            self._coords["macro_capital"] = int(self.capital_edit.text().strip() or 1000000)
+            self._coords["macro_base"] = int(self.base_bet_edit.text().strip() or 5000)
+            save_coords(self._coords)
+        except (TypeError, ValueError):
+            pass
+        if not self._poll_timer:
+            self._start_ws_client()
+            self._poll_timer = True
+            self._poll_loop()
         self._running = True
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self._log("시작 — 1초마다 API 폴링, 픽 수신 시 ADB 배팅")
-        self._poll_timer = True
-        self._poll_loop()
+        self._log("배팅 시작 — 금액 입력·ADB 배팅 활성화")
 
     def _on_stop(self):
         self._running = False
-        self._poll_timer = None
+        self._first_bet_round = None
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self._log("정지")
+        self._log("배팅 정지 (픽/카드/그래프 수신은 계속)")
+
+    def _start_ws_client(self):
+        """WebSocket 클라이언트 시작 — 픽 실시간 수신 (emulator_macro와 동일)."""
+        self._stop_ws_client()
+        self._ws_connected = False
+        url = self.analyzer_url_edit.text().strip()
+        calc_id = self.calc_combo.currentData() if hasattr(self, "calc_combo") else 1
+        ws_url = _ws_url_from_analyzer(url, calc_id)
+        if not ws_url:
+            return
+
+        def run():
+            try:
+                import socketio
+                sio = socketio.Client(reconnection=True, reconnection_attempts=10, reconnection_delay=2)
+                self._ws_client = sio
+
+                @sio.on("pick_update")
+                def on_pick(data):
+                    if not isinstance(data, dict):
+                        return
+                    if data.get("running") is False:
+                        return
+                    pick = {
+                        "round": data.get("round"),
+                        "pick_color": data.get("pick_color"),
+                        "suggested_amount": data.get("suggested_amount"),
+                    }
+                    if pick.get("round") is None or pick.get("pick_color") is None:
+                        return
+                    if HAS_PYQT and self._ws_pick_received is not None:
+                        self._ws_pick_received.emit(pick)
+
+                @sio.on("connect")
+                def on_connect():
+                    self._ws_connected = True
+
+                @sio.on("disconnect")
+                def on_disconnect():
+                    self._ws_connected = False
+
+                @sio.on("connect_error")
+                def on_error(data):
+                    self._ws_connected = False
+
+                sio.connect(ws_url, transports=["websocket"], wait_timeout=8)
+                self._ws_connected = True
+                if self._test_done_signal:
+                    self._test_done_signal.emit("ws", "[WebSocket] 연결됨 — 픽 실시간 수신")
+                sio.wait()
+            except Exception as e:
+                self._ws_connected = False
+                if self._test_done_signal:
+                    self._test_done_signal.emit("ws", "[WebSocket] 연결 실패: %s" % str(e)[:80])
+            finally:
+                self._ws_client = None
+                self._ws_connected = False
+
+        self._ws_thread = threading.Thread(target=run, daemon=True)
+        self._ws_thread.start()
+
+    def _stop_ws_client(self):
+        """WebSocket 클라이언트 종료."""
+        self._ws_connected = False
+        if self._ws_client is not None:
+            try:
+                self._ws_client.disconnect()
+            except Exception:
+                pass
+            self._ws_client = None
+        self._ws_thread = None
+
+    def _on_ws_pick_received(self, pick):
+        """WebSocket 픽 수신: 배팅중 갱신 후 즉시 ADB 배팅."""
+        if not isinstance(pick, dict):
+            return
+        rnd = pick.get("round")
+        pc = pick.get("pick_color")
+        if rnd is None or pc is None:
+            return
+        try:
+            rnd = int(rnd)
+        except (TypeError, ValueError):
+            return
+        with self._lock:
+            self._pick = {"round": rnd, "pick_color": pc}
+        self._sync_pick_to_history()
+        self._update_ui()
+        if self._running:
+            self._try_bet_if_needed()
 
     def _do_bet(self, round_num, pick_color, amount):
         """ADB 배팅 실행"""
@@ -1009,7 +1390,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         with self._lock:
             pick = dict(self._pick)
         rnd = pick.get("round")
-        pc = pick.get("pick_color")
+        pc = self._get_effective_pick_color(pick.get("pick_color"))
         if rnd is None or pc is None:
             return
         if self._last_bet_round is not None:
@@ -1017,12 +1398,16 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                 return
             if rnd != self._last_bet_round + 1:
                 return
+        capital, martin_table = self._get_macro_settings()
         completed = [h for h in self._history if (h.get("actual") or "").strip() not in ("pending", "")]
-        step, amt = calc_martingale_step_and_bet(completed)
+        step, amt = calc_martingale_step_and_bet(completed, martin_table=martin_table)
+        amt = min(amt, int(capital)) if amt > 0 else 0
         if amt <= 0:
             return
         if self._do_bet(rnd, pc, amt):
             self._last_bet_round = rnd
+            if self._first_bet_round is None:
+                self._first_bet_round = rnd
 
 
 def main():
