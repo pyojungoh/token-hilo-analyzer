@@ -12261,14 +12261,17 @@ def api_current_pick_relay():
                 round_num = int(round_num) if round_num is not None else None
             except (TypeError, ValueError):
                 round_num = None
-            if round_num is not None and pick_color is not None:
+            if round_num is not None:
                 _last_post_time_per_calc[int(calculator_id)] = time.time()
-                _write_macro_pick_transmit(calculator_id, round_num, pick_color, amt_int, True)
-                _update_current_pick_relay_cache(calculator_id, round_num, pick_color, amt_int, True, None)
-                threading.Thread(target=_relay_db_write_background, daemon=True,
-                                 args=(calculator_id, pick_color, round_num, amt_int, running if running is not None else True)).start()
+                pc = (pick_color or "").strip().upper()
+                pc_stored = "RED" if pc in ("RED", "빨강") else ("BLACK" if pc in ("BLACK", "검정") else pick_color)
+                _write_macro_pick_transmit(calculator_id, round_num, pc_stored, amt_int, True)
+                _update_current_pick_relay_cache(calculator_id, round_num, pc_stored, amt_int, True, None)
+                if pc_stored is not None:
+                    threading.Thread(target=_relay_db_write_background, daemon=True,
+                                     args=(calculator_id, pc_stored, round_num, amt_int, running if running is not None else True)).start()
             else:
-                # 보류 등: 서버 1행으로 보정
+                # round 없음: 서버 1행으로 보정
                 state = get_calc_state('default') or {}
                 c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
                 if c and c.get('running'):

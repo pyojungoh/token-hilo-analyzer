@@ -45,6 +45,7 @@ ODDS = 1.97
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 COORDS_PATH = os.path.join(SCRIPT_DIR, "emulator_coords.json")
+MACRO_HISTORY_PATH = os.path.join(SCRIPT_DIR, "macro_calc_history.json")
 
 
 def _emulator_script_dir():
@@ -82,8 +83,27 @@ def _ws_url_from_analyzer(base_url, calculator_id=1):
     return ws_base + "?calculator=" + str(int(calculator_id) if calculator_id in (1, 2, 3) else 1)
 
 
+def fetch_current_pick(analyzer_url, calculator_id=1, timeout=5):
+    """GET /api/current-pick-relay?calculator=N — 기존 emulator_macro와 동일. 계산기 배팅중 픽 직접 수신."""
+    base = normalize_analyzer_url(analyzer_url)
+    if not base:
+        return {"pick_color": None, "round": None}, "URL 없음"
+    url = base + "/api/current-pick-relay"
+    params = {"calculator": int(calculator_id) if calculator_id in (1, 2, 3) else 1}
+    try:
+        r = requests.get(url, params=params, timeout=timeout)
+        r.raise_for_status()
+        return r.json(), None
+    except requests.exceptions.Timeout:
+        return {"pick_color": None, "round": None}, "타임아웃"
+    except requests.exceptions.ConnectionError as e:
+        return {"pick_color": None, "round": None}, str(e)[:80] if e else "연결 실패"
+    except Exception as e:
+        return {"pick_color": None, "round": None}, str(e)[:100]
+
+
 def fetch_macro_data(analyzer_url, calculator_id=1, timeout=10):
-    """GET /api/macro-data?calculator=N → (data, error_msg)."""
+    """GET /api/macro-data?calculator=N → round_actuals, graph_values, cards (픽 제외). 픽은 current-pick-relay 사용."""
     base = normalize_analyzer_url(analyzer_url)
     if not base:
         return None, "URL 없음"
@@ -116,6 +136,33 @@ def load_coords():
 def save_coords(data):
     try:
         with open(COORDS_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def load_macro_history():
+    """매크로 계산기 history·first_bet_round·last_bet_round 로드."""
+    path = getattr(sys, "frozen", False) and os.path.join(_emulator_script_dir(), "macro_calc_history.json") or MACRO_HISTORY_PATH
+    if not os.path.exists(path):
+        return [], None, None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        hist = data.get("history") or []
+        first = data.get("first_bet_round")
+        last = data.get("last_bet_round")
+        return hist, first, last
+    except Exception:
+        return [], None, None
+
+
+def save_macro_history(history, first_bet_round, last_bet_round):
+    """매크로 계산기 history·first_bet_round·last_bet_round 저장."""
+    path = getattr(sys, "frozen", False) and os.path.join(_emulator_script_dir(), "macro_calc_history.json") or MACRO_HISTORY_PATH
+    try:
+        data = {"history": history, "first_bet_round": first_bet_round, "last_bet_round": last_bet_round}
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
@@ -350,7 +397,7 @@ class JungKkukGraphWidget(QWidget if HAS_PYQT else object):
             child = self._layout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
-        filtered = list(reversed([v for v in self._values[:50] if v is True or v is False]))
+        filtered = [v for v in self._values[:50] if v is True or v is False]
         if not filtered:
             return
         segments = []
@@ -384,6 +431,8 @@ class JungKkukGraphWidget(QWidget if HAS_PYQT else object):
             col_layout.addWidget(num_lb)
             self._layout.addWidget(col)
         self.setMinimumWidth(max(200, len(segments) * 28))
+        self.update()
+        self.updateGeometry()
 
 
 class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
@@ -420,9 +469,11 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self._ws_thread = None
         self._ws_connected = False
         self._flip_pick = False
+        self._last_history_save_at = 0
 
         self._build_ui()
         self._load_coords()
+        self._load_macro_history()
         if HAS_PYQT and self._test_done_signal is not None:
             self._test_done_signal.connect(self._on_test_done)
         if HAS_PYQT and self._adb_device_suggested is not None:
@@ -445,6 +496,26 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         except (TypeError, ValueError):
             base = 5000
         return cap, build_martin_table(base)
+
+    def _load_macro_history(self):
+        """저장된 history·first_bet_round·last_bet_round 복원."""
+        hist, first, last = load_macro_history()
+        if hist:
+            self._history = hist
+            if first is not None:
+                self._first_bet_round = int(first) if isinstance(first, (int, float)) else first
+            if last is not None:
+                self._last_bet_round = int(last) if isinstance(last, (int, float)) else last
+
+    def _save_macro_history(self, force=False):
+        """history·first_bet_round·last_bet_round 저장. force=True 또는 3초 경과 시 저장."""
+        now = time.time()
+        if not force and now - self._last_history_save_at < 3:
+            return
+        self._last_history_save_at = now
+        with self._lock:
+            hist = list(self._history)
+        save_macro_history(hist, self._first_bet_round, self._last_bet_round)
 
     def _load_coords(self):
         self._coords = load_coords()
@@ -1043,13 +1114,21 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         if not data:
             self._log("API 응답 없음")
             return
+        pick_relay, pick_err = fetch_current_pick(url, calculator_id=calc_id, timeout=5)
+        if not pick_err and pick_relay:
+            pc_raw = pick_relay.get("pick_color")
+            pc = _normalize_pick_color(pc_raw) if pc_raw else None
+            pick = {"round": pick_relay.get("round"), "pick_color": pc or pc_raw, "calculator": calc_id}
+        else:
+            pick = data.get("pick") or {}
         with self._lock:
-            self._pick = data.get("pick") or {}
+            self._pick = pick
             self._round_actuals = data.get("round_actuals") or {}
             self._graph_values = data.get("graph_values") or []
             self._cards = data.get("cards") or []
         self._sync_pick_to_history()
         self._merge_results_into_history()
+        self._save_macro_history()
         self._update_ui()
         if self._running:
             self._try_bet_if_needed()
@@ -1138,9 +1217,10 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             capital, martin_table = self._get_macro_settings()
             first = self._first_bet_round
             completed = [h for h in hist if (h.get("actual") or "").strip() not in ("pending", "") and first is not None and (h.get("round") or 0) >= first]
-            step, next_bet = calc_martingale_step_and_bet(completed, martin_table=martin_table)
+            completed_sorted = sorted(completed, key=lambda x: x.get("round") or 0)
+            step, next_bet = calc_martingale_step_and_bet(completed_sorted, martin_table=martin_table)
             cap = capital
-            for h in sorted(completed, key=lambda x: x["round"]):
+            for h in completed_sorted:
                 rn = h["round"]
                 act = (h.get("actual") or "").strip()
                 pred = (h.get("predicted") or "").strip()
@@ -1167,7 +1247,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                     act = (h.get("actual") or "").strip()
                     if act in ("pending", ""):
                         if first is not None:
-                            comp = [x for x in hist if (x.get("actual") or "").strip() not in ("pending", "") and (x.get("round") or 0) >= first and (x.get("round") or 0) < rn]
+                            comp = sorted([x for x in hist if (x.get("actual") or "").strip() not in ("pending", "") and (x.get("round") or 0) >= first and (x.get("round") or 0) < rn], key=lambda x: x.get("round") or 0)
                         else:
                             comp = []
                         _, nb = calc_martingale_step_and_bet(comp, martin_table=martin_table)
@@ -1210,17 +1290,22 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         rnd = pick.get("round")
         pc = self._get_effective_pick_color(pick.get("pick_color"))
         pending_rnd = rnd
+        calc_id = self.calc_combo.currentData() if hasattr(self, "calc_combo") else 1
         if pending_rnd is not None and pc:
             pred = pick_color_to_pred(pc)
-            calc_id = self.calc_combo.currentData() if hasattr(self, "calc_combo") else 1
             self.pick_label.setText(f"{pending_rnd}회 {pc} ({pred}) [계산기 {calc_id}]")
             if self._running:
                 _, martin_table = self._get_macro_settings()
-                completed = [h for h in hist if (h.get("actual") or "").strip() not in ("pending", "")]
-                step, amt = calc_martingale_step_and_bet(completed, martin_table=martin_table)
+                first = self._first_bet_round
+                completed = [h for h in hist if (h.get("actual") or "").strip() not in ("pending", "") and first is not None and (h.get("round") or 0) >= first]
+                completed_sorted = sorted(completed, key=lambda x: x.get("round") or 0)
+                step, amt = calc_martingale_step_and_bet(completed_sorted, martin_table=martin_table)
                 self.amount_label.setText(f"금액: {amt}원")
             else:
                 self.amount_label.setText("금액: —")
+        elif pending_rnd is not None:
+            self.pick_label.setText(f"{pending_rnd}회 보류 (15번 조커) [계산기 {calc_id}]")
+            self.amount_label.setText("금액: —")
         else:
             self.pick_label.setText("보류")
             self.amount_label.setText("금액: —")
@@ -1282,12 +1367,15 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                         return
                     if data.get("running") is False:
                         return
+                    rnd = data.get("round")
+                    pc_raw = data.get("pick_color")
+                    pc = _normalize_pick_color(pc_raw) if pc_raw else None
                     pick = {
-                        "round": data.get("round"),
-                        "pick_color": data.get("pick_color"),
+                        "round": rnd,
+                        "pick_color": pc or pc_raw,
                         "suggested_amount": data.get("suggested_amount"),
                     }
-                    if pick.get("round") is None or pick.get("pick_color") is None:
+                    if pick.get("round") is None:
                         return
                     if HAS_PYQT and self._ws_pick_received is not None:
                         self._ws_pick_received.emit(pick)
@@ -1332,20 +1420,22 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self._ws_thread = None
 
     def _on_ws_pick_received(self, pick):
-        """WebSocket 픽 수신: 배팅중 갱신 후 즉시 ADB 배팅."""
+        """WebSocket 픽 수신: 배팅중 갱신. 보류(15번 조커) 시 round만 있고 pick_color=None."""
         if not isinstance(pick, dict):
             return
         rnd = pick.get("round")
         pc = pick.get("pick_color")
-        if rnd is None or pc is None:
+        if rnd is None:
             return
         try:
             rnd = int(rnd)
         except (TypeError, ValueError):
             return
+        pc_norm = _normalize_pick_color(pc) if pc else None
         with self._lock:
-            self._pick = {"round": rnd, "pick_color": pc}
+            self._pick = {"round": rnd, "pick_color": pc_norm or pc}
         self._sync_pick_to_history()
+        self._save_macro_history()
         self._update_ui()
         if self._running:
             self._try_bet_if_needed()
@@ -1399,8 +1489,10 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             if rnd != self._last_bet_round + 1:
                 return
         capital, martin_table = self._get_macro_settings()
-        completed = [h for h in self._history if (h.get("actual") or "").strip() not in ("pending", "")]
-        step, amt = calc_martingale_step_and_bet(completed, martin_table=martin_table)
+        first = self._first_bet_round
+        completed = [h for h in self._history if (h.get("actual") or "").strip() not in ("pending", "") and first is not None and (h.get("round") or 0) >= first]
+        completed_sorted = sorted(completed, key=lambda x: x.get("round") or 0)
+        step, amt = calc_martingale_step_and_bet(completed_sorted, martin_table=martin_table)
         amt = min(amt, int(capital)) if amt > 0 else 0
         if amt <= 0:
             return
@@ -1408,6 +1500,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             self._last_bet_round = rnd
             if self._first_bet_round is None:
                 self._first_bet_round = rnd
+            self._save_macro_history(force=True)
 
 
 def main():
