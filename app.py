@@ -11589,7 +11589,14 @@ def _update_prediction_cache_from_db(results=None):
                 now = time.time()
                 if not hasattr(_update_prediction_cache_from_db, '_last_hold_log') or now - getattr(_update_prediction_cache_from_db, '_last_hold_log', 0) > 60:
                     _update_prediction_cache_from_db._last_hold_log = now
-                    print(f"[진단] 보류: round={sp.get('round')} joker_skip={sp.get('joker_warning', False)}")
+                    res = results if results else (get_recent_results(hours=24) or [])
+                    res = _sort_results_newest_first(res) if res else []
+                    joker_stats = _compute_joker_stats(res) if res else {}
+                    diag = _diagnose_hold_reason(res, joker_stats=joker_stats) if res else {}
+                    d = diag.get('details', {})
+                    card15 = d.get('card15', {})
+                    short = {'reason': diag.get('reason'), 'gv_len': d.get('graph_values_len'), 'valid_gv': d.get('valid_gv_len'), 'card15_joker': card15.get('is_joker'), 'card15_raw': card15.get('joker_raw')}
+                    print(f"[진단] 보류: round={sp.get('round')} {short}")
         else:
             prediction_cache = {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
     except Exception as e:
@@ -11712,9 +11719,65 @@ def get_results():
         return err_resp, 200
 
 
+def _diagnose_hold_reason(results, joker_stats=None):
+    """보류 원인 정밀 진단. results는 최신순."""
+    out = {'reason': None, 'details': {}}
+    if not results or len(results) < 16:
+        out['reason'] = 'results_too_short'
+        out['details'] = {'len': len(results) if results else 0, 'need': 16}
+        return out
+    # skip_bet 먼저 (조커 다발 등)
+    if joker_stats and joker_stats.get('skip_bet'):
+        out['reason'] = 'joker_skip_bet'
+        out['details'] = {
+            'count_in_15': joker_stats.get('count_in_15', 0),
+            'count_in_30': joker_stats.get('count_in_30', 0),
+            'warning_reason': joker_stats.get('warning_reason', ''),
+        }
+        return out
+    graph_values = _build_graph_values(results)
+    valid_gv = [v for v in graph_values if v is True or v is False]
+    out['details']['graph_values_len'] = len(graph_values)
+    out['details']['valid_gv_len'] = len(valid_gv)
+    out['details']['graph_values_head'] = graph_values[:20] if graph_values else []
+    if len(graph_values) < 2:
+        out['reason'] = 'graph_values_too_short'
+        return out
+    if len(valid_gv) < 2:
+        out['reason'] = 'valid_gv_too_few'
+        out['details']['none_count'] = sum(1 for v in graph_values if v is None)
+        return out
+    # 15번 카드 (results[14])
+    card15 = results[14] if len(results) >= 15 else None
+    joker_raw = card15.get('joker') if card15 else None
+    is_joker = _is_joker(joker_raw)
+    out['details']['card15'] = {
+        'gameID': card15.get('gameID') if card15 else None,
+        'joker_raw': joker_raw,
+        'joker_raw_type': type(joker_raw).__name__ if joker_raw is not None else None,
+        'is_joker': is_joker,
+        'red': card15.get('red') if card15 else None,
+        'black': card15.get('black') if card15 else None,
+        'result': (card15.get('result') or '')[:20] if card15 else None,
+    }
+    if is_joker:
+        out['reason'] = 'card15_joker'
+        return out
+    # compute_prediction 호출해 실제 반환값 확인
+    ph = get_prediction_history(100)
+    computed = compute_prediction(results, ph, shape_win_stats=None, chunk_profile_stats=None)
+    if computed and computed.get('value') in ('정', '꺽'):
+        out['reason'] = 'computed_ok'
+        out['details']['computed_value'] = computed.get('value')
+        return out
+    out['reason'] = 'compute_prediction_returned_none'
+    out['details']['computed'] = computed
+    return out
+
+
 @app.route('/api/debug-prediction', methods=['GET'])
 def debug_prediction():
-    """보류/멈춤 진단용. 현재 results·stored·원인 요약 반환."""
+    """보류/멈춤 진단용. 현재 results·stored·원인 요약·정밀진단 반환."""
     try:
         if not DB_AVAILABLE or not DATABASE_URL:
             return jsonify({'ok': False, 'reason': 'DB 없음'}), 200
@@ -11724,14 +11787,32 @@ def debug_prediction():
         is_15_joker = len(results) >= 15 and _is_joker(results[14].get('joker')) if results else False
         stored = get_stored_round_prediction(pred_rnd) if pred_rnd else None
         joker_stats = _compute_joker_stats(results) if results else {}
+        # 정밀 진단
+        hold_diag = _diagnose_hold_reason(results, joker_stats=joker_stats) if results else {}
+        # 최근 20건 카드 샘플 (joker·red·black)
+        sample = []
+        for i in range(min(20, len(results))):
+            r = results[i]
+            sample.append({
+                'idx': i,
+                'gameID': r.get('gameID'),
+                'joker_raw': r.get('joker'),
+                'joker_type': type(r.get('joker')).__name__,
+                'red': r.get('red'),
+                'black': r.get('black'),
+                'result': (r.get('result') or '')[:10],
+            })
         return jsonify({
             'ok': True,
             'predicted_round': pred_rnd,
             'results_count': len(results),
             'is_15_joker': is_15_joker,
             'joker_skip_bet': joker_stats.get('skip_bet', False),
+            'joker_stats': {k: v for k, v in (joker_stats or {}).items() if k in ('count_in_15', 'count_in_30', 'skip_bet', 'warning_reason')},
             'stored': stored,
             'prediction_cache_value': (prediction_cache or {}).get('value'),
+            'hold_diagnosis': hold_diag,
+            'results_sample': sample,
         }), 200
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)[:200]}), 200
