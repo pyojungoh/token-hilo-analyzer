@@ -12312,6 +12312,48 @@ def api_current_pick_relay():
         return jsonify(empty_pick), 200
 
 
+@app.route('/api/macro-data', methods=['GET'])
+def api_macro_data():
+    """매크로 전용: 픽 + 결과(round_actuals) + 그래프. 계산은 매크로에서 직접 수행."""
+    try:
+        results = get_recent_results(hours=24)
+        results = _sort_results_newest_first(results) if results else []
+        if len(results) > 50:
+            results = results[:50]
+        round_actuals = _build_round_actuals(results) if results else {}
+        gv = _build_graph_values(results) if results else []
+        # 카드덱용: gameID, joker, color(RED/BLACK)
+        cards = []
+        for r in (results or [])[:30]:
+            c = get_card_color_from_result(r)
+            color = 'RED' if c is True else ('BLACK' if c is False else None)
+            cards.append({
+                'gameID': r.get('gameID'),
+                'joker': bool(r.get('joker')),
+                'color': color,
+            })
+        # 픽: server_prediction
+        pick = {'round': None, 'pick_color': None}
+        if len(results) >= 16:
+            pred = compute_prediction(results, get_prediction_history(100) or [], shape_win_stats=None, chunk_profile_stats=None)
+            if pred and pred.get('value') in ('정', '꺽'):
+                pick['round'] = pred.get('round')
+                col = pred.get('color')
+                if col == '빨강':
+                    pick['pick_color'] = 'RED'
+                elif col == '검정':
+                    pick['pick_color'] = 'BLACK'
+        return jsonify({
+            'pick': pick,
+            'round_actuals': round_actuals,
+            'graph_values': gv,
+            'cards': cards,
+        }), 200
+    except Exception as e:
+        print(f"[경고] macro-data 오류: {str(e)[:150]}")
+        return jsonify({'pick': {'round': None, 'pick_color': None}, 'round_actuals': {}, 'graph_values': [], 'cards': []}), 200
+
+
 # 배팅 사이트 URL (토큰하이로우). 필요 시 환경변수로 오버라이드 가능
 BETTING_SITE_URL = os.getenv('BETTING_SITE_URL', 'https://nhs900.com')
 
