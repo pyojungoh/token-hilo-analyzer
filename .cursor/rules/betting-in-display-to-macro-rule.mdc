@@ -17,22 +17,23 @@ alwaysApply: true
 ## 데이터 흐름 (변형 금지)
 
 ```
-[클라이언트 상단]  getCalcResult.currentBet → suggested_amount (POST)
+[서버 1행]  _get_calc_row1_bundle(c) → (round, pick, amount)
        │
-       ├─ POST: 클라이언트 상단 금액 그대로 relay (디스플레이와 동일)
-       ├─ 스케줄러: 모든 실행중 calc에 대해 0.3초마다 _push_current_pick_from_calc
+       ├─ POST: 1행 계산 → macro_pick_transmit 저장
+       ├─ 스케줄러: 1행 계산 → macro_pick_transmit 저장
        ▼
-[서버 relay 캐시]  POST 시 상단 값, 스케줄러 시 1행 값
+[macro_pick_transmit]  전송 전용 DB — 단일 출처
        │
-       │  매크로 GET/WebSocket
+       ├─ relay 캐시 갱신
+       └─ WebSocket emit
        ▼
 [자동배팅기]  받은 금액 그대로 표시·배팅
 ```
 
 ## 금액 정확도 규칙
 
-- **POST**: 클라이언트 상단(디스플레이) 값 그대로 사용 — 디스플레이가 정확하므로 신뢰.
-- **스케줄러**: 모든 실행중 calc에 대해 매 사이클 relay 푸시 — 매크로가 항상 최신값 수신.
+- **단일 출처**: macro_pick_transmit — 1행 계산 후 여기만 씀. 클라이언트 값 사용 안 함.
+- **POST/스케줄러**: 둘 다 서버 1행 계산 → DB 저장 → relay. 겹침 없음.
 
 ## 안정화 규칙 (들어왔다 보류떴다 방지)
 

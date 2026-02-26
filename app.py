@@ -76,9 +76,9 @@ def _ws_emit_pick_update(calculator_id, round_num, pick_color, suggested_amount,
             'calculator': cid,
         }
         _socketio.emit('pick_update', data, room=room)
-        # 50ms 후 2회 전송 — 매크로에서 두 값 일치 검증 후 배팅
+        # 20ms 후 2회 전송 — 매크로 2회 확인용 (속도 개선)
         def _emit_second():
-            time.sleep(0.05)
+            time.sleep(0.02)
             try:
                 _socketio.emit('pick_update', data, room=room)
             except Exception:
@@ -291,6 +291,19 @@ def init_database():
         except Exception as ex:
             print(f"[경고] current_pick 테이블 생성/초기화 건너뜀 (서버는 계속 기동): {str(ex)[:100]}")
         
+        # macro_pick_transmit: 매크로 전송 전용 — 1행 계산 후 여기만 씀. relay는 여기서만 읽음 (이중/삼중 출처 제거)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS macro_pick_transmit (
+                calculator_id INTEGER PRIMARY KEY,
+                round_num INTEGER,
+                pick_color VARCHAR(10),
+                suggested_amount INTEGER,
+                running BOOLEAN DEFAULT true,
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        ''')
+        cur.execute('INSERT INTO macro_pick_transmit (calculator_id) VALUES (1), (2), (3) ON CONFLICT (calculator_id) DO NOTHING')
+        
         # shape_win_stats: 자주 나온 그래프 모양별 "그 다음 실제 결과" 누적 (정/꺽 예측 무관, 모양→다음 결과만)
         cur.execute('''
             CREATE TABLE IF NOT EXISTS shape_win_stats (
@@ -370,6 +383,30 @@ def ensure_current_pick_table(conn):
         return True
     except Exception as e:
         print(f"[경고] current_pick 테이블 생성 실패: {str(e)[:100]}")
+        return False
+
+
+def ensure_macro_pick_transmit_table(conn):
+    """macro_pick_transmit 테이블이 없으면 생성 (매크로 전송 전용)."""
+    if not conn:
+        return False
+    try:
+        cur = conn.cursor()
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS macro_pick_transmit (
+                calculator_id INTEGER PRIMARY KEY,
+                round_num INTEGER,
+                pick_color VARCHAR(10),
+                suggested_amount INTEGER,
+                running BOOLEAN DEFAULT true,
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        ''')
+        cur.execute('INSERT INTO macro_pick_transmit (calculator_id) VALUES (1), (2), (3) ON CONFLICT (calculator_id) DO NOTHING')
+        cur.close()
+        return True
+    except Exception as e:
+        print(f"[경고] macro_pick_transmit 테이블 생성 실패: {str(e)[:100]}")
         return False
 
 
@@ -2536,10 +2573,8 @@ def _push_current_pick_from_calc(calculator_id, c):
                                        suggested_amount=suggested_amount, calculator_id=calc_id)
         if ok:
             conn.commit()
-        # 1행 번들 relay — 단, 최근 0.5초 내 POST가 있으면 덮어쓰지 않음 (클라이언트 상단 우선)
-        last_post = _last_post_time_per_calc.get(calc_id, 0)
-        if time.time() - last_post < 0.5:
-            return  # 클라이언트가 활발히 POST 중 — 상단 값 유지
+        # 1행 → macro_pick_transmit → relay (단일 출처)
+        _write_macro_pick_transmit(calc_id, pr, pick_color, suggested_amount, c.get('running', True))
         _update_current_pick_relay_cache(calc_id, pr, pick_color, int(suggested_amount or 0), c.get('running', True), None)
     except Exception:
         pass
@@ -2550,17 +2585,64 @@ def _push_current_pick_from_calc(calculator_id, c):
             pass
 
 
-# Relay 캐시: 매크로 GET 시 즉시 반환.
+# Relay 캐시: macro_pick_transmit에서만 갱신. 단일 출처.
 _current_pick_relay_cache = {1: None, 2: None, 3: None}
-_last_post_time_per_calc = {1: 0, 2: 0, 3: 0}  # POST 시각 — 스케줄러가 최근 POST 덮어쓰지 않도록
 
 
-def _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running=True, probability=None, from_post=False):
-    """회차·배팅중 픽·금액을 relay 캐시에 즉시 반영. 매크로 GET 시 DB 없이 반환. WebSocket 푸시."""
+def _write_macro_pick_transmit(calculator_id, round_num, pick_color, suggested_amount, running=True):
+    """매크로 전송 전용 DB에 1행 계산값 저장. relay는 여기서만 읽음."""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return False
+    try:
+        conn = get_db_connection(statement_timeout_sec=3)
+        if not conn:
+            return False
+        ensure_macro_pick_transmit_table(conn)
+        cur = conn.cursor()
+        amt = int(suggested_amount or 0) if suggested_amount is not None else 0
+        cur.execute('''
+            INSERT INTO macro_pick_transmit (calculator_id, round_num, pick_color, suggested_amount, running, updated_at)
+            VALUES (%s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (calculator_id) DO UPDATE SET
+                round_num = EXCLUDED.round_num,
+                pick_color = EXCLUDED.pick_color,
+                suggested_amount = EXCLUDED.suggested_amount,
+                running = EXCLUDED.running,
+                updated_at = NOW()
+        ''', (int(calculator_id), round_num, pick_color, amt, bool(running)))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[경고] macro_pick_transmit 저장 실패: {str(e)[:80]}")
+        return False
+
+
+def _read_macro_pick_transmit(calculator_id):
+    """macro_pick_transmit에서 매크로용 픽 읽기."""
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return None
+    try:
+        conn = get_db_connection(statement_timeout_sec=3)
+        if not conn:
+            return None
+        cur = conn.cursor()
+        cur.execute('SELECT round_num, pick_color, suggested_amount, running FROM macro_pick_transmit WHERE calculator_id = %s', (int(calculator_id),))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not row:
+            return None
+        return {'round': row[0], 'pick_color': row[1], 'suggested_amount': row[2], 'running': row[3]}
+    except Exception:
+        return None
+
+
+def _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running=True, probability=None):
+    """macro_pick_transmit → relay 캐시 반영. WebSocket 푸시."""
     try:
         cid = int(calculator_id) if calculator_id in (1, 2, 3) else 1
-        if from_post:
-            _last_post_time_per_calc[cid] = time.time()
         _current_pick_relay_cache[cid] = {
             'round': round_num,
             'pick_color': pick_color,
@@ -12160,52 +12242,29 @@ def api_current_pick_relay():
             round_num = data.get('round')
             suggested_amount = data.get('suggested_amount')
             running = data.get('running')
-            # 정지 시에만 캐시 비우기
+            # 정지 시: macro_pick_transmit 비우기
             if running is False:
+                _write_macro_pick_transmit(calculator_id, None, None, 0, False)
                 _update_current_pick_relay_cache(calculator_id, None, None, None, False, None)
                 threading.Thread(target=_relay_db_write_background, daemon=True,
                                  args=(calculator_id, None, None, None, False)).start()
                 return jsonify({'ok': True}), 200
-            # 유효한 픽만 캐시 갱신 — null/보류 수신 시 기존 유효 캐시 덮어쓰지 않음 (들어왔다 보류떴다 반복 방지)
-            is_valid_post = (round_num is not None and pick_color is not None and
-                            suggested_amount is not None and int(suggested_amount or 0) > 0)
-            if not is_valid_post:
-                # 보류·null 수신 — 캐시 유지, DB만 백그라운드 저장
-                threading.Thread(target=_relay_db_write_background, daemon=True,
-                                 args=(calculator_id, pick_color, round_num, suggested_amount, running if running is not None else True)).start()
-                return jsonify({'ok': True}), 200
-            # 상단(클라이언트) 값 그대로 사용 — 디스플레이가 정확하므로 클라이언트가 보낸 금액 신뢰
+            # POST = "갱신 요청" — 서버 1행 계산 → macro_pick_transmit → relay (클라이언트 값 사용 안 함)
             try:
                 state = get_calc_state('default') or {}
                 c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
-                if c and c.get('running') and c.get('pending_round') is not None:
+                if c and c.get('running'):
                     pr, srv_pick, server_amt = _get_calc_row1_bundle(c)
-                    # 픽/회차는 서버 1행, 금액은 클라이언트 상단(디스플레이와 동일)
                     if pr is not None and srv_pick is not None:
-                        round_num = pr
-                        pick_color = srv_pick
-                        # suggested_amount는 클라이언트가 보낸 값 그대로 — 상단 표시와 동일
-                        try:
-                            suggested_amount = int(suggested_amount) if suggested_amount is not None else (int(server_amt or 0) if server_amt else 0)
-                        except (TypeError, ValueError):
-                            suggested_amount = int(server_amt or 0) if server_amt else 0
-                    if c.get('paused'):
-                        suggested_amount = 0
-                        _update_current_pick_relay_cache(calculator_id, round_num, pick_color, 0, True, None, from_post=True)
-                        return jsonify({'ok': True}), 200
+                        amt_int = int(server_amt or 0) if server_amt else 0
+                        _write_macro_pick_transmit(calculator_id, pr, srv_pick, amt_int, True)
+                        _update_current_pick_relay_cache(calculator_id, pr, srv_pick, amt_int, True, None)
+                        if amt_int > 0:
+                            threading.Thread(target=_relay_db_write_background, daemon=True,
+                                             args=(calculator_id, srv_pick, pr, amt_int, running if running is not None else True)).start()
+                return jsonify({'ok': True}), 200
             except Exception:
                 pass
-            if suggested_amount is not None and not isinstance(suggested_amount, int):
-                try:
-                    suggested_amount = int(suggested_amount) if suggested_amount != '' else None
-                except (TypeError, ValueError):
-                    suggested_amount = None
-            if not suggested_amount or int(suggested_amount) <= 0:
-                return jsonify({'ok': True}), 200
-            # 다음회차 유효 픽 — 클라이언트 상단 금액 그대로 relay (디스플레이와 동일)
-            _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, True, None, from_post=True)
-            threading.Thread(target=_relay_db_write_background, daemon=True,
-                             args=(calculator_id, pick_color, round_num, suggested_amount, running if running is not None else True)).start()
             return jsonify({'ok': True}), 200
         calculator_id = request.args.get('calculator', '1').strip()
         try:
@@ -12225,7 +12284,16 @@ def api_current_pick_relay():
             out['running'] = cached.get('running', True)
             out['probability'] = cached.get('probability')
             return jsonify(out), 200
-        # 캐시 없음: 금액은 오직 클라이언트 POST에서만. 서버/DB fallback 사용 안 함 — 충돌 제거
+        # 캐시 없음: macro_pick_transmit에서 읽기
+        row = _read_macro_pick_transmit(calculator_id)
+        if row and row.get('running') is not False:
+            out = dict(empty_pick)
+            out['round'] = row.get('round')
+            out['pick_color'] = row.get('pick_color')
+            amt = row.get('suggested_amount')
+            out['suggested_amount'] = int(amt) if amt is not None and int(amt) > 0 else None
+            out['running'] = row.get('running', True)
+            return jsonify(out), 200
         return jsonify({'round': None, 'pick_color': None, 'suggested_amount': None, 'running': True, 'probability': None}), 200
     except Exception as e:
         print(f"[경고] current-pick-relay 실패: {str(e)[:100]}")
