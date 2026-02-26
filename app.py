@@ -88,6 +88,41 @@ def _ws_emit_pick_update(calculator_id, round_num, pick_color, suggested_amount,
         pass
 
 
+_last_emitted_round_actuals = None
+
+
+def _build_cards_for_macro(results):
+    """macro-data와 동일: results[:30] → cards (gameID, joker, color)."""
+    cards = []
+    for r in (results or [])[:30]:
+        c = get_card_color_from_result(r)
+        color = 'RED' if c is True else ('BLACK' if c is False else None)
+        cards.append({
+            'gameID': r.get('gameID'),
+            'joker': bool(r.get('joker')),
+            'color': color,
+        })
+    return cards
+
+
+def _ws_emit_round_actuals(round_actuals, cards=None):
+    """실제 결과(round_actuals) WebSocket 푸시. 매크로 폴링 대체. calc_1/2/3 모두 전송."""
+    global _last_emitted_round_actuals
+    if not _HAS_SOCKETIO or not _socketio or not round_actuals:
+        return
+    if round_actuals == _last_emitted_round_actuals:
+        return
+    _last_emitted_round_actuals = dict(round_actuals)
+    try:
+        data = {'round_actuals': round_actuals}
+        if cards:
+            data['cards'] = cards
+        for room in ('calc_1', 'calc_2', 'calc_3'):
+            _socketio.emit('round_actuals_update', data, room=room)
+    except Exception:
+        pass
+
+
 if _HAS_SOCKETIO:
 
     @_socketio.on('connect')
@@ -4816,6 +4851,10 @@ def _scheduler_apply_results():
             ensure_stored_prediction_for_current_round(results)
             _apply_results_to_calcs(results)
             _backfill_latest_round_to_prediction_history(results)
+            ra = _build_round_actuals(results)
+            if ra:
+                cards = _build_cards_for_macro(results)
+                _ws_emit_round_actuals(ra, cards)
         _update_relay_cache_for_running_calcs()
         _update_prediction_cache_from_db(results=results)  # 중복 get_recent_results 방지
     except Exception as e:

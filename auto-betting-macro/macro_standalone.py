@@ -354,91 +354,37 @@ def _normalize_pick_color(pc):
     return None
 
 
-def pick_color_to_pred(pick_color):
-    """RED→정, BLACK→꺽 (15번 카드 빨강 기준. 검정이면 반대이나 매크로는 RED/BLACK만 사용)"""
+def pick_color_to_pred(pick_color, card_15_color=None):
+    """pick_color(RED/BLACK) → 정/꺽. 15번 카드 색에 따라 매핑 반대.
+    - 15번 빨강 또는 미확인: RED→정, BLACK→꺽
+    - 15번 검정: RED→꺽, BLACK→정 (PREDICTION_AND_RESULT_SPEC 3.3)"""
     n = _normalize_pick_color(pick_color)
-    if n == "RED":
-        return "정"
-    if n == "BLACK":
-        return "꺽"
-    return None
+    if n is None:
+        return None
+    c15 = _normalize_pick_color(card_15_color) if card_15_color else None
+    if c15 == "BLACK":
+        return "꺽" if n == "RED" else "정"
+    return "정" if n == "RED" else "꺽"
 
 
-def pred_to_pick_color(pred):
-    """정→RED, 꺽→BLACK"""
-    if pred == "정":
-        return "RED"
-    if pred == "꺽":
-        return "BLACK"
-    return None
-
-
-class JungKkukGraphWidget(QWidget if HAS_PYQT else object):
-    """메인예측기 상단 정/꺽 블록 그래프. 같은 타입끼리 세로로 쌓인 열."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setMinimumHeight(100)
-        self.setMaximumHeight(140)
-        self._values = []
-        self._layout = QHBoxLayout(self) if HAS_PYQT else None
-        if HAS_PYQT:
-            self.setMinimumWidth(200)
-            self._layout.setContentsMargins(4, 4, 4, 4)
-            self._layout.setSpacing(4)
-            self._layout.setAlignment(Qt.AlignBottom)
-
-    def set_values(self, values):
-        self._values = list(values) if values else []
-        if not HAS_PYQT:
-            return
-        # 기존 위젯 제거
-        while self._layout.count():
-            child = self._layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-        filtered = [v for v in self._values[:50] if v is True or v is False]
-        if not filtered:
-            return
-        segments = []
-        current, count = None, 0
-        for v in filtered:
-            if v == current:
-                count += 1
-            else:
-                if current is not None:
-                    segments.append({"type": current, "count": count})
-                current, count = v, 1
-        if current is not None:
-            segments.append({"type": current, "count": count})
-        for seg in segments:
-            col = QWidget()
-            col_layout = QVBoxLayout(col)
-            col_layout.setContentsMargins(0, 0, 0, 0)
-            col_layout.setSpacing(2)
-            col_layout.addStretch(1)
-            txt = "정" if seg["type"] is True else "꺽"
-            bg = "#4caf50" if seg["type"] is True else "#f44336"
-            for _ in range(seg["count"]):
-                lb = QLabel(txt)
-                lb.setAlignment(Qt.AlignCenter)
-                lb.setStyleSheet("background: %s; color: #fff; font-weight: bold; padding: 2px 6px; border-radius: 3px; font-size: 11px;" % bg)
-                lb.setMinimumHeight(18)
-                col_layout.addWidget(lb)
-            num_lb = QLabel(str(seg["count"]))
-            num_lb.setAlignment(Qt.AlignCenter)
-            num_lb.setStyleSheet("font-size: 10px; color: #666;")
-            col_layout.addWidget(num_lb)
-            self._layout.addWidget(col)
-        self.setMinimumWidth(max(200, len(segments) * 28))
-        self.update()
-        self.updateGeometry()
+def pred_to_pick_color(pred, card_15_color=None):
+    """정/꺽 → 배팅 색(RED/BLACK). 15번 카드에 따라 매핑.
+    - 15번 빨강 또는 미확인: 정→RED, 꺽→BLACK
+    - 15번 검정: 정→BLACK, 꺽→RED"""
+    if pred not in ("정", "꺽"):
+        return None
+    c15 = _normalize_pick_color(card_15_color) if card_15_color else None
+    if c15 == "BLACK":
+        return "BLACK" if pred == "정" else "RED"
+    return "RED" if pred == "정" else "BLACK"
 
 
 class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
     _test_done_signal = pyqtSignal(str, str) if HAS_PYQT else None  # (which, msg) — API/ADB 테스트 완료
     _adb_device_suggested = pyqtSignal(str) if HAS_PYQT else None  # 연결된 기기 ID 자동 채움
     _ws_pick_received = pyqtSignal(object) if HAS_PYQT else None  # WebSocket 픽 수신 → 즉시 배팅
+    _poll_result_signal = pyqtSignal(object) if HAS_PYQT else None  # 폴 결과 (백그라운드) → 메인 스레드 UI 업데이트
+    _round_actuals_signal = pyqtSignal(object) if HAS_PYQT else None  # WebSocket round_actuals 수신
 
     def __init__(self):
         super().__init__()
@@ -458,7 +404,6 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         # 매크로 내부 상태
         self._pick = {"round": None, "pick_color": None}
         self._round_actuals = {}
-        self._graph_values = []
         self._cards = []
         self._history = []  # [{round, predicted, actual, result, betAmount, profit}]
         self._poll_timer = None
@@ -470,6 +415,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self._ws_connected = False
         self._flip_pick = False
         self._last_history_save_at = 0
+        self._last_ui_sig = None  # UI 스킵용: 데이터 변경 시에만 갱신
 
         self._build_ui()
         self._load_coords()
@@ -480,6 +426,10 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             self._adb_device_suggested.connect(self._on_adb_device_suggested)
         if HAS_PYQT and self._ws_pick_received is not None:
             self._ws_pick_received.connect(self._on_ws_pick_received)
+        if HAS_PYQT and self._poll_result_signal is not None:
+            self._poll_result_signal.connect(self._on_poll_result)
+        if HAS_PYQT and self._round_actuals_signal is not None:
+            self._round_actuals_signal.connect(self._on_round_actuals_received)
 
     def _get_macro_settings(self):
         """매크로 설정: 시작 금액, 마틴 테이블."""
@@ -562,6 +512,15 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         if self._flip_pick:
             return "BLACK" if n == "RED" else "RED"
         return n
+
+    def _get_card_15_color(self):
+        """15번 카드 색 (RED/BLACK). cards[14] = 15번 카드. 정/꺽→색 매핑에 사용."""
+        with self._lock:
+            cards = list(self._cards)
+        if len(cards) > 14:
+            c = cards[14].get("color")
+            return _normalize_pick_color(c) if c else None
+        return None
 
     def _on_analyzer_nick_changed(self, nick):
         if nick and nick in self._analyzer_nick_urls:
@@ -847,7 +806,6 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
 
     def _build_ui(self):
         cw = QWidget()
-        self.setCentralWidget(cw)
         layout = QVBoxLayout()
 
         # 설정
@@ -1008,46 +966,24 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         g_coord.setLayout(fl_coord)
         layout.addWidget(g_coord)
 
-        # 카드덱 (15장)
-        g_cards = QGroupBox("카드덱")
-        self.cards_layout = QHBoxLayout()
-        self.card_labels = []
-        for i in range(15):
-            lb = QLabel("—")
-            lb.setMinimumWidth(36)
-            lb.setAlignment(Qt.AlignCenter)
-            lb.setStyleSheet("padding: 4px; border: 1px solid #ccc; border-radius: 4px; font-size: 11px;")
-            self.card_labels.append(lb)
-            self.cards_layout.addWidget(lb)
-        g_cards.setLayout(self.cards_layout)
-        layout.addWidget(g_cards)
-
-        # 그래프 (메인예측기 상단 정/꺽 블록 — jung-kkuk-graph)
-        g_graph = QGroupBox("그래프 (정/꺽 블록)")
-        self.graph_widget = JungKkukGraphWidget(self) if HAS_PYQT else QLabel("—")
-        self.graph_widget.setStyleSheet("background: #f5f5f5; border: 1px solid #ccc; border-radius: 4px;")
-        if HAS_PYQT:
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(False)
-            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            scroll.setWidget(self.graph_widget)
-            scroll.setMinimumHeight(120)
-            scroll.setMaximumHeight(150)
-            g_graph_layout = QVBoxLayout()
-            g_graph_layout.addWidget(scroll)
-        else:
-            g_graph_layout = QVBoxLayout()
-            g_graph_layout.addWidget(self.graph_widget)
-        g_graph.setLayout(g_graph_layout)
-        layout.addWidget(g_graph)
-
-        # 계산기 표
+        # 계산기 표 (최소 5행 보이도록, 칸 축소·가운데 정렬)
         g_calc = QGroupBox("계산기 표")
         self.calc_table = QTableWidget()
         self.calc_table.setColumnCount(6)
         self.calc_table.setHorizontalHeaderLabels(["회차", "픽", "결과", "승패", "금액", "수익"])
-        self.calc_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.calc_table.setMaximumHeight(180)
+        hh = self.calc_table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # 회차
+        hh.setSectionResizeMode(1, QHeaderView.Fixed)
+        self.calc_table.setColumnWidth(1, 36)  # 픽 가로폭 축소
+        hh.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # 결과
+        hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # 승패
+        hh.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # 금액
+        hh.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # 수익
+        row_h = 24
+        header_h = 24
+        self.calc_table.verticalHeader().setDefaultSectionSize(row_h)
+        self.calc_table.setMinimumHeight(row_h * 5 + header_h)
+        self.calc_table.setStyleSheet("QTableWidget { font-size: 11px; } QHeaderView::section { text-align: center; }")
         g_calc_layout = QVBoxLayout()
         g_calc_layout.addWidget(self.calc_table)
         g_calc.setLayout(g_calc_layout)
@@ -1089,6 +1025,13 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         layout.addStretch()
         cw.setLayout(layout)
 
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(cw)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setCentralWidget(scroll)
+
     def _log(self, msg):
         ts = datetime.now().strftime("%H:%M:%S")
         line = f"[{ts}] {msg}"
@@ -1103,33 +1046,69 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self._poll_once()
 
     def _poll_once(self):
+        """백그라운드 스레드에서 HTTP 요청 후, 결과를 시그널로 메인 스레드에 전달. UI 블로킹 방지."""
         url = self.analyzer_url_edit.text().strip()
         if not url:
             return
         calc_id = self.calc_combo.currentData()
-        data, err = fetch_macro_data(url, calculator_id=calc_id)
-        if err:
-            self._log("API 조회 실패: %s" % err)
+
+        def fetch_in_thread():
+            # 폴링 필요 이유: round_actuals(실제 결과)를 가져오기 위해. 픽은 WebSocket으로 실시간 수신되지만,
+            # 결과(정/꺽/조커)는 서버 푸시가 없어 주기 조회 필요. WebSocket 연결 시 relay 생략(1 API만).
+            data, err = fetch_macro_data(url, calculator_id=calc_id)
+            if err:
+                if self._poll_result_signal:
+                    self._poll_result_signal.emit({"err": err})
+                return
+            if not data:
+                if self._poll_result_signal:
+                    self._poll_result_signal.emit({"err": "API 응답 없음"})
+                return
+            if self._ws_connected:
+                with self._lock:
+                    pick = dict(self._pick)
+                    pick["calculator"] = calc_id  # WebSocket에서 이미 수신 중 — relay 생략
+            else:
+                pick_relay, pick_err = fetch_current_pick(url, calculator_id=calc_id, timeout=5)
+                if not pick_err and pick_relay and pick_relay.get("running") is not False:
+                    pc_raw = pick_relay.get("pick_color")
+                    pc = _normalize_pick_color(pc_raw) if pc_raw else None
+                    pick = {"round": pick_relay.get("round"), "pick_color": pc or pc_raw, "calculator": calc_id}
+                else:
+                    pick = {"round": None, "pick_color": None}
+            if self._poll_result_signal:
+                self._poll_result_signal.emit({
+                    "data": data,
+                    "pick": pick,
+                })
+
+        threading.Thread(target=fetch_in_thread, daemon=True).start()
+
+    def _on_poll_result(self, result):
+        """폴 결과 수신 (메인 스레드) — UI 업데이트만 수행."""
+        if not isinstance(result, dict):
             return
+        if "err" in result:
+            self._log("API 조회 실패: %s" % result["err"])
+            return
+        data = result.get("data")
+        pick = result.get("pick")
         if not data:
-            self._log("API 응답 없음")
             return
-        pick_relay, pick_err = fetch_current_pick(url, calculator_id=calc_id, timeout=5)
-        if not pick_err and pick_relay:
-            pc_raw = pick_relay.get("pick_color")
-            pc = _normalize_pick_color(pc_raw) if pc_raw else None
-            pick = {"round": pick_relay.get("round"), "pick_color": pc or pc_raw, "calculator": calc_id}
-        else:
-            pick = data.get("pick") or {}
         with self._lock:
-            self._pick = pick
+            self._pick = pick or {}
             self._round_actuals = data.get("round_actuals") or {}
-            self._graph_values = data.get("graph_values") or []
-            self._cards = data.get("cards") or []
+            self._cards = data.get("cards") or []  # 15번 카드 색(정/꺽 표시용)
         self._sync_pick_to_history()
         self._merge_results_into_history()
         self._save_macro_history()
-        self._update_ui()
+        with self._lock:
+            pick_t = (self._pick.get("round"), self._pick.get("pick_color"))
+            hist_t = tuple((h.get("round"), h.get("predicted"), h.get("actual"), h.get("result")) for h in self._history[-20:])
+        sig = (pick_t, hist_t)
+        if sig != self._last_ui_sig:
+            self._last_ui_sig = sig
+            self._update_ui()
         if self._running:
             self._try_bet_if_needed()
 
@@ -1161,7 +1140,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         pick = self._pick
         rnd = pick.get("round")
         eff = self._get_effective_pick_color(pick.get("pick_color"))
-        pred = pick_color_to_pred(eff)
+        pred = pick_color_to_pred(eff, self._get_card_15_color())
         if rnd is None or pred is None:
             return
         with self._lock:
@@ -1181,35 +1160,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         with self._lock:
             pick = dict(self._pick)
             cards = list(self._cards)
-            gv = list(self._graph_values)
             hist = list(self._history)
-
-        # 카드덱
-        for i, lb in enumerate(self.card_labels):
-            if i < len(cards):
-                c = cards[i]
-                joker = c.get("joker")
-                color = c.get("color")
-                gid = c.get("gameID", "")
-                if joker:
-                    lb.setText("J")
-                    lb.setStyleSheet("padding: 4px; border: 1px solid #ccc; border-radius: 4px; background: #ffeb3b;")
-                elif color == "RED":
-                    lb.setText("R")
-                    lb.setStyleSheet("padding: 4px; border: 1px solid #ccc; border-radius: 4px; background: #ffcdd2;")
-                elif color == "BLACK":
-                    lb.setText("B")
-                    lb.setStyleSheet("padding: 4px; border: 1px solid #ccc; border-radius: 4px; background: #cfd8dc;")
-                else:
-                    lb.setText("?")
-                    lb.setStyleSheet("padding: 4px; border: 1px solid #ccc; border-radius: 4px;")
-            else:
-                lb.setText("—")
-                lb.setStyleSheet("padding: 4px; border: 1px solid #ccc; border-radius: 4px;")
-
-        # 그래프 (위아래 누적 라인)
-        if hasattr(self, "graph_widget") and hasattr(self.graph_widget, "set_values"):
-            self.graph_widget.set_values(gv)
 
         # 마틴 시뮬레이션: 시작 후 첫 ADB 배팅 회차(_first_bet_round)부터만 금액·수익 표시. API 연결만 시 전부 "-"
         round_to_bet_profit = {}
@@ -1257,19 +1208,30 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         BG_WIN = QColor("#c8e6c9")
         BG_LOSE = QColor("#ffcdd2")
         BG_JOKER = QColor("#bbdefb")
+        card_15 = _normalize_pick_color(cards[14].get("color")) if len(cards) > 14 else None
         sorted_hist = sorted(hist, key=lambda x: (x.get("round") or 0))
         display_hist = list(reversed(sorted_hist))
+        self.calc_table.setUpdatesEnabled(False)
         self.calc_table.setRowCount(len(display_hist))
         for row, h in enumerate(display_hist):
             rn = h.get("round")
             rp = round_to_bet_profit.get(rn, {})
             res = (h.get("result") or "").strip()
             row_bg = BG_WIN if res == "승" else (BG_LOSE if res == "패" else (BG_JOKER if res == "조커" else None))
+            pick_cell_colored = False
             for col in range(6):
                 if col == 0:
                     it = QTableWidgetItem(str(rn) if rn is not None else "")
                 elif col == 1:
-                    it = QTableWidgetItem(h.get("predicted") or "")
+                    pred = (h.get("predicted") or "").strip()
+                    it = QTableWidgetItem(pred or "")
+                    pick_color = pred_to_pick_color(pred, card_15) if pred in ("정", "꺽") else None
+                    if pick_color == "RED":
+                        it.setBackground(QBrush(QColor("#ffcdd2")))
+                        pick_cell_colored = True
+                    elif pick_color == "BLACK":
+                        it.setBackground(QBrush(QColor("#cfd8dc")))
+                        pick_cell_colored = True
                 elif col == 2:
                     it = QTableWidgetItem((h.get("actual") or "").strip())
                 elif col == 3:
@@ -1282,9 +1244,11 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                     it = QTableWidgetItem(str(prof_val) if prof_val is not None else "-")
                     if prof_val is not None:
                         it.setForeground(QColor("green") if prof_val > 0 else QColor("red"))
-                if row_bg is not None:
+                it.setTextAlignment(Qt.AlignCenter)
+                if row_bg is not None and not (col == 1 and pick_cell_colored):
                     it.setBackground(QBrush(row_bg))
                 self.calc_table.setItem(row, col, it)
+        self.calc_table.setUpdatesEnabled(True)
 
         # 배팅중 (분석기 계산기 상단 배팅픽과 동일 출처. 픽 반대로 옵션 적용)
         rnd = pick.get("round")
@@ -1292,7 +1256,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         pending_rnd = rnd
         calc_id = self.calc_combo.currentData() if hasattr(self, "calc_combo") else 1
         if pending_rnd is not None and pc:
-            pred = pick_color_to_pred(pc)
+            pred = pick_color_to_pred(pc, self._get_card_15_color())
             self.pick_label.setText(f"{pending_rnd}회 {pc} ({pred}) [계산기 {calc_id}]")
             if self._running:
                 _, martin_table = self._get_macro_settings()
@@ -1311,9 +1275,10 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             self.amount_label.setText("금액: —")
 
     def _poll_loop(self):
-        self._poll_once()
+        if not self._ws_connected:
+            self._poll_once()  # WebSocket 미연결 시에만 폴링 (픽·결과 모두 WS로 전달 시 생략)
         if self._poll_timer:
-            QTimer.singleShot(1000, self._poll_loop)
+            QTimer.singleShot(2000, self._poll_loop)
 
     def _on_start(self):
         url = self.analyzer_url_edit.text().strip()
@@ -1361,6 +1326,12 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                 sio = socketio.Client(reconnection=True, reconnection_attempts=10, reconnection_delay=2)
                 self._ws_client = sio
 
+                @sio.on("round_actuals_update")
+                def on_round_actuals(data):
+                    if isinstance(data, dict) and data.get("round_actuals"):
+                        if HAS_PYQT and self._round_actuals_signal is not None:
+                            self._round_actuals_signal.emit(data)
+
                 @sio.on("pick_update")
                 def on_pick(data):
                     if not isinstance(data, dict):
@@ -1395,7 +1366,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                 sio.connect(ws_url, transports=["websocket"], wait_timeout=8)
                 self._ws_connected = True
                 if self._test_done_signal:
-                    self._test_done_signal.emit("ws", "[WebSocket] 연결됨 — 픽 실시간 수신")
+                    self._test_done_signal.emit("ws", "[WebSocket] 연결됨 — 픽·결과 실시간 수신")
                 sio.wait()
             except Exception as e:
                 self._ws_connected = False
@@ -1418,6 +1389,26 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                 pass
             self._ws_client = None
         self._ws_thread = None
+
+    def _on_round_actuals_received(self, data):
+        """WebSocket round_actuals 수신: 결과 반영·폴링 대체."""
+        if not isinstance(data, dict):
+            return
+        ra = data.get("round_actuals") or {}
+        cards = data.get("cards") or []
+        with self._lock:
+            self._round_actuals = ra
+            if cards:
+                self._cards = cards
+        self._merge_results_into_history()
+        self._save_macro_history()
+        with self._lock:
+            pick_t = (self._pick.get("round"), self._pick.get("pick_color"))
+            hist_t = tuple((h.get("round"), h.get("predicted"), h.get("actual"), h.get("result")) for h in self._history[-20:])
+        sig = (pick_t, hist_t)
+        if sig != self._last_ui_sig:
+            self._last_ui_sig = sig
+            self._update_ui()
 
     def _on_ws_pick_received(self, pick):
         """WebSocket 픽 수신: 배팅중 갱신. 보류(15번 조커) 시 round만 있고 pick_color=None."""
