@@ -2199,12 +2199,11 @@ def _apply_results_to_calcs(results):
                 save_calc_state(session_id, state)  # 먼저 저장 → POST /api/current-pick 시 get_calc_state가 새 상태를 읽어 금액 보정 가능
                 for calc_id, calc_c in to_push:
                     _push_current_pick_from_calc(calc_id, calc_c)
-            # relay 캐시: 클라이언트 유효 캐시 있으면 덮어쓰지 않음 (_should_skip). 새 회차만 갱신
+            # 매크로 relay: 모든 실행중 calc에 대해 매 사이클 푸시 — 상단과 동일한 값 전달
             for cid in ('1', '2', '3'):
                 c = state.get(cid)
-                if not c or not isinstance(c, dict) or not c.get('running'):
-                    continue
-                # relay 금액은 오직 클라이언트 POST(계산기 상단 배팅중)에서만. 서버가 덮어쓰지 않음.
+                if c and isinstance(c, dict) and c.get('running'):
+                    _push_current_pick_from_calc(int(cid), c)
     except Exception as e:
         print(f"[스케줄러] 회차 반영 오류: {str(e)[:200]}")
     finally:
@@ -2537,7 +2536,10 @@ def _push_current_pick_from_calc(calculator_id, c):
                                        suggested_amount=suggested_amount, calculator_id=calc_id)
         if ok:
             conn.commit()
-        # 1행 번들 그대로 relay — 금액 0(멈춤)이어도 갱신
+        # 1행 번들 relay — 단, 최근 0.5초 내 POST가 있으면 덮어쓰지 않음 (클라이언트 상단 우선)
+        last_post = _last_post_time_per_calc.get(calc_id, 0)
+        if time.time() - last_post < 0.5:
+            return  # 클라이언트가 활발히 POST 중 — 상단 값 유지
         _update_current_pick_relay_cache(calc_id, pr, pick_color, int(suggested_amount or 0), c.get('running', True), None)
     except Exception:
         pass
@@ -2548,14 +2550,17 @@ def _push_current_pick_from_calc(calculator_id, c):
             pass
 
 
-# Relay 캐시: 매크로 GET 시 즉시 반환. 1행(회차·픽·금액) 번들로만 갱신.
+# Relay 캐시: 매크로 GET 시 즉시 반환.
 _current_pick_relay_cache = {1: None, 2: None, 3: None}
+_last_post_time_per_calc = {1: 0, 2: 0, 3: 0}  # POST 시각 — 스케줄러가 최근 POST 덮어쓰지 않도록
 
 
-def _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running=True, probability=None):
+def _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running=True, probability=None, from_post=False):
     """회차·배팅중 픽·금액을 relay 캐시에 즉시 반영. 매크로 GET 시 DB 없이 반환. WebSocket 푸시."""
     try:
         cid = int(calculator_id) if calculator_id in (1, 2, 3) else 1
+        if from_post:
+            _last_post_time_per_calc[cid] = time.time()
         _current_pick_relay_cache[cid] = {
             'round': round_num,
             'pick_color': pick_color,
@@ -12169,35 +12174,25 @@ def api_current_pick_relay():
                 threading.Thread(target=_relay_db_write_background, daemon=True,
                                  args=(calculator_id, pick_color, round_num, suggested_amount, running if running is not None else True)).start()
                 return jsonify({'ok': True}), 200
-            # 1행 vs 상단 이중 검증: 둘이 같을 때만 relay 갱신 — 금액 불일치 방지
+            # 상단(클라이언트) 값 그대로 사용 — 디스플레이가 정확하므로 클라이언트가 보낸 금액 신뢰
             try:
                 state = get_calc_state('default') or {}
                 c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
-                try:
-                    amount_header = int(suggested_amount) if suggested_amount is not None else 0
-                except (TypeError, ValueError):
-                    amount_header = 0
-                if c and c.get('running'):
+                if c and c.get('running') and c.get('pending_round') is not None:
                     pr, srv_pick, server_amt = _get_calc_row1_bundle(c)
-                    srv_amt_int = int(server_amt or 0)
-                    # 클라이언트 회차가 서버보다 앞서면(결과 반영 전) 클라이언트 1행 사용
-                    try:
-                        pr_int = int(pr) if pr is not None else None
-                        cr_int = int(round_num) if round_num is not None else None
-                        client_ahead = cr_int is not None and pr_int is not None and cr_int > pr_int
-                    except (TypeError, ValueError):
-                        client_ahead = False
-                    if not client_ahead and pr is not None and srv_pick is not None:
-                        # 1행 vs 상단: 둘 다 있고 같을 때만 relay. 상단 0이면 서버 1행 사용.
-                        if srv_amt_int > 0:
-                            if amount_header > 0 and srv_amt_int != amount_header:
-                                # 불일치: relay 갱신 안 함 (스케줄러 값 유지)
-                                return jsonify({'ok': True}), 200
-                            round_num, pick_color, suggested_amount = pr, srv_pick, srv_amt_int
-                        else:
-                            round_num, pick_color, suggested_amount = pr, srv_pick, 0
-                            _update_current_pick_relay_cache(calculator_id, pr, srv_pick, 0, True, None)
-                            return jsonify({'ok': True}), 200
+                    # 픽/회차는 서버 1행, 금액은 클라이언트 상단(디스플레이와 동일)
+                    if pr is not None and srv_pick is not None:
+                        round_num = pr
+                        pick_color = srv_pick
+                        # suggested_amount는 클라이언트가 보낸 값 그대로 — 상단 표시와 동일
+                        try:
+                            suggested_amount = int(suggested_amount) if suggested_amount is not None else (int(server_amt or 0) if server_amt else 0)
+                        except (TypeError, ValueError):
+                            suggested_amount = int(server_amt or 0) if server_amt else 0
+                    if c.get('paused'):
+                        suggested_amount = 0
+                        _update_current_pick_relay_cache(calculator_id, round_num, pick_color, 0, True, None, from_post=True)
+                        return jsonify({'ok': True}), 200
             except Exception:
                 pass
             if suggested_amount is not None and not isinstance(suggested_amount, int):
@@ -12207,8 +12202,8 @@ def api_current_pick_relay():
                     suggested_amount = None
             if not suggested_amount or int(suggested_amount) <= 0:
                 return jsonify({'ok': True}), 200
-            # 다음회차 유효 픽 — 서버 계산 금액으로 저장 후 매크로가 GET으로 수신
-            _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, True, None)
+            # 다음회차 유효 픽 — 클라이언트 상단 금액 그대로 relay (디스플레이와 동일)
+            _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, True, None, from_post=True)
             threading.Thread(target=_relay_db_write_background, daemon=True,
                              args=(calculator_id, pick_color, round_num, suggested_amount, running if running is not None else True)).start()
             return jsonify({'ok': True}), 200
