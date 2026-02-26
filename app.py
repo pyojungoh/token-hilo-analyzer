@@ -4882,13 +4882,15 @@ def _scheduler_apply_results():
     if not _apply_lock.acquire(blocking=False):
         # apply 스킵 시 예측픽만 경량 갱신 (0.4초 스로틀)
         now_pl = time.time()
-        if (now_pl - _last_prediction_light_at) >= 0.4:
+        if (now_pl - _last_prediction_light_at) >= 0.2:
             _last_prediction_light_at = now_pl
             threading.Thread(target=_run_prediction_update_light, daemon=True).start()
         return
     try:
         results = get_recent_results(hours=24)
         if results and len(results) >= 16:
+            # 예측픽 캐시 먼저 갱신 — 화면에 빠르게 표시 (경량 경로)
+            _update_prediction_cache_from_db(results=results)
             ensure_stored_prediction_for_current_round(results)
             _apply_results_to_calcs(results)
             _backfill_latest_round_to_prediction_history(results)
@@ -4896,8 +4898,8 @@ def _scheduler_apply_results():
             if ra:
                 cards = _build_cards_for_macro(results)
                 _ws_emit_round_actuals(ra, cards)
-        # 예측픽 우선: relay(계산기 픽)보다 먼저 갱신 — relay 무거운 작업이 apply 지연·예측픽 지연 유발 방지
-        _update_prediction_cache_from_db(results=results)  # 중복 get_recent_results 방지
+        else:
+            _update_prediction_cache_from_db(results=results)
         _update_relay_cache_for_running_calcs()
     except Exception as e:
         print(f"[스케줄러] apply 오류: {str(e)[:100]}")
@@ -4931,8 +4933,8 @@ def _scheduler_trim_shape_tables():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.2, id='fetch_results', max_instances=1)  # 0.2초마다 fetch — 부하 완화
-    _scheduler.add_job(_scheduler_apply_results, 'interval', seconds=0.2, id='apply_results', max_instances=1)  # 0.2초마다 apply — 예측픽 갱신 가속
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.15, id='fetch_results', max_instances=1)  # 0.15초마다 fetch
+    _scheduler.add_job(_scheduler_apply_results, 'interval', seconds=0.15, id='apply_results', max_instances=1)  # 0.15초마다 apply — 예측픽 갱신 가속
     _scheduler.add_job(_scheduler_trim_shape_tables, 'interval', seconds=300, id='trim_shape', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(25)
@@ -10850,6 +10852,53 @@ def results_page():
     """경기 결과 웹페이지"""
     return render_template_string(RESULTS_HTML)
 
+def _build_server_prediction_light(results=None, hours=24):
+    """예측픽 캐시 전용 경량 경로. _build_results_payload_db_only 대비 calc_best·shape_pick·get_shape_prediction_hint 등 생략."""
+    try:
+        if not DB_AVAILABLE or not DATABASE_URL:
+            return None
+        if results is None:
+            results = get_recent_results(hours=hours)
+            results = _sort_results_newest_first(results) if results else []
+        else:
+            results = _sort_results_newest_first(results) if results else []
+        if len(results) < 16:
+            return {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
+        latest_gid = results[0].get('gameID')
+        predicted_round = int(str(latest_gid or '0'), 10) + 1
+        is_15_joker = len(results) >= 15 and bool(results[14].get('joker'))
+        if is_15_joker:
+            return {'value': None, 'round': predicted_round, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
+        joker_stats = _compute_joker_stats(results) if results else {}
+        stored = get_stored_round_prediction(predicted_round)
+        if stored and stored.get('predicted'):
+            sp = {
+                'value': stored['predicted'], 'round': predicted_round,
+                'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
+                'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {},
+            }
+        else:
+            ph = get_prediction_history(100)
+            computed = compute_prediction(results, ph, shape_win_stats=None, chunk_profile_stats=None)
+            if computed and computed.get('value') in ('정', '꺽'):
+                sp = {
+                    'value': computed['value'], 'round': computed.get('round') or predicted_round,
+                    'prob': computed.get('prob') or 0, 'color': computed.get('color'),
+                    'warning_u35': bool(computed.get('warning_u35')), 'pong_chunk_phase': computed.get('pong_chunk_phase'), 'pong_chunk_debug': computed.get('pong_chunk_debug') or {},
+                }
+            else:
+                sp = {'value': None, 'round': predicted_round, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
+        if joker_stats.get('skip_bet') and sp:
+            sp['value'] = None
+            sp['color'] = None
+            sp['joker_warning'] = True
+            sp['joker_warning_reason'] = joker_stats.get('warning_reason', '')
+        return sp
+    except Exception as e:
+        print(f"[API] server_prediction_light 오류: {str(e)[:80]}")
+        return None
+
+
 def _build_results_payload_db_only(hours=24, backfill=False, results=None):
     """DB만으로 페이로드 생성 (네트워크 없음). results 전달 시 get_recent_results 생략(apply 중복 호출 방지)."""
     t0 = time.time()
@@ -11516,25 +11565,20 @@ _prediction_light_lock = threading.Lock()
 _last_prediction_light_at = 0.0  # apply 스킵 시 경량 prediction 갱신 스로틀 (0.4초)
 
 def _update_prediction_cache_from_db(results=None):
-    """DB만 사용해 예측픽 캐시 갱신. results 전달 시 get_recent_results 중복 호출 방지."""
+    """DB만 사용해 예측픽 캐시 갱신. 경량 경로(_build_server_prediction_light) 사용 — calc_best·shape_pick 등 생략해 속도 개선."""
     global prediction_cache
     try:
         if not DB_AVAILABLE or not DATABASE_URL:
             return
-        payload = _build_results_payload_db_only(hours=24, backfill=False, results=results)
-        if payload and payload.get('server_prediction'):
-            sp = payload['server_prediction']
+        sp = _build_server_prediction_light(results=results, hours=24)
+        if sp:
             prediction_cache = sp
-            if sp.get('value') is None and len(payload.get('results') or []) >= 16:
+            if sp.get('value') is None and sp.get('round'):
                 # 보류 원인 로그 (60초마다, 스팸 방지)
                 now = time.time()
                 if not hasattr(_update_prediction_cache_from_db, '_last_hold_log') or now - getattr(_update_prediction_cache_from_db, '_last_hold_log', 0) > 60:
                     _update_prediction_cache_from_db._last_hold_log = now
-                    r0 = (payload.get('results') or [])[0]
-                    pred_rnd = int(str(r0.get('gameID') or '0'), 10) + 1
-                    is_15j = len(payload.get('results') or []) >= 15 and bool((payload.get('results') or [])[14].get('joker'))
-                    joker_skip = (payload.get('joker_stats') or {}).get('skip_bet', False)
-                    print(f"[진단] 보류: round={pred_rnd} 15joker={is_15j} skip_bet={joker_skip}")
+                    print(f"[진단] 보류: round={sp.get('round')} joker_skip={sp.get('joker_warning', False)}")
         else:
             prediction_cache = {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
     except Exception as e:

@@ -29,6 +29,7 @@ alwaysApply: true
 
 - **매크로**: round_actuals(macro-data) + _bet_history로 마틴 단계·금액 계산. 서버 suggested_amount 사용 금지.
 - **시작 금액**: base_bet_edit / macro_base (coords). 표마틴 9단계.
+- **직전 회차 결과 필수**: _last_bet_round가 있으면, round_actuals/history에 직전 회차 결과(정/꺽/joker/조커)가 **없으면** 금액 계산·배팅 **절대 금지**. 결과 대기 후 다음 폴링에서 재시도. (마틴 승 후 8만원 재배팅 방지)
 
 ## 안정화 규칙 (들어왔다 보류떴다 방지)
 

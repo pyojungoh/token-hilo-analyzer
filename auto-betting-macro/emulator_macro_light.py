@@ -23,6 +23,7 @@ try:
     from PyQt5.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QLabel, QPushButton, QGroupBox, QFormLayout, QComboBox, QPlainTextEdit,
+        QCheckBox, QLineEdit,
     )
     from PyQt5.QtCore import QTimer, pyqtSignal
     HAS_PYQT = True
@@ -36,7 +37,7 @@ COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드"
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
 # 배팅 지연 — 픽 수신 즉시 사이트로 빠르게 배팅 (입력 안 먹으면 늘리세요)
-D_BEFORE_EXECUTE = 0.06  # 배팅 실행 전 대기(초) — 픽 수신 즉시 배팅
+D_BEFORE_EXECUTE = 0.02  # 배팅 실행 전 대기(초) — 최소화해 배팅 시간 확보
 D_AMOUNT_TAP = 0.01  # 금액 칸 탭 후 포커스 대기 (자동 클리어됨)
 D_INPUT = 0.01  # 금액 입력 후 바로 BACK
 D_BACK = 0.06  # 키보드 닫힌 뒤 바로 레드/블랙 탭
@@ -335,6 +336,8 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
         if hasattr(self, "base_bet_edit"):
             b = self._coords.get("macro_base") or 5000
             self.base_bet_edit.setText(str(int(b)))
+        if hasattr(self, "no_martin_check"):
+            self.no_martin_check.setChecked(bool(self._coords.get("macro_no_martin")))
 
     def _refresh_coord_labels(self):
         for key in COORD_KEYS:
@@ -375,8 +378,11 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
         self.base_bet_edit = QLineEdit()
         self.base_bet_edit.setPlaceholderText("5000")
         self.base_bet_edit.setMaximumWidth(80)
-        self.base_bet_edit.setToolTip("1단계 배팅 금액 (표마틴)")
+        self.base_bet_edit.setToolTip("배팅 금액 (마틴 끄면 고정 금액)")
         fl.addRow("시작 금액 (원):", self.base_bet_edit)
+        self.no_martin_check = QCheckBox("마틴 사용 안함 (고정 금액만)")
+        self.no_martin_check.setToolTip("체크 시 매 회차 시작 금액만 배팅. 마틴 단계 없음.")
+        fl.addRow("", self.no_martin_check)
 
         self.adb_btn = QPushButton("ADB 연결 확인")
         self.adb_btn.clicked.connect(self._on_adb_devices)
@@ -488,6 +494,7 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
         try:
             b = int(self.base_bet_edit.text().strip() or 5000)
             self._coords["macro_base"] = b
+            self._coords["macro_no_martin"] = getattr(self, "no_martin_check", None) and self.no_martin_check.isChecked()
             save_coords(self._coords)
         except (TypeError, ValueError):
             pass
@@ -538,46 +545,79 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
 
         def do_fetch():
             now = time.time()
-            if now - self._last_macro_fetch_at >= 1.5:
-                data = fetch_macro_data(url, calc_id, timeout=4)
-                if data:
-                    with self._macro_lock:
-                        self._round_actuals = data.get("round_actuals") or {}
-                        self._cards = data.get("cards") or []
-                        self._last_macro_fetch_at = now
-            pick = fetch_pick(url, calc_id, timeout=3)
+            need_macro = now - self._last_macro_fetch_at >= 0.5
+            pick = {}
+            if need_macro:
+                # macro-data와 pick 병렬 fetch — 순차 대기 제거, 배팅 속도 개선
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=2) as ex:
+                    f_macro = ex.submit(fetch_macro_data, url, calc_id, 2)
+                    f_pick = ex.submit(fetch_pick, url, calc_id, 2)
+                    try:
+                        data = f_macro.result(timeout=2.5)
+                        if data:
+                            with self._macro_lock:
+                                self._round_actuals = data.get("round_actuals") or {}
+                                if data.get("cards"):
+                                    self._cards = data.get("cards") or []
+                                self._last_macro_fetch_at = now
+                    except Exception:
+                        pass
+                    try:
+                        pick = f_pick.result(timeout=2.5) or {}
+                    except Exception:
+                        pick = {}
+            else:
+                try:
+                    pick = fetch_pick(url, calc_id, timeout=2) or {}
+                except Exception:
+                    pick = {}
             if self.poll_done:
-                self.poll_done.emit(pick or {})
+                self.poll_done.emit(pick)
 
         threading.Thread(target=do_fetch, daemon=True).start()
 
     def _calc_bet_amount(self, round_num, predicted):
-        """매크로 내부 마틴 계산. _bet_history + _round_actuals 기반."""
+        """매크로 내부 마틴 계산. _bet_history + _round_actuals 기반. 마틴 끄면 고정 금액만."""
+        no_martin = getattr(self, "no_martin_check", None) and self.no_martin_check.isChecked()
         with self._macro_lock:
             ra = dict(self._round_actuals)
             bh = dict(self._bet_history)
-        base = 5000
-        if hasattr(self, "base_bet_edit") and self.base_bet_edit and self.base_bet_edit.text().strip():
-            try:
-                base = int(self.base_bet_edit.text().strip())
-            except (TypeError, ValueError):
-                pass
-        if base <= 0:
-            base = int(self._coords.get("macro_base") or 5000)
+        # 마틴 사용 시에만: 직전 배팅 회차 결과가 round_actuals에 없으면 금액 계산 안 함
+        if not no_martin and self._last_bet_round is not None:
+            lb_str = str(self._last_bet_round)
+            if lb_str not in ra:
+                if hasattr(self, "_log"):
+                    self._log("[금액검증] %s회 결과 대기 — %s회 배팅 스킵 (마틴 리셋 보장)" % (lb_str, round_num))
+                return 0
+            act = (ra[lb_str].get("actual") or "").strip()
+            if act not in ("정", "꺽", "joker", "조커"):
+                if hasattr(self, "_log"):
+                    self._log("[금액검증] %s회 결과 미완료 — %s회 배팅 스킵" % (lb_str, round_num))
+                return 0
+        base = int(self._coords.get("macro_base") or 5000)
+        if hasattr(self, "base_bet_edit") and self.base_bet_edit:
+            txt = (self.base_bet_edit.text() or "").strip()
+            if txt:
+                try:
+                    base = int(txt)
+                except (TypeError, ValueError):
+                    pass
         if base <= 0:
             base = 5000
         capital = int(self._coords.get("macro_capital") or 1000000)
         martin_table = _build_martin_table(base)
         completed = []
-        for rnd, pred in sorted(bh.items(), key=lambda x: x[0]):
-            rnd_str = str(rnd)
-            if rnd_str not in ra:
-                continue
-            act = (ra[rnd_str].get("actual") or "").strip()
-            if act not in ("정", "꺽", "joker", "조커"):
-                continue
-            completed.append({"round": rnd, "predicted": pred, "actual": act})
-        completed.sort(key=lambda x: x["round"])
+        if not no_martin:
+            for rnd, pred in sorted(bh.items(), key=lambda x: x[0]):
+                rnd_str = str(rnd)
+                if rnd_str not in ra:
+                    continue
+                act = (ra[rnd_str].get("actual") or "").strip()
+                if act not in ("정", "꺽", "joker", "조커"):
+                    continue
+                completed.append({"round": rnd, "predicted": pred, "actual": act})
+            completed.sort(key=lambda x: x["round"])
         _, amt = _calc_martingale_step_and_bet(completed, martin_table)
         return min(amt, capital) if amt > 0 else 0
 
@@ -646,23 +686,27 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
                 self._log("[금액검증] %s회 %s원 스킵 — 마틴 연속 동일금액 오탐" % (round_num, amt_val))
                 self._pending_bet_rounds.pop(round_num, None)
                 return
-            # 배팅 직전: 회차만 재조회 — 회차 불일치 시 스킵. 금액은 처음 받은 값 유지 (5천→1만 덮어쓰기 방지)
-            final_amt = amt_val
-            recheck_round_match = None
-            try:
-                url = self._url or (self.url_combo.currentText() or self.url_combo.currentData() or "").strip().rstrip("/")
-                calc_id = self._calc_id or (self.calc_combo.currentData() if HAS_PYQT else 1)
-                if url and calc_id:
-                    pick = fetch_pick(url, calc_id=calc_id, timeout=2)
-                    if pick and isinstance(pick, dict):
-                        srv_round = int(pick.get("round") or 0)
-                        recheck_round_match = (srv_round == round_num)
-            except Exception:
-                pass
-            if recheck_round_match is False:
-                self._log("[금액검증] %s회 스킵 — 재조회 회차 불일치" % round_num)
+            # 마틴 사용 시에만: 배팅 직전 macro-data 재조회 (마틴 끄면 생략 — 속도 우선)
+            no_martin = getattr(self, "no_martin_check", None) and self.no_martin_check.isChecked()
+            if not no_martin:
+                try:
+                    url = self._url or (self.url_combo.currentText() or self.url_combo.currentData() or "").strip().rstrip("/")
+                    calc_id = self._calc_id or (self.calc_combo.currentData() if HAS_PYQT else 1)
+                    if url and calc_id:
+                        data = fetch_macro_data(url, calc_id, timeout=2)
+                        if data:
+                            with self._macro_lock:
+                                self._round_actuals = data.get("round_actuals") or {}
+                                if data.get("cards"):
+                                    self._cards = data.get("cards") or []
+                except Exception:
+                    pass
+            final_amt = self._calc_bet_amount(round_num, predicted)
+            if final_amt <= 0 or not _validate_bet_amount(final_amt):
+                self._log("[금액검증] %s회 배팅 스킵 — 직전 회차 결과 미수신" % round_num)
                 self._pending_bet_rounds.pop(round_num, None)
                 return
+            # 회차 재조회 생략 — 픽 수신 직후 배팅, 속도 우선 (마틴 끄면 이미 생략)
             self._log("%s회 %s %s원 실행" % (round_num, pick_color, final_amt))
             ok = self._do_bet(round_num, pick_color, final_amt)
             if ok:
@@ -674,7 +718,7 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
                 if len(self._bet_rounds_done) > 50:
                     for r in sorted(self._bet_rounds_done)[:-50]:
                         self._bet_rounds_done.discard(r)
-                QTimer.singleShot(60, self._poll)
+                QTimer.singleShot(30, self._poll)
             else:
                 self._pending_bet_rounds.pop(round_num, None)
         delay_ms = int(D_BEFORE_EXECUTE * 1000)
@@ -696,7 +740,6 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
             coords = load_coords()
             device = self._device_id or None
             bet_xy = coords.get("bet_amount")
-            confirm_xy = coords.get("confirm")
             red_xy = coords.get("red")
             black_xy = coords.get("black")
             if not bet_xy or len(bet_xy) < 2:
@@ -720,15 +763,10 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
                     time.sleep(D_BACK)
                 _input_amount_once()
 
-                # 픽 버튼 1회만 탭 — 2중배팅 절대 방지
+                # 픽 버튼 1회만 탭 — 2중배팅 절대 방지 (정정 버튼 탭 제거 — 밖으로 튕김 방지)
                 cx, cy = _apply_window_offset(coords, color_xy[0], color_xy[1], key="red" if pick_color == "RED" else "black")
                 adb_swipe(device, cx, cy, SWIPE_COLOR_MS)
                 time.sleep(D_COLOR)
-
-                if confirm_xy and len(confirm_xy) >= 2:
-                    cx2, cy2 = _apply_window_offset(coords, confirm_xy[0], confirm_xy[1], key="confirm")
-                    adb_swipe(device, cx2, cy2, SWIPE_COLOR_MS)
-                    time.sleep(D_CONFIRM)
 
                 self._log("%s회 %s %s원 완료" % (round_num, pick_color, bet_amount))
                 return True

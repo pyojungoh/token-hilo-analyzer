@@ -105,7 +105,7 @@ def fetch_current_pick(analyzer_url, calculator_id=1, timeout=5):
 
 
 def fetch_macro_data(analyzer_url, calculator_id=1, timeout=10):
-    """GET /api/macro-data?calculator=N → round_actuals, graph_values, cards (픽 제외). 픽은 current-pick-relay 사용."""
+    """GET /api/macro-data?calculator=N → round_actuals, graph_values, cards. 픽은 절대 사용 안 함 — 배팅중만 current-pick-relay에서."""
     base = normalize_analyzer_url(analyzer_url)
     if not base:
         return None, "URL 없음"
@@ -408,7 +408,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self._lock = threading.Lock()
 
         # 매크로 내부 상태
-        self._pick = {"round": None, "pick_color": None}
+        self._pick = {"round": None, "pick_color": None, "pick_pred": None}
         self._round_actuals = {}
         self._cards = []
         self._history = []  # [{round, predicted, actual, result, betAmount, profit}]
@@ -448,6 +448,8 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             cap = 1000000
         try:
             base = int(self.base_bet_edit.text().strip() or 0)
+            if base <= 0:
+                base = int(getattr(self, "_coords", {}).get("macro_base") or 5000)
             if base <= 0:
                 base = 5000
         except (TypeError, ValueError):
@@ -504,6 +506,8 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             idx = self.martin_combo.findData(mt)
             if idx >= 0:
                 self.martin_combo.setCurrentIndex(idx)
+        if hasattr(self, "no_martin_check") and self.no_martin_check:
+            self.no_martin_check.setChecked(bool(self._coords.get("macro_no_martin")))
         if hasattr(self, "window_left_edit") and self.window_left_edit:
             self.window_left_edit.setText(str(self._coords.get("window_left") or ""))
             self.window_top_edit.setText(str(self._coords.get("window_top") or ""))
@@ -887,6 +891,9 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self.martin_combo.setToolTip("마틴 규칙 선택")
         self.martin_combo.currentIndexChanged.connect(self._on_martin_type_changed)
         fl.addRow("마틴 규칙:", self.martin_combo)
+        self.no_martin_check = QCheckBox("마틴 사용 안함 (고정 금액만)")
+        self.no_martin_check.setToolTip("체크 시 매 회차 시작 금액만 배팅. 마틴 단계 없음.")
+        fl.addRow("", self.no_martin_check)
 
         self.odds_edit = QLineEdit()
         self.odds_edit.setPlaceholderText("1.97")
@@ -1029,16 +1036,18 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         # 계산기 표 (최소 5행 보이도록, 칸 축소·가운데 정렬)
         g_calc = QGroupBox("계산기 표")
         self.calc_table = QTableWidget()
-        self.calc_table.setColumnCount(6)
-        self.calc_table.setHorizontalHeaderLabels(["회차", "픽", "결과", "승패", "금액", "수익"])
+        self.calc_table.setColumnCount(7)
+        self.calc_table.setHorizontalHeaderLabels(["회차", "정/꺽", "색상", "결과", "승패", "금액", "수익"])
         hh = self.calc_table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # 회차
         hh.setSectionResizeMode(1, QHeaderView.Fixed)
-        self.calc_table.setColumnWidth(1, 36)  # 픽 가로폭 축소
-        hh.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # 결과
-        hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # 승패
-        hh.setSectionResizeMode(4, QHeaderView.Stretch)  # 금액 — 남은 공간 채움
-        hh.setSectionResizeMode(5, QHeaderView.Stretch)  # 수익 — 남은 공간 채움
+        self.calc_table.setColumnWidth(1, 36)  # 정/꺽
+        hh.setSectionResizeMode(2, QHeaderView.Fixed)
+        self.calc_table.setColumnWidth(2, 36)  # 색상(픽)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # 결과
+        hh.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # 승패
+        hh.setSectionResizeMode(5, QHeaderView.Stretch)  # 금액 — 남은 공간 채움
+        hh.setSectionResizeMode(6, QHeaderView.Stretch)  # 수익 — 남은 공간 채움
         row_h = 24
         header_h = 24
         self.calc_table.verticalHeader().setDefaultSectionSize(row_h)
@@ -1243,6 +1252,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         def fetch_in_thread():
             # 폴링 필요 이유: round_actuals(실제 결과)를 가져오기 위해. 픽은 WebSocket으로 실시간 수신되지만,
             # 결과(정/꺽/조커)는 서버 푸시가 없어 주기 조회 필요. WebSocket 연결 시 relay 생략(1 API만).
+            # 픽: 배팅중만 사용. macro-data의 pick은 예측픽 포함 가능하므로 절대 사용 안 함 — current-pick-relay만.
             data, err = fetch_macro_data(url, calculator_id=calc_id)
             if err:
                 if self._poll_result_signal:
@@ -1261,9 +1271,10 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                 if not pick_err and pick_relay and pick_relay.get("running") is not False:
                     pc_raw = pick_relay.get("pick_color")
                     pc = _normalize_pick_color(pc_raw) if pc_raw else None
-                    pick = {"round": pick_relay.get("round"), "pick_color": pc or pc_raw, "calculator": calc_id}
+                    pp = (pick_relay.get("pick_pred") or "").strip()
+                    pick = {"round": pick_relay.get("round"), "pick_color": pc or pc_raw, "pick_pred": pp if pp in ("정", "꺽") else None, "calculator": calc_id}
                 else:
-                    pick = {"round": None, "pick_color": None}
+                    pick = {"round": None, "pick_color": None, "pick_pred": None}
             if self._poll_result_signal:
                 self._poll_result_signal.emit({
                     "data": data,
@@ -1306,7 +1317,8 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             self._try_bet_if_needed()
 
     def _merge_results_into_history(self):
-        """round_actuals로 기존 history의 actual만 갱신. 픽이 있었던 회차만 추적."""
+        """round_actuals로 기존 history의 actual만 갱신. 픽이 있었던 회차만 추적.
+        결과 매칭: pick_color vs actual color 사용 — 정/꺽 변환 오류 방지."""
         with self._lock:
             ra = dict(self._round_actuals)
             for h in self._history:
@@ -1325,19 +1337,29 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                 pred = h.get("predicted")
                 if pred == "보류":
                     h["result"] = "보류"
-                elif pred in ("정", "꺽"):
-                    h["result"] = "승" if pred == act else "패"
-                else:
+                elif act in ("joker", "조커"):
                     h["result"] = "조커"
+                else:
+                    # pick_color vs actual color로 승/패 판정 — card_15 변환 오류 방지
+                    pick_pc = _normalize_pick_color(h.get("_pick_color"))
+                    actual_color = _normalize_pick_color(ra[rnd_str].get("color"))
+                    if pick_pc in ("RED", "BLACK") and actual_color in ("RED", "BLACK"):
+                        h["result"] = "승" if pick_pc == actual_color else "패"
+                    elif pred in ("정", "꺽"):
+                        h["result"] = "승" if pred == act else "패"
+                    else:
+                        h["result"] = "조커"
 
     def _sync_pick_to_history(self):
-        """현재 픽을 pending 회차로 history에 반영. 보류(15번 조커)도 기록."""
+        """현재 픽(배팅중)만 pending 회차에 반영. 예측픽 덮어쓰기 절대 금지.
+        배팅중 픽 고정: 정/꺽 한 번 설정되면 절대 변경 안 함 — 예측픽으로 덮어씌우는 일 없음.
+        pick_pred(정/꺽) 서버 전달 시 그대로 사용 — card_15 변환 오류 방지."""
         pick = self._pick
         rnd = pick.get("round")
         if rnd is None:
             return
         eff = self._get_effective_pick_color(pick.get("pick_color"))
-        pred = pick_color_to_pred(eff, self._get_card_15_color())
+        pred = pick.get("pick_pred") if pick.get("pick_pred") in ("정", "꺽") else pick_color_to_pred(eff, self._get_card_15_color())
         if pred is None:
             pred = "보류"
         with self._lock:
@@ -1345,11 +1367,17 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             if rnd in hist_by_round:
                 h = hist_by_round[rnd]
                 if (h.get("actual") or "").strip() == "pending":
+                    # 정/꺽 한 번 설정되면 절대 덮어쓰지 않음 — 예측픽으로 바뀌는 일 없음
+                    existing_pred = (h.get("predicted") or "").strip()
+                    if existing_pred in ("정", "꺽"):
+                        return
+                    # 보류/빈값만 갱신
                     h["predicted"] = pred
+                    h["_pick_color"] = eff
                 return
             self._history.append({
                 "round": rnd, "predicted": pred, "actual": "pending", "result": None,
-                "betAmount": None, "profit": None,
+                "betAmount": None, "profit": None, "_pick_color": eff,
             })
             self._history.sort(key=lambda x: x["round"])
 
@@ -1369,6 +1397,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             completed_sorted = sorted(completed, key=lambda x: x.get("round") or 0)
             step, next_bet = calc_martingale_step_and_bet(completed_sorted, martin_table=martin_table)
             cap = capital
+            ra = dict(getattr(self, "_round_actuals", {}) or {})
             for h in completed_sorted:
                 rn = h["round"]
                 act = (h.get("actual") or "").strip()
@@ -1377,7 +1406,9 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                     round_to_bet_profit[rn] = {"bet": 0, "profit": 0}
                     continue
                 is_joker = act in ("joker", "조커")
-                is_win = not is_joker and pred in ("정", "꺽") and pred == act
+                # h["result"] 우선 (색상 매칭 적용됨) — 없으면 pred==act 폴백
+                res = (h.get("result") or "").strip()
+                is_win = not is_joker and (res == "승" or (res != "패" and res != "조커" and pred in ("정", "꺽") and pred == act))
                 bet = min(next_bet, int(cap))
                 if is_joker:
                     profit = -bet
@@ -1408,6 +1439,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                             round_to_bet_profit[rn] = {"bet": nb, "profit": None}
 
         # 계산기 표 — 최신회차가 제일 위에, 승패열만 글씨색 (승: 노란 굵게, 패: 빨강)
+        # 픽 셀 색상: 저장된 _pick_color(RED/BLACK) 우선 — card_15 변경 시 전체 행 색상 뒤바뀜 방지
         card_15 = _normalize_pick_color(cards[14].get("color")) if len(cards) > 14 else None
         sorted_hist = sorted(hist, key=lambda x: (x.get("round") or 0))
         display_hist = list(reversed(sorted_hist))[:80]
@@ -1417,20 +1449,23 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             rn = h.get("round")
             rp = round_to_bet_profit.get(rn, {})
             res = (h.get("result") or "").strip()
-            for col in range(6):
+            pred = (h.get("predicted") or "").strip()
+            stored_pc = _normalize_pick_color(h.get("_pick_color"))
+            pick_color = stored_pc if stored_pc in ("RED", "BLACK") else (pred_to_pick_color(pred, card_15) if pred in ("정", "꺽") else None)
+            for col in range(7):
                 if col == 0:
                     it = QTableWidgetItem(str(rn) if rn is not None else "")
                 elif col == 1:
-                    pred = (h.get("predicted") or "").strip()
                     it = QTableWidgetItem(pred or "")
-                    pick_color = pred_to_pick_color(pred, card_15) if pred in ("정", "꺽") else None
+                elif col == 2:
+                    it = QTableWidgetItem("R" if pick_color == "RED" else ("B" if pick_color == "BLACK" else ""))
                     if pick_color == "RED":
                         it.setBackground(QBrush(QColor("#ffcdd2")))
                     elif pick_color == "BLACK":
                         it.setBackground(QBrush(QColor("#cfd8dc")))
-                elif col == 2:
-                    it = QTableWidgetItem((h.get("actual") or "").strip())
                 elif col == 3:
+                    it = QTableWidgetItem((h.get("actual") or "").strip())
+                elif col == 4:
                     it = QTableWidgetItem(res)
                     if res == "승":
                         it.setForeground(QColor("#e6b800"))
@@ -1439,7 +1474,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                         it.setForeground(QColor("red"))
                     elif res == "보류":
                         it.setForeground(QColor("#888"))
-                elif col == 4:
+                elif col == 5:
                     bet_val = rp.get("bet")
                     it = QTableWidgetItem(str(bet_val) if bet_val is not None and bet_val > 0 else "-")
                 else:
@@ -1457,8 +1492,8 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         pending_rnd = rnd
         calc_id = self.calc_combo.currentData() if hasattr(self, "calc_combo") else 1
         if pending_rnd is not None and pc:
-            pred = pick_color_to_pred(pc, self._get_card_15_color())
-            self.pick_label.setText(f"{pending_rnd}회 {pc} ({pred}) [계산기 {calc_id}]")
+            pred = pick.get("pick_pred") if pick.get("pick_pred") in ("정", "꺽") else pick_color_to_pred(pc, self._get_card_15_color())
+            self.pick_label.setText(f"{pending_rnd}회 {pc} ({pred or '—'}) [계산기 {calc_id}]")
             if self._running:
                 _, martin_table, _ = self._get_macro_settings()
                 first = self._first_bet_round
@@ -1501,6 +1536,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         try:
             self._coords["macro_capital"] = int(self.capital_edit.text().strip() or 1000000)
             self._coords["macro_base"] = int(self.base_bet_edit.text().strip() or 5000)
+            self._coords["macro_no_martin"] = getattr(self, "no_martin_check", None) and self.no_martin_check.isChecked()
             try:
                 self._coords["macro_odds"] = float(self.odds_edit.text().strip() or 1.97)
             except (TypeError, ValueError):
@@ -1512,11 +1548,17 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             self._start_ws_client()
             self._poll_timer = True
             self._poll_loop()
+        # 시작 시 계산기 표 초기화 — 이전 세션/연결 중 쌓인 데이터 제거
+        self._history = []
+        self._first_bet_round = None
+        self._last_bet_round = None
         self._running = True
         self._waiting_for_first_win = True  # 첫 승 나온 뒤부터 배팅 시작
         self._session_start_at = datetime.now()
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
+        self._save_macro_history(force=True)  # 빈 상태로 저장
+        self._update_ui()
         self._log("배팅 대기 — 첫 승 나온 뒤부터 배팅 시작")
 
     def _on_stop(self):
@@ -1642,8 +1684,9 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         except (TypeError, ValueError):
             return
         pc_norm = _normalize_pick_color(pc) if pc else None
+        pp = (pick.get("pick_pred") or "").strip()
         with self._lock:
-            self._pick = {"round": rnd, "pick_color": pc_norm or pc, "calculator": cur_calc}
+            self._pick = {"round": rnd, "pick_color": pc_norm or pc, "pick_pred": pp if pp in ("정", "꺽") else None, "calculator": cur_calc}
         self._sync_pick_to_history()
         self._save_macro_history()
         self._update_ui()
@@ -1660,7 +1703,6 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         bet_xy = coords.get("bet_amount")
         red_xy = coords.get("red")
         black_xy = coords.get("black")
-        confirm_xy = coords.get("confirm")
         if not bet_xy or not red_xy or not black_xy:
             self._log("좌표 없음 — coord_picker로 설정")
             return False
@@ -1676,9 +1718,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             cx, cy = _apply_window_offset(coords, color_xy[0], color_xy[1], key="red" if pick_color == "RED" else "black")
             adb_swipe(device, cx, cy, 100)
             time.sleep(0.01)
-            if confirm_xy:
-                cx2, cy2 = _apply_window_offset(coords, confirm_xy[0], confirm_xy[1], key="confirm")
-                adb_swipe(device, cx2, cy2, 80)
+            # 정정 버튼 탭 제거 — 밖으로 튕김 방지
             self._log("%s회 %s %s원 ADB 완료" % (round_num, pick_color, amount))
             return True
         except Exception as e:
@@ -1696,6 +1736,12 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             return
         if self._last_bet_round is not None and rnd <= self._last_bet_round:
             return
+        no_martin = getattr(self, "no_martin_check", None) and self.no_martin_check.isChecked()
+        # 마틴 사용 시에만: 직전 배팅 회차 결과가 history에 없으면 배팅 스킵
+        if not no_martin and self._last_bet_round is not None:
+            last_actual = next((h.get("actual") or "" for h in hist if h.get("round") == self._last_bet_round), None)
+            if (last_actual or "").strip() in ("pending", ""):
+                return  # 직전 회차 결과 대기 — 다음 폴링에서 재시도
         # 첫 승 나올 때까지 배팅 대기
         if getattr(self, "_waiting_for_first_win", False):
             has_win = any((h.get("result") or "").strip() == "승" for h in hist)
@@ -1706,8 +1752,11 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             self._log("첫 승 확인 — %s회부터 배팅 시작" % rnd)
         capital, martin_table, _ = self._get_macro_settings()
         first = self._first_bet_round
-        completed = [h for h in hist if (h.get("actual") or "").strip() not in ("pending", "") and first is not None and (h.get("round") or 0) >= first]
-        completed_sorted = sorted(completed, key=lambda x: x.get("round") or 0)
+        if no_martin:
+            completed_sorted = []
+        else:
+            completed = [h for h in hist if (h.get("actual") or "").strip() not in ("pending", "") and first is not None and (h.get("round") or 0) >= first]
+            completed_sorted = sorted(completed, key=lambda x: x.get("round") or 0)
         step, amt = calc_martingale_step_and_bet(completed_sorted, martin_table=martin_table)
         amt = min(amt, int(capital)) if amt > 0 else 0
         if amt <= 0:

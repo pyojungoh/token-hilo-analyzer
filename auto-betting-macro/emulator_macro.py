@@ -49,11 +49,11 @@ COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드"
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
 # 배팅 동작 간 지연(초). 픽 수신 즉시 사이트로 빠르게 배팅 — 최소화. 입력/확정이 안 먹으면 값을 늘리세요.
-BET_DELAY_BEFORE_EXECUTE = 0.06  # 배팅 실행 전 대기(초) — 픽 수신 즉시 배팅
+BET_DELAY_BEFORE_EXECUTE = 0.02  # 배팅 실행 전 대기(초) — 최소화해 배팅 시간 확보
 BET_DELAY_AFTER_AMOUNT_TAP = 0.01  # 금액 칸 탭 후 포커스 대기 (자동 클리어됨)
 BET_DELAY_AFTER_INPUT = 0.01  # 금액 입력 후 바로 BACK
-BET_DELAY_AFTER_BACK = 0.06  # 키보드 닫힌 뒤 바로 레드/블랙 탭
-PUSH_BET_DELAY = 0.03  # WebSocket 픽 수신 시 배팅 전 대기(초) — 속도 개선
+BET_DELAY_AFTER_BACK = 0.04  # 키보드 닫힌 뒤 레드/블랙 탭
+PUSH_BET_DELAY = 0.01  # WebSocket 픽 수신 시 배팅 전 대기(초) — 최소화
 BET_DEL_COUNT = 8  # 기존 값 삭제용 DEL (8자리: 99999999까지. 탭 후 바로 입력 위해 최소화)
 BET_AMOUNT_DOUBLE_INPUT = False  # 금액 1회만 입력 (이중 입력 시 1000010000 중복 발생)
 BET_DELAY_AFTER_COLOR_TAP = 0.01
@@ -572,8 +572,11 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self.base_bet_edit = QLineEdit()
         self.base_bet_edit.setPlaceholderText("5000")
         self.base_bet_edit.setMaximumWidth(80)
-        self.base_bet_edit.setToolTip("1단계 배팅 금액 (표마틴)")
+        self.base_bet_edit.setToolTip("배팅 금액 (마틴 끄면 고정 금액)")
         fl.addRow("시작 금액 (원):", self.base_bet_edit)
+        self.no_martin_check = QCheckBox("마틴 사용 안함 (고정 금액만)")
+        self.no_martin_check.setToolTip("체크 시 매 회차 시작 금액만 배팅. 마틴 단계 없음.")
+        fl.addRow("", self.no_martin_check)
 
         self.device_edit = QLineEdit()
         self.device_edit.setText("127.0.0.1:5555")
@@ -762,6 +765,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         if hasattr(self, "base_bet_edit"):
             b = self._coords.get("macro_base") or 5000
             self.base_bet_edit.setText(str(int(b)))
+        if hasattr(self, "no_martin_check"):
+            self.no_martin_check.setChecked(bool(self._coords.get("macro_no_martin")))
         try:
             self.window_left_edit.setText(str(self._coords.get("window_left", "") or ""))
             self.window_top_edit.setText(str(self._coords.get("window_top", "") or ""))
@@ -1187,6 +1192,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         try:
             b = int(self.base_bet_edit.text().strip() or 5000)
             self._coords["macro_base"] = b
+            self._coords["macro_no_martin"] = getattr(self, "no_martin_check", None) and self.no_martin_check.isChecked()
             save_coords(self._coords)
         except (TypeError, ValueError):
             pass
@@ -1215,7 +1221,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._log("배팅 중지 (픽 수신은 계속)")
 
     def _start_macro_data_poll(self):
-        """macro-data 1.5초마다 폴링 — round_actuals (금액 계산용)."""
+        """macro-data 0.5초마다 폴링 — round_actuals (금액 계산용), 배팅 속도 개선."""
         self._stop_macro_data_poll()
         def poll():
             if not self._running:
@@ -1231,7 +1237,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         if HAS_PYQT:
             self._macro_data_timer = QTimer(self)
             self._macro_data_timer.timeout.connect(poll)
-            self._macro_data_timer.start(1500)
+            self._macro_data_timer.start(500)
             QTimer.singleShot(100, poll)  # 즉시 1회
 
     def _stop_macro_data_poll(self):
@@ -1243,32 +1249,44 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             self._macro_data_timer = None
 
     def _calc_bet_amount(self, round_num, predicted):
-        """매크로 내부 마틴 계산. _bet_history + _round_actuals 기반."""
+        """매크로 내부 마틴 계산. _bet_history + _round_actuals 기반. 마틴 끄면 고정 금액만."""
+        no_martin = getattr(self, "no_martin_check", None) and self.no_martin_check.isChecked()
         with self._macro_lock:
             ra = dict(self._round_actuals)
             bh = dict(self._bet_history)
-        base = 5000
-        if hasattr(self, "base_bet_edit") and self.base_bet_edit and self.base_bet_edit.text().strip():
-            try:
-                base = int(self.base_bet_edit.text().strip())
-            except (TypeError, ValueError):
-                pass
-        if base <= 0:
-            base = int(self._coords.get("macro_base") or 5000)
+        # 마틴 사용 시에만: 직전 배팅 회차 결과가 round_actuals에 없으면 금액 계산 안 함
+        if not no_martin and self._last_bet_round is not None:
+            lb_str = str(self._last_bet_round)
+            if lb_str not in ra:
+                self._log("[금액검증] %s회 결과 대기 — %s회 배팅 스킵 (마틴 리셋 보장)" % (lb_str, round_num))
+                return 0
+            act = (ra[lb_str].get("actual") or "").strip()
+            if act not in ("정", "꺽", "joker", "조커"):
+                self._log("[금액검증] %s회 결과 미완료 — %s회 배팅 스킵" % (lb_str, round_num))
+                return 0
+        base = int(self._coords.get("macro_base") or 5000)
+        if hasattr(self, "base_bet_edit") and self.base_bet_edit:
+            txt = (self.base_bet_edit.text() or "").strip()
+            if txt:
+                try:
+                    base = int(txt)
+                except (TypeError, ValueError):
+                    pass
         if base <= 0:
             base = 5000
         capital = int(self._coords.get("macro_capital") or 1000000)
         martin_table = _build_martin_table(base)
         completed = []
-        for rnd, pred in sorted(bh.items(), key=lambda x: x[0]):
-            rnd_str = str(rnd)
-            if rnd_str not in ra:
-                continue
-            act = (ra[rnd_str].get("actual") or "").strip()
-            if act not in ("정", "꺽", "joker", "조커"):
-                continue
-            completed.append({"round": rnd, "predicted": pred, "actual": act})
-        completed.sort(key=lambda x: x["round"])
+        if not no_martin:
+            for rnd, pred in sorted(bh.items(), key=lambda x: x[0]):
+                rnd_str = str(rnd)
+                if rnd_str not in ra:
+                    continue
+                act = (ra[rnd_str].get("actual") or "").strip()
+                if act not in ("정", "꺽", "joker", "조커"):
+                    continue
+                completed.append({"round": rnd, "predicted": pred, "actual": act})
+            completed.sort(key=lambda x: x["round"])
         _, amt = _calc_martingale_step_and_bet(completed, martin_table)
         return min(amt, capital) if amt > 0 else 0
 
@@ -1390,20 +1408,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         with self._lock:
             if round_num in self._pending_bet_rounds:
                 return  # 같은 회차 중복 호출 방지
-        # 금액 2회 연속 일치 시 배팅 — use_amt(고정된 금액) 사용
-        key = (round_num, pick_color, use_amt)
-        if key == self._bet_confirm_key:
-            self._bet_confirm_count += 1
-        else:
-            self._bet_confirm_key = key
-            self._bet_confirm_count = 1
-        if self._bet_confirm_count < 2:
-            self._log("[푸시] %s회 %s %s원 (%s/2회 확인 대기)" % (round_num, pick_color, use_amt, self._bet_confirm_count))
-            return
-        self._bet_confirm_key = None
-        self._bet_confirm_count = 0
+        # 픽 수신 즉시 배팅 (1회 확인 — 속도 우선)
         self._round_next = round_num
-        self._log("[푸시] %s회 %s %s원 수신 — 2회 일치, 즉시 ADB" % (round_num, pick_color, use_amt))
+        self._log("[푸시] %s회 %s %s원 수신 — 즉시 ADB" % (round_num, pick_color, use_amt))
         self._coords = load_coords()
         self._run_bet(round_num, pick_color, use_amt, predicted=predicted, from_push=True)
 
@@ -1424,6 +1431,28 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 with self._lock:
                     self._pending_bet_rounds.pop(round_num, None)
                 return  # 이미 배팅한 회차 — 스킵
+            # 마틴 사용 시에만: 배팅 직전 macro-data 재조회 (마틴 끄면 생략 — 속도 우선)
+            no_martin = getattr(self, "no_martin_check", None) and self.no_martin_check.isChecked()
+            if predicted and not no_martin:
+                try:
+                    url = self._analyzer_url or (getattr(self, "analyzer_url_edit", None) and self.analyzer_url_edit.text().strip() or "").strip().rstrip("/")
+                    calc_id = self._calculator_id or (getattr(self, "calc_combo", None) and self.calc_combo.currentData() or 1)
+                    if url and calc_id:
+                        data = fetch_macro_data(url, calc_id, timeout=2)
+                        if data:
+                            with self._macro_lock:
+                                self._round_actuals = data.get("round_actuals") or {}
+                                if data.get("cards"):
+                                    self._cards = data.get("cards") or []
+                except Exception:
+                    pass
+                final_amt = self._calc_bet_amount(round_num, predicted)
+                if final_amt <= 0 or not _validate_bet_amount(final_amt):
+                    self._log("[금액검증] %s회 배팅 스킵 — 직전 회차 결과 미수신" % round_num)
+                    with self._lock:
+                        self._pending_bet_rounds.pop(round_num, None)
+                    return
+                amount = final_amt
             self._log("배팅 실행: %s회 %s %s원" % (round_num, pick_color, amount))
             ok = self._do_bet(round_num, pick_color, amount)
             if ok:
@@ -1464,7 +1493,6 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             device = self._device_id or None
 
             bet_xy = coords.get("bet_amount")
-            confirm_xy = coords.get("confirm")
             red_xy = coords.get("red")
             black_xy = coords.get("black")
             if not bet_xy or len(bet_xy) < 2:
@@ -1510,12 +1538,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                     button_name = "레드" if tap_red_button else "블랙"
                     cx, cy = _apply_window_offset(coords, color_xy[0], color_xy[1], key=color_key)
                     self._log("ADB: 픽 %s → %s 버튼 탭 (%s,%s)" % (pick_color, button_name, cx, cy))
-                    adb_swipe(device, cx, cy, 100)  # 픽 버튼 1회만 — 2중배팅 방지
+                    adb_swipe(device, cx, cy, 100)  # 픽 버튼 1회만 — 2중배팅 방지 (정정 버튼 탭 제거 — 밖으로 튕김 방지)
                     time.sleep(BET_DELAY_AFTER_COLOR_TAP)
-                    # 3) 정정 버튼(배팅 확정) — 1번만 탭
-                    if confirm_xy and len(confirm_xy) >= 2:
-                        tap_swipe(confirm_xy[0], confirm_xy[1], "confirm")
-                        time.sleep(BET_DELAY_AFTER_CONFIRM)
 
                     with self._lock:
                         pick_pred = (getattr(self, '_pick_data', {}) or {}).get('pick_pred')
