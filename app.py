@@ -3579,7 +3579,7 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
     덩어리 / 줄 구간 판별. 시각화·예측픽 가중치에 사용. (퐁당 구간 감지 비활성화 — 덩어리 위주)
     - 줄 구간: 한쪽으로 길게 이어짐 (line run >= 5).
     - 덩어리 구간: 꺽줄-정-꺽줄-정 블록 반복, 줄1퐁당1, 또는 줄 2~4. debug에 chunk_shape(321/123/block_repeat) 추가.
-    - 덩어리→퐁당(chunk_to_pong): 최근 15 퐁당%가 직전 15보다 12%p 이상 높을 때 반환 (조기 감지).
+    - 덩어리→퐁당(chunk_to_pong): 최근 15 퐁당%가 직전 15보다 8%p 이상 높을 때, 또는 맨 앞 퐁당 run + 직전 줄 2 이상일 때 반환 (긴퐁당 조기 감지).
     """
     debug = {'first_run_type': None, 'first_run_len': 0, 'pong_pct_short': pong_pct_short, 'pong_pct_prev': pong_pct_prev, 'segment_type': None, 'chunk_shape': None}
     if not line_runs and not pong_runs:
@@ -3613,14 +3613,16 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
         debug['segment_type'] = 'chunk'
         debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, True)
         return 'pong_to_chunk', debug
-    # 덩어리→퐁당 전환: 최근 15 퐁당%가 직전 15보다 12%p 이상 높음 → 조기 감지 (덩어리 직후 긴퐁당 대응)
-    if diff_short_prev >= 12:
+    # 덩어리→퐁당 전환: 최근 15 퐁당%가 직전 15보다 8%p 이상 높음 → 조기 감지 (덩어리 직후 긴퐁당 대응)
+    if diff_short_prev >= 8:
         debug['segment_type'] = 'pong'
         debug['chunk_shape'] = 'chunk_to_pong'
         return 'chunk_to_pong', debug
-    # 덩어리 직후 퐁당 진입: 퐁당 구간 감지 비활성화 — None 반환
+    # 덩어리 직후 퐁당 진입: 맨 앞 퐁당 run + 직전 줄 2 이상 → chunk_to_pong (전환 직후 연패 방지)
     if not first_is_line and pong_runs and line_runs and len(pong_runs) >= 1 and line_runs[0] >= 2:
-        return None, debug
+        debug['segment_type'] = 'pong'
+        debug['chunk_shape'] = 'chunk_to_pong'
+        return 'chunk_to_pong', debug
     # 퐁당 1~2회 직후 긴 줄: 맨 앞이 퐁당 run(1~2), 그 다음(과거)에 줄 run 5 이상 → 줄 쪽 가산(pong_to_chunk)
     if not first_is_line and pong_runs and line_runs and 1 <= current_run_len <= 2 and line_runs[0] >= 5:
         debug['segment_type'] = 'chunk'
