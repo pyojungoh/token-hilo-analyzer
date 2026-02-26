@@ -12314,8 +12314,13 @@ def api_current_pick_relay():
 
 @app.route('/api/macro-data', methods=['GET'])
 def api_macro_data():
-    """매크로 전용: 픽 + 결과(round_actuals) + 그래프. 계산은 매크로에서 직접 수행."""
+    """매크로 전용: 픽 + 결과(round_actuals) + 그래프. ?calculator=1|2|3 이면 해당 계산기 픽 사용."""
     try:
+        calculator_id = request.args.get('calculator', '1')
+        try:
+            calculator_id = int(calculator_id) if calculator_id in ('1', '2', '3') else 1
+        except (TypeError, ValueError):
+            calculator_id = 1
         results = get_recent_results(hours=24)
         results = _sort_results_newest_first(results) if results else []
         if len(results) > 50:
@@ -12332,9 +12337,16 @@ def api_macro_data():
                 'joker': bool(r.get('joker')),
                 'color': color,
             })
-        # 픽: server_prediction
-        pick = {'round': None, 'pick_color': None}
-        if len(results) >= 16:
+        # 픽: calculator 지정 시 해당 계산기 1행, 아니면 메인 예측
+        pick = {'round': None, 'pick_color': None, 'calculator': calculator_id}
+        state = get_calc_state('default') or {}
+        c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
+        if c and c.get('running'):
+            pr, srv_pick, _ = _get_calc_row1_bundle(c)
+            if pr is not None and srv_pick is not None:
+                pick['round'] = pr
+                pick['pick_color'] = srv_pick
+        if pick.get('round') is None and len(results) >= 16:
             pred = compute_prediction(results, get_prediction_history(100) or [], shape_win_stats=None, chunk_profile_stats=None)
             if pred and pred.get('value') in ('정', '꺽'):
                 pick['round'] = pred.get('round')

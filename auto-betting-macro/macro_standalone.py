@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 매크로 독립형 — 분석기에서 픽+결과만 받고, 계산·배팅은 매크로에서 직접 수행.
-- API: GET /api/macro-data → pick, round_actuals, graph_values, cards
-- 옵션 없음: 표마틴만, 멈춤/반픽 등 없음
+- API: GET /api/macro-data?calculator=N → pick, round_actuals, graph_values, cards
+- emulator_macro와 동일: 계산기 선택, 좌표 설정, ADB 연결/테스트
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -16,11 +17,18 @@ from datetime import datetime
 import requests
 
 try:
+    from pynput import mouse as pynput_mouse
+    HAS_PYNPUT = True
+except ImportError:
+    HAS_PYNPUT = False
+    pynput_mouse = None
+
+try:
     from PyQt5.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QLabel, QLineEdit, QPushButton, QGroupBox, QFormLayout, QFrame,
         QScrollArea, QGridLayout, QTableWidget, QTableWidgetItem, QHeaderView,
-        QCheckBox,
+        QCheckBox, QComboBox,
     )
     from PyQt5.QtCore import Qt, QTimer, pyqtSignal
     from PyQt5.QtGui import QFont, QColor
@@ -29,6 +37,7 @@ except ImportError:
     HAS_PYQT = False
 
 COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드", "black": "블랙"}
+COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
 # 표마틴 9단계
 MARTIN_PYO_TABLE = [5000, 10000, 15000, 30000, 55000, 105000, 200000, 380000, 600000]
@@ -59,14 +68,15 @@ def normalize_analyzer_url(s):
         return s.split("/")[0] if s else ""
 
 
-def fetch_macro_data(analyzer_url, timeout=10):
-    """GET /api/macro-data → (data, error_msg). 성공 시 (dict, None), 실패 시 (None, str)."""
+def fetch_macro_data(analyzer_url, calculator_id=1, timeout=10):
+    """GET /api/macro-data?calculator=N → (data, error_msg)."""
     base = normalize_analyzer_url(analyzer_url)
     if not base:
         return None, "URL 없음"
     url = base + "/api/macro-data"
+    params = {"calculator": int(calculator_id) if calculator_id in (1, 2, 3) else 1}
     try:
-        r = requests.get(url, timeout=timeout)
+        r = requests.get(url, params=params, timeout=timeout)
         r.raise_for_status()
         return r.json(), None
     except requests.exceptions.Timeout:
@@ -95,6 +105,52 @@ def save_coords(data):
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
+
+
+def get_window_rect_at(screen_x, screen_y):
+    """클릭한 점이 속한 창의 클라이언트 영역 (left, top, width, height)."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        GA_ROOT = 2
+        class RECT(ctypes.Structure):
+            _fields_ = [("left", wintypes.LONG), ("top", wintypes.LONG), ("right", wintypes.LONG), ("bottom", wintypes.LONG)]
+        class POINT(ctypes.Structure):
+            _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+        pt = POINT(int(screen_x), int(screen_y))
+        hwnd = user32.WindowFromPoint(pt)
+        if not hwnd:
+            return None
+        root = user32.GetAncestor(hwnd, GA_ROOT) or hwnd
+        crect = RECT()
+        if not user32.GetClientRect(root, ctypes.byref(crect)):
+            return None
+        client_w = crect.right - crect.left
+        client_h = crect.bottom - crect.top
+        if client_w <= 0 or client_h <= 0:
+            return None
+        pt_tl = POINT(0, 0)
+        if not user32.ClientToScreen(root, ctypes.byref(pt_tl)):
+            return None
+        return (pt_tl.x, pt_tl.y, client_w, client_h)
+    except Exception:
+        return None
+
+
+def get_device_size_via_adb(device_id=None):
+    """adb shell wm size 로 기기 해상도 (width, height)."""
+    try:
+        rc, out, err = _run_adb_shell_cmd(device_id, "shell", "wm", "size")
+        combined = (out or "") + (err or "")
+        m = re.search(r"(\d+)\s*x\s*(\d+)", combined, re.IGNORECASE)
+        if m:
+            return (int(m.group(1)), int(m.group(2)))
+    except Exception:
+        pass
+    return (0, 0)
 
 
 def _run_adb_shell_cmd(device_id, *args):
@@ -238,8 +294,8 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("매크로 독립형 — 픽+결과 수신, 직접 계산")
-        self.setMinimumSize(480, 720)
-        self.resize(520, 800)
+        self.setMinimumSize(500, 900)
+        self.resize(540, 950)
 
         self._analyzer_url = ""
         self._device_id = "127.0.0.1:5555"
@@ -256,6 +312,9 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self._cards = []
         self._history = []  # [{round, predicted, actual, result, betAmount, profit}]
         self._poll_timer = None
+        self._coord_listener = None
+        self._coord_capture_key = None
+        self._pending_coord_click = None
 
         self._build_ui()
         self._load_coords()
@@ -263,16 +322,26 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
     def _load_coords(self):
         self._coords = load_coords()
         self._refresh_coord_labels()
+        if hasattr(self, "window_left_edit") and self.window_left_edit:
+            self.window_left_edit.setText(str(self._coords.get("window_left") or ""))
+            self.window_top_edit.setText(str(self._coords.get("window_top") or ""))
+            self.window_width_edit.setText(str(self._coords.get("window_width") or ""))
+            self.window_height_edit.setText(str(self._coords.get("window_height") or ""))
+            self.device_width_edit.setText(str(self._coords.get("device_width") or ""))
+            self.device_height_edit.setText(str(self._coords.get("device_height") or ""))
+            self.raw_coords_check.setChecked(bool(self._coords.get("raw_coords", False)))
 
     def _refresh_coord_labels(self):
-        parts = []
         for key in COORD_KEYS:
             val = self._coords.get(key)
-            s = "(%s,%s)" % (val[0], val[1]) if val and len(val) >= 2 else "—"
-            parts.append("%s:%s" % (COORD_KEYS[key], s))
-        txt = " ".join(parts) if parts else "(미설정)"
-        if hasattr(self, "_coord_status_label") and self._coord_status_label:
-            self._coord_status_label.setText(txt)
+            lb = getattr(self, "_coord_value_labels", {}).get(key)
+            if lb:
+                lb.setText("(%s,%s)" % (val[0], val[1]) if val and len(val) >= 2 else "(미설정)")
+
+    def _set_coord_status(self, key, text, color="green"):
+        if key in getattr(self, "_coord_status_labels", {}):
+            self._coord_status_labels[key].setText(text)
+            self._coord_status_labels[key].setStyleSheet("color: %s; font-size: 11px;" % color)
 
     def _on_analyzer_nick_changed(self, nick):
         if nick and nick in self._analyzer_nick_urls:
@@ -283,8 +352,9 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self.api_test_btn.setText("확인 중...")
         def run():
             url = self.analyzer_url_edit.text().strip()
-            data, err = fetch_macro_data(url)
-            msg = "API 연결됨" if not err and data else ("API 실패: %s" % (err or "응답 없음"))
+            calc_id = self.calc_combo.currentData()
+            data, err = fetch_macro_data(url, calculator_id=calc_id)
+            msg = "API 연결됨 (계산기 %s)" % calc_id if not err and data else ("API 실패: %s" % (err or "응답 없음"))
             QTimer.singleShot(0, lambda: self._api_test_done(msg))
         threading.Thread(target=run, daemon=True).start()
 
@@ -294,8 +364,8 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self._log(msg)
 
     def _on_adb_devices(self):
-        self.adb_test_btn.setEnabled(False)
-        self.adb_test_btn.setText("확인 중...")
+        self.adb_devices_btn.setEnabled(False)
+        self.adb_devices_btn.setText("확인 중...")
         def run():
             device = self.device_edit.text().strip() or "127.0.0.1:5555"
             _run_adb_shell_cmd(None, "start-server")
@@ -307,8 +377,8 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         threading.Thread(target=run, daemon=True).start()
 
     def _adb_test_done(self, msg):
-        self.adb_test_btn.setEnabled(True)
-        self.adb_test_btn.setText("ADB 연결 확인")
+        self.adb_devices_btn.setEnabled(True)
+        self.adb_devices_btn.setText("ADB 연결 확인")
         self._log(msg)
 
     def _on_adb_bet_test(self):
@@ -356,14 +426,127 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         adb_swipe(device, tx, ty, 100)
         self._log("%s 탭 완료" % COORD_KEYS.get(coord_key, coord_key))
 
-    def _on_open_coord_picker(self):
-        """coord_picker.py 실행 (별도 프로세스)"""
+    def _start_coord_capture(self, key):
+        if not HAS_PYNPUT:
+            self._log("pynput 설치 필요: pip install pynput")
+            return
+        if self._coord_listener is not None:
+            self._log("다른 좌표 잡는 중입니다. 잠시 후 다시 시도하세요.")
+            return
+        self._coord_capture_key = key
+        if key == "window_topleft":
+            self._log("창 왼쪽 위 잡기: 이 창 최소화 후 LDPlayer 창 왼쪽 위 모서리 클릭")
+        else:
+            self._log("좌표 찾기: 이 창 최소화 후 LDPlayer 창 안에서만 클릭")
+            self._set_coord_status(key, "검색중", "green")
+        self.showMinimized()
+        self._coord_listener = pynput_mouse.Listener(on_click=self._on_coord_click)
+        self._coord_listener.start()
+
+    def _on_coord_click(self, x, y, button, pressed):
+        if not pressed or self._coord_capture_key is None:
+            return
+        key = self._coord_capture_key
+        self._pending_coord_click = (key, x, y)
+        self._coord_capture_key = None
+        if self._coord_listener:
+            try:
+                self._coord_listener.stop()
+            except Exception:
+                pass
+            self._coord_listener = None
+        QTimer.singleShot(0, self._apply_coord_captured)
+
+    def _apply_coord_captured(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        if self._pending_coord_click is None:
+            return
+        key, x, y = self._pending_coord_click
+        self._pending_coord_click = None
+        if key == "window_topleft":
+            self._coords["window_left"] = int(x)
+            self._coords["window_top"] = int(y)
+            self.window_left_edit.setText(str(x))
+            self.window_top_edit.setText(str(y))
+            save_coords(self._coords)
+            self._log("창 왼쪽 위 저장: X=%s, Y=%s" % (x, y))
+            return
+        rect = get_window_rect_at(x, y)
+        if rect is not None:
+            left, top, w, h = rect
+            rel_x, rel_y = x - left, y - top
+            self._coords[key] = [rel_x, rel_y]
+            self._coords["window_left"] = left
+            self._coords["window_top"] = top
+            self._coords["window_width"] = w
+            self._coords["window_height"] = h
+            if not int(self._coords.get("device_width") or 0) or not int(self._coords.get("device_height") or 0):
+                self._coords["device_width"] = w
+                self._coords["device_height"] = h
+                self.device_width_edit.setText(str(w))
+                self.device_height_edit.setText(str(h))
+            sp = self._coords.get("coord_spaces") or {}
+            sp[key] = True
+            self._coords["coord_spaces"] = sp
+            self.window_left_edit.setText(str(left))
+            self.window_top_edit.setText(str(top))
+            self.window_width_edit.setText(str(w))
+            self.window_height_edit.setText(str(h))
+            save_coords(self._coords)
+            self._refresh_coord_labels()
+            self._set_coord_status(key, "저장됨", "green")
+            self._log("%s = (%s,%s) 저장" % (COORD_KEYS.get(key, key), rel_x, rel_y))
+        else:
+            self._coords[key] = [x, y]
+            sp = self._coords.get("coord_spaces") or {}
+            sp[key] = False
+            self._coords["coord_spaces"] = sp
+            self._coords["window_left"] = int(self.window_left_edit.text().strip() or 0)
+            self._coords["window_top"] = int(self.window_top_edit.text().strip() or 0)
+            self._coords["raw_coords"] = self.raw_coords_check.isChecked()
+            save_coords(self._coords)
+            self._refresh_coord_labels()
+            self._set_coord_status(key, "저장됨", "green")
+            self._log("%s = (%s,%s) 저장 (창 자동 감지 실패)" % (COORD_KEYS.get(key, key), x, y))
+        QTimer.singleShot(1500, lambda: self._set_coord_status(key, ""))
+
+    def _save_window_offset(self):
         try:
-            subprocess.Popen([sys.executable, os.path.join(SCRIPT_DIR, "coord_picker.py")],
-                             cwd=SCRIPT_DIR, creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0)
-            self._log("좌표 설정 창 열림. LDPlayer에서 배팅금액/레드/블랙/정정 위치를 클릭해 잡으세요.")
-        except Exception as e:
-            self._log("좌표 설정 열기 실패: %s" % str(e)[:80])
+            self._coords["window_left"] = int(self.window_left_edit.text().strip() or 0)
+            self._coords["window_top"] = int(self.window_top_edit.text().strip() or 0)
+            self._coords["raw_coords"] = self.raw_coords_check.isChecked()
+            for k, edit in [("window_width", self.window_width_edit), ("window_height", self.window_height_edit),
+                            ("device_width", self.device_width_edit), ("device_height", self.device_height_edit)]:
+                v = int(edit.text().strip() or 0)
+                self._coords[k] = v if v > 0 else 0
+            save_coords(self._coords)
+            self._log("창 위치·해상도 저장됨")
+        except (TypeError, ValueError):
+            self._log("숫자만 입력하세요.")
+
+    def _on_fetch_device_size(self):
+        device = self.device_edit.text().strip() or None
+        self.device_size_fetch_btn.setEnabled(False)
+        self.device_size_fetch_btn.setText("가져오는 중...")
+        def run():
+            w, h = get_device_size_via_adb(device)
+            QTimer.singleShot(0, lambda: self._device_size_done(w, h))
+        threading.Thread(target=run, daemon=True).start()
+
+    def _device_size_done(self, w, h):
+        self.device_size_fetch_btn.setEnabled(True)
+        self.device_size_fetch_btn.setText("기기 해상도 가져오기")
+        if w > 0 and h > 0:
+            self.device_width_edit.setText(str(w))
+            self.device_height_edit.setText(str(h))
+            self._coords["device_width"] = w
+            self._coords["device_height"] = h
+            save_coords(self._coords)
+            self._log("기기 해상도 %s×%s 가져옴" % (w, h))
+        else:
+            self._log("기기 해상도 가져오기 실패. ADB 연결 확인.")
 
     def _build_ui(self):
         cw = QWidget()
@@ -386,6 +569,13 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self.analyzer_url_edit.setPlaceholderText("분석기 URL 루트")
         self.analyzer_url_edit.setText(self._analyzer_nick_urls.get("표마왕", ""))
         fl.addRow("Analyzer URL:", self.analyzer_url_edit)
+
+        self.calc_combo = QComboBox()
+        self.calc_combo.addItem("계산기 1", 1)
+        self.calc_combo.addItem("계산기 2", 2)
+        self.calc_combo.addItem("계산기 3", 3)
+        fl.addRow("계산기 선택:", self.calc_combo)
+
         api_row = QHBoxLayout()
         self.api_test_btn = QPushButton("API 연결 확인")
         self.api_test_btn.setMinimumHeight(28)
@@ -396,41 +586,111 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self.device_edit = QLineEdit()
         self.device_edit.setPlaceholderText("127.0.0.1:5555")
         self.device_edit.setText("127.0.0.1:5555")
+        self.device_edit.setMaximumWidth(180)
         fl.addRow("ADB 기기:", self.device_edit)
         adb_row = QHBoxLayout()
-        self.adb_test_btn = QPushButton("ADB 연결 확인")
-        self.adb_test_btn.setMinimumHeight(28)
-        self.adb_test_btn.clicked.connect(self._on_adb_devices)
-        self.adb_bet_btn = QPushButton("배팅금액 테스트")
+        self.adb_devices_btn = QPushButton("ADB 연결 확인")
+        self.adb_devices_btn.setMinimumHeight(28)
+        self.adb_devices_btn.clicked.connect(self._on_adb_devices)
+        self.adb_bet_btn = QPushButton("배팅금액 테스트 (5000원)")
         self.adb_bet_btn.setMinimumHeight(28)
         self.adb_bet_btn.clicked.connect(self._on_adb_bet_test)
-        self.adb_red_btn = QPushButton("레드 탭")
+        self.adb_red_btn = QPushButton("레드 1회 탭")
         self.adb_red_btn.setMinimumHeight(28)
         self.adb_red_btn.clicked.connect(lambda: self._on_adb_color_tap("red"))
-        self.adb_black_btn = QPushButton("블랙 탭")
+        self.adb_black_btn = QPushButton("블랙 1회 탭")
         self.adb_black_btn.setMinimumHeight(28)
         self.adb_black_btn.clicked.connect(lambda: self._on_adb_color_tap("black"))
-        self.adb_confirm_btn = QPushButton("정정 탭")
+        self.adb_confirm_btn = QPushButton("정정 1회 탭")
         self.adb_confirm_btn.setMinimumHeight(28)
         self.adb_confirm_btn.clicked.connect(lambda: self._on_adb_color_tap("confirm"))
-        adb_row.addWidget(self.adb_test_btn)
+        adb_row.addWidget(self.adb_devices_btn)
         adb_row.addWidget(self.adb_bet_btn)
         adb_row.addWidget(self.adb_red_btn)
         adb_row.addWidget(self.adb_black_btn)
         adb_row.addWidget(self.adb_confirm_btn)
         fl.addRow("", adb_row)
-
-        coord_row = QHBoxLayout()
-        self.coord_open_btn = QPushButton("좌표 설정 열기")
-        self.coord_open_btn.setMinimumHeight(28)
-        self.coord_open_btn.clicked.connect(self._on_open_coord_picker)
-        self._coord_status_label = QLabel("(미설정)")
-        self._coord_status_label.setStyleSheet("color: #666; font-size: 11px;")
-        coord_row.addWidget(self._coord_status_label)
-        coord_row.addWidget(self.coord_open_btn)
-        coord_row.addStretch()
-        fl.addRow("좌표:", coord_row)
+        g_set.setLayout(fl)
         layout.addWidget(g_set)
+
+        # 좌표 설정 (LDPlayer에서 클릭해 잡기)
+        g_coord = QGroupBox("좌표 설정 (LDPlayer에서 해당 위치 클릭)")
+        fl_coord = QFormLayout()
+        self._coord_value_labels = {}
+        self._coord_status_labels = {}
+        for key, label in COORD_KEYS.items():
+            row_w = QWidget()
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 2, 0, 2)
+            row_w.setLayout(row)
+            short = COORD_BTN_SHORT.get(key, label)
+            btn = QPushButton(f"{short} 찾기")
+            btn.setMinimumHeight(28)
+            btn.clicked.connect(lambda checked=False, k=key: self._start_coord_capture(k))
+            row.addWidget(btn)
+            val_lbl = QLabel("(미설정)")
+            val_lbl.setMinimumWidth(80)
+            row.addWidget(val_lbl)
+            status_lbl = QLabel("")
+            status_lbl.setStyleSheet("color: green; font-size: 11px;")
+            row.addWidget(status_lbl)
+            row.addStretch(1)
+            self._coord_value_labels[key] = val_lbl
+            self._coord_status_labels[key] = status_lbl
+            fl_coord.addRow(row_w)
+        self.raw_coords_check = QCheckBox("원시 좌표 (보정 없이 저장된 x,y 그대로 전송)")
+        self.raw_coords_check.setChecked(False)
+        self.raw_coords_check.setStyleSheet("color: #888; font-size: 11px;")
+        fl_coord.addRow("", self.raw_coords_check)
+        win_row = QHBoxLayout()
+        win_row.addWidget(QLabel("LDPlayer 창 왼쪽 위:"))
+        self.window_left_edit = QLineEdit()
+        self.window_left_edit.setPlaceholderText("X")
+        self.window_left_edit.setMaximumWidth(60)
+        self.window_top_edit = QLineEdit()
+        self.window_top_edit.setPlaceholderText("Y")
+        self.window_top_edit.setMaximumWidth(60)
+        win_row.addWidget(self.window_left_edit)
+        win_row.addWidget(self.window_top_edit)
+        self.window_capture_btn = QPushButton("창 왼쪽 위 잡기")
+        self.window_capture_btn.setMinimumHeight(28)
+        self.window_capture_btn.clicked.connect(lambda: self._start_coord_capture("window_topleft"))
+        win_row.addWidget(self.window_capture_btn)
+        self.window_save_btn = QPushButton("창 위치 저장")
+        self.window_save_btn.setMinimumHeight(28)
+        self.window_save_btn.clicked.connect(self._save_window_offset)
+        win_row.addWidget(self.window_save_btn)
+        win_row.addStretch(1)
+        fl_coord.addRow(win_row)
+        res_row = QHBoxLayout()
+        res_row.addWidget(QLabel("해상도 보정: 창 W/H"))
+        self.window_width_edit = QLineEdit()
+        self.window_width_edit.setPlaceholderText("창가로")
+        self.window_width_edit.setMaximumWidth(50)
+        self.window_height_edit = QLineEdit()
+        self.window_height_edit.setPlaceholderText("창세로")
+        self.window_height_edit.setMaximumWidth(50)
+        res_row.addWidget(self.window_width_edit)
+        res_row.addWidget(self.window_height_edit)
+        res_row.addWidget(QLabel("기기 W/H"))
+        self.device_width_edit = QLineEdit()
+        self.device_width_edit.setPlaceholderText("기기가로")
+        self.device_width_edit.setMaximumWidth(50)
+        self.device_height_edit = QLineEdit()
+        self.device_height_edit.setPlaceholderText("기기세로")
+        self.device_height_edit.setMaximumWidth(50)
+        res_row.addWidget(self.device_width_edit)
+        res_row.addWidget(self.device_height_edit)
+        self.device_size_fetch_btn = QPushButton("기기 해상도 가져오기")
+        self.device_size_fetch_btn.setMinimumHeight(28)
+        self.device_size_fetch_btn.clicked.connect(self._on_fetch_device_size)
+        res_row.addWidget(self.device_size_fetch_btn)
+        res_row.addStretch(1)
+        fl_coord.addRow(res_row)
+        if not HAS_PYNPUT:
+            fl_coord.addRow("", QLabel("pynput 미설치: pip install pynput"))
+        g_coord.setLayout(fl_coord)
+        layout.addWidget(g_coord)
 
         # 카드덱 (15장)
         g_cards = QGroupBox("카드덱")
@@ -520,7 +780,8 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         url = self.analyzer_url_edit.text().strip()
         if not url:
             return
-        data, err = fetch_macro_data(url)
+        calc_id = self.calc_combo.currentData()
+        data, err = fetch_macro_data(url, calculator_id=calc_id)
         if err:
             self._log("API 조회 실패: %s" % err)
             return
@@ -674,7 +935,8 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             pred = pick_color_to_pred(pc)
             completed = [h for h in hist if (h.get("actual") or "").strip() not in ("pending", "")]
             step, amt = calc_martingale_step_and_bet(completed)
-            self.pick_label.setText(f"{pending_rnd}회 {pc} ({pred})")
+            calc_id = self.calc_combo.currentData() if hasattr(self, "calc_combo") else 1
+            self.pick_label.setText(f"{pending_rnd}회 {pc} ({pred}) [계산기 {calc_id}]")
             self.amount_label.setText(f"금액: {amt}원")
         else:
             self.pick_label.setText("보류")
