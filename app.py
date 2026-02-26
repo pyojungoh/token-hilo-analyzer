@@ -4831,12 +4831,39 @@ def _update_relay_cache_for_running_calcs():
         _perf_log('update_relay_cache', (time.time() - t0) * 1000)
 
 
+def _run_prediction_update_light():
+    """apply 스킵 시 예측픽만 경량 갱신. _apply_lock과 별도로 실행되어 보류 지속 완화."""
+    global _last_prediction_light_at
+    if not _prediction_light_lock.acquire(blocking=False):
+        return
+    try:
+        if not DB_AVAILABLE or not DATABASE_URL:
+            return
+        results = get_recent_results(hours=3)
+        if results and len(results) >= 16:
+            ensure_stored_prediction_for_current_round(results)
+            _update_prediction_cache_from_db(results=results)
+    except Exception as e:
+        print(f"[경량] prediction 갱신 오류: {str(e)[:80]}")
+    finally:
+        try:
+            _prediction_light_lock.release()
+        except Exception:
+            pass
+
+
 def _scheduler_apply_results():
     """DB 결과로 계산기 회차 반영 + relay + prediction_cache. 0.2초마다 실행. fetch 완료 시 fetch 스레드에서도 즉시 호출."""
+    global _last_prediction_light_at
     t0 = time.time()
     if not DB_AVAILABLE or not DATABASE_URL:
         return
     if not _apply_lock.acquire(blocking=False):
+        # apply 스킵 시 예측픽만 경량 갱신 (0.4초 스로틀)
+        now_pl = time.time()
+        if (now_pl - _last_prediction_light_at) >= 0.4:
+            _last_prediction_light_at = now_pl
+            threading.Thread(target=_run_prediction_update_light, daemon=True).start()
         return
     try:
         results = get_recent_results(hours=24)
@@ -11446,6 +11473,8 @@ _results_refresh_lock = threading.Lock()
 _results_refreshing = False
 _last_refresh_trigger_at = 0.0  # /api/results에서 refresh 트리거 스로틀 (1.5초)
 _apply_lock = threading.Lock()
+_prediction_light_lock = threading.Lock()
+_last_prediction_light_at = 0.0  # apply 스킵 시 경량 prediction 갱신 스로틀 (0.4초)
 
 def _update_prediction_cache_from_db(results=None):
     """DB만 사용해 예측픽 캐시 갱신. results 전달 시 get_recent_results 중복 호출 방지."""
