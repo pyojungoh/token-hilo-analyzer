@@ -4833,7 +4833,8 @@ def _update_relay_cache_for_running_calcs():
                 if not c.get('running'):
                     _update_current_pick_relay_cache(int(cid), None, None, None, False, None)  # 정지 시 clear
                     continue
-                # relay 금액은 오직 클라이언트 POST(계산기 상단 배팅중)에서만. 서버가 덮어쓰지 않음.
+                # relay 픽: 클라이언트 POST 없으면 서버 calc state(배팅중 픽)로 갱신 — 예측픽 폴백 방지
+                _push_current_pick_from_calc(int(cid), c)
     except Exception:
         pass
     finally:
@@ -12350,6 +12351,18 @@ def api_current_pick_relay():
             out['suggested_amount'] = int(amt) if amt is not None and int(amt) > 0 else None
             out['running'] = row.get('running', True)
             return jsonify(out), 200
+        # 캐시·DB 없음: 서버 calc state에서 배팅중 픽 직접 계산 (예측픽 폴백 방지)
+        state = get_calc_state('default') or {}
+        c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
+        if c and c.get('running'):
+            pr, srv_pick, server_amt = _get_calc_row1_bundle(c)
+            if pr is not None and srv_pick is not None:
+                out = dict(empty_pick)
+                out['round'] = pr
+                out['pick_color'] = srv_pick
+                out['suggested_amount'] = int(server_amt or 0) if server_amt and int(server_amt) > 0 else None
+                out['running'] = True
+                return jsonify(out), 200
         return jsonify({'round': None, 'pick_color': None, 'suggested_amount': None, 'running': True, 'probability': None}), 200
     except Exception as e:
         print(f"[경고] current-pick-relay 실패: {str(e)[:100]}")
@@ -12400,15 +12413,7 @@ def api_macro_data():
                 if pr is not None and srv_pick is not None:
                     pick['round'] = pr
                     pick['pick_color'] = srv_pick
-        if pick.get('round') is None and len(results) >= 16:
-            pred = compute_prediction(results, get_prediction_history(100) or [], shape_win_stats=None, chunk_profile_stats=None)
-            if pred and pred.get('value') in ('정', '꺽'):
-                pick['round'] = pred.get('round')
-                col = pred.get('color')
-                if col == '빨강':
-                    pick['pick_color'] = 'RED'
-                elif col == '검정':
-                    pick['pick_color'] = 'BLACK'
+        # 예측픽(compute_prediction) 폴백 제거 — 매크로는 배팅중 픽만 사용. 예측픽 사용 시 반픽/스마트반픽과 결과 꼬임
         return jsonify({
             'pick': pick,
             'round_actuals': round_actuals,
