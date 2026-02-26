@@ -100,7 +100,7 @@ def _build_cards_for_macro(results):
         color = 'RED' if c is True else ('BLACK' if c is False else None)
         cards.append({
             'gameID': r.get('gameID'),
-            'joker': bool(r.get('joker')),
+            'joker': _is_joker(r.get('joker')),
             'color': color,
         })
     return cards
@@ -505,7 +505,7 @@ def save_game_result(game_data):
             game_data.get('red', False),
             game_data.get('black', False),
             game_data.get('jqka', False),
-            game_data.get('joker', False),
+            _is_joker(game_data.get('joker')),
             game_data.get('hash', ''),
             game_data.get('salt', '')
         ))
@@ -1270,7 +1270,7 @@ def _get_actual_for_round(results, round_id):
     rid = str(round_id)
     for i in range(len(results)):
         if str(results[i].get('gameID')) == rid:
-            if results[i].get('joker'):
+            if _is_joker(results[i].get('joker')):
                 return 'joker'
             gv = _build_graph_values(results)
             if i < len(gv) and gv[i] is not None:
@@ -1291,7 +1291,7 @@ def _build_round_actuals(results):
         rid = str(r.get('gameID', ''))
         if not rid:
             continue
-        if r.get('joker') or r15.get('joker'):
+        if _is_joker(r.get('joker')) or _is_joker(r15.get('joker')):
             out[rid] = {'actual': 'joker', 'color': None}
             continue
         if gv[i] is None:
@@ -2189,7 +2189,7 @@ def _apply_results_to_calcs(results):
                 # 15번 카드 조커 시 배팅 안 함 → no_bet. 조커 끝나면 마틴 이어감
                 # 15번째 카드 = results[14] (0-based: 1번째=0, 15번째=14). 16번째(results[15]) 아님.
                 if actual == 'joker':
-                    is_15_joker_at_pred = len(results) >= 15 and bool(results[14].get('joker'))
+                    is_15_joker_at_pred = len(results) >= 15 and _is_joker(results[14].get('joker'))
                     if is_15_joker_at_pred:
                         history_entry['no_bet'] = True
                         history_entry['betAmount'] = 0
@@ -2369,7 +2369,7 @@ def ensure_stored_prediction_for_current_round(results):
     try:
         latest_gid = results[0].get('gameID')
         predicted_round = int(str(latest_gid or '0'), 10) + 1
-        is_15_joker = len(results) >= 15 and bool(results[14].get('joker'))
+        is_15_joker = len(results) >= 15 and _is_joker(results[14].get('joker'))
         if is_15_joker:
             return
         if get_stored_round_prediction(predicted_round):
@@ -2886,12 +2886,12 @@ def _compute_joker_stats(results):
     if not results or len(results) < 15:
         return out
     # 15카드 내 조커 개수 (화면에 보이는 카드)
-    count = sum(1 for i in range(min(15, len(results))) if results[i].get('joker'))
+    count = sum(1 for i in range(min(15, len(results))) if _is_joker(results[i].get('joker')))
     out["count_in_15"] = count
     # 30카드 내 조커 개수
-    out["count_in_30"] = sum(1 for i in range(min(30, len(results))) if results[i].get('joker'))
+    out["count_in_30"] = sum(1 for i in range(min(30, len(results))) if _is_joker(results[i].get('joker')))
     # 조커 위치(인덱스) 수집
-    joker_indices = [i for i in range(min(100, len(results))) if results[i].get('joker')]
+    joker_indices = [i for i in range(min(100, len(results))) if _is_joker(results[i].get('joker'))]
     # 마지막 조커가 몇 회차 전인지 (0 = 최신 회차가 조커)
     out["last_joker_rounds_ago"] = joker_indices[0] if joker_indices else None
     # 간격 계산 (연속된 조커 인덱스 차이)
@@ -3050,10 +3050,21 @@ def parse_card_color(result_str):
     return None
 
 
+def _is_joker(val):
+    """조커 여부. API가 'false' 문자열 등으로 보내도 True로 오인하지 않도록."""
+    if val is True:
+        return True
+    if val is None or val is False:
+        return False
+    if isinstance(val, str):
+        return val.strip().lower() in ('true', '1', 'yes')
+    return bool(val)
+
+
 def get_card_color_from_result(r):
     """프론트엔드 getCategory와 동일: result 객체에서 카드 색상 추출. True=RED, False=BLACK, None=미확인.
     red/black 우선(게임 제공값), parse_card_color 보조, 정/꺽+비교카드 유도까지 적용."""
-    if not r or r.get('joker'):
+    if not r or _is_joker(r.get('joker')):
         return None
     if r.get('red') and not r.get('black'):
         return True
@@ -3070,7 +3081,7 @@ def _build_graph_values(results):
     out = []
     for i in range(len(results) - 15):
         r0, r15 = results[i], results[i + 15]
-        if r0.get('joker') or r15.get('joker'):
+        if _is_joker(r0.get('joker')) or _is_joker(r15.get('joker')):
             out.append(None)
             continue
         c0 = get_card_color_from_result(r0)
@@ -3846,7 +3857,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         current_round_full = 0
     predicted_round_full = current_round_full + 1
 
-    is_15_joker = len(results) >= 15 and bool(results[14].get('joker'))
+    is_15_joker = len(results) >= 15 and _is_joker(results[14].get('joker'))
     if is_15_joker:
         _perf_log('compute_prediction', (time.time() - t0) * 1000)
         return {'value': None, 'round': predicted_round_full, 'prob': 0, 'color': None}
@@ -4317,7 +4328,7 @@ def calculate_and_save_color_matches(results):
             compare_game_id = str(compare_result.get('gameID', ''))
             
             # 조커 카드는 비교 불가
-            if current_result.get('joker') or compare_result.get('joker'):
+            if _is_joker(current_result.get('joker')) or _is_joker(compare_result.get('joker')):
                 continue
             
             if not current_game_id or not compare_game_id:
@@ -4490,7 +4501,7 @@ def get_recent_results(hours=24):
                 'red': row['red'] or False,
                 'black': row['black'] or False,
                 'jqka': row['jqka'] or False,
-                'joker': row['joker'] or False,
+                'joker': _is_joker(row['joker']),
                 'hash': row['hash'] or '',
                 'salt': row['salt'] or ''
             })
@@ -4504,7 +4515,7 @@ def get_recent_results(hours=24):
         for i in range(min(15, len(results))):
             if i + 15 >= len(results):
                 break
-            if results[i].get('joker') or results[i + 15].get('joker'):
+            if _is_joker(results[i].get('joker')) or _is_joker(results[i + 15].get('joker')):
                 results[i]['colorMatch'] = None
                 continue
             gid = results[i].get('gameID')
@@ -4751,7 +4762,7 @@ def _parse_results_json(data):
                 'red': red_val,
                 'black': black_val,
                 'jqka': json_data.get('jqka', False),
-                'joker': json_data.get('joker', False),
+                'joker': _is_joker(json_data.get('joker')),
                 'hash': game.get('hash', ''),
                 'salt': game.get('salt', '')
             })
@@ -10866,7 +10877,7 @@ def _build_server_prediction_light(results=None, hours=24):
             return {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
         latest_gid = results[0].get('gameID')
         predicted_round = int(str(latest_gid or '0'), 10) + 1
-        is_15_joker = len(results) >= 15 and bool(results[14].get('joker'))
+        is_15_joker = len(results) >= 15 and _is_joker(results[14].get('joker'))
         if is_15_joker:
             return {'value': None, 'round': predicted_round, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
         joker_stats = _compute_joker_stats(results) if results else {}
@@ -10926,7 +10937,7 @@ def _build_results_payload_db_only(hours=24, backfill=False, results=None):
             try:
                 latest_gid = results[0].get('gameID')
                 predicted_round = int(str(latest_gid or '0'), 10) + 1
-                is_15_joker = len(results) >= 15 and bool(results[14].get('joker'))
+                is_15_joker = len(results) >= 15 and _is_joker(results[14].get('joker'))
                 if not is_15_joker:
                     stored = get_stored_round_prediction(predicted_round)
                     if stored and stored.get('predicted'):
@@ -11145,7 +11156,7 @@ def _build_results_payload():
                                 continue
                             
                             # 조커 카드는 비교 불가
-                            if results[i].get('joker') or results[i + 15].get('joker'):
+                            if _is_joker(results[i].get('joker')) or _is_joker(results[i + 15].get('joker')):
                                 results[i]['colorMatch'] = None
                                 continue
                             
@@ -11225,7 +11236,7 @@ def _build_results_payload():
                 try:
                     latest_gid = results[0].get('gameID')
                     predicted_round = int(str(latest_gid or '0'), 10) + 1
-                    is_15_joker = len(results) >= 15 and bool(results[14].get('joker'))
+                    is_15_joker = len(results) >= 15 and _is_joker(results[14].get('joker'))
                     if not is_15_joker:
                         stored = get_stored_round_prediction(predicted_round)
                         if stored and stored.get('predicted'):
@@ -11385,7 +11396,7 @@ def _build_results_payload():
                             continue
                         
                         # 조커 카드는 비교 불가
-                        if results[i].get('joker') or results[i + 15].get('joker'):
+                        if _is_joker(results[i].get('joker')) or _is_joker(results[i + 15].get('joker')):
                             results[i]['colorMatch'] = None
                             continue
                         
@@ -11407,7 +11418,7 @@ def _build_results_payload():
                 try:
                     latest_gid = results[0].get('gameID')
                     predicted_round = int(str(latest_gid or '0'), 10) + 1
-                    is_15_joker = len(results) >= 15 and bool(results[14].get('joker'))
+                    is_15_joker = len(results) >= 15 and _is_joker(results[14].get('joker'))
                     if not is_15_joker:
                         stored = get_stored_round_prediction(predicted_round)
                         if stored and stored.get('predicted'):
@@ -11710,7 +11721,7 @@ def debug_prediction():
         results = get_recent_results(hours=24)
         results = _sort_results_newest_first(results) if results else []
         pred_rnd = int(str((results[0].get('gameID') or '0')), 10) + 1 if results else 0
-        is_15_joker = len(results) >= 15 and bool(results[14].get('joker')) if results else False
+        is_15_joker = len(results) >= 15 and _is_joker(results[14].get('joker')) if results else False
         stored = get_stored_round_prediction(pred_rnd) if pred_rnd else None
         joker_stats = _compute_joker_stats(results) if results else {}
         return jsonify({
@@ -12515,7 +12526,7 @@ def api_macro_data():
             color = 'RED' if c is True else ('BLACK' if c is False else None)
             cards.append({
                 'gameID': r.get('gameID'),
-                'joker': bool(r.get('joker')),
+                'joker': _is_joker(r.get('joker')),
                 'color': color,
             })
         # 픽: 계산기 배팅중 픽과 동일 출처 — relay 캐시 우선(클라이언트 POST 즉시 반영), DB(macro_pick_transmit) 폴백

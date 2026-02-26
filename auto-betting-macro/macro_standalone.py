@@ -44,6 +44,7 @@ D_AFTER_AMOUNT_TAP = 0.05   # 금액 칸 탭 후 포커스 대기
 D_AFTER_INPUT = 0.03        # 금액 입력 후 레드/블랙 탭 전 대기 (키보드 닫기 없음)
 D_AFTER_COLOR = 0.03        # 레드/블랙 탭 후
 D_BET_COOLDOWN = 0.8        # 배팅 완료 후 최소 대기(초) — 2번행 중복 배팅 방지
+D_PICK_WAIT_TIMEOUT = 2.0   # 픽 수신 후 직전 결과 대기 최대(초) — 초과 시 1배로 배팅 (뒤늦게 배팅 방지)
 
 # 일반마틴 9단계 (2배: 1,2,4,8,16,32,64,128,256 × base)
 MARTIN_RATIOS_NORMAL = [1, 2, 4, 8, 16, 32, 64, 128, 256]
@@ -150,26 +151,27 @@ def save_coords(data):
 
 
 def load_macro_history():
-    """매크로 계산기 history·first_bet_round·last_bet_round 로드."""
+    """매크로 계산기 history·first_bet_round·last_bet_round·last_bet_amount 로드."""
     path = getattr(sys, "frozen", False) and os.path.join(_emulator_script_dir(), "macro_calc_history.json") or MACRO_HISTORY_PATH
     if not os.path.exists(path):
-        return [], None, None
+        return [], None, None, None
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         hist = data.get("history") or []
         first = data.get("first_bet_round")
         last = data.get("last_bet_round")
-        return hist, first, last
+        last_amt = data.get("last_bet_amount")
+        return hist, first, last, last_amt
     except Exception:
-        return [], None, None
+        return [], None, None, None
 
 
-def save_macro_history(history, first_bet_round, last_bet_round):
-    """매크로 계산기 history·first_bet_round·last_bet_round 저장."""
+def save_macro_history(history, first_bet_round, last_bet_round, last_bet_amount=None):
+    """매크로 계산기 history·first_bet_round·last_bet_round·last_bet_amount 저장."""
     path = getattr(sys, "frozen", False) and os.path.join(_emulator_script_dir(), "macro_calc_history.json") or MACRO_HISTORY_PATH
     try:
-        data = {"history": history, "first_bet_round": first_bet_round, "last_bet_round": last_bet_round}
+        data = {"history": history, "first_bet_round": first_bet_round, "last_bet_round": last_bet_round, "last_bet_amount": last_bet_amount}
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception:
@@ -422,12 +424,14 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self._running = False
         self._coords = {}
         self._last_bet_round = None
+        self._last_bet_amount = None  # 직전 배팅 금액 — 타임아웃 시 재배팅용
         self._first_bet_round = None  # 첫 ADB 배팅 회차 — 이 회차부터만 금액·수익 표시
         self._waiting_for_first_win = False  # True: 첫 승 나올 때까지 배팅 대기
         self._pending_bet_rounds = {}
         self._lock = threading.Lock()
         self._do_bet_lock = threading.Lock()  # 배팅 실행 중복 방지
         self._last_bet_at = 0.0  # 배팅 완료 시각 — 쿨다운용
+        self._pick_received_at = 0.0  # 픽(회차) 수신 시각 — 직전 결과 대기 타임아웃용
 
         # 매크로 내부 상태
         self._pick = {"round": None, "pick_color": None, "pick_pred": None}
@@ -486,14 +490,16 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         return cap, build_martin_table(base, martin_type), odds
 
     def _load_macro_history(self):
-        """저장된 history·first_bet_round·last_bet_round 복원."""
-        hist, first, last = load_macro_history()
+        """저장된 history·first_bet_round·last_bet_round·last_bet_amount 복원."""
+        hist, first, last, last_amt = load_macro_history()
         if hist:
             self._history = hist
             if first is not None:
                 self._first_bet_round = int(first) if isinstance(first, (int, float)) else first
             if last is not None:
                 self._last_bet_round = int(last) if isinstance(last, (int, float)) else last
+            if last_amt is not None and _validate_bet_amount(last_amt):
+                self._last_bet_amount = int(last_amt)
 
     def _save_macro_history(self, force=False):
         """history·first_bet_round·last_bet_round 저장. force=True 또는 3초 경과 시 저장. I/O는 스레드에서(메인 블로킹 방지)."""
@@ -505,9 +511,10 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             hist = list(self._history)
             first = self._first_bet_round
             last = self._last_bet_round
+            last_amt = getattr(self, "_last_bet_amount", None)
 
         def _do_save():
-            save_macro_history(hist, first, last)
+            save_macro_history(hist, first, last, last_amt)
 
         threading.Thread(target=_do_save, daemon=True).start()
 
@@ -1253,6 +1260,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self._running = False
         self._first_bet_round = None
         self._last_bet_round = None
+        self._last_bet_amount = None
         self._last_bet_at = 0.0
         self._waiting_for_first_win = False
         self._history = []
@@ -1321,6 +1329,10 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         with self._lock:
             # 폴링 시점과 현재 선택 계산기가 다르면 _pick 덮어쓰지 않음 (콤보 변경 후 지연 응답 방지)
             if pick and pick.get("calculator") == cur_calc:
+                prev_rnd = (self._pick or {}).get("round")
+                new_rnd = pick.get("round")
+                if new_rnd is not None and new_rnd != prev_rnd:
+                    self._pick_received_at = time.time()
                 self._pick = pick or {}
             elif not pick or pick.get("calculator") != cur_calc:
                 pass  # _pick 유지
@@ -1581,6 +1593,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self._history = []
         self._first_bet_round = None
         self._last_bet_round = None
+        self._last_bet_amount = None
         self._last_bet_at = 0.0
         self._running = True
         self._waiting_for_first_win = True  # 첫 승 나온 뒤부터 배팅 시작
@@ -1679,7 +1692,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self._ws_thread = None
 
     def _on_round_actuals_received(self, data):
-        """WebSocket round_actuals 수신: 결과 반영·폴링 대체."""
+        """WebSocket round_actuals 수신: 결과 반영·폴링 대체. 승패 들어오면 즉시 배팅 시도."""
         if not isinstance(data, dict):
             return
         ra = data.get("round_actuals") or {}
@@ -1697,6 +1710,8 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         if sig != self._last_ui_sig:
             self._last_ui_sig = sig
             self._update_ui()
+        if self._running:
+            self._try_bet_if_needed()
 
     def _on_ws_pick_received(self, pick):
         """WebSocket 픽 수신: 배팅중 갱신. 보류(15번 조커) 시 round만 있고 pick_color=None."""
@@ -1716,8 +1731,12 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         pc_norm = _normalize_pick_color(pc) if pc else None
         pp = (pick.get("pick_pred") or "").strip()
         with self._lock:
+            prev_rnd = (self._pick or {}).get("round")
+            if rnd is not None and rnd != prev_rnd:
+                self._pick_received_at = time.time()
             self._pick = {"round": rnd, "pick_color": pc_norm or pc, "pick_pred": pp if pp in ("정", "꺽") else None, "calculator": cur_calc}
         self._sync_pick_to_history()
+        self._merge_results_into_history()  # WS 픽만 올 때도 현재 round_actuals로 merge — 승패 있으면 즉시 배팅
         self._save_macro_history()
         self._update_ui()
         if self._running:
@@ -1769,11 +1788,16 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         if time.time() - self._last_bet_at < D_BET_COOLDOWN:
             return
         no_martin = getattr(self, "no_martin_check", None) and self.no_martin_check.isChecked()
-        # 마틴 사용 시에만: 직전 배팅 회차 결과가 history에 없으면 배팅 스킵
+        # 마틴 사용 시에만: 직전 배팅 회차 결과가 history에 없으면 배팅 스킵 (단, 타임아웃 시 1배로 배팅)
+        force_base_bet = False
         if not no_martin and self._last_bet_round is not None:
             last_actual = next((h.get("actual") or "" for h in hist if h.get("round") == self._last_bet_round), None)
             if (last_actual or "").strip() in ("pending", ""):
-                return  # 직전 회차 결과 대기 — 다음 폴링에서 재시도
+                pick_wait = time.time() - getattr(self, "_pick_received_at", 0)
+                if pick_wait > D_PICK_WAIT_TIMEOUT:
+                    force_base_bet = True  # 픽 들어온 지 2초 초과 — 1배로 배팅 (뒤늦게 배팅 방지)
+                else:
+                    return  # 직전 회차 결과 대기 — 다음 폴링에서 재시도
         # 첫 승 나올 때까지 배팅 대기
         if getattr(self, "_waiting_for_first_win", False):
             has_win = any((h.get("result") or "").strip() == "승" for h in hist)
@@ -1786,16 +1810,26 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         first = self._first_bet_round
         if no_martin:
             completed_sorted = []
+            step, amt = 0, martin_table[0] if martin_table else 0
+        elif force_base_bet:
+            # 직전 금액으로 재배팅 (기본금액 아님)
+            last_amt = getattr(self, "_last_bet_amount", None)
+            if last_amt is not None and last_amt > 0:
+                step, amt = 0, last_amt
+            else:
+                step, amt = 0, martin_table[0] if martin_table else 0
+            self._log("직전 결과 대기 타임아웃 — 직전 금액(%s원)으로 배팅" % amt)
         else:
             completed = [h for h in hist if (h.get("actual") or "").strip() not in ("pending", "") and first is not None and (h.get("round") or 0) >= first]
             completed_sorted = _dedupe_completed_by_round(completed)
-        step, amt = calc_martingale_step_and_bet(completed_sorted, martin_table=martin_table)
+            step, amt = calc_martingale_step_and_bet(completed_sorted, martin_table=martin_table)
         amt = min(amt, int(capital)) if amt > 0 else 0
         if amt <= 0:
             return
         if self._do_bet(rnd, pc, amt):
             self._last_bet_round = rnd
             self._last_bet_at = time.time()
+            self._last_bet_amount = amt
             if self._first_bet_round is None:
                 self._first_bet_round = rnd
             self._save_macro_history(force=True)
