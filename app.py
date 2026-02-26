@@ -9241,7 +9241,8 @@ RESULTS_HTML = '''
                             bettingCardEl.textContent = '보류';
                             bettingCardEl.className = 'calc-current-card calc-card-betting card-hold';
                             bettingCardEl.title = lastIs15Joker ? '15번 카드 조커 · 배팅하지 마세요' : '예측 대기 중';
-                            var betAmt = lastIs15Joker ? 0 : ((lastPrediction && lastPrediction.round != null && typeof getBetForRound === 'function') ? getBetForRound(id, lastPrediction.round) : 0);
+                            var rHold = (typeof getCalcResult === 'function') ? getCalcResult(id) : null;
+                            var betAmt = lastIs15Joker ? 0 : (rHold && rHold.currentBet != null && rHold.currentBet > 0 ? Math.min(rHold.currentBet, Math.floor(rHold.cap || 0)) : 0);
                             postCurrentPickIfChanged(parseInt(id, 10) || 1, { pickColor: null, round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: null, suggested_amount: (lastIs15Joker || betAmt <= 0) ? null : betAmt });
                         } else {
                         // 배팅중인 회차는 이미 정한 계산기 픽만 유지 — lastPrediction이 잠깐 예측기로 바뀌어도 저장된 픽으로 POST/표시해 예측기 픽으로 배팅 나가는 것 방지
@@ -9343,8 +9344,9 @@ RESULTS_HTML = '''
                         bettingCardEl.textContent = bettingText;
                         bettingCardEl.className = 'calc-current-card calc-card-betting' + (bettingText === '보류' ? ' card-hold' : ' card-' + (bettingIsRed ? 'jung' : 'kkuk'));
                         bettingCardEl.title = bettingText === '보류' ? '모양 옵션: 픽 불일치 또는 값 없음' : '';
-                        // 매크로: 1행(배팅중 행)과 동일한 출처 — getBetForRound 사용 (getCalcResult 대신). 15번 카드 조커 시 금액 0
-                        var betAmt = (effectivePausedForRound(id) || (shapeOnly && bettingText === '보류') || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker)) ? 0 : (curRound != null && typeof getBetForRound === 'function' ? getBetForRound(id, curRound) : 0);
+                        // 매크로: 계산기 "배팅중"에 써있는 금액 그대로 — getCalcResult.currentBet (화면 표시와 동일)
+                        var r = (typeof getCalcResult === 'function') ? getCalcResult(id) : null;
+                        var betAmt = (effectivePausedForRound(id) || (shapeOnly && bettingText === '보류') || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker)) ? 0 : (r && r.currentBet != null && r.currentBet > 0 ? Math.min(r.currentBet, Math.floor(r.cap || 0)) : 0);
                         var suggestedAmt = (bettingText === '보류' && shapeOnly) || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker) ? null : (betAmt > 0 ? betAmt : null);
                         var postPickColor = (bettingText === '보류' && shapeOnly) ? null : (bettingIsRed ? 'RED' : 'BLACK');
                         postCurrentPickIfChanged(parseInt(id, 10) || 1, { pickColor: postPickColor, round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: typeof predProb === 'number' && !isNaN(predProb) ? predProb : null, suggested_amount: suggestedAmt });
