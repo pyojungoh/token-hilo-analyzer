@@ -4754,7 +4754,7 @@ def _scheduler_apply_results():
             _apply_results_to_calcs(results)
             _backfill_latest_round_to_prediction_history(results)
         _update_relay_cache_for_running_calcs()
-        _update_prediction_cache_from_db()
+        _update_prediction_cache_from_db(results=results)  # 중복 get_recent_results 방지
     except Exception as e:
         print(f"[스케줄러] apply 오류: {str(e)[:100]}")
     finally:
@@ -10678,14 +10678,17 @@ def results_page():
     """경기 결과 웹페이지"""
     return render_template_string(RESULTS_HTML)
 
-def _build_results_payload_db_only(hours=24, backfill=False):
-    """DB만으로 페이로드 생성 (네트워크 없음). 규칙: 24h 구간. 캐시 비어 있을 때 첫 화면 빠르게 표시용."""
+def _build_results_payload_db_only(hours=24, backfill=False, results=None):
+    """DB만으로 페이로드 생성 (네트워크 없음). results 전달 시 get_recent_results 생략(apply 중복 호출 방지)."""
     t0 = time.time()
     try:
         if not DB_AVAILABLE or not DATABASE_URL:
             return None
-        results = get_recent_results(hours=hours)
-        results = _sort_results_newest_first(results)
+        if results is None:
+            results = get_recent_results(hours=hours)
+            results = _sort_results_newest_first(results)
+        else:
+            results = _sort_results_newest_first(results) if results else []
         results_full = results  # 모양판별 보정용 전체 (슬라이스 전)
         # 응답 크기·처리 시간 제한 (성능 최적화: 100건으로 축소)
         RESULTS_PAYLOAD_LIMIT = 100
@@ -11337,15 +11340,26 @@ _results_refresh_lock = threading.Lock()
 _results_refreshing = False
 _apply_lock = threading.Lock()
 
-def _update_prediction_cache_from_db():
-    """DB만 사용해 예측픽 캐시 갱신. load_results_data 호출 금지. 외부 fetch 대기 없이 예측픽 빠르게 표시."""
+def _update_prediction_cache_from_db(results=None):
+    """DB만 사용해 예측픽 캐시 갱신. results 전달 시 get_recent_results 중복 호출 방지."""
     global prediction_cache
     try:
         if not DB_AVAILABLE or not DATABASE_URL:
             return
-        payload = _build_results_payload_db_only(hours=24, backfill=False)
+        payload = _build_results_payload_db_only(hours=24, backfill=False, results=results)
         if payload and payload.get('server_prediction'):
-            prediction_cache = payload['server_prediction']
+            sp = payload['server_prediction']
+            prediction_cache = sp
+            if sp.get('value') is None and len(payload.get('results') or []) >= 16:
+                # 보류 원인 로그 (60초마다, 스팸 방지)
+                now = time.time()
+                if not hasattr(_update_prediction_cache_from_db, '_last_hold_log') or now - getattr(_update_prediction_cache_from_db, '_last_hold_log', 0) > 60:
+                    _update_prediction_cache_from_db._last_hold_log = now
+                    r0 = (payload.get('results') or [])[0]
+                    pred_rnd = int(str(r0.get('gameID') or '0'), 10) + 1
+                    is_15j = len(payload.get('results') or []) >= 15 and bool((payload.get('results') or [])[14].get('joker'))
+                    joker_skip = (payload.get('joker_stats') or {}).get('skip_bet', False)
+                    print(f"[진단] 보류: round={pred_rnd} 15joker={is_15j} skip_bet={joker_skip}")
         else:
             prediction_cache = {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
     except Exception as e:
@@ -11372,7 +11386,7 @@ def _refresh_results_background():
                         _apply_results_to_calcs(results)
                         _backfill_latest_round_to_prediction_history(results)
                     _update_relay_cache_for_running_calcs()
-                    _update_prediction_cache_from_db()
+                    _update_prediction_cache_from_db(results=results)
                 finally:
                     try:
                         _apply_lock.release()
@@ -11463,6 +11477,31 @@ def get_results():
         })
         err_resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
         return err_resp, 200
+
+
+@app.route('/api/debug-prediction', methods=['GET'])
+def debug_prediction():
+    """보류/멈춤 진단용. 현재 results·stored·원인 요약 반환."""
+    try:
+        if not DB_AVAILABLE or not DATABASE_URL:
+            return jsonify({'ok': False, 'reason': 'DB 없음'}), 200
+        results = get_recent_results(hours=24)
+        results = _sort_results_newest_first(results) if results else []
+        pred_rnd = int(str((results[0].get('gameID') or '0')), 10) + 1 if results else 0
+        is_15_joker = len(results) >= 15 and bool(results[14].get('joker')) if results else False
+        stored = get_stored_round_prediction(pred_rnd) if pred_rnd else None
+        joker_stats = _compute_joker_stats(results) if results else {}
+        return jsonify({
+            'ok': True,
+            'predicted_round': pred_rnd,
+            'results_count': len(results),
+            'is_15_joker': is_15_joker,
+            'joker_skip_bet': joker_stats.get('skip_bet', False),
+            'stored': stored,
+            'prediction_cache_value': (prediction_cache or {}).get('value'),
+        }), 200
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)[:200]}), 200
 
 
 @app.route('/api/current-prediction', methods=['GET'])

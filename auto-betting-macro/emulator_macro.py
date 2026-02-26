@@ -1083,7 +1083,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             self._connected = True
             self._analyzer_url = self.analyzer_url_edit.text().strip()
             self._calculator_id = self.calc_combo.currentData()
-            self._log("Analyzer 연결됨 — 시작 버튼으로 WebSocket 연결 후 배팅하세요.")
+            self._log("Analyzer 연결됨 — WebSocket으로 픽 수신 중. 시작 버튼으로 배팅하세요.")
+            self._start_ws_client()  # 연결 시 WebSocket 시작 → 현재픽에 픽 계속 들어옴
 
     def _log(self, msg):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -1122,10 +1123,10 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
 
     def _on_stop(self):
         self._running = False
-        self._stop_ws_client()
+        # WebSocket은 유지 — 연결 상태에서 픽 계속 표시
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self._log("배팅 중지")
+        self._log("배팅 중지 (픽 수신은 계속)")
 
     def _start_ws_client(self):
         """WebSocket 클라이언트 스레드 시작. 연결 성공 시 _ws_connected=True, 폴링 생략."""
@@ -1174,7 +1175,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 sio.wait()
             except Exception as e:
                 self._ws_connected = False
-                self._log("[WebSocket] 연결 실패 → HTTP 폴링 사용: %s" % str(e)[:80])
+                self._log("[WebSocket] 연결 실패: %s" % str(e)[:80])
             finally:
                 self._ws_client = None
                 self._ws_connected = False
@@ -1364,7 +1365,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 except Exception as e:
                     last_error = e
                     break  # 한 회차 1번만 — 재시도 안 함
-            self._log("배팅 실행 중 오류: %s — 같은 회차 다음 폴링에 재시도됩니다." % (str(last_error)[:80] if last_error else "unknown"))
+            self._log("배팅 실행 중 오류: %s" % (str(last_error)[:80] if last_error else "unknown"))
             with self._lock:
                 self._pending_bet_rounds.pop(round_num, None)
             return False
