@@ -2198,9 +2198,9 @@ def _apply_results_to_calcs(results):
                     continue
                 try:
                     pr = c.get('pending_round')
-                    if _should_skip_relay_cache_update(int(cid), pr):
-                        continue
                     pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
+                    if _should_skip_relay_cache_update(int(cid), pr, pick_color, suggested_amount):
+                        continue
                     if pick_color is not None or (c.get('streak_wait_enabled') and c.get('streak_wait_state') in ('waiting', 'paused')):
                         _update_current_pick_relay_cache(int(cid), pr, pick_color, suggested_amount if suggested_amount is not None else 0, c.get('running', True))
                 except Exception:
@@ -2514,7 +2514,7 @@ def _push_current_pick_from_calc(calculator_id, c):
     calc_id = int(calculator_id) if calculator_id in (1, 2, 3) else 1
     pr = c.get('pending_round')
     # 클라이언트 유효 캐시 있으면 DB·relay 모두 덮어쓰지 않음 — 배팅중 금액 vs 서버 5000 충돌 방지
-    if _should_skip_relay_cache_update(calc_id, pr):
+    if _should_skip_relay_cache_update(calc_id, pr, pick_color, suggested_amount):
         return
     conn = get_db_connection(statement_timeout_sec=3)
     if not conn:
@@ -2554,8 +2554,9 @@ def _update_current_pick_relay_cache(calculator_id, round_num, pick_color, sugge
         pass
 
 
-def _should_skip_relay_cache_update(calculator_id, new_round):
-    """스케줄러가 클라이언트 유효 캐시를 덮어쓰지 않도록. new_round <= 캐시 회차이면 True(스킵). 색상·금액 오탐 방지."""
+def _should_skip_relay_cache_update(calculator_id, new_round, new_pick=None, new_amount=None):
+    """스케줄러가 클라이언트 유효 캐시를 덮어쓰지 않도록. new_round < 캐시 회차이면 True(스킵).
+    같은 회차: 픽만 바뀌었으면 업데이트(스마트반픽 등). 금액만 다르면 스킵 — 클라이언트 금액 보호(서버 5000 덮어쓰기 방지)."""
     try:
         cached = _current_pick_relay_cache.get(int(calculator_id))
         if not cached or not isinstance(cached, dict) or not cached.get('running'):
@@ -2565,13 +2566,19 @@ def _should_skip_relay_cache_update(calculator_id, new_round):
         cache_amt = cached.get('suggested_amount')
         if cache_round is None or new_round is None:
             return False
-        # 캐시에 유효 픽 있으면 같은/낮은 회차로 덮어쓰지 않음 (들어왔다 보류떴다·색상틀림 방지)
-        has_valid_cache = cache_pick and cache_amt and int(cache_amt or 0) > 0
+        # 낮은 회차로 덮어쓰지 않음
         try:
             if int(new_round) < int(cache_round):
                 return True
-            if has_valid_cache and int(new_round) == int(cache_round):
-                return True  # 같은 회차 — 클라이언트 유효 데이터 유지
+            # 같은 회차: 픽이 바뀌었으면 업데이트 (매크로에 픽 변경 반영)
+            if int(new_round) == int(cache_round):
+                has_valid_cache = cache_pick and cache_amt and int(cache_amt or 0) > 0
+                if not has_valid_cache:
+                    return False
+                if new_pick is not None and str(new_pick).strip() != str(cache_pick or '').strip():
+                    return False  # 픽 바뀜 — 업데이트 (스마트반픽 등). 금액은 서버값 사용(픽과 함께)
+                # 금액만 다르면 스킵 — 클라이언트 POST 금액이 정확. 서버가 5000 등으로 덮어쓰기 방지
+                return True  # 동일 픽 — 클라이언트 캐시 유지
         except (TypeError, ValueError):
             return False
         return False
@@ -4717,9 +4724,9 @@ def _update_relay_cache_for_running_calcs():
                 try:
                     pr = c.get('pending_round')
                     # 클라이언트가 이미 더 높은 회차로 POST했으면 덮어쓰지 않음 — 분석기 회차=매크로 회차 동시 변경
-                    if _should_skip_relay_cache_update(int(cid), pr):
-                        continue
                     pick_color, suggested_amount, _ = _server_calc_effective_pick_and_amount(c)
+                    if _should_skip_relay_cache_update(int(cid), pr, pick_color, suggested_amount):
+                        continue
                     # pick_color가 None이어도 streak_wait(대기/일시정지)면 업데이트 — 매크로가 배팅하지 않도록. 그 외는 유효 픽 있을 때만 덮어씀 (들어왔다 보류떴다 반복 방지)
                     if pick_color is not None:
                         _update_current_pick_relay_cache(int(cid), pr, pick_color, suggested_amount if suggested_amount is not None else 0, True, None)

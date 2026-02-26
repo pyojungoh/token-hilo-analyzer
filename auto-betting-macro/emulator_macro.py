@@ -53,9 +53,7 @@ BET_DELAY_BEFORE_EXECUTE = 0.06  # 배팅 실행 전 대기(초) — 픽 수신 
 BET_DELAY_AFTER_AMOUNT_TAP = 0.01  # 금액 칸 탭 후 포커스 대기 (자동 클리어됨)
 BET_DELAY_AFTER_INPUT = 0.01  # 금액 입력 후 바로 BACK
 BET_DELAY_AFTER_BACK = 0.06  # 키보드 닫힌 뒤 바로 레드/블랙 탭
-BET_AMOUNT_CONFIRM_COUNT = 1  # 같은 (회차, 픽, 금액) 1회 수신 시 즉시 배팅 (2회는 서버 응답 변동으로 놓치는 경우 있음)
-PUSH_PICK_PORT = 8765  # 중간페이지→매크로 푸시 수신 포트. 푸시 시 3회확인 생략·즉시 ADB
-PUSH_BET_DELAY = 0.06  # 푸시 수신 시 배팅 전 대기(초) — 배팅시간 확보용 최소화
+PUSH_BET_DELAY = 0.06  # WebSocket 픽 수신 시 배팅 전 대기(초) — 배팅시간 확보용 최소화
 BET_DEL_COUNT = 8  # 기존 값 삭제용 DEL (8자리: 99999999까지. 탭 후 바로 입력 위해 최소화)
 BET_AMOUNT_DOUBLE_INPUT = False  # 금액 1회만 입력 (이중 입력 시 1000010000 중복 발생)
 BET_DELAY_AFTER_COLOR_TAP = 0.01
@@ -63,8 +61,7 @@ BET_DELAY_BETWEEN_CONFIRM_TAPS = 0.02
 BET_DELAY_AFTER_CONFIRM = 0.02
 BET_CONFIRM_TAP_COUNT = 1  # 정정 버튼 1번만
 BET_RETRY_ATTEMPTS = 1  # 한 회차당 1번만 배팅 (재시도 시 중복 배팅됨)
-# 마틴 연속 동일금액 검증: 이 값 초과 금액이 연속 회차에 같으면 오탐으로 간주 (기본금 1~2만은 연승 시 동일 가능)
-MARTINGALE_SAME_AMOUNT_THRESHOLD = 30000
+MARTINGALE_SAME_AMOUNT_THRESHOLD = 30000  # 마틴 연속 동일금액 검증: 이 값 초과 시 오탐 간주
 
 
 def _validate_bet_amount(amt):
@@ -395,8 +392,7 @@ def adb_keyevent_repeat(device_id, keycode, count):
 class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
     connect_result_ready = pyqtSignal(object, object) if HAS_PYQT else None  # (pick, results) 서브스레드 → 메인 스레드
     test_tap_done = pyqtSignal(object, str, str) if HAS_PYQT else None  # (버튼, 복원텍스트, 로그메시지)
-    poll_done = pyqtSignal(object, object) if HAS_PYQT else None  # (pick, results) 폴링 스레드 → 메인 스레드
-    push_pick_received = pyqtSignal(object) if HAS_PYQT else None  # 푸시 수신 시 (pick dict) → 즉시 배팅
+    push_pick_received = pyqtSignal(object) if HAS_PYQT else None  # WebSocket 픽 수신 시 (pick dict) → 즉시 배팅
     device_size_fetched = pyqtSignal(int, int) if HAS_PYQT else None  # (width, height) 기기 해상도 가져오기 완료
     adb_device_suggested = pyqtSignal(str) if HAS_PYQT else None  # 연결된 기기 ID로 ADB 칸 자동 채움
 
@@ -410,42 +406,24 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._calculator_id = 1
         self._coords = {}
         self._device_id = "127.0.0.1:5555"
-        self._poll_interval_sec = 2.0
         self._running = False
         self._connected = False  # 연결 버튼으로 연결됨 → 계속 폴링해 픽/회차 갱신
         self._last_round_when_started = None  # 미사용 (바로 시작 시 현재 회차부터 배팅)
-        self._last_bet_round = None  # 이미 배팅한 회차 (중복 방지)
+        self._last_bet_round = None  # 마지막으로 배팅한 회차 — 다음회차(이 값+1) 픽만 배팅
         self._last_bet_amount = None  # 직전 배팅 금액 — 마틴 연속 동일금액 검증용
-        self._bet_rounds_done = set()  # 배팅 완료 회차 집합 — 마틴 끝 후 동일 금액 재송출 방지 (최대 50개 유지)
-        self._pending_bet_rounds = {}  # round_num -> { pick_color, amount } (결과 대기 → 승/패/조커 로그)
-        self._pick_history = deque(maxlen=5)  # 최근 5회 (round_num, pick_color) — 회차·픽 안정 시에만 배팅
+        self._pending_bet_rounds = {}  # round_num -> { pick_color, amount } — 같은 회차 중복 호출 방지
         self._pick_data = {}
         self._results_data = {}
         self._lock = threading.Lock()
         self._do_bet_lock = threading.Lock()  # _do_bet 동시 실행 방지 — 픽 1회만 탭, 2중배팅 절대 방지
-        # 표시 깜빡임 방지: 같은 (회차, 픽, 금액)이 2회 연속 올 때만 카드/회차/금액 갱신 (웹·서버 교차 덮어쓰기로 5천↔1만 깜빡임 방지)
-        self._display_stable = None  # (round_num, pick_color, amount)
-        self._display_candidate = None
-        self._display_confirm_count = 0
-        self._display_confirm_needed = 1  # 1회 수신 시 즉시 갱신 (20000 고정 방지, 서버 안정화로 깜빡임 완화)
-        # 배팅금액 2~3회만 받고 즉시 배팅 (계산기 표와 동일 금액 확정용)
-        self._amount_confirm_round = None
-        self._amount_confirm_pick = None
-        self._amount_confirm_amounts = []
-        self._amount_confirm_want = 3
-        # 회차 N회 확인: 같은 (회차, 픽, 금액)이 N회 연속 수신될 때만 배팅 (금액 오탐 방지)
-        self._bet_confirm_last = None  # (round_num, pick_color, amount)
-        self._bet_confirm_count = 0  # 연속 일치 횟수
-        self._last_seen_round = None  # 지금까지 본 최고 회차 — 역행(전회차) 수신 시 거부
-        self._display_best_amount = None  # (round_num, amount) — 같은 회차에서 본 최고 금액 (표시용, 5000 고정 방지)
         self._round_prev = None  # 전회차 (배팅 완료)
         self._round_current = None  # 지금회차 (배팅 대기/진행)
         self._round_next = None  # 다음회차 (픽 수신 시 설정)
-        self._poll_in_flight = False  # 폴링 중복 방지 — 요청 완료 전 새 요청 시작 금지 (CPU 부하 감소)
-        # WebSocket: 푸시 수신, 폴백 시 폴링
+        # WebSocket 전용 — 회차·픽·금액 수신 즉시 배팅
         self._ws_client = None
         self._ws_connected = False
         self._ws_thread = None
+        self._recent_picks = deque(maxlen=5)  # 표시용 최근 회차·픽
         # 좌표 찾기 (한곳에 통합)
         self._coord_listener = None
         self._coord_capture_key = None
@@ -455,8 +433,6 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
 
         self._build_ui()
         self._load_coords()
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._poll)
         if HAS_PYQT and self.connect_result_ready is not None:
             self.connect_result_ready.connect(self._apply_connect_result)
         if HAS_PYQT and self.test_tap_done is not None:
@@ -465,20 +441,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 self.device_size_fetched.connect(self._on_device_size_fetched)
             if self.adb_device_suggested is not None:
                 self.adb_device_suggested.connect(self._on_adb_device_suggested)
-        if HAS_PYQT and self.poll_done is not None:
-            self.poll_done.connect(self._on_poll_done)
         if HAS_PYQT and self.push_pick_received is not None:
-            self.push_pick_received.connect(self._on_push_pick_received)
-        # 중간페이지→매크로 푸시 수신 서버 (localhost:8765)
-        def _push_cb(pick):
-            if HAS_PYQT and self.push_pick_received is not None:
-                self.push_pick_received.emit(pick)
-        try:
-            t = threading.Thread(target=_run_push_server, args=(PUSH_PICK_PORT, _push_cb), daemon=True)
-            t.start()
-            self._log("푸시 수신: localhost:%s (중간페이지→매크로 즉시 배팅)" % PUSH_PICK_PORT)
-        except Exception:
-            pass
+            self.push_pick_received.connect(self._on_ws_pick_received)
 
     def _on_test_tap_done(self, btn, restore_text, message):
         """테스트 탭/연결확인 완료 시 버튼 복원 + 로그 (메인 스레드)."""
@@ -526,10 +490,6 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self.calc_combo.addItem("계산기 2", 2)
         self.calc_combo.addItem("계산기 3", 3)
         fl.addRow("계산기 선택:", self.calc_combo)
-        self.ws_check = QCheckBox("WebSocket 사용 (푸시, 폴링 대신)")
-        self.ws_check.setChecked(True)
-        self.ws_check.setToolTip("분석기 서버 WebSocket으로 픽 푸시 수신. 실패 시 HTTP 폴링으로 자동 전환.")
-        fl.addRow("", self.ws_check)
         connect_row = QHBoxLayout()
         connect_row.setContentsMargins(0, 4, 0, 4)
         self.connect_btn = QPushButton("Analyzer 연결")
@@ -1123,9 +1083,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             self._connected = True
             self._analyzer_url = self.analyzer_url_edit.text().strip()
             self._calculator_id = self.calc_combo.currentData()
-            if not self._timer.isActive():
-                self._timer.start(int(self._poll_interval_sec * 1000))
-            self._log("Analyzer 연결됨 — 픽/회차가 계속 갱신됩니다. 확인 후 시작하세요.")
+            self._log("Analyzer 연결됨 — 시작 버튼으로 WebSocket 연결 후 배팅하세요.")
 
     def _log(self, msg):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -1149,43 +1107,25 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._analyzer_url = url
         self._calculator_id = self.calc_combo.currentData()
         self._device_id = self.device_edit.text().strip() or "127.0.0.1:5555"
-        # 배팅 중: 25ms 간격 — 픽 수신 즉시 배팅
-        self._poll_interval_sec = 0.025
         self._coords = load_coords()
         if not self._coords.get("bet_amount") or not self._coords.get("red") or not self._coords.get("black"):
             self._log("좌표를 먼저 설정하세요. coord_picker.py로 배팅금액/정정/레드/블랙 좌표를 잡으세요.")
             return
         self._running = True
-        self._last_round_when_started = None
         self._last_bet_round = None
-        self._last_bet_amount = None  # 마틴 연속 동일금액 검증 초기화
-        self._bet_rounds_done.clear()  # 배팅 완료 회차 초기화
-        self._pick_history.clear()  # 전회차 히스토리 초기화 → 2회 연속 일치 시에만 배팅
-        self._bet_confirm_last = None  # 회차 N회 확인 상태 초기화
-        self._bet_confirm_count = 0
-        self._last_seen_round = None  # 회차 역행 방지 초기화
-        self._pick_data = {}  # 이전 연결/폴링 잔여 픽 제거 — 계산기 정지 시 매크로만 시작해도 배팅 들어가는 것 방지
-        self._display_stable = None  # 표시 깜빡임 방지 상태 초기화 — 새 폴링으로 다시 안정화
-        self._display_best_amount = None  # 표시용 최고 금액 초기화
-        self._display_candidate = None
-        self._display_confirm_count = 0
+        self._last_bet_amount = None
+        self._pick_data = {}
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self._log("시작 — 계산기 픽 바뀌는 즉시 사이트로 전송합니다.")
-        if getattr(self, 'ws_check', None) and self.ws_check.isChecked():
-            self._start_ws_client()
-        self._timer.start(int(self._poll_interval_sec * 1000))
-        QTimer.singleShot(0, self._poll)   # 시작 직후 즉시 1회 폴링
+        self._log("시작 — WebSocket으로 회차·픽·금액 수신 즉시 배팅")
+        self._start_ws_client()
 
     def _on_stop(self):
         self._running = False
-        self._poll_in_flight = False  # 정지 시 플래그 초기화
         self._stop_ws_client()
-        if not self._connected:
-            self._timer.stop()
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self._log("배팅 중지 (연결 유지 시 픽은 계속 갱신)")
+        self._log("배팅 중지")
 
     def _start_ws_client(self):
         """WebSocket 클라이언트 스레드 시작. 연결 성공 시 _ws_connected=True, 폴링 생략."""
@@ -1253,170 +1193,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             self._ws_client = None
         self._ws_thread = None
 
-    def _poll(self):
-        """타이머에서 호출: 스레드에서 서버 요청 후 결과만 메인 스레드로 전달 (UI 멈춤 방지)."""
-        if not self._running and not self._connected:
-            return
-        if getattr(self, '_ws_connected', False):
-            return  # WebSocket 연결 시 폴링 생략
-        if self._poll_in_flight:
-            return  # 이전 요청 완료 전 중복 방지 — CPU 부하 감소
-        url = (self._analyzer_url or "").strip() or self.analyzer_url_edit.text().strip()
-        if not url:
-            return
-        self._analyzer_url = url
-        calc_id = self._calculator_id
-        if calc_id is None:
-            calc_id = self.calc_combo.currentData()
-            self._calculator_id = calc_id
-        url_snap = url
-        calc_snap = calc_id
-        self._poll_in_flight = True
-
-        def do_fetch():
-            """계산기에서 회차·배팅중 픽·배팅금액만 가져옴. 계산/승패는 분석기 가상배팅 계산기가 담당."""
-            try:
-                pick = fetch_current_pick(url_snap, calculator_id=calc_snap, timeout=4)
-            except Exception as e:
-                pick = {"error": str(e)}
-            if pick is None:
-                pick = {"error": "픽 조회 지연"}
-            if self.poll_done is not None:
-                self.poll_done.emit(pick, {})
-
-        threading.Thread(target=do_fetch, daemon=True).start()
-
-    def _on_poll_done(self, pick, results):
-        """폴링 결과 수신: 회차·배팅중 픽·금액만 반영하고 배팅. 계산/승패는 분석기에서."""
-        try:
-            self._on_poll_done_impl(pick, results)
-        finally:
-            self._poll_in_flight = False  # 다음 폴링 허용 — CPU 부하 감소
-
-    def _on_poll_done_impl(self, pick, results):
-        """폴링 결과 처리 (내부)."""
-        with self._lock:
-            self._pick_data = pick if isinstance(pick, dict) else {}
-            self._results_data = results if isinstance(results, dict) else {}
-        # 표시: 회차·픽·금액 — 최신 값 즉시 반영 (20000 고정 방지, 서버 relay 0.2초 갱신으로 안정화)
-        round_num = self._pick_data.get("round")
-        raw_color = self._pick_data.get("pick_color")
-        pick_color = _normalize_pick_color(raw_color)
-        try:
-            amt = self._pick_data.get("suggested_amount") or self._pick_data.get("suggestedAmount")
-            amt_val = int(amt) if amt is not None else None
-        except (TypeError, ValueError):
-            amt_val = None
-        key = (round_num, pick_color, amt_val)
-        # 유효한 픽만 표시 유지 — null/보류 수신 시 기존 유효 표시 절대 덮어쓰지 않음 (들어왔다 보류떴다 반복 방지)
-        is_valid = round_num is not None and pick_color is not None and amt_val is not None and amt_val > 0
-        if is_valid:
-            self._display_stable = key
-        elif self._display_stable is not None and len(self._display_stable) >= 3:
-            prev_round, prev_color, prev_amt = self._display_stable[0], self._display_stable[1], self._display_stable[2]
-            # 기존에 유효 픽 있으면 null/보류로 덮어쓰지 않음 — 전회차·보류 깜빡임 방지
-            if prev_round is not None and prev_color is not None and prev_amt and int(prev_amt or 0) > 0:
-                pass  # 기존 유효 표시 유지
-            elif round_num is not None and round_num == prev_round:
-                pass  # 같은 회차인데 null → 이전 표시 유지
-            else:
-                self._display_stable = key
-        else:
-            self._display_stable = key
-        # 같은 회차에서 본 최고 금액 유지 — 오래된 5000이 다시 표시되는 것 방지
-        if round_num is not None and amt_val is not None and amt_val > 0:
-            prev_round, prev_amt = self._display_best_amount or (None, 0)
-            if prev_round != round_num or amt_val > prev_amt:
-                self._display_best_amount = (round_num, amt_val)
-        self._update_display()
-
-        # 매크로는 오는 픽만 따라감. 목표금액/중지 판단은 분석기 계산기에서만 함 — running=False 수신해도 여기서 자동 중지하지 않음.
-
-        if not self._running:
-            return
-        # 계산기가 정지 상태면 픽이 있어도 배팅하지 않음 (서버가 픽을 비워도 레거시/타이밍으로 값이 올 수 있음)
-        if self._pick_data.get("running") is False:
-            return
-        round_num = self._pick_data.get("round")
-        raw_color = self._pick_data.get("pick_color")
-        # 서버는 RED/BLACK 또는 빨강/검정 올 수 있음 → 항상 RED/BLACK으로 통일
-        pick_color = _normalize_pick_color(raw_color)
-        amount = self._pick_data.get("suggested_amount") or self._pick_data.get("suggestedAmount")
-        # 계산기 멈춤 연동: suggested_amount 없거나 0이면 이 회차 배팅 스킵 (macro.py와 동일)
-        try:
-            amt_val = int(amount) if amount is not None else 0
-        except (TypeError, ValueError):
-            amt_val = 0
-        if amount is None or amt_val <= 0:
-            self._log("[멈춤] 계산기 멈춤 구간 (금액=%s) — 회차 %s 배팅 스킵" % (amount, round_num))
-            return
-        if round_num is None or pick_color is None:
-            self._log("서버 픽 없음 (회차=%s, 픽=%s, 금액=%s) — 분석기에서 해당 계산기 실행·픽 확인" % (round_num, raw_color or "(없음)", amount))
-            return
-        try:
-            round_num = int(round_num)
-        except (TypeError, ValueError):
-            return
-        # 이미 이 회차로 배팅했으면 스킵 (중복 배팅 방지). 오래된 회차는 목록에서 제거
-        with self._lock:
-            for old_r in list(self._pending_bet_rounds.keys()):
-                if old_r < round_num - 20:
-                    self._pending_bet_rounds.pop(old_r, None)
-            if round_num in self._pending_bet_rounds:
-                return
-            if round_num in self._bet_rounds_done:
-                return  # 이미 배팅 완료한 회차 — 마틴 끝 후 동일 금액 재송출 방지
-        if self._last_bet_round is not None and round_num <= self._last_bet_round:
-            return
-
-        # 회차 역행 방지: 이미 더 높은 회차를 본 적 있으면 전회차 데이터 거부 (마틴 금액 오탐 방지)
-        if self._last_seen_round is not None and round_num < self._last_seen_round:
-            self._log("전회차 데이터 무시: %s회 (최고 %s회)" % (round_num, self._last_seen_round))
-            return
-        self._last_seen_round = max(self._last_seen_round or 0, round_num)
-        self._round_next = round_num  # 픽 수신 시 다음회차 갱신
-
-        # 회차 N회 확인: 같은 (회차, 픽, 금액)이 N회 연속 수신될 때만 배팅 (금액 오탐 방지). N=1이면 1회 수신 즉시 배팅
-        key = (round_num, pick_color, amt_val)
-        if self._bet_confirm_last != key:
-            # 회차가 올라갔는데 이전 회차를 아직 안 쳤으면 즉시 배팅 (픽 놓침 방지)
-            old = self._bet_confirm_last
-            if old is not None and len(old) >= 3 and (self._bet_confirm_count or 0) >= 1:
-                old_round, old_pick, old_amt = old[0], old[1], old[2]
-                if round_num > old_round and old_round is not None and old_pick and old_amt and old_amt > 0:
-                    with self._lock:
-                        skip = old_round in self._bet_rounds_done or old_round in self._pending_bet_rounds
-                    if not skip and (self._last_bet_round is None or old_round > self._last_bet_round):
-                        self._log("회차 변경 감지 — 이전 %s회 즉시 배팅 (놓침 방지)" % old_round)
-                        self._coords = load_coords()
-                        self._run_bet(old_round, old_pick, old_amt, from_push=False)
-            self._bet_confirm_last = key
-            self._bet_confirm_count = 1
-            if self._bet_confirm_count >= BET_AMOUNT_CONFIRM_COUNT:
-                self._log("픽 수신: %s회 %s %s원 (1회 확인 — 즉시 배팅)" % (round_num, pick_color, amt_val))
-                self._bet_confirm_last = None
-                self._bet_confirm_count = 0
-                self._pick_history.append((round_num, pick_color))
-                self._coords = load_coords()
-                self._run_bet(round_num, pick_color, amt_val, from_push=False)
-                return
-            self._log("픽 수신: %s회 %s %s원 (1회 확인 — %s회 연속 일치 시 배팅)" % (round_num, pick_color, amt_val, BET_AMOUNT_CONFIRM_COUNT))
-            return
-        self._bet_confirm_count = (self._bet_confirm_count or 0) + 1
-        if self._bet_confirm_count < BET_AMOUNT_CONFIRM_COUNT:
-            self._log("픽 수신: %s회 %s %s원 (%s회 확인 — %s회 연속 일치 시 배팅)" % (round_num, pick_color, amt_val, self._bet_confirm_count, BET_AMOUNT_CONFIRM_COUNT))
-            return
-
-        # N회 연속 일치 → 배팅
-        self._log("픽 수신: %s회 %s %s원 (%s회 확인 — 배팅)" % (round_num, pick_color, amt_val, BET_AMOUNT_CONFIRM_COUNT))
-        self._bet_confirm_last = None
-        self._bet_confirm_count = 0
-        self._pick_history.append((round_num, pick_color))
-        self._coords = load_coords()
-        self._run_bet(round_num, pick_color, amt_val, from_push=False)
-
-    def _on_push_pick_received(self, pick):
-        """중간페이지 푸시 수신: 회차 검증 후 즉시 ADB 전송 (3회확인 생략, 배팅시간 확보)."""
+    def _on_ws_pick_received(self, pick):
+        """WebSocket 픽 수신: 회차·픽·금액 표시 갱신 후 즉시 ADB 배팅."""
         if not isinstance(pick, dict):
             return
         round_num = pick.get("round")
@@ -1433,6 +1211,17 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             round_num = int(round_num)
         except (TypeError, ValueError):
             return
+        # 표시 갱신
+        with self._lock:
+            self._pick_data = {
+                'round': round_num,
+                'pick_color': raw_color or pick_color,
+                'suggested_amount': amt_val,
+                'running': True,
+            }
+            if round_num is not None and pick_color and amt_val > 0:
+                self._recent_picks.append((round_num, pick_color))
+        self._update_display()
         if not self._running:
             return
         if amt_val <= 0:
@@ -1440,42 +1229,19 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             return
         if not _validate_bet_amount(amt_val):
             return
+        # 배팅했던 회차는 딱 한 번만. 다음회차(마지막배팅회차+1) 픽이 왔을 때만 배팅
+        if self._last_bet_round is not None:
+            if round_num <= self._last_bet_round:
+                return  # 이미 배팅한 회차 — 스킵
+            if round_num != self._last_bet_round + 1:
+                return  # 다음회차가 아님 — 스킵 (연속 회차만 배팅)
         with self._lock:
             if round_num in self._pending_bet_rounds:
-                return
-            if round_num in self._bet_rounds_done:
-                return  # 이미 배팅 완료한 회차 — 마틴 끝 후 동일 금액 재송출 방지
-            if self._last_bet_round is not None and round_num <= self._last_bet_round:
-                return
-        # 회차 검증: 전회차/지금회차/다음회차 — 픽 회차가 다음회차(또는 지금회차)와 일치 시 배팅
+                return  # 같은 회차 중복 호출 방지
         self._round_next = round_num
-        self._last_seen_round = max(self._last_seen_round or 0, round_num)
-        self._log("[푸시] %s회 %s %s원 수신 — 회차 검증 후 즉시 ADB" % (round_num, pick_color, amt_val))
+        self._log("[푸시] %s회 %s %s원 수신 — 다음회차 일치, 즉시 ADB" % (round_num, pick_color, amt_val))
         self._coords = load_coords()
         self._run_bet(round_num, pick_color, amt_val, from_push=True)
-
-    def _on_amount_confirm_timeout(self):
-        """금액 2~3회 수집 타임아웃: 1회 분이라도 있으면 그 금액으로 즉시 배팅."""
-        if not self._running or self._amount_confirm_round is None:
-            return
-        if not self._amount_confirm_amounts:
-            self._amount_confirm_round = None
-            self._amount_confirm_pick = None
-            return
-        round_num = self._amount_confirm_round
-        pick_color = self._amount_confirm_pick
-        final_amt = self._amount_confirm_amounts[-1]
-        self._amount_confirm_round = None
-        self._amount_confirm_pick = None
-        self._amount_confirm_amounts = []
-        with self._lock:
-            if round_num in self._pending_bet_rounds or round_num in self._bet_rounds_done:
-                return
-            if self._last_bet_round is not None and round_num <= self._last_bet_round:
-                return
-        self._log("픽 수신: %s회 %s %s원 (확인 1회분으로 즉시 배팅)" % (round_num, pick_color, final_amt))
-        self._coords = load_coords()
-        self._run_bet(round_num, pick_color, final_amt)
 
     def _run_bet(self, round_num, pick_color, amount, from_push=False):
         """배팅 실행. from_push면 PUSH_BET_DELAY, 아니면 BET_DELAY_BEFORE_EXECUTE 후 ADB 전송."""
@@ -1490,14 +1256,10 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         def _execute():
             if not self._running:
                 return
-            with self._lock:
-                if round_num in self._bet_rounds_done:
-                    self._pending_bet_rounds.pop(round_num, None)
-                    return  # 이미 배팅 완료 — 마틴 끝 후 동일 금액 재송출 방지
             if self._last_bet_round is not None and round_num <= self._last_bet_round:
                 with self._lock:
                     self._pending_bet_rounds.pop(round_num, None)
-                return
+                return  # 이미 배팅한 회차 — 스킵
             # 마틴 연속 동일금액 검증: 다음 회차에 같은 금액(3만 초과)은 오탐 — 패면 2배, 승이면 기본금
             if (self._last_bet_round is not None and self._last_bet_amount is not None
                     and round_num == self._last_bet_round + 1 and amount == self._last_bet_amount
@@ -1506,46 +1268,14 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                 with self._lock:
                     self._pending_bet_rounds.pop(round_num, None)
                 return
-            # 배팅 직전: 회차·금액 재조회 — 회차 불일치 시 스킵 (잘못된 금액 배팅 방지)
-            final_amount = amount
-            recheck_round_match = None
-            try:
-                url = normalize_analyzer_url((self._analyzer_url or "").strip() or self.analyzer_url_edit.text().strip())
-                calc_id = self._calculator_id or (self.calc_combo.currentData() if HAS_PYQT else 1)
-                if url and calc_id:
-                    pick = fetch_current_pick(url, calculator_id=calc_id, timeout=2)
-                    if pick and isinstance(pick, dict):
-                        srv_round = int(pick.get("round") or 0)
-                        recheck_round_match = (srv_round == round_num)
-                        if recheck_round_match:
-                            amt = pick.get("suggested_amount") or pick.get("suggestedAmount")
-                            if amt is not None and int(amt) > 0:
-                                final_amount = int(amt)
-                                self._log("배팅 직전 %s회 금액 재조회: %s원" % (round_num, final_amount))
-            except Exception:
-                pass
-            if recheck_round_match is False:
-                self._log("[금액검증] %s회 스킵 — 재조회 회차 불일치 (서버 미반영, 다음 폴링 대기)" % round_num)
-                with self._lock:
-                    self._pending_bet_rounds.pop(round_num, None)
-                return
-            self._log("배팅 실행: %s회 %s %s원" % (round_num, pick_color, final_amount))
-            ok = self._do_bet(round_num, pick_color, final_amount)
+            self._log("배팅 실행: %s회 %s %s원" % (round_num, pick_color, amount))
+            ok = self._do_bet(round_num, pick_color, amount)
             if ok:
-                self._last_bet_round = round_num
-                self._last_bet_amount = final_amount
-                with self._lock:
-                    self._bet_rounds_done.add(round_num)
-                    # 최대 50개 유지 (오래된 것 제거)
-                    if len(self._bet_rounds_done) > 50:
-                        for r in sorted(self._bet_rounds_done)[:-50]:
-                            self._bet_rounds_done.discard(r)
+                self._last_bet_round = round_num  # 배팅한 회차 저장 — 다음회차 비교용
+                self._last_bet_amount = amount
                 self._round_prev = self._round_current
                 self._round_current = round_num
                 self._round_next = round_num + 1
-                if HAS_PYQT:
-                    QTimer.singleShot(80, self._poll)
-                    QTimer.singleShot(300, self._poll)
         if HAS_PYQT and delay_ms > 0:
             QTimer.singleShot(delay_ms, _execute)
         else:
@@ -1556,9 +1286,6 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         한 회차당 1번만 배팅. 픽(RED/BLACK) 버튼은 절대 1회만 탭 — 2중배팅 방지."""
         with self._do_bet_lock:  # 동시 실행 방지 — 픽 1회만 클릭 보장 (전체 배팅 흐름 직렬화)
             with self._lock:
-                if round_num in self._bet_rounds_done:
-                    self._pending_bet_rounds.pop(round_num, None)
-                    return False  # 이미 배팅 완료한 회차 — 중복 방지
                 if self._last_bet_round is not None and round_num <= self._last_bet_round:
                     self._pending_bet_rounds.pop(round_num, None)
                     return False  # 이미 배팅한 회차 — 중복 방지
@@ -1645,27 +1372,12 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
     def _update_display(self):
         with self._lock:
             pick = self._pick_data.copy()
-            results = self._results_data.copy()
-        # 표시: _display_stable(폴링 시 설정) 또는 pick(연결 시 등)
-        if self._display_stable is not None and len(self._display_stable) >= 3:
-            stable_round, stable_color, stable_amt = self._display_stable[0], self._display_stable[1], self._display_stable[2]
-            round_num, pick_color = stable_round, stable_color
-            # 같은 회차에서 본 최고 금액 사용 (5000 고정 방지 — 오래된 값이 다시 표시되는 것 방지)
-            if self._display_best_amount is not None and self._display_best_amount[0] == stable_round:
-                display_amt = self._display_best_amount[1]
-            else:
-                display_amt = stable_amt
-            amount_str = str(display_amt) if display_amt is not None and display_amt > 0 else "-"
-        else:
-            round_num = pick.get("round")
-            raw_color = pick.get("pick_color")
-            pick_color = _normalize_pick_color(raw_color)
-            suggested = pick.get("suggested_amount")
-            if suggested is not None and int(suggested) > 0:
-                amount_str = str(int(suggested))
-            else:
-                amount_str = "-"
-        prob = pick.get("probability")
+            recent = list(self._recent_picks)
+        round_num = pick.get("round")
+        raw_color = pick.get("pick_color")
+        pick_color = _normalize_pick_color(raw_color)
+        suggested = pick.get("suggested_amount")
+        amount_str = str(int(suggested)) if suggested is not None and int(suggested) > 0 else "-"
         icon_ch, _ = get_round_icon(round_num)
         round_str = f"{round_num}회 {icon_ch}" if round_num is not None else "-"
         self.round_label.setText(f"회차: {round_str}")
@@ -1689,11 +1401,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         # 계산/승패/합산승률은 분석기 가상배팅 계산기에서 처리
         self.stats_label.setText("")
 
-        # 전회차 최대 5회 표시 (회차·픽 확인용) (회차매칭 확인용). 현재 픽 포함해 최근 5개
-        recent = list(self._pick_history)
-        if round_num is not None and pick_color:
-            recent = recent + [(round_num, pick_color)]
-        recent = recent[-5:]
+        # 전회차 최대 5회 표시 (회차·픽 확인용)
         if recent:
             hist_str = ", ".join("%s회 %s" % (r, c) for r, c in recent)
             self.pick_history_label.setText("최근 회차·픽: " + hist_str)
