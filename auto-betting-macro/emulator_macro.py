@@ -1393,7 +1393,8 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         cr = self._round_current
         nr = self._round_next
         self.rounds_track_label.setText("전/지금/다음: %s / %s / %s" % (pr if pr is not None else "-", cr if cr is not None else "-", nr if nr is not None else "-"))
-        self.amount_label.setText(f"금액: {amount_str} (계산기에서 전달)")
+        calc_id = getattr(self, '_calculator_id', None) or (self.calc_combo.currentData() if hasattr(self, 'calc_combo') else 1)
+        self.amount_label.setText(f"금액: {amount_str} (계산기 {calc_id})")
 
         # 정/꺽 + 색깔 카드 (RED=정·빨강, BLACK=꺽·검정)
         if pick_color == "RED":

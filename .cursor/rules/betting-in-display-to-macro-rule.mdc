@@ -32,8 +32,8 @@ alwaysApply: true
 
 ## 금액 정확도 규칙
 
-- **단일 출처**: macro_pick_transmit — 1행 계산 후 여기만 씀. 클라이언트 값 사용 안 함.
-- **POST/스케줄러**: 둘 다 서버 1행 계산 → DB 저장 → relay. 겹침 없음.
+- **POST**: 클라이언트(디스플레이) round·픽·금액 우선 — 상단이 정확하므로 그대로 macro_pick_transmit에 저장.
+- **스케줄러**: 서버 1행 → macro_pick_transmit (보류 등 클라이언트 값 없을 때).
 
 ## 안정화 규칙 (들어왔다 보류떴다 방지)
 

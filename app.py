@@ -2573,7 +2573,9 @@ def _push_current_pick_from_calc(calculator_id, c):
                                        suggested_amount=suggested_amount, calculator_id=calc_id)
         if ok:
             conn.commit()
-        # 1행 → macro_pick_transmit → relay (단일 출처)
+        # 1행 → macro_pick_transmit → relay. 단, 최근 0.5초 내 POST 있으면 스킵 (클라이언트 값 유지)
+        if time.time() - _last_post_time_per_calc.get(calc_id, 0) < 0.5:
+            return
         _write_macro_pick_transmit(calc_id, pr, pick_color, suggested_amount, c.get('running', True))
         _update_current_pick_relay_cache(calc_id, pr, pick_color, int(suggested_amount or 0), c.get('running', True), None)
     except Exception:
@@ -2585,8 +2587,9 @@ def _push_current_pick_from_calc(calculator_id, c):
             pass
 
 
-# Relay 캐시: macro_pick_transmit에서만 갱신. 단일 출처.
+# Relay 캐시: macro_pick_transmit에서만 갱신.
 _current_pick_relay_cache = {1: None, 2: None, 3: None}
+_last_post_time_per_calc = {1: 0, 2: 0, 3: 0}  # POST 시각 — 스케줄러가 클라이언트 값 덮어쓰지 않도록
 
 
 def _write_macro_pick_transmit(calculator_id, round_num, pick_color, suggested_amount, running=True):
@@ -12249,8 +12252,23 @@ def api_current_pick_relay():
                 threading.Thread(target=_relay_db_write_background, daemon=True,
                                  args=(calculator_id, None, None, None, False)).start()
                 return jsonify({'ok': True}), 200
-            # POST = "갱신 요청" — 서버 1행 계산 → macro_pick_transmit → relay (클라이언트 값 사용 안 함)
+            # 클라이언트(디스플레이) 값 우선 — 상단이 정확하므로 round·픽·금액 그대로 사용
             try:
+                amt_int = int(suggested_amount) if suggested_amount is not None and suggested_amount != '' else 0
+            except (TypeError, ValueError):
+                amt_int = 0
+            try:
+                round_num = int(round_num) if round_num is not None else None
+            except (TypeError, ValueError):
+                round_num = None
+            if round_num is not None and pick_color is not None and amt_int > 0:
+                _last_post_time_per_calc[int(calculator_id)] = time.time()
+                _write_macro_pick_transmit(calculator_id, round_num, pick_color, amt_int, True)
+                _update_current_pick_relay_cache(calculator_id, round_num, pick_color, amt_int, True, None)
+                threading.Thread(target=_relay_db_write_background, daemon=True,
+                                 args=(calculator_id, pick_color, round_num, amt_int, running if running is not None else True)).start()
+            else:
+                # 보류 등: 서버 1행으로 보정
                 state = get_calc_state('default') or {}
                 c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
                 if c and c.get('running'):
@@ -12259,12 +12277,6 @@ def api_current_pick_relay():
                         amt_int = int(server_amt or 0) if server_amt else 0
                         _write_macro_pick_transmit(calculator_id, pr, srv_pick, amt_int, True)
                         _update_current_pick_relay_cache(calculator_id, pr, srv_pick, amt_int, True, None)
-                        if amt_int > 0:
-                            threading.Thread(target=_relay_db_write_background, daemon=True,
-                                             args=(calculator_id, srv_pick, pr, amt_int, running if running is not None else True)).start()
-                return jsonify({'ok': True}), 200
-            except Exception:
-                pass
             return jsonify({'ok': True}), 200
         calculator_id = request.args.get('calculator', '1').strip()
         try:
