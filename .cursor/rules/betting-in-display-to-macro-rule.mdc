@@ -11,40 +11,34 @@ alwaysApply: true
 ## 기본 원칙
 
 1. **계산기 상단 "배팅중"**에 픽이 들어오자마자 **자동배팅기에도 즉시** 픽이 전달되어야 한다.
-2. **회차·픽·배팅중 금액** 검증 후 **바로 ADB로 배팅**해야 한다.
-3. **배팅중 금액 = 계산기 표 1열(배팅중 행)과 동일** — `getBetForRound(id, curRound)` 출처만 사용.
+2. **회차·픽** 검증 후 **바로 ADB로 배팅**해야 한다.
+3. **매크로 금액 = 매크로 내부에서만 계산** — round_actuals + _bet_history 기반 마틴. 서버 suggested_amount 사용 금지.
 
 ## 데이터 흐름 (변형 금지)
 
 ```
-[서버 1행]  _get_calc_row1_bundle(c) → (round, pick, amount)
+[서버]  round, pick_color, pick_pred → relay / WebSocket
        │
-       ├─ POST: 1행 계산 → macro_pick_transmit 저장
-       ├─ 스케줄러: 1행 계산 → macro_pick_transmit 저장
        ▼
-[macro_pick_transmit]  전송 전용 DB — 단일 출처
+[자동배팅기]  round_actuals(macro-data) + _bet_history → 내부 마틴 계산 → 금액
        │
-       ├─ relay 캐시 갱신
-       └─ WebSocket emit
-       ▼
-[자동배팅기]  받은 금액 그대로 표시·배팅
+       └─ ADB 배팅 (회차·픽·금액)
 ```
 
-## 금액 정확도 규칙
+## 매크로 금액 계산 (절대 규칙)
 
-- **POST**: 클라이언트(디스플레이) round·픽·금액 우선 — 상단이 정확하므로 그대로 macro_pick_transmit에 저장.
-- **스케줄러**: 서버 1행 → macro_pick_transmit (보류 등 클라이언트 값 없을 때).
+- **매크로**: round_actuals(macro-data) + _bet_history로 마틴 단계·금액 계산. 서버 suggested_amount 사용 금지.
+- **시작 금액**: base_bet_edit / macro_base (coords). 표마틴 9단계.
 
 ## 안정화 규칙 (들어왔다 보류떴다 방지)
 
-- **POST null/보류 수신 시**: 캐시 덮어쓰지 않음. 유효 (round, pick, amount) 있을 때만 캐시 갱신.
-- **스케줄러**: 캐시에 유효 픽 있고 서버 회차가 같거나 낮으면 덮어쓰지 않음 (`_should_skip_relay_cache_update`).
-- **매크로 표시**: null 수신 시 기존 유효 표시 유지. 새 유효 픽(round, pick, amount) 있을 때만 갱신.
+- **POST null/보류 수신 시**: 캐시 덮어쓰지 않음. 유효 (round, pick) 있을 때만 캐시 갱신.
+- **매크로 표시**: null 수신 시 기존 유효 표시 유지.
 
 ## 수정 시 금지
 
+- 매크로에서 서버 suggested_amount로 배팅 금지 — 내부 계산만 사용
 - `_display_best_amount`를 배팅 금액으로 사용 금지 (표시용만)
-- `suggested_amount` 외 다른 필드로 금액 유도 금지
 
 ---
 

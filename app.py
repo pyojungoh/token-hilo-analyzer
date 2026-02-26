@@ -2612,8 +2612,8 @@ def _push_current_pick_from_calc(calculator_id, c):
                                        suggested_amount=suggested_amount, calculator_id=calc_id)
         if ok:
             conn.commit()
-        # 1행 → macro_pick_transmit → relay. 단, 최근 0.5초 내 POST 있으면 스킵 (클라이언트 값 유지)
-        if time.time() - _last_post_time_per_calc.get(calc_id, 0) < 0.5:
+        # 1행 → macro_pick_transmit → relay. 단, 최근 0.2초 내 POST 있으면 스킵 (클라이언트 값 유지)
+        if time.time() - _last_post_time_per_calc.get(calc_id, 0) < 0.2:
             return
         _write_macro_pick_transmit(calc_id, pr, pick_color, suggested_amount, c.get('running', True), pick_pred)
         _update_current_pick_relay_cache(calc_id, pr, pick_color, int(suggested_amount or 0), c.get('running', True), None, pick_pred)
@@ -10705,7 +10705,7 @@ RESULTS_HTML = '''
             // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·버벅임 발생
             var resultsInterval = isTabVisible ? 200 : 1200;   // 200ms — 결과 체크 주기
             var calcStatusInterval = isTabVisible ? 200 : 1200; // 200ms — 픽 서버 전달 (80ms→200ms 부하 완화)
-            var calcStateInterval = isTabVisible ? 3000 : 5000; // 계산기 상태 GET 간격
+            var calcStateInterval = isTabVisible ? 1000 : 5000; // 계산기 상태 GET 간격 (1초 — 마틴 밀림 방지)
             var timerInterval = isTabVisible ? 300 : 1000;
             
             // 결과 폴링: 분당 4게임(15초 사이클) 기준. 계산기 실행 중이면 빠르게 해서 회차 놓침 방지
@@ -12360,7 +12360,7 @@ def api_current_pick_relay():
                 threading.Thread(target=_relay_db_write_background, daemon=True,
                                  args=(calculator_id, None, None, None, False)).start()
                 return jsonify({'ok': True}), 200
-            # 클라이언트(디스플레이) 값 우선 — 상단이 정확하므로 round·픽·금액 그대로 사용
+            # 클라이언트(디스플레이) 값 우선 — 단, 마틴 밀림 방지: 서버 금액이 더 크면 서버 값 사용
             try:
                 amt_int = int(suggested_amount) if suggested_amount is not None and suggested_amount != '' else 0
             except (TypeError, ValueError):
@@ -12370,6 +12370,15 @@ def api_current_pick_relay():
             except (TypeError, ValueError):
                 round_num = None
             if round_num is not None:
+                # 마틴 밀림 보정: 클라이언트 히스토리 지연 시 한 단계 낮은 금액(1만→2만 등) 전달 방지
+                state = get_calc_state('default') or {}
+                c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
+                if c and c.get('running'):
+                    pr, _, server_amt, _ = _get_calc_row1_bundle(c)
+                    if pr == round_num and server_amt is not None:
+                        srv = int(server_amt or 0)
+                        if srv > amt_int and srv > 0:
+                            amt_int = srv
                 _last_post_time_per_calc[int(calculator_id)] = time.time()
                 pc = (pick_color or "").strip().upper()
                 pc_stored = "RED" if pc in ("RED", "빨강") else ("BLACK" if pc in ("BLACK", "검정") else pick_color)

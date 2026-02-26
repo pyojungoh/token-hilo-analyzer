@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 에뮬레이터(LDPlayer) 자동배팅 매크로.
-- 서버(계산기)에서 회차·배팅중 픽·배팅금액만 받아서 ADB로 배팅. 매크로는 전회차/다음회차 계산 안 함.
-- 한 회차당 1번만 배팅. 분석기 웹 계산기1/2/3 중 선택 → 해당 계산기 픽/금액 수신 → 금액 입력 → RED/BLACK 탭 → 정정.
+- 서버(계산기)에서 회차·배팅중 픽만 받고, 금액은 매크로 내부에서 마틴 계산.
+- 한 회차당 1번만 배팅. 분석기 웹 계산기1/2/3 중 선택 → 해당 계산기 픽 수신 → 금액 계산 → RED/BLACK 탭 → 정정.
 """
 import json
 import os
@@ -85,6 +85,65 @@ def _normalize_pick_color(raw):
     if u == "BLACK" or s == "검정":
         return "BLACK"
     return None
+
+
+def _pick_color_to_pred(pick_color, card_15_color=None):
+    """RED/BLACK → 정/꺽. 15번 카드 색에 따라 (PREDICTION_AND_RESULT_SPEC 3.3)."""
+    if _normalize_pick_color(pick_color) is None:
+        return None
+    n = _normalize_pick_color(pick_color)
+    c15 = _normalize_pick_color(card_15_color) if card_15_color else None
+    if c15 == "BLACK":
+        return "꺽" if n == "RED" else "정"
+    return "정" if n == "RED" else "꺽"
+
+
+MARTIN_RATIOS_TABLE = [1, 2, 3, 6, 11, 21, 40, 76, 120]
+
+
+def _build_martin_table(base_amount):
+    """1단계 배팅 금액으로 표마틴 테이블 생성."""
+    try:
+        b = int(base_amount)
+        if b <= 0:
+            b = 5000
+    except (TypeError, ValueError):
+        b = 5000
+    return [b * r for r in MARTIN_RATIOS_TABLE]
+
+
+def _calc_martingale_step_and_bet(history, martin_table=None):
+    """history: [{round, predicted, actual}] 완료된 순서. 반환: (step, next_bet_amount)."""
+    martin_table = martin_table or _build_martin_table(5000)
+    step = 0
+    for h in (history or []):
+        act = (h.get("actual") or "").strip()
+        pred = (h.get("predicted") or "").strip()
+        if pred == "보류":
+            continue
+        if act not in ("정", "꺽", "joker", "조커"):
+            continue
+        is_joker = act in ("joker", "조커")
+        is_win = not is_joker and pred in ("정", "꺽") and pred == act
+        if is_win:
+            step = 0
+        else:
+            step = min(step + 1, len(martin_table) - 1)
+    bet = martin_table[min(step, len(martin_table) - 1)]
+    return step, bet
+
+
+def fetch_macro_data(url, calc_id=1, timeout=6):
+    """GET /api/macro-data → round_actuals, cards. 금액 계산용."""
+    base = normalize_analyzer_url(url)
+    if not base:
+        return None
+    try:
+        r = requests.get(base + "/api/macro-data", params={"calculator": calc_id}, timeout=timeout)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return None
 
 
 def save_coords(data):
@@ -417,6 +476,10 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._bet_confirm_count = 0
         self._pick_data = {}
         self._results_data = {}
+        self._round_actuals = {}  # round_id -> {actual, color} — 매크로 내부 금액 계산용
+        self._cards = []  # 15번 카드 색(정/꺽 변환용)
+        self._bet_history = {}  # round -> predicted (배팅 시 저장)
+        self._macro_lock = threading.Lock()
         self._lock = threading.Lock()
         self._do_bet_lock = threading.Lock()  # _do_bet 동시 실행 방지 — 픽 1회만 탭, 2중배팅 절대 방지
         self._round_prev = None  # 전회차 (배팅 완료)
@@ -504,7 +567,13 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         connect_row.addWidget(self.connect_status_label)
         connect_row.addStretch(1)
         fl.addRow("", connect_row)
-        fl.addRow("", QLabel("※ 연결 후 픽/금액이 보이면 정상. 그다음 배팅 시작하세요."))
+        fl.addRow("", QLabel("※ 연결 후 픽이 보이면 정상. 금액은 매크로 내부 계산."))
+
+        self.base_bet_edit = QLineEdit()
+        self.base_bet_edit.setPlaceholderText("5000")
+        self.base_bet_edit.setMaximumWidth(80)
+        self.base_bet_edit.setToolTip("1단계 배팅 금액 (표마틴)")
+        fl.addRow("시작 금액 (원):", self.base_bet_edit)
 
         self.device_edit = QLineEdit()
         self.device_edit.setText("127.0.0.1:5555")
@@ -690,6 +759,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
     def _load_coords(self):
         self._coords = load_coords()
         self._refresh_coord_labels()
+        if hasattr(self, "base_bet_edit"):
+            b = self._coords.get("macro_base") or 5000
+            self.base_bet_edit.setText(str(int(b)))
         try:
             self.window_left_edit.setText(str(self._coords.get("window_left", "") or ""))
             self.window_top_edit.setText(str(self._coords.get("window_top", "") or ""))
@@ -1112,6 +1184,12 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._calculator_id = self.calc_combo.currentData()
         self._device_id = self.device_edit.text().strip() or "127.0.0.1:5555"
         self._coords = load_coords()
+        try:
+            b = int(self.base_bet_edit.text().strip() or 5000)
+            self._coords["macro_base"] = b
+            save_coords(self._coords)
+        except (TypeError, ValueError):
+            pass
         if not self._coords.get("bet_amount") or not self._coords.get("red") or not self._coords.get("black"):
             self._log("좌표를 먼저 설정하세요. coord_picker.py로 배팅금액/정정/레드/블랙 좌표를 잡으세요.")
             return
@@ -1123,15 +1201,76 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._bet_confirm_count = 0
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self._log("시작 — WebSocket으로 회차·픽·금액 수신 즉시 배팅")
+        self._bet_history.clear()  # 매크로 내부 금액 계산용 — 시작 시 초기화
+        self._log("시작 — WebSocket으로 회차·픽 수신, 금액은 매크로 내부 계산")
         self._start_ws_client()
+        self._start_macro_data_poll()
 
     def _on_stop(self):
         self._running = False
+        self._stop_macro_data_poll()
         # WebSocket은 유지 — 연결 상태에서 픽 계속 표시
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self._log("배팅 중지 (픽 수신은 계속)")
+
+    def _start_macro_data_poll(self):
+        """macro-data 1.5초마다 폴링 — round_actuals (금액 계산용)."""
+        self._stop_macro_data_poll()
+        def poll():
+            if not self._running:
+                return
+            url = self._analyzer_url or (self.analyzer_url_edit.text().strip() if hasattr(self, "analyzer_url_edit") else "")
+            calc_id = self._calculator_id or (self.calc_combo.currentData() if hasattr(self, "calc_combo") else 1)
+            if url:
+                data = fetch_macro_data(url, calc_id, timeout=4)
+                if data:
+                    with self._macro_lock:
+                        self._round_actuals = data.get("round_actuals") or {}
+                        self._cards = data.get("cards") or []
+        if HAS_PYQT:
+            self._macro_data_timer = QTimer(self)
+            self._macro_data_timer.timeout.connect(poll)
+            self._macro_data_timer.start(1500)
+            QTimer.singleShot(100, poll)  # 즉시 1회
+
+    def _stop_macro_data_poll(self):
+        if HAS_PYQT and getattr(self, "_macro_data_timer", None):
+            try:
+                self._macro_data_timer.stop()
+            except Exception:
+                pass
+            self._macro_data_timer = None
+
+    def _calc_bet_amount(self, round_num, predicted):
+        """매크로 내부 마틴 계산. _bet_history + _round_actuals 기반."""
+        with self._macro_lock:
+            ra = dict(self._round_actuals)
+            bh = dict(self._bet_history)
+        base = 5000
+        if hasattr(self, "base_bet_edit") and self.base_bet_edit and self.base_bet_edit.text().strip():
+            try:
+                base = int(self.base_bet_edit.text().strip())
+            except (TypeError, ValueError):
+                pass
+        if base <= 0:
+            base = int(self._coords.get("macro_base") or 5000)
+        if base <= 0:
+            base = 5000
+        capital = int(self._coords.get("macro_capital") or 1000000)
+        martin_table = _build_martin_table(base)
+        completed = []
+        for rnd, pred in sorted(bh.items(), key=lambda x: x[0]):
+            rnd_str = str(rnd)
+            if rnd_str not in ra:
+                continue
+            act = (ra[rnd_str].get("actual") or "").strip()
+            if act not in ("정", "꺽", "joker", "조커"):
+                continue
+            completed.append({"round": rnd, "predicted": pred, "actual": act})
+        completed.sort(key=lambda x: x["round"])
+        _, amt = _calc_martingale_step_and_bet(completed, martin_table)
+        return min(amt, capital) if amt > 0 else 0
 
     def _start_ws_client(self):
         """WebSocket 클라이언트 스레드 시작. 연결 성공 시 _ws_connected=True, 폴링 생략."""
@@ -1155,13 +1294,19 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                     pick = {
                         'round': data.get('round'),
                         'pick_color': data.get('pick_color'),
-                        'suggested_amount': data.get('suggested_amount'),
                         'pick_pred': data.get('pick_pred') if data.get('pick_pred') in ('정', '꺽') else None,
                     }
                     if pick.get('round') is None or pick.get('pick_color') is None:
                         return
                     if HAS_PYQT and self.push_pick_received is not None:
                         self.push_pick_received.emit(pick)
+
+                @sio.on('round_actuals_update')
+                def on_round_actuals(data):
+                    if isinstance(data, dict) and data.get('round_actuals'):
+                        with self._macro_lock:
+                            self._round_actuals = data.get('round_actuals') or {}
+                            self._cards = data.get('cards') or []
 
                 @sio.on('connect')
                 def on_connect():
@@ -1201,26 +1346,23 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._ws_thread = None
 
     def _on_ws_pick_received(self, pick):
-        """WebSocket 픽 수신: 회차·픽·금액 표시 갱신 후 즉시 ADB 배팅."""
+        """WebSocket 픽 수신: 회차·픽 표시 갱신 후 매크로 내부 금액 계산 → ADB 배팅."""
         if not isinstance(pick, dict):
             return
         round_num = pick.get("round")
         raw_color = pick.get("pick_color")
         pick_color = _normalize_pick_color(raw_color)
-        try:
-            amt = pick.get("suggested_amount")
-            amt_val = int(amt) if amt is not None else 0
-        except (TypeError, ValueError):
-            amt_val = 0
         if round_num is None or pick_color is None:
             return
         try:
             round_num = int(round_num)
         except (TypeError, ValueError):
             return
-        # 현재픽 표시·배팅: 받은 금액 그대로 사용 (서버 1행·상단 검증 후 전달된 값)
-        use_amt = amt_val
-        pick_pred = pick.get('pick_pred') if pick.get('pick_pred') in ('정', '꺽') else None
+        pick_pred = (pick.get("pick_pred") or "").strip()
+        pick_pred = pick_pred if pick_pred in ("정", "꺽") else None
+        card_15 = self._cards[14].get("color") if len(self._cards) > 14 else None
+        predicted = pick_pred or _pick_color_to_pred(pick_color, card_15)
+        use_amt = self._calc_bet_amount(round_num, predicted)
         with self._lock:
             self._pick_data = {
                 'round': round_num,
@@ -1235,7 +1377,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         if not self._running:
             return
         if use_amt <= 0:
-            self._log("[푸시] 금액 없음 — %s회 %s 스킵" % (round_num, pick_color))
+            self._log("[푸시] 금액 계산 실패 — %s회 %s 스킵" % (round_num, pick_color))
             return
         if not _validate_bet_amount(use_amt):
             return
@@ -1263,9 +1405,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._round_next = round_num
         self._log("[푸시] %s회 %s %s원 수신 — 2회 일치, 즉시 ADB" % (round_num, pick_color, use_amt))
         self._coords = load_coords()
-        self._run_bet(round_num, pick_color, use_amt, from_push=True)
+        self._run_bet(round_num, pick_color, use_amt, predicted=predicted, from_push=True)
 
-    def _run_bet(self, round_num, pick_color, amount, from_push=False):
+    def _run_bet(self, round_num, pick_color, amount, predicted=None, from_push=False):
         """배팅 실행. from_push면 PUSH_BET_DELAY, 아니면 BET_DELAY_BEFORE_EXECUTE 후 ADB 전송."""
         # 즉시 pending 등록 — 같은 회차로 _run_bet이 연속 호출되어 두 번 배팅되는 것 방지
         with self._lock:
@@ -1285,6 +1427,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             self._log("배팅 실행: %s회 %s %s원" % (round_num, pick_color, amount))
             ok = self._do_bet(round_num, pick_color, amount)
             if ok:
+                if predicted:
+                    with self._macro_lock:
+                        self._bet_history[round_num] = predicted
                 self._last_bet_round = round_num
                 self._last_bet_amount = amount
                 self._round_prev = self._round_current
