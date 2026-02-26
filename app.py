@@ -2556,14 +2556,15 @@ def _update_current_pick_relay_cache(calculator_id, round_num, pick_color, sugge
 
 def _should_skip_relay_cache_update(calculator_id, new_round, new_pick=None, new_amount=None):
     """스케줄러가 클라이언트 유효 캐시를 덮어쓰지 않도록. new_round < 캐시 회차이면 True(스킵).
-    같은 회차: 픽만 바뀌었으면 업데이트(스마트반픽 등). 금액만 다르면 스킵 — 클라이언트 금액 보호(서버 5000 덮어쓰기 방지)."""
+    같은 회차: 픽 바뀌었으면 업데이트. 금액만 다르면: 서버 금액이 더 높을 때만 갱신(마틴 갱신 반영), 낮으면 스킵(클라이언트 보호)."""
     try:
         cached = _current_pick_relay_cache.get(int(calculator_id))
         if not cached or not isinstance(cached, dict) or not cached.get('running'):
             return False
         cache_round = cached.get('round')
         cache_pick = cached.get('pick_color')
-        cache_amt = cached.get('suggested_amount')
+        cache_amt = int(cached.get('suggested_amount') or 0)
+        new_amt = int(new_amount or 0) if new_amount is not None else 0
         if cache_round is None or new_round is None:
             return False
         # 낮은 회차로 덮어쓰지 않음
@@ -2572,13 +2573,15 @@ def _should_skip_relay_cache_update(calculator_id, new_round, new_pick=None, new
                 return True
             # 같은 회차: 픽이 바뀌었으면 업데이트 (매크로에 픽 변경 반영)
             if int(new_round) == int(cache_round):
-                has_valid_cache = cache_pick and cache_amt and int(cache_amt or 0) > 0
+                has_valid_cache = cache_pick and cache_amt > 0
                 if not has_valid_cache:
                     return False
                 if new_pick is not None and str(new_pick).strip() != str(cache_pick or '').strip():
                     return False  # 픽 바뀜 — 업데이트 (스마트반픽 등). 금액은 서버값 사용(픽과 함께)
-                # 금액만 다르면 스킵 — 클라이언트 POST 금액이 정확. 서버가 5000 등으로 덮어쓰기 방지
-                return True  # 동일 픽 — 클라이언트 캐시 유지
+                # 금액만 다름: 서버가 더 높으면 갱신(클라이언트 history 지연 시 마틴 정확 반영), 낮으면 스킵(서버 5000 등 덮어쓰기 방지)
+                if new_amt > cache_amt:
+                    return False  # 서버 금액이 더 높음 — 갱신
+                return True  # 동일 픽, 서버 금액이 같거나 낮음 — 클라이언트 캐시 유지
         except (TypeError, ValueError):
             return False
         return False
@@ -6191,7 +6194,10 @@ RESULTS_HTML = '''
             try { localStorage.setItem(PREDICTION_HISTORY_KEY, JSON.stringify(predictionHistory)); } catch (e) {}
         }
         function savePredictionHistoryToServer(round, predicted, actual, probability, pickColor, shapePredicted) {
-            const body = { round: round, predicted: predicted, actual: actual };
+            // predicted가 null/undefined면 API 400 → 반복 실패 방지. 유효할 때만 전송
+            var pred = (predicted === '정' || predicted === '꺽') ? predicted : ((shapePredicted === '정' || shapePredicted === '꺽') ? shapePredicted : null);
+            if (pred == null || round == null || actual == null) return;
+            const body = { round: round, predicted: pred, actual: actual };
             if (probability != null) body.probability = probability;
             if (pickColor) body.pickColor = pickColor;
             if (shapePredicted === '정' || shapePredicted === '꺽') body.shape_predicted = shapePredicted;

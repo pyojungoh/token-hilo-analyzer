@@ -424,6 +424,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._ws_connected = False
         self._ws_thread = None
         self._recent_picks = deque(maxlen=5)  # 표시용 최근 회차·픽
+        self._display_locked = None  # (round, pick_color, amt) — 다음회차 수신 시 고정, 전회차로 덮어쓰지 않음
         # 좌표 찾기 (한곳에 통합)
         self._coord_listener = None
         self._coord_capture_key = None
@@ -1116,6 +1117,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._last_bet_round = None
         self._last_bet_amount = None
         self._pick_data = {}
+        self._display_locked = None  # 시작 시 고정 해제
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self._log("시작 — WebSocket으로 회차·픽·금액 수신 즉시 배팅")
@@ -1138,7 +1140,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         def run():
             try:
                 import socketio
-                sio = socketio.Client(reconnection=True, reconnection_attempts=0, reconnection_delay=2)
+                sio = socketio.Client(reconnection=True, reconnection_attempts=10, reconnection_delay=2)
                 self._ws_client = sio
 
                 @sio.on('pick_update')
@@ -1212,16 +1214,31 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             round_num = int(round_num)
         except (TypeError, ValueError):
             return
-        # 표시 갱신
+        # 표시 갱신 — 다음회차 수신 시 고정. 같은 회차에 더 높은 금액(마틴 갱신) 수신 시에도 갱신
         with self._lock:
+            prev_round = self._display_locked[0] if self._display_locked else -1
+            prev_amt = self._display_locked[2] if self._display_locked and len(self._display_locked) > 2 else 0
+            should_update = (
+                (round_num > prev_round and pick_color and amt_val > 0) or
+                (round_num == prev_round and amt_val > prev_amt)
+            )
+            if should_update:
+                self._display_locked = (round_num, pick_color, amt_val)
             self._pick_data = {
                 'round': round_num,
                 'pick_color': raw_color or pick_color,
                 'suggested_amount': amt_val,
                 'running': True,
             }
-            if round_num is not None and pick_color and amt_val > 0:
+            if round_num > prev_round and pick_color and amt_val > 0:
                 self._recent_picks.append((round_num, pick_color))
+            # 같은 회차에 더 높은 금액 수신 시 pending 배팅 금액 갱신 (마틴 갱신 반영)
+            if round_num in self._pending_bet_rounds and amt_val > 0:
+                entry = self._pending_bet_rounds[round_num]
+                old_amt = entry.get("amount", 0)
+                if amt_val > old_amt:
+                    entry["amount"] = amt_val
+                    self._log("[푸시] %s회 금액 갱신: %s원 → %s원" % (round_num, old_amt, amt_val))
         self._update_display()
         if not self._running:
             return
@@ -1257,23 +1274,28 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         def _execute():
             if not self._running:
                 return
+            # 실행 시점에 pending에서 최신 금액 사용 (같은 회차 더 높은 금액 수신 시 반영)
+            with self._lock:
+                entry = self._pending_bet_rounds.get(round_num)
+                exec_amount = entry.get("amount", amount) if entry else amount
+                exec_pick = entry.get("pick_color", pick_color) if entry else pick_color
             if self._last_bet_round is not None and round_num <= self._last_bet_round:
                 with self._lock:
                     self._pending_bet_rounds.pop(round_num, None)
                 return  # 이미 배팅한 회차 — 스킵
             # 마틴 연속 동일금액 검증: 다음 회차에 같은 금액(3만 초과)은 오탐 — 패면 2배, 승이면 기본금
             if (self._last_bet_round is not None and self._last_bet_amount is not None
-                    and round_num == self._last_bet_round + 1 and amount == self._last_bet_amount
-                    and amount > MARTINGALE_SAME_AMOUNT_THRESHOLD):
-                self._log("[금액검증] %s회 %s원 스킵 — 마틴 연속 동일금액 오탐 (직전 %s회 %s원)" % (round_num, amount, self._last_bet_round, self._last_bet_amount))
+                    and round_num == self._last_bet_round + 1 and exec_amount == self._last_bet_amount
+                    and exec_amount > MARTINGALE_SAME_AMOUNT_THRESHOLD):
+                self._log("[금액검증] %s회 %s원 스킵 — 마틴 연속 동일금액 오탐 (직전 %s회 %s원)" % (round_num, exec_amount, self._last_bet_round, self._last_bet_amount))
                 with self._lock:
                     self._pending_bet_rounds.pop(round_num, None)
                 return
-            self._log("배팅 실행: %s회 %s %s원" % (round_num, pick_color, amount))
-            ok = self._do_bet(round_num, pick_color, amount)
+            self._log("배팅 실행: %s회 %s %s원" % (round_num, exec_pick, exec_amount))
+            ok = self._do_bet(round_num, exec_pick, exec_amount)
             if ok:
                 self._last_bet_round = round_num  # 배팅한 회차 저장 — 다음회차 비교용
-                self._last_bet_amount = amount
+                self._last_bet_amount = exec_amount
                 self._round_prev = self._round_current
                 self._round_current = round_num
                 self._round_next = round_num + 1
@@ -1372,13 +1394,18 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
 
     def _update_display(self):
         with self._lock:
-            pick = self._pick_data.copy()
+            locked = self._display_locked
             recent = list(self._recent_picks)
-        round_num = pick.get("round")
-        raw_color = pick.get("pick_color")
-        pick_color = _normalize_pick_color(raw_color)
-        suggested = pick.get("suggested_amount")
-        amount_str = str(int(suggested)) if suggested is not None and int(suggested) > 0 else "-"
+        # 고정된 표시 우선 — 다음회차 수신 후 전회차로 덮어쓰지 않음
+        if locked and len(locked) >= 3:
+            round_num, pick_color, amt_val = locked[0], locked[1], locked[2]
+            amount_str = str(amt_val) if amt_val and amt_val > 0 else "-"
+        else:
+            pick = getattr(self, '_pick_data', {}) or {}
+            round_num = pick.get("round")
+            pick_color = _normalize_pick_color(pick.get("pick_color"))
+            suggested = pick.get("suggested_amount")
+            amount_str = str(int(suggested)) if suggested is not None and int(suggested) > 0 else "-"
         icon_ch, _ = get_round_icon(round_num)
         round_str = f"{round_num}회 {icon_ch}" if round_num is not None else "-"
         self.round_label.setText(f"회차: {round_str}")
