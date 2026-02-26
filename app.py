@@ -1969,7 +1969,6 @@ def _apply_results_to_calcs(results):
             if not state or not isinstance(state, dict):
                 continue
             updated = False
-            to_push = []  # (calculator_id, c) — save_calc_state 후에 푸시해 POST 시 서버 보정이 동작하도록
             for cid in ('1', '2', '3'):
                 c = state.get(cid)
                 if not c or not isinstance(c, dict):
@@ -1978,7 +1977,7 @@ def _apply_results_to_calcs(results):
                 # 리셋(running=false, history=[]): 회차 반영 안 함 — 표가 다시 살아나는 버그 방지
                 if not is_running and len(c.get('history') or []) == 0:
                     continue
-                # 정지(running=false): 배팅만 멈춤. 픽/승패는 계속 기록(no_bet). 푸시(to_push)는 안 함
+                # 정지(running=false): 배팅만 멈춤. 픽/승패는 계속 기록(no_bet). relay는 _update_relay_cache_for_running_calcs에서 처리
                 # 연패정지: 대기/일시정지 상태면 패턴 확인. 준비되면 first_bet_round·betting으로 전환 (실행 중일 때만)
                 if is_running and c.get('streak_wait_enabled'):
                     sw_state = c.get('streak_wait_state') or 'waiting'
@@ -2043,8 +2042,6 @@ def _apply_results_to_calcs(results):
                             c['pending_predicted'] = eff_pred
                             c['pending_color'] = '빨강' if eff_pick == 'RED' else ('검정' if eff_pick == 'BLACK' else c.get('pending_color'))
                         updated = True
-                        if is_running:
-                            to_push.append((int(cid), c))
                     continue
                 actual = _get_actual_for_round(results, pending_round)
                 if actual is None:
@@ -2267,17 +2264,8 @@ def _apply_results_to_calcs(results):
                         c['pending_predicted'] = eff_pred
                         c['pending_color'] = '빨강' if eff_pick == 'RED' else ('검정' if eff_pick == 'BLACK' else c.get('pending_color'))
                     updated = True
-                    if is_running:
-                        to_push.append((int(cid), c))
             if updated:
-                save_calc_state(session_id, state)  # 먼저 저장 → POST /api/current-pick 시 get_calc_state가 새 상태를 읽어 금액 보정 가능
-                for calc_id, calc_c in to_push:
-                    _push_current_pick_from_calc(calc_id, calc_c)
-            # 매크로 relay: 모든 실행중 calc에 대해 매 사이클 푸시 — 상단과 동일한 값 전달
-            for cid in ('1', '2', '3'):
-                c = state.get(cid)
-                if c and isinstance(c, dict) and c.get('running'):
-                    _push_current_pick_from_calc(int(cid), c)
+                save_calc_state(session_id, state)  # 먼저 저장 → _update_relay_cache_for_running_calcs에서 relay 픽 푸시
     except Exception as e:
         print(f"[스케줄러] 회차 반영 오류: {str(e)[:200]}")
     finally:
@@ -4858,8 +4846,9 @@ def _scheduler_apply_results():
             if ra:
                 cards = _build_cards_for_macro(results)
                 _ws_emit_round_actuals(ra, cards)
-        _update_relay_cache_for_running_calcs()
+        # 예측픽 우선: relay(계산기 픽)보다 먼저 갱신 — relay 무거운 작업이 apply 지연·예측픽 지연 유발 방지
         _update_prediction_cache_from_db(results=results)  # 중복 get_recent_results 방지
+        _update_relay_cache_for_running_calcs()
     except Exception as e:
         print(f"[스케줄러] apply 오류: {str(e)[:100]}")
     finally:
@@ -11500,8 +11489,8 @@ def _refresh_results_background():
                         ensure_stored_prediction_for_current_round(results)
                         _apply_results_to_calcs(results)
                         _backfill_latest_round_to_prediction_history(results)
-                    _update_relay_cache_for_running_calcs()
                     _update_prediction_cache_from_db(results=results)
+                    _update_relay_cache_for_running_calcs()
                 finally:
                     try:
                         _apply_lock.release()
