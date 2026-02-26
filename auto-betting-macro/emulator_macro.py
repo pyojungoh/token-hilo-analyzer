@@ -188,6 +188,22 @@ def fetch_current_pick(analyzer_url, calculator_id=1, timeout=5):
         return {"pick_color": None, "round": None, "probability": None, "error": str(e)}
 
 
+def _ws_url_from_analyzer(base_url, calculator_id=1):
+    """분석기 base URL → WebSocket URL (wss/https, ?calculator=N)."""
+    if not base_url or not base_url.strip():
+        return ""
+    s = base_url.strip().rstrip("/")
+    if "://" not in s:
+        s = "https://" + s
+    if s.startswith("https://"):
+        ws_base = "https://" + s[8:]
+    elif s.startswith("http://"):
+        ws_base = "http://" + s[7:]
+    else:
+        ws_base = s
+    return ws_base + "?calculator=" + str(int(calculator_id) if calculator_id in (1, 2, 3) else 1)
+
+
 def load_coords():
     if not os.path.exists(COORDS_PATH):
         return {}
@@ -426,6 +442,10 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._round_current = None  # 지금회차 (배팅 대기/진행)
         self._round_next = None  # 다음회차 (픽 수신 시 설정)
         self._poll_in_flight = False  # 폴링 중복 방지 — 요청 완료 전 새 요청 시작 금지 (CPU 부하 감소)
+        # WebSocket: 푸시 수신, 폴백 시 폴링
+        self._ws_client = None
+        self._ws_connected = False
+        self._ws_thread = None
         # 좌표 찾기 (한곳에 통합)
         self._coord_listener = None
         self._coord_capture_key = None
@@ -506,6 +526,10 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self.calc_combo.addItem("계산기 2", 2)
         self.calc_combo.addItem("계산기 3", 3)
         fl.addRow("계산기 선택:", self.calc_combo)
+        self.ws_check = QCheckBox("WebSocket 사용 (푸시, 폴링 대신)")
+        self.ws_check.setChecked(True)
+        self.ws_check.setToolTip("분석기 서버 WebSocket으로 픽 푸시 수신. 실패 시 HTTP 폴링으로 자동 전환.")
+        fl.addRow("", self.ws_check)
         connect_row = QHBoxLayout()
         connect_row.setContentsMargins(0, 4, 0, 4)
         self.connect_btn = QPushButton("Analyzer 연결")
@@ -1148,22 +1172,93 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self._log("시작 — 계산기 픽 바뀌는 즉시 사이트로 전송합니다.")
+        if getattr(self, 'ws_check', None) and self.ws_check.isChecked():
+            self._start_ws_client()
         self._timer.start(int(self._poll_interval_sec * 1000))
         QTimer.singleShot(0, self._poll)   # 시작 직후 즉시 1회 폴링
 
     def _on_stop(self):
         self._running = False
         self._poll_in_flight = False  # 정지 시 플래그 초기화
+        self._stop_ws_client()
         if not self._connected:
             self._timer.stop()
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self._log("배팅 중지 (연결 유지 시 픽은 계속 갱신)")
 
+    def _start_ws_client(self):
+        """WebSocket 클라이언트 스레드 시작. 연결 성공 시 _ws_connected=True, 폴링 생략."""
+        self._stop_ws_client()
+        self._ws_connected = False
+        url = _ws_url_from_analyzer(self._analyzer_url or self.analyzer_url_edit.text().strip(), self._calculator_id)
+        if not url:
+            return
+        def run():
+            try:
+                import socketio
+                sio = socketio.Client(reconnection=True, reconnection_attempts=0, reconnection_delay=2)
+                self._ws_client = sio
+
+                @sio.on('pick_update')
+                def on_pick(data):
+                    if not isinstance(data, dict):
+                        return
+                    if data.get('running') is False:
+                        return
+                    pick = {
+                        'round': data.get('round'),
+                        'pick_color': data.get('pick_color'),
+                        'suggested_amount': data.get('suggested_amount'),
+                    }
+                    if pick.get('round') is None or pick.get('pick_color') is None:
+                        return
+                    if HAS_PYQT and self.push_pick_received is not None:
+                        self.push_pick_received.emit(pick)
+
+                @sio.on('connect')
+                def on_connect():
+                    self._ws_connected = True
+
+                @sio.on('disconnect')
+                def on_disconnect():
+                    self._ws_connected = False
+
+                @sio.on('connect_error')
+                def on_error(data):
+                    self._ws_connected = False
+
+                sio.connect(url, transports=['websocket'], wait_timeout=8)
+                self._ws_connected = True
+                self._log("[WebSocket] 연결됨 — 픽 푸시 수신")
+                sio.wait()
+            except Exception as e:
+                self._ws_connected = False
+                self._log("[WebSocket] 연결 실패 → HTTP 폴링 사용: %s" % str(e)[:80])
+            finally:
+                self._ws_client = None
+                self._ws_connected = False
+
+        self._ws_thread = threading.Thread(target=run, daemon=True)
+        self._ws_thread.start()
+
+    def _stop_ws_client(self):
+        """WebSocket 클라이언트 종료."""
+        self._ws_connected = False
+        if self._ws_client is not None:
+            try:
+                self._ws_client.disconnect()
+            except Exception:
+                pass
+            self._ws_client = None
+        self._ws_thread = None
+
     def _poll(self):
         """타이머에서 호출: 스레드에서 서버 요청 후 결과만 메인 스레드로 전달 (UI 멈춤 방지)."""
         if not self._running and not self._connected:
             return
+        if getattr(self, '_ws_connected', False):
+            return  # WebSocket 연결 시 폴링 생략
         if self._poll_in_flight:
             return  # 이전 요청 완료 전 중복 방지 — CPU 부하 감소
         url = (self._analyzer_url or "").strip() or self.analyzer_url_edit.text().strip()

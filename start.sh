@@ -6,9 +6,10 @@
 
 PORT_VALUE="${PORT:-5000}"
 
+# WebSocket(Flask-SocketIO) 지원: eventlet worker, 단일 워커 필수 (-w 1)
 exec gunicorn app:app \
   --bind "0.0.0.0:${PORT_VALUE}" \
-  --workers 2 \
-  --threads 2 \
+  --worker-class eventlet \
+  --workers 1 \
   --timeout 30 \
   --keep-alive 5

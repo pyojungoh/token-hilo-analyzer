@@ -50,6 +50,48 @@ except ImportError:
 app = Flask(__name__)
 CORS(app)
 
+# WebSocket (픽 푸시): flask-socketio, eventlet. 없으면 스킵.
+try:
+    from flask_socketio import SocketIO, join_room
+    _socketio = SocketIO(app, cors_allowed_origins='*', async_mode='eventlet')
+    _HAS_SOCKETIO = True
+except ImportError:
+    _socketio = None
+    _HAS_SOCKETIO = False
+    join_room = None
+
+
+def _ws_emit_pick_update(calculator_id, round_num, pick_color, suggested_amount, running):
+    """WebSocket으로 픽 갱신 푸시. calc_N room에 emit."""
+    if not _HAS_SOCKETIO or not _socketio:
+        return
+    try:
+        cid = int(calculator_id) if calculator_id in (1, 2, 3) else 1
+        room = f'calc_{cid}'
+        data = {
+            'round': round_num,
+            'pick_color': pick_color,
+            'suggested_amount': int(suggested_amount) if suggested_amount is not None else None,
+            'running': bool(running) if running is not None else True,
+            'calculator': cid,
+        }
+        _socketio.emit('pick_update', data, room=room)
+    except Exception:
+        pass
+
+
+if _HAS_SOCKETIO:
+
+    @_socketio.on('connect')
+    def _ws_handle_connect():
+        calculator = request.args.get('calculator', '1')
+        try:
+            cid = int(calculator) if calculator in ('1', '2', '3') else 1
+        except (TypeError, ValueError):
+            cid = 1
+        join_room(f'calc_{cid}')
+
+
 @app.after_request
 def add_csp_allow_eval(response):
     """CSP: 'eval' 차단으로 스크립트 오동작 시 script-src에 unsafe-eval 허용."""
@@ -2497,7 +2539,7 @@ _current_pick_relay_cache = {1: None, 2: None, 3: None}
 
 
 def _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running=True, probability=None):
-    """회차·배팅중 픽·금액을 relay 캐시에 즉시 반영. 매크로 GET 시 DB 없이 반환."""
+    """회차·배팅중 픽·금액을 relay 캐시에 즉시 반영. 매크로 GET 시 DB 없이 반환. WebSocket 푸시."""
     try:
         cid = int(calculator_id) if calculator_id in (1, 2, 3) else 1
         _current_pick_relay_cache[cid] = {
@@ -2507,6 +2549,7 @@ def _update_current_pick_relay_cache(calculator_id, round_num, pick_color, sugge
             'running': running,
             'probability': probability,
         }
+        _ws_emit_pick_update(cid, round_num, pick_color, suggested_amount, running)
     except (TypeError, ValueError):
         pass
 
