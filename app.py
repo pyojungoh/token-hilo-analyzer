@@ -61,7 +61,7 @@ except ImportError:
     join_room = None
 
 
-def _ws_emit_pick_update(calculator_id, round_num, pick_color, suggested_amount, running):
+def _ws_emit_pick_update(calculator_id, round_num, pick_color, suggested_amount, running, pick_pred=None):
     """WebSocket으로 픽 갱신 푸시. calc_N room에 emit. 2회 전송으로 매크로 검증용."""
     if not _HAS_SOCKETIO or not _socketio:
         return
@@ -74,6 +74,7 @@ def _ws_emit_pick_update(calculator_id, round_num, pick_color, suggested_amount,
             'suggested_amount': int(suggested_amount) if suggested_amount is not None else None,
             'running': bool(running) if running is not None else True,
             'calculator': cid,
+            'pick_pred': pick_pred if pick_pred in ('정', '꺽') else None,
         }
         _socketio.emit('pick_update', data, room=room)
         # 20ms 후 2회 전송 — 매크로 2회 확인용 (속도 개선)
@@ -340,6 +341,13 @@ def init_database():
             )
         ''')
         cur.execute('INSERT INTO macro_pick_transmit (calculator_id) VALUES (1), (2), (3) ON CONFLICT (calculator_id) DO NOTHING')
+        cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'macro_pick_transmit' AND column_name = 'pick_pred'")
+        if cur.fetchone() is None:
+            try:
+                cur.execute("ALTER TABLE macro_pick_transmit ADD COLUMN pick_pred VARCHAR(10)")
+            except Exception as alter_err:
+                if 'already exists' not in str(alter_err).lower():
+                    print(f"[경고] macro_pick_transmit pick_pred 컬럼 추가: {str(alter_err)[:100]}")
         
         # shape_win_stats: 자주 나온 그래프 모양별 "그 다음 실제 결과" 누적 (정/꺽 예측 무관, 모양→다음 결과만)
         cur.execute('''
@@ -424,7 +432,7 @@ def ensure_current_pick_table(conn):
 
 
 def ensure_macro_pick_transmit_table(conn):
-    """macro_pick_transmit 테이블이 없으면 생성 (매크로 전송 전용)."""
+    """macro_pick_transmit 테이블이 없으면 생성 (매크로 전송 전용). pick_pred 컬럼 없으면 추가."""
     if not conn:
         return False
     try:
@@ -440,6 +448,12 @@ def ensure_macro_pick_transmit_table(conn):
             )
         ''')
         cur.execute('INSERT INTO macro_pick_transmit (calculator_id) VALUES (1), (2), (3) ON CONFLICT (calculator_id) DO NOTHING')
+        cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'macro_pick_transmit' AND column_name = 'pick_pred'")
+        if cur.fetchone() is None:
+            try:
+                cur.execute("ALTER TABLE macro_pick_transmit ADD COLUMN pick_pred VARCHAR(10)")
+            except Exception:
+                pass
         cur.close()
         return True
     except Exception as e:
@@ -2566,27 +2580,27 @@ def _server_calc_effective_pick_and_amount(c):
 
 
 def _get_calc_row1_bundle(c):
-    """계산기 c의 1행(배팅중 행) — 회차·픽·금액을 한 번에 반환. 동시에 생성되므로 불일치 없음.
-    반환: (round, pick_color, amount) 또는 (None, None, 0)"""
+    """계산기 c의 1행(배팅중 행) — 회차·픽·금액·정꺽을 한 번에 반환. 동시에 생성되므로 불일치 없음.
+    반환: (round, pick_color, amount, pred) 또는 (None, None, 0, None) — pred는 매크로 정/꺽 표시·결과 매칭용"""
     if not c or not c.get('running'):
-        return None, None, 0
+        return None, None, 0, None
     pr = c.get('pending_round')
     if pr is None:
-        return None, None, 0
-    pick_color, amt, _ = _server_calc_effective_pick_and_amount(c)
+        return None, None, 0, None
+    pick_color, amt, pred = _server_calc_effective_pick_and_amount(c)
     if pick_color is None:
-        return pr, None, 0
+        return pr, None, 0, None
     amt_int = int(amt or 0) if amt is not None else 0
     if c.get('paused'):
         amt_int = 0
-    return pr, pick_color, amt_int
+    return pr, pick_color, amt_int, pred
 
 
 def _push_current_pick_from_calc(calculator_id, c):
-    """서버에서 계산기 1행(회차·픽·금액)을 current_pick DB·relay 캐시에 반영. 1행 번들만 사용."""
+    """서버에서 계산기 1행(회차·픽·금액·정꺽)을 current_pick DB·relay 캐시에 반영. 1행 번들만 사용."""
     if not bet_int or not DB_AVAILABLE or not DATABASE_URL:
         return
-    pr, pick_color, suggested_amount = _get_calc_row1_bundle(c)
+    pr, pick_color, suggested_amount, pick_pred = _get_calc_row1_bundle(c)
     if pick_color is None or pr is None:
         return
     calc_id = int(calculator_id) if calculator_id in (1, 2, 3) else 1
@@ -2601,8 +2615,8 @@ def _push_current_pick_from_calc(calculator_id, c):
         # 1행 → macro_pick_transmit → relay. 단, 최근 0.5초 내 POST 있으면 스킵 (클라이언트 값 유지)
         if time.time() - _last_post_time_per_calc.get(calc_id, 0) < 0.5:
             return
-        _write_macro_pick_transmit(calc_id, pr, pick_color, suggested_amount, c.get('running', True))
-        _update_current_pick_relay_cache(calc_id, pr, pick_color, int(suggested_amount or 0), c.get('running', True), None)
+        _write_macro_pick_transmit(calc_id, pr, pick_color, suggested_amount, c.get('running', True), pick_pred)
+        _update_current_pick_relay_cache(calc_id, pr, pick_color, int(suggested_amount or 0), c.get('running', True), None, pick_pred)
     except Exception:
         pass
     finally:
@@ -2617,8 +2631,8 @@ _current_pick_relay_cache = {1: None, 2: None, 3: None}
 _last_post_time_per_calc = {1: 0, 2: 0, 3: 0}  # POST 시각 — 스케줄러가 클라이언트 값 덮어쓰지 않도록
 
 
-def _write_macro_pick_transmit(calculator_id, round_num, pick_color, suggested_amount, running=True):
-    """매크로 전송 전용 DB에 1행 계산값 저장. relay는 여기서만 읽음."""
+def _write_macro_pick_transmit(calculator_id, round_num, pick_color, suggested_amount, running=True, pick_pred=None):
+    """매크로 전송 전용 DB에 1행 계산값 저장. relay는 여기서만 읽음. pick_pred=정/꺽 — 매크로 표시용."""
     if not DB_AVAILABLE or not DATABASE_URL:
         return False
     try:
@@ -2628,16 +2642,18 @@ def _write_macro_pick_transmit(calculator_id, round_num, pick_color, suggested_a
         ensure_macro_pick_transmit_table(conn)
         cur = conn.cursor()
         amt = int(suggested_amount or 0) if suggested_amount is not None else 0
+        pp = pick_pred if pick_pred in ('정', '꺽') else None
         cur.execute('''
-            INSERT INTO macro_pick_transmit (calculator_id, round_num, pick_color, suggested_amount, running, updated_at)
-            VALUES (%s, %s, %s, %s, %s, NOW())
+            INSERT INTO macro_pick_transmit (calculator_id, round_num, pick_color, suggested_amount, running, pick_pred, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, NOW())
             ON CONFLICT (calculator_id) DO UPDATE SET
                 round_num = EXCLUDED.round_num,
                 pick_color = EXCLUDED.pick_color,
                 suggested_amount = EXCLUDED.suggested_amount,
                 running = EXCLUDED.running,
+                pick_pred = EXCLUDED.pick_pred,
                 updated_at = NOW()
-        ''', (int(calculator_id), round_num, pick_color, amt, bool(running)))
+        ''', (int(calculator_id), round_num, pick_color, amt, bool(running), pp))
         conn.commit()
         cur.close()
         conn.close()
@@ -2656,19 +2672,23 @@ def _read_macro_pick_transmit(calculator_id):
         if not conn:
             return None
         cur = conn.cursor()
-        cur.execute('SELECT round_num, pick_color, suggested_amount, running FROM macro_pick_transmit WHERE calculator_id = %s', (int(calculator_id),))
+        try:
+            cur.execute('SELECT round_num, pick_color, suggested_amount, running, pick_pred FROM macro_pick_transmit WHERE calculator_id = %s', (int(calculator_id),))
+        except Exception:
+            cur.execute('SELECT round_num, pick_color, suggested_amount, running FROM macro_pick_transmit WHERE calculator_id = %s', (int(calculator_id),))
         row = cur.fetchone()
         cur.close()
         conn.close()
         if not row:
             return None
-        return {'round': row[0], 'pick_color': row[1], 'suggested_amount': row[2], 'running': row[3]}
+        pp = row[4] if len(row) > 4 and row[4] in ('정', '꺽') else None
+        return {'round': row[0], 'pick_color': row[1], 'suggested_amount': row[2], 'running': row[3], 'pick_pred': pp}
     except Exception:
         return None
 
 
-def _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running=True, probability=None):
-    """macro_pick_transmit → relay 캐시 반영. WebSocket 푸시."""
+def _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running=True, probability=None, pick_pred=None):
+    """macro_pick_transmit → relay 캐시 반영. WebSocket 푸시. pick_pred=정/꺽 — 매크로 표시·결과 매칭용."""
     try:
         cid = int(calculator_id) if calculator_id in (1, 2, 3) else 1
         _current_pick_relay_cache[cid] = {
@@ -2677,8 +2697,9 @@ def _update_current_pick_relay_cache(calculator_id, round_num, pick_color, sugge
             'suggested_amount': suggested_amount,
             'running': running,
             'probability': probability,
+            'pick_pred': pick_pred if pick_pred in ('정', '꺽') else None,
         }
-        _ws_emit_pick_update(cid, round_num, pick_color, suggested_amount, running)
+        _ws_emit_pick_update(cid, round_num, pick_color, suggested_amount, running, pick_pred)
     except (TypeError, ValueError):
         pass
 
@@ -4821,7 +4842,7 @@ def _update_relay_cache_for_running_calcs():
                 if not c or not isinstance(c, dict):
                     continue
                 if not c.get('running'):
-                    _update_current_pick_relay_cache(int(cid), None, None, None, False, None)  # 정지 시 clear
+                    _update_current_pick_relay_cache(int(cid), None, None, None, False, None, None)  # 정지 시 clear
                     continue
                 # relay 픽: 클라이언트 POST 없으면 서버 calc state(배팅중 픽)로 갱신 — 예측픽 폴백 방지
                 _push_current_pick_from_calc(int(cid), c)
@@ -6379,6 +6400,7 @@ RESULTS_HTML = '''
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         var lastServerPrediction = null;  // 서버 예측 (있으면 표시·pending 동기화용)
         var lastIs15Joker = false;  // 15번 카드 조커 여부 (계산기 예측픽에 보류 반영용)
+        var lastJokerSkipBet = false;  // 조커 2개 이상 등 skip_bet 시 계산기표·배팅중 보류
         var lastJokerStats = {};    // 조커 통계 (15카드 내 개수, 간격, 경고 등)
         /** 승률 방향 메뉴: 최근 100회 기준 고점/저점/방향. { round, rate50 } 최대 300개 */
         var winRate50History = [];
@@ -6390,11 +6412,11 @@ RESULTS_HTML = '''
         var lastPostedCurrentPick = {};   // 계산기별 마지막으로 POST한 픽 — 같으면 재전송 안 함 (충돌·깜빡임 방지)
         var pushPickBackoffUntil = 0;     // 푸시 실패 시 N초간 재시도 안 함 (매크로 미사용 시 병목 방지)
         function postCurrentPickIfChanged(id, payload) {
-            var key = { round: payload.round ?? null, pickColor: payload.pickColor ?? null, suggested_amount: payload.suggested_amount ?? null, running: payload.running };
+            var key = { round: payload.round ?? null, pickColor: payload.pickColor ?? null, predicted: payload.predicted ?? null, suggested_amount: payload.suggested_amount ?? null, running: payload.running };
             var last = lastPostedCurrentPick[id];
-            if (last && last.round === key.round && last.pickColor === key.pickColor && last.suggested_amount === key.suggested_amount && last.running === key.running) return;
+            if (last && last.round === key.round && last.pickColor === key.pickColor && last.predicted === key.predicted && last.suggested_amount === key.suggested_amount && last.running === key.running) return;
             lastPostedCurrentPick[id] = key;
-            try { fetch('/api/current-pick-relay', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: payload.pickColor ?? null, round: payload.round ?? null, suggested_amount: payload.suggested_amount ?? null, running: payload.running }) }).catch(function() {}); } catch (e) {}
+            try { fetch('/api/current-pick-relay', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculator: id, pickColor: payload.pickColor ?? null, predicted: payload.predicted ?? null, round: payload.round ?? null, suggested_amount: payload.suggested_amount ?? null, running: payload.running }) }).catch(function() {}); } catch (e) {}
             // 픽 발생 즉시 매크로로 푸시 — 폴링 대기 없이 배팅 (매크로 푸시 URL 입력 시)
             var macroCalc = parseInt((document.getElementById('macro-push-calc') || {}).value, 10) || 1;
             if (macroCalc !== id) return;
@@ -6407,7 +6429,7 @@ RESULTS_HTML = '''
                     fetch((pushUrl.replace(/\\/$/, '')) + '/push-pick', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ round: payload.round, pick_color: payload.pickColor, suggested_amount: payload.suggested_amount })
+                        body: JSON.stringify({ round: payload.round, pick_color: payload.pickColor, predicted: payload.predicted || null, suggested_amount: payload.suggested_amount })
                     }).catch(function() { pushPickBackoffUntil = Date.now() + 30000; });
                 } catch (e) { pushPickBackoffUntil = Date.now() + 30000; }
             }
@@ -6840,10 +6862,11 @@ RESULTS_HTML = '''
                     var rev = !!(state.reverse);
                     if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                 }
-                var isNoBet = (typeof effectivePausedForRound === 'function' && effectivePausedForRound(id)) || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker);
+                var jokerHoldRow = (typeof lastIs15Joker !== 'undefined' && lastIs15Joker) || (typeof lastJokerSkipBet !== 'undefined' && lastJokerSkipBet);
+                var isNoBet = (typeof effectivePausedForRound === 'function' && effectivePausedForRound(id)) || jokerHoldRow;
                 var betForThisRound = (typeof getBetForRound === 'function') ? getBetForRound(id, roundNum) : 0;
                 var amt = isNoBet ? 0 : betForThisRound;
-                if (typeof lastIs15Joker !== 'undefined' && lastIs15Joker) { bettingText = '보류'; bettingIsRed = false; amt = 0; }
+                if (jokerHoldRow) { bettingText = '보류'; bettingIsRed = false; amt = 0; }
                 state.history = state.history || [];
                 state.history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: amt, no_bet: isNoBet, actual: 'pending', warningWinRate: null });
                 state.history = dedupeCalcHistoryByRound(state.history);
@@ -7062,10 +7085,11 @@ RESULTS_HTML = '''
                 // 맨 왼쪽 = 최신 회차: 서버·클라이언트 모두 gameID 내림차순 정렬 완료. index 0이 최신.
                 const displayResults = allResults.slice(0, 15);
                 const results = allResults;  // 비교를 위해 전체 결과 사용
-                // 픽/보류: 15번 카드 조커만 보류. skip_bet(조커 다발)은 경고만 — 보류로 픽 가리지 않음
+                // 픽/보류: 15번 카드 조커 또는 skip_bet(조커 2개 이상 등) 시 계산기표·배팅중 모두 보류
                 const jokerStats = (data.joker_stats && typeof data.joker_stats === 'object') ? data.joker_stats : {};
                 lastJokerStats = jokerStats;
                 lastIs15Joker = (displayResults.length >= 15 && !!displayResults[14].joker);
+                lastJokerSkipBet = !!(jokerStats && jokerStats.skip_bet);
                 try { if (typeof updateCalcJokerBadge === 'function') updateCalcJokerBadge(); } catch (e) {}
                 try { CALC_IDS.forEach(function(id) { updateCalcStatus(id); }); } catch (e) {}
                 
@@ -9401,16 +9425,17 @@ RESULTS_HTML = '''
                         var roundLineHtml = '<span class="calc-round-badge calc-round-' + iconType + '">' + roundFull + '회 ' + getRoundIconHtml(lastPrediction.round) + '</span>';
                         if (bettingRoundEl) { bettingRoundEl.innerHTML = roundLineHtml; bettingRoundEl.className = 'calc-round-line'; }
                         if (predictionRoundEl) { predictionRoundEl.innerHTML = roundLineHtml; predictionRoundEl.className = 'calc-round-line'; }
-                        if (lastIs15Joker || !lastPrediction.value || lastPrediction.value === '') {
+                        if (lastIs15Joker || (typeof lastJokerSkipBet !== 'undefined' && lastJokerSkipBet) || !lastPrediction.value || lastPrediction.value === '') {
                             predictionCardEl.textContent = '보류';
                             predictionCardEl.className = 'calc-current-card calc-card-prediction card-hold';
-                            predictionCardEl.title = lastIs15Joker ? '15번 카드 조커 · 배팅하지 마세요' : '예측 대기 중';
+                            predictionCardEl.title = lastIs15Joker ? '15번 카드 조커 · 배팅하지 마세요' : ((typeof lastJokerSkipBet !== 'undefined' && lastJokerSkipBet && lastJokerStats && lastJokerStats.warning_reason) ? '조커 주의 · ' + lastJokerStats.warning_reason : ((typeof lastJokerSkipBet !== 'undefined' && lastJokerSkipBet) ? '조커 주의 구간 · 배팅 보류' : '예측 대기 중'));
                             bettingCardEl.textContent = '보류';
                             bettingCardEl.className = 'calc-current-card calc-card-betting card-hold';
-                            bettingCardEl.title = lastIs15Joker ? '15번 카드 조커 · 배팅하지 마세요' : '예측 대기 중';
+                            bettingCardEl.title = predictionCardEl.title;
+                            var jokerHold = lastIs15Joker || (typeof lastJokerSkipBet !== 'undefined' && lastJokerSkipBet);
                             var rHold = (typeof getCalcResult === 'function') ? getCalcResult(id) : null;
-                            var betAmt = lastIs15Joker ? 0 : (rHold && rHold.currentBet != null && rHold.currentBet > 0 ? Math.min(rHold.currentBet, Math.floor(rHold.cap || 0)) : 0);
-                            postCurrentPickIfChanged(parseInt(id, 10) || 1, { pickColor: null, round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: null, suggested_amount: (lastIs15Joker || betAmt <= 0) ? null : betAmt });
+                            var betAmt = jokerHold ? 0 : (rHold && rHold.currentBet != null && rHold.currentBet > 0 ? Math.min(rHold.currentBet, Math.floor(rHold.cap || 0)) : 0);
+                            postCurrentPickIfChanged(parseInt(id, 10) || 1, { pickColor: null, round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: null, suggested_amount: (jokerHold || betAmt <= 0) ? null : betAmt });
                         } else {
                         // 배팅중인 회차는 이미 정한 계산기 픽만 유지 — lastPrediction이 잠깐 예측기로 바뀌어도 저장된 픽으로 POST/표시해 예측기 픽으로 배팅 나가는 것 방지
                         var curRound = lastPrediction && lastPrediction.round != null ? Number(lastPrediction.round) : null;
@@ -9511,12 +9536,12 @@ RESULTS_HTML = '''
                         bettingCardEl.textContent = bettingText;
                         bettingCardEl.className = 'calc-current-card calc-card-betting' + (bettingText === '보류' ? ' card-hold' : ' card-' + (bettingIsRed ? 'jung' : 'kkuk'));
                         bettingCardEl.title = bettingText === '보류' ? '모양 옵션: 픽 불일치 또는 값 없음' : '';
-                        // 매크로: 계산기 "배팅중"에 써있는 금액 그대로 — getCalcResult.currentBet (화면 표시와 동일)
-                        var r = (typeof getCalcResult === 'function') ? getCalcResult(id) : null;
-                        var betAmt = (effectivePausedForRound(id) || (shapeOnly && bettingText === '보류') || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker)) ? 0 : (r && r.currentBet != null && r.currentBet > 0 ? Math.min(r.currentBet, Math.floor(r.cap || 0)) : 0);
+                        // 매크로: 1열과 동일 출처 — getBetForRound(id, curRound) (규칙: betting-in-display-to-macro)
+                        var curRound = lastPrediction && lastPrediction.round != null ? Number(lastPrediction.round) : null;
+                        var betAmt = (effectivePausedForRound(id) || (shapeOnly && bettingText === '보류') || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker)) ? 0 : (curRound != null && typeof getBetForRound === 'function' ? getBetForRound(id, curRound) : 0);
                         var suggestedAmt = (bettingText === '보류' && shapeOnly) || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker) ? null : (betAmt > 0 ? betAmt : null);
                         var postPickColor = (bettingText === '보류' && shapeOnly) ? null : (bettingIsRed ? 'RED' : 'BLACK');
-                        postCurrentPickIfChanged(parseInt(id, 10) || 1, { pickColor: postPickColor, round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: typeof predProb === 'number' && !isNaN(predProb) ? predProb : null, suggested_amount: suggestedAmt });
+                        postCurrentPickIfChanged(parseInt(id, 10) || 1, { pickColor: postPickColor, predicted: (bettingText === '정' || bettingText === '꺽') ? bettingText : null, round: lastPrediction && lastPrediction.round != null ? lastPrediction.round : null, probability: typeof predProb === 'number' && !isNaN(predProb) ? predProb : null, suggested_amount: suggestedAmt });
                         if (lastPrediction && lastPrediction.round != null) {
                             savedBetPickByRound[Number(lastPrediction.round)] = { value: bettingText, isRed: bettingIsRed };
                             var sbKeys = Object.keys(savedBetPickByRound).map(Number).filter(function(k) { return !isNaN(k); }).sort(function(a,b) { return a - b; });
@@ -9626,7 +9651,7 @@ RESULTS_HTML = '''
                 var cw = Math.max(0, parseInt(calcState[id].streak_wait_cumulative_wins, 10) || 0);
                 betDisplay = '현재 ' + cw + '승중';
             } else {
-                betDisplay = (effectivePausedForRound(id) || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker) ? '-' : (r.currentBet.toLocaleString() + '원'));
+                betDisplay = (effectivePausedForRound(id) || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker) || (typeof lastJokerSkipBet !== 'undefined' && lastJokerSkipBet) ? '-' : (r.currentBet.toLocaleString() + '원'));
             }
             // 보유자산·순익·배팅중이 그대로면 그리드 전체를 다시 쓰지 않고 경과만 갱신 (깜빡임 방지)
             try {
@@ -9658,7 +9683,7 @@ RESULTS_HTML = '''
                 '<span class="label">순익</span><span class="value ' + profitClass + '">' + profitStr + '</span>' +
                 '<span class="label">배팅중</span><span class="value">' + betDisplay + '</span>' +
                 '<span class="label">경과</span><span class="value">' + elapsedStr + '</span></div>';
-            updateCalcBetCopyLine(id, (effectivePausedForRound(id) || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker)) ? 0 : r.currentBet);
+            updateCalcBetCopyLine(id, (effectivePausedForRound(id) || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker) || (typeof lastJokerSkipBet !== 'undefined' && lastJokerSkipBet)) ? 0 : r.currentBet);
             updateCalcShapeRateRow(id);
             updateCalcStatus(id);
             } catch (e) { console.warn('updateCalcSummary', id, e); }
@@ -9847,7 +9872,8 @@ RESULTS_HTML = '''
                 const roundStr = h.round != null ? String(h.round) : '-';
                 var curRound = (typeof lastPrediction !== 'undefined' && lastPrediction && lastPrediction.round != null) ? Number(lastPrediction.round) : null;
                 var isPendingRow = !isNaN(rn) && curRound != null && rn === curRound && (h.actual === 'pending' || !h.actual || h.actual === '');
-                const pickVal = (isPendingRow && typeof lastIs15Joker !== 'undefined' && lastIs15Joker) ? '보류' : ((h.predicted === '정' || h.predicted === '꺽') ? h.predicted : '보류');
+                var jokerHoldDisplay = (typeof lastIs15Joker !== 'undefined' && lastIs15Joker) || (typeof lastJokerSkipBet !== 'undefined' && lastJokerSkipBet);
+                const pickVal = (isPendingRow && jokerHoldDisplay) ? '보류' : ((h.predicted === '정' || h.predicted === '꺽') ? h.predicted : '보류');
                 // pick-color-core-rule: 정/꺽→빨강/검정은 15번 카드 기준. 고정 매핑(정=빨강,꺽=검정) 금지.
                 var pickClass;
                 var pendingColorFromState = (isPendingRow && state && (state.pending_color === '빨강' || state.pending_color === '검정')) ? state.pending_color : null;
@@ -9902,7 +9928,7 @@ RESULTS_HTML = '''
                     // nextRoundBet/pending_bet_amount 대신 getCalcResult 사용 → 1행에 2행과 같은 금액 표시 버그 방지
                     // 15번 카드 조커 시 배팅 안 함 → 금액 표시 안 함
                     var amt;
-                    if (h.no_bet === true || (typeof effectivePausedForRound === 'function' && effectivePausedForRound(id)) || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker)) {
+                    if (h.no_bet === true || (typeof effectivePausedForRound === 'function' && effectivePausedForRound(id)) || (typeof lastIs15Joker !== 'undefined' && lastIs15Joker) || (typeof lastJokerSkipBet !== 'undefined' && lastJokerSkipBet)) {
                         amt = 0;
                     } else if (lastCompletedRound != null && !isNaN(rn) && rn > lastCompletedRound + 1) {
                         // 회차 간격: 간격 구간 패배 가정 시뮬레이션
@@ -12216,12 +12242,13 @@ def api_current_pick():
         suggested_amount = data.get('suggestedAmount') or data.get('suggested_amount')
         running = data.get('running')  # True/False 또는 없음 — 정지 시 클라이언트가 running: false 보내면 DB에 반영해 GET 시 픽 미반환
         # 픽/회차는 서버 calc 상태로 맞추고, 금액은 선택한 계산기 상단 "배팅중"에서 보낸 값(suggested_amount) 그대로 사용 — 매크로가 그 금액을 GET으로 받음
+        srv_pred = None
         try:
             state = get_calc_state('default') or {}
             c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
             if c is not None and c.get('running') and c.get('pending_round') is not None:
                 try:
-                    srv_pick, server_amt, _ = _server_calc_effective_pick_and_amount(c)
+                    srv_pick, server_amt, srv_pred = _server_calc_effective_pick_and_amount(c)
                     pr = c.get('pending_round')
                     # 클라이언트 회차가 서버보다 크면 클라이언트 값 사용 — 1회차 느림 방지 (결과 반영 직후 클라이언트가 먼저 POST할 때)
                     try:
@@ -12266,7 +12293,9 @@ def api_current_pick():
         ok = bet_int.set_current_pick(conn, pick_color=pick_color, round_num=round_num, probability=probability, suggested_amount=suggested_amount, calculator_id=calculator_id)
         if ok:
             conn.commit()
-            _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running if running is not None else True, probability)
+            pick_pred = (data.get('predicted') or '').strip()
+            pick_pred = pick_pred if pick_pred in ('정', '꺽') else (srv_pred if (srv_pred and srv_pred in ('정', '꺽')) else None)
+            _update_current_pick_relay_cache(calculator_id, round_num, pick_color, suggested_amount, running if running is not None else True, probability, pick_pred)
             _log_when_changed('current_pick', (calculator_id, pick_color, round_num), lambda v: f"[배팅연동] 계산기{v[0]} 픽 저장: {v[1]} round {v[2]}")
         if running is not None:
             if bet_int.set_calculator_running(conn, calculator_id, bool(running)):
@@ -12310,8 +12339,8 @@ def _relay_db_write_background(calculator_id, pick_color, round_num, suggested_a
 
 @app.route('/api/current-pick-relay', methods=['GET', 'POST'])
 def api_current_pick_relay():
-    """매크로 전용: POST 시 relay 캐시 즉시 갱신. GET은 캐시만 반환. 1행(회차·픽·금액) 번들만 사용."""
-    empty_pick = {'pick_color': None, 'round': None, 'probability': None, 'suggested_amount': None, 'running': True}
+    """매크로 전용: POST 시 relay 캐시 즉시 갱신. GET은 캐시만 반환. 1행(회차·픽·금액·정꺽) 번들만 사용."""
+    empty_pick = {'pick_color': None, 'round': None, 'probability': None, 'suggested_amount': None, 'running': True, 'pick_pred': None}
     try:
         if request.method == 'POST':
             data = request.get_json(silent=True) or {}
@@ -12327,7 +12356,7 @@ def api_current_pick_relay():
             # 정지 시: macro_pick_transmit 비우기
             if running is False:
                 _write_macro_pick_transmit(calculator_id, None, None, 0, False)
-                _update_current_pick_relay_cache(calculator_id, None, None, None, False, None)
+                _update_current_pick_relay_cache(calculator_id, None, None, None, False, None, None)
                 threading.Thread(target=_relay_db_write_background, daemon=True,
                                  args=(calculator_id, None, None, None, False)).start()
                 return jsonify({'ok': True}), 200
@@ -12344,8 +12373,10 @@ def api_current_pick_relay():
                 _last_post_time_per_calc[int(calculator_id)] = time.time()
                 pc = (pick_color or "").strip().upper()
                 pc_stored = "RED" if pc in ("RED", "빨강") else ("BLACK" if pc in ("BLACK", "검정") else pick_color)
-                _write_macro_pick_transmit(calculator_id, round_num, pc_stored, amt_int, True)
-                _update_current_pick_relay_cache(calculator_id, round_num, pc_stored, amt_int, True, None)
+                pick_pred = (data.get('predicted') or '').strip()
+                pick_pred = pick_pred if pick_pred in ('정', '꺽') else None
+                _write_macro_pick_transmit(calculator_id, round_num, pc_stored, amt_int, True, pick_pred)
+                _update_current_pick_relay_cache(calculator_id, round_num, pc_stored, amt_int, True, None, pick_pred)
                 if pc_stored is not None:
                     threading.Thread(target=_relay_db_write_background, daemon=True,
                                      args=(calculator_id, pc_stored, round_num, amt_int, running if running is not None else True)).start()
@@ -12354,11 +12385,11 @@ def api_current_pick_relay():
                 state = get_calc_state('default') or {}
                 c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
                 if c and c.get('running'):
-                    pr, srv_pick, server_amt = _get_calc_row1_bundle(c)
+                    pr, srv_pick, server_amt, srv_pred = _get_calc_row1_bundle(c)
                     if pr is not None and srv_pick is not None:
                         amt_int = int(server_amt or 0) if server_amt else 0
-                        _write_macro_pick_transmit(calculator_id, pr, srv_pick, amt_int, True)
-                        _update_current_pick_relay_cache(calculator_id, pr, srv_pick, amt_int, True, None)
+                        _write_macro_pick_transmit(calculator_id, pr, srv_pick, amt_int, True, srv_pred)
+                        _update_current_pick_relay_cache(calculator_id, pr, srv_pick, amt_int, True, None, srv_pred)
             return jsonify({'ok': True}), 200
         calculator_id = request.args.get('calculator', '1').strip()
         try:
@@ -12369,7 +12400,7 @@ def api_current_pick_relay():
         cached = _current_pick_relay_cache.get(calculator_id)
         if cached and isinstance(cached, dict):
             if cached.get('running') is False:
-                return jsonify({'round': None, 'pick_color': None, 'suggested_amount': None, 'running': False, 'probability': None}), 200
+                return jsonify({'round': None, 'pick_color': None, 'suggested_amount': None, 'running': False, 'probability': None, 'pick_pred': None}), 200
             out = dict(empty_pick)
             out['round'] = cached.get('round')
             out['pick_color'] = cached.get('pick_color')
@@ -12377,6 +12408,7 @@ def api_current_pick_relay():
             out['suggested_amount'] = int(amt) if amt is not None and int(amt) > 0 else None
             out['running'] = cached.get('running', True)
             out['probability'] = cached.get('probability')
+            out['pick_pred'] = cached.get('pick_pred')
             return jsonify(out), 200
         # 캐시 없음: macro_pick_transmit에서 읽기
         row = _read_macro_pick_transmit(calculator_id)
@@ -12387,20 +12419,22 @@ def api_current_pick_relay():
             amt = row.get('suggested_amount')
             out['suggested_amount'] = int(amt) if amt is not None and int(amt) > 0 else None
             out['running'] = row.get('running', True)
+            out['pick_pred'] = row.get('pick_pred')  # DB에 없으면 None
             return jsonify(out), 200
         # 캐시·DB 없음: 서버 calc state에서 배팅중 픽 직접 계산 (예측픽 폴백 방지)
         state = get_calc_state('default') or {}
         c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
         if c and c.get('running'):
-            pr, srv_pick, server_amt = _get_calc_row1_bundle(c)
+            pr, srv_pick, server_amt, srv_pred = _get_calc_row1_bundle(c)
             if pr is not None and srv_pick is not None:
                 out = dict(empty_pick)
                 out['round'] = pr
                 out['pick_color'] = srv_pick
                 out['suggested_amount'] = int(server_amt or 0) if server_amt and int(server_amt) > 0 else None
                 out['running'] = True
+                out['pick_pred'] = srv_pred
                 return jsonify(out), 200
-        return jsonify({'round': None, 'pick_color': None, 'suggested_amount': None, 'running': True, 'probability': None}), 200
+        return jsonify({'round': None, 'pick_color': None, 'suggested_amount': None, 'running': True, 'probability': None, 'pick_pred': None}), 200
     except Exception as e:
         print(f"[경고] current-pick-relay 실패: {str(e)[:100]}")
         return jsonify(empty_pick), 200

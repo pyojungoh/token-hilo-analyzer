@@ -144,9 +144,11 @@ def _run_push_server(port, on_pick_callback):
                 content_len = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(content_len).decode("utf-8", errors="replace") if content_len else "{}"
                 data = json.loads(body) if body.strip() else {}
+                pp = (data.get("predicted") or data.get("pick_pred") or "").strip()
                 pick_data[0] = {
                     "round": data.get("round"),
                     "pick_color": data.get("pick_color") or data.get("pickColor"),
+                    "pick_pred": pp if pp in ("정", "꺽") else None,
                     "suggested_amount": data.get("suggested_amount") or data.get("suggestedAmount"),
                 }
                 if callable(on_pick_callback):
@@ -1154,6 +1156,7 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                         'round': data.get('round'),
                         'pick_color': data.get('pick_color'),
                         'suggested_amount': data.get('suggested_amount'),
+                        'pick_pred': data.get('pick_pred') if data.get('pick_pred') in ('정', '꺽') else None,
                     }
                     if pick.get('round') is None or pick.get('pick_color') is None:
                         return
@@ -1217,10 +1220,12 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             return
         # 현재픽 표시·배팅: 받은 금액 그대로 사용 (서버 1행·상단 검증 후 전달된 값)
         use_amt = amt_val
+        pick_pred = pick.get('pick_pred') if pick.get('pick_pred') in ('정', '꺽') else None
         with self._lock:
             self._pick_data = {
                 'round': round_num,
                 'pick_color': raw_color or pick_color,
+                'pick_pred': pick_pred,
                 'suggested_amount': use_amt,
                 'running': True,
             }
@@ -1367,7 +1372,9 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
                         tap_swipe(confirm_xy[0], confirm_xy[1], "confirm")
                         time.sleep(BET_DELAY_AFTER_CONFIRM)
 
-                    pred_text = "정" if pick_color == "RED" else "꺽"
+                    with self._lock:
+                        pick_pred = (getattr(self, '_pick_data', {}) or {}).get('pick_pred')
+                    pred_text = pick_pred if pick_pred in ('정', '꺽') else "색상"
                     self._log(f"{round_num}회차 {pred_text} {pick_color} {bet_amount}원 (ADB 완료 — 사이트 반영은 화면에서 확인)")
                     return True
                 except Exception as e:
@@ -1396,12 +1403,15 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         calc_id = getattr(self, '_calculator_id', None) or (self.calc_combo.currentData() if hasattr(self, 'calc_combo') else 1)
         self.amount_label.setText(f"금액: {amount_str} (계산기 {calc_id})")
 
-        # 정/꺽 + 색깔 카드 (RED=정·빨강, BLACK=꺽·검정)
+        # 정/꺽 + 색깔 카드 (pick_pred 있으면 서버 값 사용 — RED=정 고정 매핑 금지)
+        pick_pred = pick.get("pick_pred") if pick.get("pick_pred") in ("정", "꺽") else None
         if pick_color == "RED":
-            self.pick_card_label.setText("정 · 빨강 (RED)")
+            text = ("%s · 빨강 (RED)" % pick_pred) if pick_pred else "빨강 (RED)"
+            self.pick_card_label.setText(text)
             self.pick_card_label.setStyleSheet("font-size: 16px; font-weight: bold; padding: 8px; border-radius: 6px; background: #ffcdd2; color: #b71c1c;")
         elif pick_color == "BLACK":
-            self.pick_card_label.setText("꺽 · 검정 (BLACK)")
+            text = ("%s · 검정 (BLACK)" % pick_pred) if pick_pred else "검정 (BLACK)"
+            self.pick_card_label.setText(text)
             self.pick_card_label.setStyleSheet("font-size: 16px; font-weight: bold; padding: 8px; border-radius: 6px; background: #cfd8dc; color: #263238;")
         else:
             self.pick_card_label.setText("보류")

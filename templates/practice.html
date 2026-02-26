@@ -216,13 +216,15 @@
                     }
                     var pushUrl = (document.getElementById('push-url') || {}).value;
                     if (pushUrl && round != null && color && amt != null && amt > 0 && run !== false) {
-                        var key = round + '|' + color + '|' + amt;
+                        var pred = (data.pick_pred || '').trim();
+                        pred = (pred === '정' || pred === '꺽') ? pred : null;
+                        var key = round + '|' + color + '|' + amt + '|' + (pred || '');
                         if (key !== lastPushedKey && Date.now() >= pushPickBackoffUntil) {
                             lastPushedKey = key;
                             fetch((pushUrl.replace(/\/$/, '')) + '/push-pick', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ round: round, pick_color: color, suggested_amount: amt })
+                                body: JSON.stringify({ round: round, pick_color: color, predicted: pred, suggested_amount: amt })
                             }).catch(function() { pushPickBackoffUntil = Date.now() + 30000; });
                         }
                     } else if (!pushUrl) lastPushedKey = null;
