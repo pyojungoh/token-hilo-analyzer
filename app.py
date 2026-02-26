@@ -12169,12 +12169,17 @@ def api_current_pick_relay():
                 threading.Thread(target=_relay_db_write_background, daemon=True,
                                  args=(calculator_id, pick_color, round_num, suggested_amount, running if running is not None else True)).start()
                 return jsonify({'ok': True}), 200
-            # 1행 방식: 회차·픽·금액을 한 번에(번들) 사용. 섞지 않음.
+            # 1행 vs 상단 이중 검증: 둘이 같을 때만 relay 갱신 — 금액 불일치 방지
             try:
                 state = get_calc_state('default') or {}
                 c = state.get(str(calculator_id)) if isinstance(state.get(str(calculator_id)), dict) else None
+                try:
+                    amount_header = int(suggested_amount) if suggested_amount is not None else 0
+                except (TypeError, ValueError):
+                    amount_header = 0
                 if c and c.get('running'):
                     pr, srv_pick, server_amt = _get_calc_row1_bundle(c)
+                    srv_amt_int = int(server_amt or 0)
                     # 클라이언트 회차가 서버보다 앞서면(결과 반영 전) 클라이언트 1행 사용
                     try:
                         pr_int = int(pr) if pr is not None else None
@@ -12183,9 +12188,14 @@ def api_current_pick_relay():
                     except (TypeError, ValueError):
                         client_ahead = False
                     if not client_ahead and pr is not None and srv_pick is not None:
-                        # 서버 1행 번들 그대로 사용 (금액 0이어도 멈춤 시 relay 갱신)
-                        round_num, pick_color, suggested_amount = pr, srv_pick, int(server_amt or 0)
-                        if suggested_amount <= 0:
+                        # 1행 vs 상단: 둘 다 있고 같을 때만 relay. 상단 0이면 서버 1행 사용.
+                        if srv_amt_int > 0:
+                            if amount_header > 0 and srv_amt_int != amount_header:
+                                # 불일치: relay 갱신 안 함 (스케줄러 값 유지)
+                                return jsonify({'ok': True}), 200
+                            round_num, pick_color, suggested_amount = pr, srv_pick, srv_amt_int
+                        else:
+                            round_num, pick_color, suggested_amount = pr, srv_pick, 0
                             _update_current_pick_relay_cache(calculator_id, pr, srv_pick, 0, True, None)
                             return jsonify({'ok': True}), 200
             except Exception:

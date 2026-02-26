@@ -413,7 +413,6 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._pending_bet_rounds = {}  # round_num -> { pick_color, amount } — 같은 회차 중복 호출 방지
         self._bet_confirm_key = None  # (round, pick_color, amount) — 2회 연속 일치 시 배팅
         self._bet_confirm_count = 0
-        self._display_amount_locked = {}  # round -> amount. 같은 회차에 먼저 받은 금액 고정 (5천→1만 덮어쓰기 방지)
         self._pick_data = {}
         self._results_data = {}
         self._lock = threading.Lock()
@@ -1118,7 +1117,6 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
         self._last_bet_round = None
         self._last_bet_amount = None
         self._pick_data = {}
-        self._display_amount_locked.clear()
         self._bet_confirm_key = None
         self._bet_confirm_count = 0
         self.start_btn.setEnabled(False)
@@ -1217,24 +1215,16 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             round_num = int(round_num)
         except (TypeError, ValueError):
             return
-        # 현재픽 표시: 같은 회차에 먼저 받은 금액 고정 — 5천→1만 덮어쓰기 방지
+        # 현재픽 표시·배팅: 받은 금액 그대로 사용 (서버 1행·상단 검증 후 전달된 값)
+        use_amt = amt_val
         with self._lock:
-            if amt_val <= 0:
-                self._display_amount_locked.pop(round_num, None)  # 정지 시 lock 해제
-            locked = self._display_amount_locked.get(round_num)
-            if locked is not None and amt_val != locked:
-                use_amt = locked  # 이미 표시한 금액 유지
-            else:
-                use_amt = amt_val
-                if amt_val > 0:
-                    self._display_amount_locked[round_num] = amt_val
             self._pick_data = {
                 'round': round_num,
                 'pick_color': raw_color or pick_color,
                 'suggested_amount': use_amt,
                 'running': True,
             }
-            if pick_color and (use_amt or amt_val) > 0:
+            if pick_color and use_amt > 0:
                 self._recent_picks.append((round_num, pick_color))
         self._update_display()
         if not self._running:
@@ -1265,7 +1255,6 @@ class EmulatorMacroWindow(QMainWindow if HAS_PYQT else object):
             return
         self._bet_confirm_key = None
         self._bet_confirm_count = 0
-        self._display_amount_locked.pop(round_num, None)  # 배팅 완료 시 해제
         self._round_next = round_num
         self._log("[푸시] %s회 %s %s원 수신 — 2회 일치, 즉시 ADB" % (round_num, pick_color, use_amt))
         self._coords = load_coords()
