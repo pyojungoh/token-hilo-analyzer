@@ -10345,11 +10345,24 @@ RESULTS_HTML = '''
             updateCalcSummary(id);
             try { saveCalcStateToServer({ immediate: true, skipApplyForIds: [id] }); } catch (e) {}  // 서버 응답으로 로컬 덮어쓰기 방지
         }
+        var _capitalBaseOddsSaveDebounce = {};
         CALC_IDS.forEach(id => {
             ['capital', 'base', 'odds', 'target-amount'].forEach(f => {
                 const el = document.getElementById('calc-' + id + '-' + f);
                 if (el) {
-                    el.addEventListener('input', () => { updateCalcSummary(id); updateCalcDetail(id); });
+                    el.addEventListener('input', () => {
+                        updateCalcSummary(id);
+                        updateCalcDetail(id);
+                        // change는 blur 시에만 발생 → 타이핑 후 blur 없이 실행/탭 전환 시 5000이 저장 안 되는 버그 방지
+                        if (f === 'capital' || f === 'base' || f === 'odds') {
+                            var key = 'calc-' + id + '-' + f;
+                            if (_capitalBaseOddsSaveDebounce[key]) clearTimeout(_capitalBaseOddsSaveDebounce[key]);
+                            _capitalBaseOddsSaveDebounce[key] = setTimeout(function() {
+                                _capitalBaseOddsSaveDebounce[key] = null;
+                                try { saveCalcStateToServer({ immediate: true }); } catch (e) {}
+                            }, 600);
+                        }
+                    });
                     // 자본/배팅금액/배당 변경 시 서버에 저장 — 매크로가 GET으로 받는 금액이 표와 동일하도록
                     if (f === 'capital' || f === 'base' || f === 'odds') {
                         el.addEventListener('change', function() { try { saveCalcStateToServer({ immediate: true }); } catch (e) {} });
