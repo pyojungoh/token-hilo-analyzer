@@ -126,10 +126,12 @@ def _ws_emit_round_actuals(round_actuals, cards=None):
 if _HAS_SOCKETIO:
 
     @_socketio.on('connect')
-    def _ws_handle_connect():
-        calculator = request.args.get('calculator', '1')
+    def _ws_handle_connect(auth=None):
+        calculator = request.args.get('calculator') or (auth.get('calculator') if isinstance(auth, dict) else None)
+        if calculator is None:
+            calculator = '1'
         try:
-            cid = int(calculator) if calculator in ('1', '2', '3') else 1
+            cid = int(calculator) if str(calculator) in ('1', '2', '3') else 1
         except (TypeError, ValueError):
             cid = 1
         join_room(f'calc_{cid}')
