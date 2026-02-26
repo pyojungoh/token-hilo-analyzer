@@ -6628,7 +6628,11 @@ RESULTS_HTML = '''
                 const baseEl = document.getElementById('calc-' + id + '-base');
                 const oddsEl = document.getElementById('calc-' + id + '-odds');
                 if (capitalEl && typeof c.capital === 'number' && c.capital >= 0) capitalEl.value = String(c.capital);
-                if (baseEl && typeof c.base === 'number' && c.base >= 1) baseEl.value = String(c.base);
+                // 실행 중일 때: 입력값이 서버 base와 다르면 덮어쓰지 않음 — 매크로 5천→1만 바뀜 방지
+                if (baseEl && typeof c.base === 'number' && c.base >= 1) {
+                    var curBase = parseFloat(baseEl.value);
+                    if (!(c.running && curBase >= 1 && curBase !== c.base)) baseEl.value = String(c.base);
+                }
                 if (oddsEl && typeof c.odds === 'number' && c.odds >= 1) oddsEl.value = String(c.odds);
             });
         }
