@@ -39,6 +39,12 @@ except ImportError:
 COORD_KEYS = {"bet_amount": "배팅금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드", "black": "블랙"}
 
+# 배팅 탭 지연 (초) — 좌표 오탭 방지. 느린 기기면 값 늘리세요
+D_AFTER_AMOUNT_TAP = 0.08   # 금액 칸 탭 후 포커스 대기
+D_AFTER_INPUT = 0.04        # 금액 입력 후 레드/블랙 탭 전 대기 (키보드 닫기 없음)
+D_AFTER_COLOR = 0.05        # 레드/블랙 탭 후
+D_BET_COOLDOWN = 1.2        # 배팅 완료 후 최소 대기(초) — 2번행 중복 배팅 방지
+
 # 일반마틴 9단계 (2배: 1,2,4,8,16,32,64,128,256 × base)
 MARTIN_RATIOS_NORMAL = [1, 2, 4, 8, 16, 32, 64, 128, 256]
 # 표마틴 9단계 (비율: 1,2,3,6,11,21,40,76,120 × base)
@@ -323,11 +329,18 @@ def build_martin_table(base_amount, martin_type="table"):
     return [b * r for r in ratios]
 
 
+def _dedupe_completed_by_round(completed):
+    """회차별 중복 제거. 데이터 많아질 때 금액 오류 방지."""
+    by_round = {h["round"]: h for h in completed if h.get("round") is not None}
+    return sorted(by_round.values(), key=lambda x: x.get("round") or 0)
+
+
 def calc_martingale_step_and_bet(history, martin_table=None):
     """
-    history: [{round, predicted, actual, ...}] 완료된 순서.
-    predicted: 정/꺽 (RED→정, BLACK→꺽) 또는 보류(배팅 안 함, 스텝 변화 없음)
+    history: [{round, predicted, actual, result, ...}] 완료된 순서.
+    predicted: 정/꺽 또는 보류(배팅 안 함, 스텝 변화 없음)
     actual: 정/꺽/joker
+    result: 승/패/조커 — _merge에서 pick_color vs actual_color로 설정. 우선 사용.
     반환: (martingale_step, next_bet_amount)
     """
     martin_table = martin_table or build_martin_table(5000, "table")
@@ -335,12 +348,19 @@ def calc_martingale_step_and_bet(history, martin_table=None):
     for h in (history or []):
         act = (h.get("actual") or "").strip()
         pred = (h.get("predicted") or "").strip()
+        res = (h.get("result") or "").strip()
         if pred == "보류":
             continue
         if act not in ("정", "꺽", "joker", "조커"):
             continue
         is_joker = act in ("joker", "조커")
-        is_win = not is_joker and pred in ("정", "꺽") and pred == act
+        # result(색상 비교) 우선 — pred==act는 card_15 변환 오류 시 틀릴 수 있음
+        if res == "승":
+            is_win = True
+        elif res == "패":
+            is_win = False
+        else:
+            is_win = not is_joker and pred in ("정", "꺽") and pred == act
         if is_win:
             step = 0
         else:
@@ -406,6 +426,8 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self._waiting_for_first_win = False  # True: 첫 승 나올 때까지 배팅 대기
         self._pending_bet_rounds = {}
         self._lock = threading.Lock()
+        self._do_bet_lock = threading.Lock()  # 배팅 실행 중복 방지
+        self._last_bet_at = 0.0  # 배팅 완료 시각 — 쿨다운용
 
         # 매크로 내부 상태
         self._pick = {"round": None, "pick_color": None, "pick_pred": None}
@@ -697,7 +719,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                 time.sleep(0.6)
                 adb_input_text(device, "5000")
                 time.sleep(0.5)
-                adb_keyevent(device, 4)
+                # BACK 키 사용 안 함 — 금액 넣고 끝 (레드/블랙은 별도 테스트)
                 msg = "배팅금액 테스트 완료 (5000 입력)"
             except Exception as e:
                 msg = "배팅금액 테스트 실패: %s" % str(e)[:80]
@@ -1130,7 +1152,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             return
         capital, martin_table, odds = self._get_macro_settings()
         completed = [h for h in hist if (h.get("actual") or "").strip() not in ("pending", "") and (h.get("round") or 0) >= first]
-        completed_sorted = sorted(completed, key=lambda x: x.get("round") or 0)
+        completed_sorted = _dedupe_completed_by_round(completed)
         if not completed_sorted:
             self._log("완료된 배팅 내역이 없습니다.")
             return
@@ -1231,6 +1253,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self._running = False
         self._first_bet_round = None
         self._last_bet_round = None
+        self._last_bet_at = 0.0
         self._waiting_for_first_win = False
         self._history = []
         self._session_start_at = None
@@ -1317,8 +1340,8 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             self._try_bet_if_needed()
 
     def _merge_results_into_history(self):
-        """round_actuals로 기존 history의 actual만 갱신. 픽이 있었던 회차만 추적.
-        결과 매칭: pick_color vs actual color 사용 — 정/꺽 변환 오류 방지."""
+        """round_actuals로 기존 history의 actual·result 갱신. API가 최신이므로 result는 항상 덮어씀.
+        결과 매칭: pick_color vs actual color 사용 — card_15 변환 오류 방지."""
         with self._lock:
             ra = dict(self._round_actuals)
             for h in self._history:
@@ -1331,17 +1354,22 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                 act = (ra[rnd_str].get("actual") or "").strip()
                 if act not in ("정", "꺽", "joker", "조커"):
                     continue
-                if (h.get("actual") or "").strip() in ("정", "꺽", "joker", "조커"):
-                    continue
-                h["actual"] = act
+                # actual 없으면 설정. result는 API 있을 때마다 항상 갱신 (저장된 오판 수정)
+                if (h.get("actual") or "").strip() not in ("정", "꺽", "joker", "조커"):
+                    h["actual"] = act
                 pred = h.get("predicted")
                 if pred == "보류":
                     h["result"] = "보류"
                 elif act in ("joker", "조커"):
                     h["result"] = "조커"
                 else:
-                    # pick_color vs actual color로 승/패 판정 — card_15 변환 오류 방지
+                    # pick_color vs actual color로 승/패 판정 — 마틴 step 리셋 정확도
                     pick_pc = _normalize_pick_color(h.get("_pick_color"))
+                    if pick_pc not in ("RED", "BLACK") and pred in ("정", "꺽"):
+                        # _pick_color 없을 때(구버전 저장) pred+card_15로 복원 — 1번열/2번열 금액 꼬임 방지
+                        pick_pc = pred_to_pick_color(pred, self._get_card_15_color())
+                        if pick_pc:
+                            h["_pick_color"] = pick_pc
                     actual_color = _normalize_pick_color(ra[rnd_str].get("color"))
                     if pick_pc in ("RED", "BLACK") and actual_color in ("RED", "BLACK"):
                         h["result"] = "승" if pick_pc == actual_color else "패"
@@ -1394,7 +1422,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             capital, martin_table, odds = self._get_macro_settings()
             first = self._first_bet_round
             completed = [h for h in hist if (h.get("actual") or "").strip() not in ("pending", "") and (h.get("round") or 0) >= first]
-            completed_sorted = sorted(completed, key=lambda x: x.get("round") or 0)
+            completed_sorted = _dedupe_completed_by_round(completed)
             step, next_bet = calc_martingale_step_and_bet(completed_sorted, martin_table=martin_table)
             cap = capital
             ra = dict(getattr(self, "_round_actuals", {}) or {})
@@ -1434,7 +1462,8 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                         if pred == "보류":
                             round_to_bet_profit[rn] = {"bet": 0, "profit": None}
                         else:
-                            comp = sorted([x for x in hist if (x.get("actual") or "").strip() not in ("pending", "") and (x.get("round") or 0) >= first and (x.get("round") or 0) < rn], key=lambda x: x.get("round") or 0)
+                            comp = [x for x in hist if (x.get("actual") or "").strip() not in ("pending", "") and (x.get("round") or 0) >= first and (x.get("round") or 0) < rn]
+                            comp = _dedupe_completed_by_round(comp)
                             _, nb = calc_martingale_step_and_bet(comp, martin_table=martin_table)
                             round_to_bet_profit[rn] = {"bet": nb, "profit": None}
 
@@ -1498,7 +1527,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
                 _, martin_table, _ = self._get_macro_settings()
                 first = self._first_bet_round
                 completed = [h for h in hist if (h.get("actual") or "").strip() not in ("pending", "") and first is not None and (h.get("round") or 0) >= first]
-                completed_sorted = sorted(completed, key=lambda x: x.get("round") or 0)
+                completed_sorted = _dedupe_completed_by_round(completed)
                 step, amt = calc_martingale_step_and_bet(completed_sorted, martin_table=martin_table)
                 sp = f"{total_profit:+,d}원" if total_profit is not None else "—"
                 self.amount_label.setText(f"다음: {amt:,}원 | 순익: {sp}")
@@ -1552,6 +1581,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         self._history = []
         self._first_bet_round = None
         self._last_bet_round = None
+        self._last_bet_at = 0.0
         self._running = True
         self._waiting_for_first_win = True  # 첫 승 나온 뒤부터 배팅 시작
         self._session_start_at = datetime.now()
@@ -1694,7 +1724,7 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             self._try_bet_if_needed()
 
     def _do_bet(self, round_num, pick_color, amount):
-        """ADB 배팅 실행"""
+        """ADB 배팅 실행. 좌표 오탭 방지용 지연 적용."""
         if not _validate_bet_amount(amount):
             self._log("금액 오류: %s" % amount)
             return False
@@ -1706,24 +1736,23 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         if not bet_xy or not red_xy or not black_xy:
             self._log("좌표 없음 — coord_picker로 설정")
             return False
-        try:
-            tx, ty = _apply_window_offset(coords, bet_xy[0], bet_xy[1], key="bet_amount")
-            adb_swipe(device, tx, ty, 100)
-            time.sleep(0.06)
-            adb_input_text(device, str(int(amount)))
-            time.sleep(0.01)
-            adb_keyevent(device, 4)
-            time.sleep(0.06)
-            color_xy = red_xy if pick_color == "RED" else black_xy
-            cx, cy = _apply_window_offset(coords, color_xy[0], color_xy[1], key="red" if pick_color == "RED" else "black")
-            adb_swipe(device, cx, cy, 100)
-            time.sleep(0.01)
-            # 정정 버튼 탭 제거 — 밖으로 튕김 방지
-            self._log("%s회 %s %s원 ADB 완료" % (round_num, pick_color, amount))
-            return True
-        except Exception as e:
-            self._log("ADB 오류: %s" % str(e)[:80])
-            return False
+        with self._do_bet_lock:
+            try:
+                tx, ty = _apply_window_offset(coords, bet_xy[0], bet_xy[1], key="bet_amount")
+                adb_swipe(device, tx, ty, 100)
+                time.sleep(D_AFTER_AMOUNT_TAP)
+                adb_input_text(device, str(int(amount)))
+                time.sleep(D_AFTER_INPUT)
+                # 키보드 닫기 없음 — 금액 넣고 바로 레드/블랙 탭 (BACK 키 절대 사용 금지)
+                color_xy = red_xy if pick_color == "RED" else black_xy
+                cx, cy = _apply_window_offset(coords, color_xy[0], color_xy[1], key="red" if pick_color == "RED" else "black")
+                adb_swipe(device, cx, cy, 100)
+                time.sleep(D_AFTER_COLOR)
+                self._log("%s회 %s %s원 ADB 완료" % (round_num, pick_color, amount))
+                return True
+            except Exception as e:
+                self._log("ADB 오류: %s" % str(e)[:80])
+                return False
 
     def _try_bet_if_needed(self):
         """픽이 있고 아직 배팅 안 한 회차면 배팅 시도. 보류 회차 건너뛰어도 다음 유효 픽에서 재개."""
@@ -1735,6 +1764,9 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
         if rnd is None or pc is None:
             return
         if self._last_bet_round is not None and rnd <= self._last_bet_round:
+            return
+        # 배팅 직후 쿨다운 — 2번행 중복 배팅 방지
+        if time.time() - self._last_bet_at < D_BET_COOLDOWN:
             return
         no_martin = getattr(self, "no_martin_check", None) and self.no_martin_check.isChecked()
         # 마틴 사용 시에만: 직전 배팅 회차 결과가 history에 없으면 배팅 스킵
@@ -1756,13 +1788,14 @@ class MacroStandaloneWindow(QMainWindow if HAS_PYQT else object):
             completed_sorted = []
         else:
             completed = [h for h in hist if (h.get("actual") or "").strip() not in ("pending", "") and first is not None and (h.get("round") or 0) >= first]
-            completed_sorted = sorted(completed, key=lambda x: x.get("round") or 0)
+            completed_sorted = _dedupe_completed_by_round(completed)
         step, amt = calc_martingale_step_and_bet(completed_sorted, martin_table=martin_table)
         amt = min(amt, int(capital)) if amt > 0 else 0
         if amt <= 0:
             return
         if self._do_bet(rnd, pc, amt):
             self._last_bet_round = rnd
+            self._last_bet_at = time.time()
             if self._first_bet_round is None:
                 self._first_bet_round = rnd
             self._save_macro_history(force=True)

@@ -31,6 +31,18 @@ alwaysApply: false
 - 매크로 표시 안정화: `(회차, 픽, 금액)`이 2회 연속 동일할 때만 UI 갱신 (`emulator_macro.py`)
 - relay 캐시: POST 즉시 갱신 + 스케줄러 0.2초마다 갱신 (매크로 즉시 수신)
 
+## 배팅 흐름 (절대 규칙)
+
+- **금액 넣고 바로 레드/블랙 탭.** 키보드 닫기 없음.
+- **BACK 키 절대 사용 금지** — 앱 나가기 원인. 원래 BACK 명령 없었음.
+- 순서: 금액 칸 탭 → 금액 입력 → 레드 또는 블랙 탭 (끝)
+
+## 마틴게일 승/패 판정 (절대 규칙)
+
+- **승/패 판정은 `h["result"]` 우선.** `_merge_results_into_history`에서 pick_color vs actual_color(색상 비교)로 설정.
+- `pred == act`는 card_15 변환 오류 시 틀릴 수 있으므로, result가 있으면 반드시 result 사용.
+- **승이면 step=0(1배), 패/조커면 step+1.** 승 후 다음 배팅은 반드시 1배(초기금액).
+
 ## 좌표 기능 (금액 테스트·탭 튕김 방지)
 
 - **get_window_rect_at**: `GetClientRect` + `ClientToScreen` 사용 — LDPlayer 클라이언트 영역(실제 화면) 기준. `GetWindowRect`(창 전체) 사용 금지.

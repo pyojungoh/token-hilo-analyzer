@@ -39,8 +39,8 @@ COORD_BTN_SHORT = {"bet_amount": "금액", "confirm": "정정", "red": "레드",
 # 배팅 지연 — 픽 수신 즉시 사이트로 빠르게 배팅 (입력 안 먹으면 늘리세요)
 D_BEFORE_EXECUTE = 0.02  # 배팅 실행 전 대기(초) — 최소화해 배팅 시간 확보
 D_AMOUNT_TAP = 0.01  # 금액 칸 탭 후 포커스 대기 (자동 클리어됨)
-D_INPUT = 0.01  # 금액 입력 후 바로 BACK
-D_BACK = 0.06  # 키보드 닫힌 뒤 바로 레드/블랙 탭
+D_INPUT = 0.04  # 금액 입력 후 레드/블랙 탭 전 (키보드 닫기 없음, BACK 절대 금지)
+D_BACK = 0.12   # 입력 후 대기 — 레드/블랙 탭 전
 D_COLOR = 0.01
 D_CONFIRM = 0.01
 SWIPE_AMOUNT_MS = 50
@@ -759,7 +759,7 @@ class LightMacroWindow(QMainWindow if HAS_PYQT else object):
                     time.sleep(D_AMOUNT_TAP)
                     adb_input_text(device, bet_amount)
                     time.sleep(D_INPUT)
-                    adb_keyevent(device, 4)
+                    # BACK 키 사용 안 함 — 금액 넣고 바로 레드/블랙 탭 (앱 나가기 원인)
                     time.sleep(D_BACK)
                 _input_amount_once()
 

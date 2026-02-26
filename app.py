@@ -4697,7 +4697,7 @@ def ensure_database_initialized():
 # 모듈 로드 시 DB 초기화는 백그라운드 스레드에서 (앱 시작 블로킹 방지). 헬스체크 통과 후 실행
 def _run_db_init():
     try:
-        time.sleep(20)
+        time.sleep(8)
         ensure_database_initialized()
     except Exception as e:
         print(f"[❌ 오류] DB 초기화 실패: {str(e)}")
@@ -4721,9 +4721,9 @@ def load_game_data():
         'timestamp': current_status_data.get('timestamp', datetime.now().isoformat())
     }
 
-# 외부 result.json 요청 시 타임아웃 (병렬: 경로당 2초, 전체 4초 — 픽 지연 최소화)
-RESULTS_FETCH_TIMEOUT_PER_PATH = 2
-RESULTS_FETCH_OVERALL_TIMEOUT = 4
+# 외부 result.json 요청 시 타임아웃 (병렬: 경로당 1.5초, 전체 3초 — 결과 수집 가속)
+RESULTS_FETCH_TIMEOUT_PER_PATH = 1.5
+RESULTS_FETCH_OVERALL_TIMEOUT = 3
 RESULTS_FETCH_MAX_RETRIES = 1
 
 
@@ -4933,15 +4933,15 @@ def _scheduler_trim_shape_tables():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.15, id='fetch_results', max_instances=1)  # 0.15초마다 fetch
-    _scheduler.add_job(_scheduler_apply_results, 'interval', seconds=0.15, id='apply_results', max_instances=1)  # 0.15초마다 apply — 예측픽 갱신 가속
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.1, id='fetch_results', max_instances=1)  # 0.1초마다 fetch — 결과 수집 가속
+    _scheduler.add_job(_scheduler_apply_results, 'interval', seconds=0.1, id='apply_results', max_instances=1)  # 0.1초마다 apply
     _scheduler.add_job(_scheduler_trim_shape_tables, 'interval', seconds=300, id='trim_shape', max_instances=1)
     def _start_scheduler_delayed():
-        time.sleep(25)
+        time.sleep(12)
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (fetch 0.2초, apply 0.2초)")
+        print("[✅] 결과 수집 스케줄러 시작 (fetch 0.1초, apply 0.1초)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
-    print("[⏳] 스케줄러는 25초 후 시작 (DB init 20초 후)")
+    print("[⏳] 스케줄러는 12초 후 시작")
 else:
     print("[⚠] APScheduler 미설치 - 결과 수집은 브라우저 요청 시에만 동작합니다. pip install APScheduler")
 
@@ -11648,9 +11648,9 @@ def get_results():
                     'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}},
                     'blended_win_rate': None, 'round_actuals': {}, 'joker_stats': {}
                 }
-        # refresh 트리거: 스케줄러(0.2초)가 이미 fetch하므로, /api/results 연속 호출 시 1.5초 스로틀로 부하 완화
+        # refresh 트리거: 스케줄러가 fetch하므로, /api/results 연속 호출 시 0.8초 스로틀로 부하 완화 (결과 수집 가속)
         now_tr = time.time()
-        if not _results_refreshing and (now_tr - _last_refresh_trigger_at) >= 1.5:
+        if not _results_refreshing and (now_tr - _last_refresh_trigger_at) >= 0.8:
             _last_refresh_trigger_at = now_tr
             threading.Thread(target=_refresh_results_background, daemon=True).start()
         
