@@ -52,7 +52,7 @@ def main(path):
         if len(r) < 12:
             continue
         phase = (r[7] or '').strip()
-        if phase != 'pong_phase':
+        if phase != '퐁당구간':  # CSV는 한글 구간명
             continue
         plen = first_pong_run(r[11])
         if plen is None:
