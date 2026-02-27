@@ -7265,7 +7265,8 @@ RESULTS_HTML = '''
                 var amt = isNoBet ? 0 : betForThisRound;
                 if (jokerHoldRow) { bettingText = '보류'; bettingIsRed = false; amt = 0; }
                 state.history = state.history || [];
-                state.history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: amt, no_bet: isNoBet, actual: 'pending', warningWinRate: null });
+                var blendedForPending = (typeof getBlendedWinRate === 'function') ? getBlendedWinRate() : null;
+                state.history.push({ round: roundNum, predicted: bettingText, pickColor: bettingIsRed ? '빨강' : '검정', betAmount: amt, no_bet: isNoBet, actual: 'pending', warningWinRate: (typeof blendedForPending === 'number' && !isNaN(blendedForPending)) ? blendedForPending : null });
                 state.history = dedupeCalcHistoryByRound(state.history);
             } catch (e) { console.warn('ensurePendingRowForRunningCalc', id, e); }
         }
@@ -9990,7 +9991,7 @@ RESULTS_HTML = '''
                                 var amt = isNoBet ? 0 : betForThisRound;
                                 var predForHistory = joker15NoBet ? '보류' : ((shapeOnlyNoBet && (predBeforeShapeOnly === '정' || predBeforeShapeOnly === '꺽')) ? predBeforeShapeOnly : bettingText);
                                 var pickColorForHistory = joker15NoBet ? null : ((shapeOnlyNoBet && (predBeforeShapeOnly === '정' || predBeforeShapeOnly === '꺽')) ? (predBeforeShapeOnlyIsRed ? '빨강' : '검정') : (bettingIsRed ? '빨강' : '검정'));
-                                calcState[id].history.push({ round: roundNum, predicted: predForHistory, pickColor: pickColorForHistory, betAmount: amt, no_bet: isNoBet, actual: 'pending', warningWinRate: typeof blended === 'number' ? blended : null });
+                                calcState[id].history.push({ round: roundNum, predicted: predForHistory, pickColor: pickColorForHistory, betAmount: amt, no_bet: isNoBet, actual: 'pending', warningWinRate: typeof blendedCard === 'number' ? blendedCard : null });
                                 calcState[id].history = dedupeCalcHistoryByRound(calcState[id].history);
                                 saveCalcStateToServer();
                                 updateCalcDetail(id);
@@ -10311,7 +10312,16 @@ RESULTS_HTML = '''
                         pickClass = 'pick-hold';  // 15번 카드 미확인 시 회색(잘못된 색상보다 안전)
                     }
                 }
-                const warningWinRateVal = (typeof h.warningWinRate === 'number' && !isNaN(h.warningWinRate)) ? h.warningWinRate.toFixed(1) + '%' : '-';
+                // 경고승률: h.warningWinRate 우선. 없으면 prediction_history 해당 회차 blended_win_rate로 보정
+                var wrVal = (typeof h.warningWinRate === 'number' && !isNaN(h.warningWinRate)) ? h.warningWinRate : null;
+                if (wrVal == null && Array.isArray(predictionHistory) && !isNaN(rn)) {
+                    var phAtRound = predictionHistory.find(function(p) { return p && Number(p.round) === rn; });
+                    if (phAtRound && (typeof phAtRound.blended_win_rate === 'number' || typeof phAtRound.warningWinRate === 'number')) {
+                        wrVal = phAtRound.blended_win_rate ?? phAtRound.warningWinRate;
+                        if (typeof wrVal === 'number') h.warningWinRate = wrVal;
+                    }
+                }
+                const warningWinRateVal = (typeof wrVal === 'number' && !isNaN(wrVal)) ? wrVal.toFixed(1) + '%' : '-';
                 // 15회 승률: CALCULATOR_GUIDE — 표에는 회차별 저장값(rate15) 표시. 없으면 완료 행은 해당 시점 15회 승률 계산 후 저장(한 번만).
                 var rate15Val;
                 if (typeof h.rate15 === 'number' && !isNaN(h.rate15)) {
