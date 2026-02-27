@@ -3667,8 +3667,9 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
             return 'chunk_phase', debug
         return 'chunk_start', debug
     else:
-        # 퐁당 구간 감지 비활성화 — 덩어리 위주로만 감지 (pong_phase → None)
-        return None, debug
+        # 퐁당 구간: 맨 앞이 퐁당(바뀜) run → 꺽(change) 가산 필요. CSV: 퐁당에서 정 고집 시 연패
+        debug['segment_type'] = 'pong'
+        return 'pong_phase', debug
 
 
 def _suppress_smart_reverse_by_phase(results):
@@ -3693,6 +3694,8 @@ def _suppress_smart_reverse_by_phase(results):
         if phase == 'line_phase':
             return True
         if phase == 'chunk_to_pong' and pong_pct >= 50:  # 50% 이상: 덩어리→긴퐁당 조기 억제
+            return True
+        if phase == 'pong_phase':  # 퐁당 구간: 꺽 예측 유지, 반픽 억제
             return True
         return False
     except Exception:
@@ -4079,6 +4082,11 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         pong_w = min(1.0, pong_w + 0.15)  # 덩어리→긴퐁당: 퐁당 가산 강화 (덩어리 꺽 고집→퐁당 전환 빠르게)
         line_w = max(0.0, 1.0 - pong_w)
         pong_chunk_phase = phase
+    elif phase == 'pong_phase':
+        # 퐁당 구간: 정꺽정꺽 패턴 → 꺽(바뀜) 가산. CSV: 퐁당에서 정 고집 시 연패
+        pong_w = min(1.0, pong_w + 0.14)
+        line_w = max(0.0, 1.0 - pong_w)
+        pong_chunk_phase = phase
     elif phase is None:
         # 미분류/퐁당구간: CSV 퐁당 65%+ 51%, 퐁당<45% 46%, 미분류(-) 45.1%
         # pong_pct 기준 분기 — 퐁당구간이면 꺽(바뀜) 가산, 덩어리/줄이면 정(유지) 가산
@@ -4089,8 +4097,8 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
             line_w = min(1.0, line_w + 0.10)
             pong_w = max(0.0, pong_w - 0.05)
         else:
-            line_w += 0.04
-            pong_w = max(0.0, pong_w - 0.02)
+            # 45~55% 구간: 퐁당/덩어리 애매 — line_w 편향 제거(퐁당에서 정 고집 방지)
+            pass
     # 장줄(5+) 이후 끊김 예측 완화: 5연속 이상일 때 꺽(끊김) 과대 예측 방지 — 5에서 끊김 과다 방지
     if first_is_line_col and line_runs and line_runs[0] >= 5:
         line_w = min(1.0, line_w + 0.08)
