@@ -3399,6 +3399,88 @@ def _get_column_heights(graph_values, max_cols=30):
     return segments[:max_cols]
 
 
+def _build_prediction_reason_summary(phase, chunk_shape, line_runs, pong_runs, first_is_line,
+                                     long_short_stats, pong_pct, line_pct, line_w, pong_w,
+                                     avg_pong_gap=None, u35_detected=False, has_long_line=False):
+    """예측픽 상황 설명 문장 (2~3문장) 생성. 카드 아래 표시용."""
+    lines = []
+    # 1문장: 현재 그래프 상태
+    if phase == 'line_phase' and line_runs:
+        n = line_runs[0]
+        if n >= 5:
+            lines.append('긴 줄이 이어지는 구간입니다.')
+        elif n >= 2:
+            lines.append('중간 길이 줄이 이어지는 구간입니다.')
+        else:
+            lines.append('줄이 시작된 구간입니다.')
+    elif phase == 'pong_phase' and pong_runs:
+        n = pong_runs[0]
+        if n >= 5:
+            lines.append('긴 퐁당이 이어지는 구간입니다.')
+        elif n >= 2:
+            lines.append('퐁당이 이어지는 구간입니다.')
+        else:
+            lines.append('짧은 퐁당이 반복되는 구간입니다.')
+    elif phase == 'chunk_to_pong':
+        lines.append('덩어리에서 퐁당으로 전환 중입니다.')
+    elif phase == 'pong_to_chunk':
+        lines.append('퐁당에서 덩어리로 전환 중입니다.')
+    elif phase in ('chunk_start', 'chunk_phase', 'pong_to_chunk'):
+        if chunk_shape == '321':
+            lines.append('321 형태의 덩어리 구간입니다.')
+        elif chunk_shape == '123':
+            lines.append('123 형태의 덩어리 구간입니다.')
+        elif chunk_shape == 'block_repeat':
+            lines.append('블록 반복 덩어리 구간입니다.')
+        else:
+            lines.append('덩어리 구간입니다.')
+    elif long_short_stats:
+        ls = long_short_stats
+        total = ls.get('total') or 0
+        if total > 0:
+            long_n = ls.get('long') or 0
+            short_n = ls.get('short') or 0
+            pong_n = ls.get('pong') or 0
+            if long_n >= total * 0.4:
+                lines.append('긴 줄들이 많은 구간입니다.')
+            elif pong_n >= total * 0.5:
+                lines.append('퐁당(번갈아)이 많은 구간입니다.')
+            elif short_n >= total * 0.4:
+                lines.append('낮은 줄들이 많은 구간입니다.')
+    if pong_pct is not None and line_pct is not None:
+        if pong_pct >= 60 and (not lines or '퐁당' not in (lines[0] if lines else '')):
+            lines.append('최근 15회 퐁당 비율이 높습니다.')
+        elif line_pct >= 60 and (not lines or '줄' not in (lines[0] if lines else '')):
+            lines.append('최근 15회 줄 비율이 높습니다.')
+    if not lines:
+        lines.append('그래프 상태를 분석 중입니다.')
+
+    # 2문장: 예측 방향
+    if line_w > pong_w + 0.1:
+        lines.append('같은 픽 유지 방향으로 예측합니다.')
+    elif pong_w > line_w + 0.1:
+        lines.append('번갈아 픽 방향으로 예측합니다.')
+    else:
+        lines.append('유지·바뀜 비율이 비슷한 구간입니다.')
+
+    # 3문장(선택): 보조 정보
+    if avg_pong_gap is not None:
+        if avg_pong_gap <= 1.5:
+            lines.append('덩어리/줄 사이 퐁당 간격이 짧습니다.')
+        elif avg_pong_gap >= 3.0:
+            lines.append('덩어리/줄 사이 퐁당 간격이 깁니다.')
+    if first_is_line and line_runs and line_runs[0] >= 5:
+        lines.append('긴 줄 직후라 끊김 예측을 완화했습니다.')
+    elif not first_is_line and pong_runs and pong_runs[0] >= 5:
+        lines.append('긴 퐁당 직후라 줄 전환을 예상합니다.')
+    if u35_detected:
+        lines.append('U자 구간 감지 — 유지 쪽 보정 적용.')
+    if has_long_line:
+        lines.append('긴 줄 구간이라 끊김 예측을 억제했습니다.')
+
+    return lines[:4]  # 최대 4문장
+
+
 def _get_line_pong_runs(arr):
     """줄(1)/퐁당(0) 쌍으로 run 길이 리스트."""
     pairs = []
@@ -3947,15 +4029,15 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     t0 = time.time()
     if not results or len(results) < 16:
         _perf_log('compute_prediction', (time.time() - t0) * 1000)
-        return {'value': None, 'round': 0, 'prob': 0, 'color': None}
+        return {'value': None, 'round': 0, 'prob': 0, 'color': None, 'reason_summary': []}
     graph_values = _build_graph_values(results)
     if len(graph_values) < 1:
         _perf_log('compute_prediction', (time.time() - t0) * 1000)
-        return {'value': None, 'round': 0, 'prob': 0, 'color': None}
+        return {'value': None, 'round': 0, 'prob': 0, 'color': None, 'reason_summary': []}
     valid_gv = [v for v in graph_values if v is True or v is False]
     if len(valid_gv) < 1:
         _perf_log('compute_prediction', (time.time() - t0) * 1000)
-        return {'value': None, 'round': 0, 'prob': 0, 'color': None}
+        return {'value': None, 'round': 0, 'prob': 0, 'color': None, 'reason_summary': []}
 
     latest_game_id = results[0].get('gameID')
     try:
@@ -3967,7 +4049,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     is_15_joker = len(results) >= 15 and _is_joker(results[14].get('joker'))
     if is_15_joker:
         _perf_log('compute_prediction', (time.time() - t0) * 1000)
-        return {'value': None, 'round': predicted_round_full, 'prob': 0, 'color': None}
+        return {'value': None, 'round': predicted_round_full, 'prob': 0, 'color': None, 'reason_summary': []}
 
     full = _calc_transitions(graph_values)
     recent30 = _calc_transitions(graph_values[:30])
@@ -4139,9 +4221,11 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         use_shape_adjustments, pong_weight
     )
     # 덩어리/줄 사이 퐁당 간격: 짧으면(≤1.5) 올리는, 길면(≥3) 직진
+    avg_pong_gap_val = None
     if pong_runs and len(pong_runs) >= 2:
         recent_pong = pong_runs[:min(5, len(pong_runs))]
         avg_pong_gap = sum(recent_pong) / len(recent_pong)
+        avg_pong_gap_val = avg_pong_gap
         pong_gap_mul = pong_weight if use_shape_adjustments else 1.0
         if avg_pong_gap <= 1.5:
             # [올리는 방향] 짧은 퐁당 간격: 덩어리/줄이 가깝게 붙어있음
@@ -4349,6 +4433,12 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         if chunk_profile_stats:
             pong_chunk_debug['chunk_profile_jung'] = chunk_profile_stats.get('jung_count')
             pong_chunk_debug['chunk_profile_kkeok'] = chunk_profile_stats.get('kkeok_count')
+    ls = (pong_chunk_debug or {}).get('long_short_stats') or {}
+    reason_summary = _build_prediction_reason_summary(
+        pong_chunk_phase, chunk_shape, line_runs, pong_runs, first_is_line_col,
+        ls, pong_pct, line_pct, line_w, pong_w,
+        avg_pong_gap_val, u35_detected, has_long_line
+    )
     if use_shape_adjustments and shape_debug_out is not None and isinstance(shape_debug_out, dict):
         shape_debug_out['phase'] = pong_chunk_phase
         shape_debug_out['chunk_shape'] = chunk_shape
@@ -4360,6 +4450,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         'warning_u35': u35_detected,
         'pong_chunk_phase': pong_chunk_phase,
         'pong_chunk_debug': pong_chunk_debug,
+        'reason_summary': reason_summary,
     }
 
 
@@ -5547,6 +5638,29 @@ RESULTS_HTML = '''
             color: #ffeb3b;
             margin-left: 4px;
         }
+        .prediction-reason-summary {
+            font-size: 0.95rem;
+            line-height: 1.65;
+            letter-spacing: -0.01em;
+            color: #b0bec5;
+        }
+        .prediction-reason-summary .prediction-reason-line {
+            display: block;
+            margin-bottom: 6px;
+            padding-left: 12px;
+            position: relative;
+            font-weight: 450;
+        }
+        .prediction-reason-summary .prediction-reason-line::before {
+            content: '•';
+            position: absolute;
+            left: 0;
+            color: #64b5f6;
+            font-weight: 600;
+        }
+        .prediction-reason-summary .prediction-reason-line:last-child {
+            margin-bottom: 0;
+        }
         /* 예측 박스 밖 별도 가로 박스 (몇 회차 성공/실패, 정·꺽 / 빨강·검정) */
         .pick-result-bar {
             padding: 8px 14px;
@@ -5977,6 +6091,9 @@ RESULTS_HTML = '''
                         <div class="pred-pick-rate" style="font-size:0.85em;color:#aaa;margin-top:6px;">15회 승률: —</div>
                         <div class="pred-pick-meta" style="font-size:0.8em;color:#888;margin-top:4px;">줄/덩어리 시 승할때까지 고집</div>
                     </div>
+                </div>
+                <div id="prediction-reason-summary" class="prediction-reason-summary" style="display:none;margin-top:16px;padding:14px 18px;background:linear-gradient(135deg,#1a2332 0%,#151b26 100%);border-radius:10px;border:1px solid #2d3a4a;font-family:'Pretendard','Noto Sans KR',-apple-system,sans-serif;">
+                    <div class="prediction-reason-lines"></div>
                 </div>
             </div>
             <div id="panel-pong-chunk" class="analysis-panel">
@@ -10731,6 +10848,17 @@ RESULTS_HTML = '''
                 [mainCard, mainReverseCard, shapeCard, pongCard].forEach(function(c) { if (c) c.classList.remove('pred-pick-card-calc-best'); });
                 if (bestCard) bestCard.classList.add('pred-pick-card-calc-best');
             }
+            var summaryEl = document.getElementById('prediction-reason-summary');
+            var linesEl = summaryEl && summaryEl.querySelector('.prediction-reason-lines');
+            if (summaryEl && linesEl) {
+                var lines = Array.isArray(sp.reason_summary) ? sp.reason_summary : [];
+                if (lines.length > 0) {
+                    summaryEl.style.display = 'block';
+                    linesEl.innerHTML = lines.map(function(t) { return '<span class="prediction-reason-line">' + (t || '').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</span>'; }).join('');
+                } else {
+                    summaryEl.style.display = 'none';
+                }
+            }
         }
         
         function updateCalcJokerBadge() {
@@ -10989,6 +11117,7 @@ def _build_server_prediction_light(results=None, hours=24):
                     'value': computed['value'], 'round': computed.get('round') or predicted_round,
                     'prob': computed.get('prob') or 0, 'color': computed.get('color'),
                     'warning_u35': bool(computed.get('warning_u35')), 'pong_chunk_phase': computed.get('pong_chunk_phase'), 'pong_chunk_debug': computed.get('pong_chunk_debug') or {},
+                    'reason_summary': computed.get('reason_summary') or [],
                 }
             else:
                 sp = {'value': None, 'round': predicted_round, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
@@ -11033,7 +11162,7 @@ def _build_results_payload_db_only(hours=24, backfill=False, results=None):
                         server_pred = {
                             'value': stored['predicted'], 'round': predicted_round,
                             'prob': stored.get('probability') or 0, 'color': stored.get('pick_color'),
-                            'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {},
+                            'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}, 'reason_summary': [],
                         }
                         # 퐁당/덩어리 판별 메뉴용: 저장 픽은 유지하되 phase/debug만 계산. shape_predicted = 가장 최근 다음 픽.
                         try:
@@ -11041,6 +11170,7 @@ def _build_results_payload_db_only(hours=24, backfill=False, results=None):
                             if computed:
                                 server_pred['pong_chunk_phase'] = computed.get('pong_chunk_phase')
                                 server_pred['pong_chunk_debug'] = computed.get('pong_chunk_debug') or {}
+                                server_pred['reason_summary'] = computed.get('reason_summary') or []
                             latest_next_pick = _get_latest_next_pick_for_chunk(results, exclude_round=predicted_round)
                             if latest_next_pick:
                                 server_pred['pong_chunk_debug'] = server_pred.get('pong_chunk_debug') or {}
@@ -11052,7 +11182,7 @@ def _build_results_payload_db_only(hours=24, backfill=False, results=None):
             except Exception as e:
                 print(f"[API] server_pred 조회 오류: {str(e)[:100]}")
         if server_pred is None:
-            server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}, 'shape_predicted': None}
+            server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}, 'shape_predicted': None, 'reason_summary': []}
         # 조커 주의 구간: skip_bet이면 배팅 보류 (value/color None)
         if joker_stats.get('skip_bet') and server_pred:
             server_pred['value'] = None
@@ -11350,7 +11480,7 @@ def _build_results_payload():
                 except Exception as e:
                     print(f"[API] server_pred 조회 오류: {str(e)[:100]}")
             if server_pred is None:
-                server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}, 'shape_predicted': None}
+                server_pred = {'value': None, 'round': int(str(results[0].get('gameID') or '0'), 10) + 1 if results else 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}, 'shape_predicted': None, 'reason_summary': []}
             if len(results) >= 16 and server_pred.get('shape_predicted') is None:
                 try:
                     pred_rnd_fb = int(str(results[0].get('gameID') or '0'), 10) + 1
