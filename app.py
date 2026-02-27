@@ -3702,6 +3702,115 @@ def _suppress_smart_reverse_by_phase(results):
         return False
 
 
+def _apply_phase_line_pong_adjustments(line_w, pong_w, phase, chunk_shape, line_runs, pong_runs,
+                                        first_is_line_col, use_for_pattern, pong_pct,
+                                        has_long_line, allow_break_consideration, chunk_sub_break,
+                                        use_shape_adjustments, pong_weight):
+    """
+    phase별 line_w/pong_w 조정. 올리는 방향(같은 픽) vs 직진 방향(번갈아 픽).
+    반환: (line_w, pong_w, pong_chunk_phase, is_321_bottom)
+    """
+    pong_chunk_phase = None
+    is_321_bottom = False
+    pong_mul = pong_weight if use_shape_adjustments else 1.0
+
+    if phase == 'line_phase':
+        line_w += 0.12
+        pong_w = max(0.0, pong_w - 0.06)
+        pong_chunk_phase = phase
+
+    elif phase in ('chunk_start', 'chunk_phase', 'pong_to_chunk'):
+        curr_line_len = line_runs[0] if (first_is_line_col and line_runs) else 0
+        suppress_break = has_long_line and not allow_break_consideration
+        is_321_bottom = (chunk_shape == '321' and curr_line_len <= 3 and line_runs and len(line_runs) >= 2 and line_runs[1] <= curr_line_len)
+
+        if phase == 'pong_to_chunk':
+            line_w += 0.08
+            pong_w = max(0.0, pong_w - 0.04)
+            if chunk_shape == 'block_repeat':
+                line_w += 0.06
+                pong_w = max(0.0, pong_w - 0.03)
+            elif chunk_shape == '123':
+                line_w += 0.04
+                pong_w = max(0.0, pong_w - 0.02)
+
+        if use_shape_adjustments:
+            if curr_line_len == 2 and not suppress_break:
+                pong_w += 0.05
+                line_w = max(0.0, line_w - 0.025)
+            else:
+                line_w += 0.05
+                pong_w = max(0.0, pong_w - 0.025)
+            if chunk_shape == '321' and not suppress_break:
+                if is_321_bottom:
+                    line_w += 0.04 * pong_mul
+                    pong_w = max(0.0, pong_w - 0.02 * pong_mul)
+                else:
+                    pong_w += 0.05 * pong_mul
+                    line_w = max(0.0, line_w - 0.025 * pong_mul)
+            elif chunk_shape == '123':
+                line_w += 0.06 * pong_mul
+                pong_w = max(0.0, pong_w - 0.03 * pong_mul)
+                if curr_line_len >= 3:
+                    line_w += 0.04 * pong_mul
+                    pong_w = max(0.0, pong_w - 0.02 * pong_mul)
+            elif not suppress_break and _detect_line1_pong1_pattern(line_runs, pong_runs, (use_for_pattern[0] == use_for_pattern[1]) if len(use_for_pattern) >= 2 else True):
+                pong_w += 0.05 * pong_mul
+                line_w = max(0.0, line_w - 0.025 * pong_mul)
+            chunk_sub = chunk_sub_break
+            if chunk_sub == 'chunk_2pair':
+                line_w += 0.04 * pong_mul
+                pong_w = max(0.0, pong_w - 0.02 * pong_mul)
+            elif chunk_sub == 'chunk_1pair' and not suppress_break:
+                pong_w += 0.04 * pong_mul
+                line_w = max(0.0, line_w - 0.02 * pong_mul)
+        else:
+            if curr_line_len == 2 and not suppress_break:
+                pong_w += 0.08
+                line_w = max(0.0, line_w - 0.04)
+            else:
+                line_w += 0.10
+                if not suppress_break:
+                    pong_w = max(0.0, pong_w - 0.05)
+            if chunk_shape == '321' and not suppress_break:
+                if is_321_bottom:
+                    line_w += 0.03 * pong_mul
+                    pong_w = max(0.0, pong_w - 0.015 * pong_mul)
+                else:
+                    pong_w += 0.03 * pong_mul
+                    line_w = max(0.0, line_w - 0.015 * pong_mul)
+            elif chunk_shape == '123':
+                line_w += 0.06
+                pong_w = max(0.0, pong_w - 0.03)
+                if curr_line_len >= 3:
+                    line_w += 0.04
+                    pong_w = max(0.0, pong_w - 0.02)
+        pong_chunk_phase = phase
+
+    elif phase == 'chunk_to_pong':
+        pong_w = min(1.0, pong_w + 0.12)
+        line_w = max(0.0, 1.0 - pong_w)
+        pong_chunk_phase = phase
+
+    elif phase == 'pong_phase':
+        pong_w = min(1.0, pong_w + 0.10)
+        line_w = max(0.0, 1.0 - pong_w)
+        pong_chunk_phase = phase
+
+    elif phase is None:
+        if pong_pct >= 55:
+            pong_w = min(1.0, pong_w + 0.10)
+            line_w = max(0.0, 1.0 - pong_w)
+        elif pong_pct <= 42:
+            line_w = min(1.0, line_w + 0.10)
+            pong_w = max(0.0, pong_w - 0.05)
+        else:
+            line_w = min(1.0, line_w + 0.06)
+            pong_w = max(0.0, pong_w - 0.03)
+
+    return line_w, pong_w, pong_chunk_phase, is_321_bottom
+
+
 def _compute_blend_data(prediction_history):
     """예측 이력(actual!=joker)으로 15/30/100 구간 반영 확률."""
     valid = [h for h in (prediction_history or []) if h and isinstance(h, dict)]
@@ -3942,9 +4051,11 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     current_seg_5plus = bool(col_heights_break and col_heights_break[0] >= 5)
     allow_break_consideration = (chunk_sub_break == 'chunk_2pair') and not current_seg_5plus
     if flow_state == 'line_strong':
+        # [올리는 방향] 줄 강함: 같은 픽 유지
         line_w = min(1.0, line_w + 0.25)
         pong_w = max(0.0, 1.0 - line_w)
     elif flow_state == 'pong_strong':
+        # [직진 방향] 퐁당 강함: 번갈아 픽
         pong_w = min(1.0, pong_w + 0.25)
         line_w = max(0.0, 1.0 - pong_w)
     # 전체 그림: 퐁당 자주·줄 낮음·덩어리 적음 → 올리려고만 하면 연패하므로 퐁당 가중치 가산
@@ -3952,11 +4063,12 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     overall_pong = _detect_overall_pong_dominant(graph_values)
     if overall_pong:
         if not (has_long_line and not allow_break_consideration):
-            # 퐁당→긴줄 전환: 짧은 퐁당(2,3) 후 줄이 3+ 쌓이면 긴줄 돌입 가능 — 줄 가산
             if first_is_line_col and line_runs and line_runs[0] >= 3:
+                # [올리는 방향] 퐁당→긴줄 전환: 줄 가산
                 line_w = min(1.0, line_w + 0.10)
                 pong_w = max(0.0, pong_w - 0.05)
             else:
+                # [직진 방향] 퐁당 우세: 번갈아 픽
                 pong_w = min(1.0, pong_w + 0.14)
                 line_w = max(0.0, 1.0 - pong_w)
 
@@ -3970,16 +4082,20 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         is_new_segment_early = (prev_r and prev_r >= 5 and (prev_l is None or prev_l >= 4) and lc <= 3)
         sym_mul = symmetry_weight if use_shape_adjustments else 1.0
         if is_new_segment or is_new_segment_early:
+            # [올리는 방향] 새 세그먼트: 같은 픽 유지
             line_w = min(1.0, line_w + 0.22 * sym_mul)
             pong_w = max(0.0, 1.0 - line_w)
         elif sp >= 70 and rc <= 3:
+            # [올리는 방향] 대칭 높음: 같은 픽 유지
             line_w = min(1.0, line_w + 0.28 * sym_mul)
             pong_w = max(0.0, 1.0 - line_w)
         else:
             if lc <= 3:
+                # [올리는 방향] 줄 적음: 같은 픽 유지
                 line_w = min(1.0, line_w + SYM_LINE_PONG_BOOST * sym_mul)
                 pong_w = max(0.0, 1.0 - line_w)
             elif lc >= 5 and not (has_long_line and not allow_break_consideration):
+                # [직진 방향] 줄 많음: 번갈아 픽
                 max_run = symmetry_line_data.get('maxLeftRunLength', 4)
                 recent_run = symmetry_line_data.get('recentRunLength', 0)
                 calm_or_run_start = (max_run <= 3) or (recent_run >= 2)
@@ -3994,8 +4110,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
 
     first_is_line_col = (use_for_pattern[0] == use_for_pattern[1]) if len(use_for_pattern) >= 2 else True
     u35_detected = _detect_u_35_pattern(line_runs)  # U자+줄3~5: 예측 안정화·과신 방지
-    # 퐁당 / 덩어리 / 줄 구간 보정: phase·chunk_shape에 따라 line_w·pong_w 조정
-    pong_chunk_phase = None
+    # === 2단계: phase별 방향 가산 (올리는=같은픽 / 직진=번갈아) ===
     pong_chunk_debug = {}
     phase, pong_chunk_debug = _detect_pong_chunk_phase(
         line_runs, pong_runs,
@@ -4003,108 +4118,17 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         pong_pct, pong_prev15
     )
     chunk_shape = (pong_chunk_debug or {}).get('chunk_shape')
-    # 줄 구간: 한쪽으로 길게 이어짐 → 유지(줄) 가중치 가산
-    pong_mul = pong_weight if use_shape_adjustments else 1.0
-    if phase == 'line_phase':
-        line_w += 0.12
-        pong_w = max(0.0, pong_w - 0.06)
-        pong_chunk_phase = phase
-    # 덩어리 구간: 블록 반복·줄2~4. 줄2(짧은줄)는 바뀜(퐁당) 쪽, 줄3~4는 줄 가중치 우선. 321 끝이면 바뀜 소폭 가산
-    elif phase in ('chunk_start', 'chunk_phase', 'pong_to_chunk'):
-        curr_line_len = line_runs[0] if (first_is_line_col and line_runs) else 0
-        suppress_break = has_long_line and not allow_break_consideration  # 긴줄일 때 끊김 예측 억제
-        is_321_bottom = (chunk_shape == '321' and curr_line_len <= 3 and line_runs and len(line_runs) >= 2 and line_runs[1] <= curr_line_len)
-        if phase == 'pong_to_chunk':
-            # 퐁당→덩어리 전환: CSV 46.9% — 꺽 과다. block_repeat 41.9%, 123 46.8%
-            line_w += 0.08
-            pong_w = max(0.0, pong_w - 0.04)
-            if chunk_shape == 'block_repeat':
-                line_w += 0.06
-                pong_w = max(0.0, pong_w - 0.03)
-            elif chunk_shape == '123':
-                line_w += 0.04  # 123(늘어남) 전환 시 꺽 과다(46.8%) 보정
-                pong_w = max(0.0, pong_w - 0.02)
-        if use_shape_adjustments:
-            if curr_line_len == 2 and not suppress_break:
-                pong_w += 0.05
-                line_w = max(0.0, line_w - 0.025)
-            else:
-                line_w += 0.05  # 덩어리 기본 가중치 축소 (위로만 쏠림 완화)
-                pong_w = max(0.0, pong_w - 0.025)
-            if chunk_shape == '321' and not suppress_break:
-                # 321 바닥(2~3): 쭉 내려왔다 쭉 올라가는 전환점 — 반픽 과다 방지
-                if is_321_bottom:
-                    line_w += 0.04 * pong_mul  # 긴줄 돌입 가능성 반영
-                    pong_w = max(0.0, pong_w - 0.02 * pong_mul)
-                else:
-                    pong_w += 0.05 * pong_mul  # 321(줄어듦) 구간 퐁당 가산 — CSV 연패분석: 꺽 과다(49.2%) 완화
-                    line_w = max(0.0, line_w - 0.025 * pong_mul)
-            elif chunk_shape == '123':
-                line_w += 0.06 * pong_mul  # 123(늘어남) 구간: 줄 유지 쪽 가산 — 덩어리시작+123 연패 구간 보정
-                pong_w = max(0.0, pong_w - 0.03 * pong_mul)
-                if curr_line_len >= 3:
-                    line_w += 0.04 * pong_mul  # 짧은줄→2~3연속→긴줄 전환 임박: 줄 가산 추가
-                    pong_w = max(0.0, pong_w - 0.02 * pong_mul)
-            elif not suppress_break and _detect_line1_pong1_pattern(line_runs, pong_runs, (use_for_pattern[0] == use_for_pattern[1]) if len(use_for_pattern) >= 2 else True):
-                pong_w += 0.05 * pong_mul  # 줄1퐁당1 패턴 퐁당 반영
-                line_w = max(0.0, line_w - 0.025 * pong_mul)
-            # 덩어리 내부 패턴: 2개씩 끈김(정정꺽꺽)=줄, 1개씩 끈김(정꺽정꺽)=퐁당
-            chunk_sub = chunk_sub_break  # col_heights_break로 이미 계산됨
-            if chunk_sub == 'chunk_2pair':
-                line_w += 0.04 * pong_mul
-                pong_w = max(0.0, pong_w - 0.02 * pong_mul)
-            elif chunk_sub == 'chunk_1pair' and not suppress_break:
-                pong_w += 0.04 * pong_mul
-                line_w = max(0.0, line_w - 0.02 * pong_mul)
-        else:
-            if curr_line_len == 2 and not suppress_break:
-                pong_w += 0.08
-                line_w = max(0.0, line_w - 0.04)
-            else:
-                line_w += 0.10
-                if not suppress_break:
-                    pong_w = max(0.0, pong_w - 0.05)
-            if chunk_shape == '321' and not suppress_break:
-                if is_321_bottom:
-                    line_w += 0.03 * pong_mul
-                    pong_w = max(0.0, pong_w - 0.015 * pong_mul)
-                else:
-                    pong_w += 0.03 * pong_mul  # 꺽 과다 완화
-                    line_w = max(0.0, line_w - 0.015 * pong_mul)
-            elif chunk_shape == '123':
-                line_w += 0.06
-                pong_w = max(0.0, pong_w - 0.03)
-                if curr_line_len >= 3:
-                    line_w += 0.04
-                    pong_w = max(0.0, pong_w - 0.02)
-        pong_chunk_phase = phase
-    elif phase == 'chunk_to_pong':
-        # 조건→다음 결과: 덩어리→퐁당 시 정 46.7% / 꺽 53.3% (347회). 꺽 소폭 → pong_w 0.12 (0.15 과다 완화)
-        pong_w = min(1.0, pong_w + 0.12)
-        line_w = max(0.0, 1.0 - pong_w)
-        pong_chunk_phase = phase
-    elif phase == 'pong_phase':
-        # 조건→다음 결과: 퐁당구간 정 57.1% / 꺽 42.9% (14회). 정 쪽 → pong_w 0.10 (0.14→보수적 완화)
-        pong_w = min(1.0, pong_w + 0.10)
-        line_w = max(0.0, 1.0 - pong_w)
-        pong_chunk_phase = phase
-    elif phase is None:
-        # 미분류: CSV (-) 구간 정 63.4% / 꺽 36.6% (93회). 조건→다음 결과 분포 기준 line_w 가산
-        if pong_pct >= 55:
-            pong_w = min(1.0, pong_w + 0.10)
-            line_w = max(0.0, 1.0 - pong_w)
-        elif pong_pct <= 42:
-            line_w = min(1.0, line_w + 0.10)
-            pong_w = max(0.0, pong_w - 0.05)
-        else:
-            # 45~55% 구간: 미분류에서 정 63.4% → line_w +0.06 (보수적, 다른 phase 영향 최소화)
-            line_w = min(1.0, line_w + 0.06)
-            pong_w = max(0.0, pong_w - 0.03)
-    # 장줄(5+) 이후 끊김 예측 완화: 5연속 이상일 때 꺽(끊김) 과대 예측 방지 — 5에서 끊김 과다 방지
+    line_w, pong_w, pong_chunk_phase, is_321_bottom = _apply_phase_line_pong_adjustments(
+        line_w, pong_w, phase, chunk_shape, line_runs, pong_runs,
+        first_is_line_col, use_for_pattern, pong_pct,
+        has_long_line, allow_break_consideration, chunk_sub_break,
+        use_shape_adjustments, pong_weight
+    )
+    # [올리는 방향] 장줄(5+) 이후 끊김 예측 완화: 같은 픽 유지
     if first_is_line_col and line_runs and line_runs[0] >= 5:
         line_w = min(1.0, line_w + 0.08)
         pong_w = max(0.0, pong_w - 0.04)
-    # 긴줄 구간 끊김 예측 억제: col_heights_break·has_long_line·allow_break_consideration은 위(3691~3695)에서 이미 계산됨
+    # [올리는 방향] 긴줄 구간 끊김 예측 억제: 같은 픽 유지
     suppress_break = has_long_line and not allow_break_consideration
     if suppress_break:
         line_w = min(1.0, line_w + 0.12)
