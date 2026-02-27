@@ -6469,6 +6469,7 @@ RESULTS_HTML = '''
         var lastCalcBestTypeConsecutive = 0;  // calc_best 디바운스: 연속 동일 횟수 (깜빡임 방지)
         var lastCalcBestRound = null;     // calc_best 디바운스: 회차 변경 시 리셋용
         var lastShapePickByRound = {};    // 모양 카드 회차별 고정: { round: { val, color, rate } } — 나중에 바뀌는 것 방지
+        var lastMainByRound = {};         // 메인·메인반픽 회차별 고정 — 서버 응답 불일치로 깜빡임 방지
         var lastShapePickFromApi = null;  // shape-pick API 응답 — 모양 카드 빠른 표시용, 우선 사용
         var lastSpForCards = null;        // updatePredictionPicksCards에 마지막 전달한 sp (shape-pick 갱신 시 재호출용)
         let lastWinEffectRound = null;  // 승리 이펙트를 이미 보여준 회차 (한 번만 표시)
@@ -10571,9 +10572,21 @@ RESULTS_HTML = '''
             if (!cards || !sp) return;
             lastSpForCards = sp;
             var mainVal = (sp.value === '정' || sp.value === '꺽') ? sp.value : null;
-            var mainReverseVal = (sp.main_reverse === '정' || sp.main_reverse === '꺽') ? sp.main_reverse : null;
             var currentRound = (sp.round != null) ? Number(sp.round) : null;
-            // shape-pick API 응답 우선 (모양 카드 빠른 표시)
+            // 메인·메인반픽 회차별 고정: 한 번 나온 픽은 회차가 바뀔 때까지 유지 (서버 보류/빈값으로 바뀌어도 깜빡임 방지)
+            if (currentRound != null && mainVal) {
+                if (!lastMainByRound[currentRound]) lastMainByRound[currentRound] = {};
+                lastMainByRound[currentRound].val = mainVal;
+                lastMainByRound[currentRound].color = sp.color ? (String(sp.color).toUpperCase().indexOf('RED') >= 0 || sp.color === '빨강' ? 'RED' : 'BLACK') : null;
+                var keys = Object.keys(lastMainByRound).map(Number).filter(function(k) { return !isNaN(k); });
+                while (keys.length > 20) { var oldest = Math.min.apply(null, keys); delete lastMainByRound[oldest]; keys = Object.keys(lastMainByRound).map(Number).filter(function(k) { return !isNaN(k); }); }
+            }
+            var frozenMain = currentRound != null ? lastMainByRound[currentRound] : null;
+            mainVal = (mainVal || (frozenMain && frozenMain.val)) || null;
+            var mainColor = (sp.color ? (String(sp.color).toUpperCase().indexOf('RED') >= 0 || sp.color === '빨강' ? 'RED' : 'BLACK') : null) || (frozenMain && frozenMain.color) || null;
+            // 메인반픽: 메인 픽이 있으면 항상 메인에서 파생 (서버 응답 불일치로 나왔다 사라졌다 깜빡임 방지)
+            var mainReverseVal = mainVal ? (mainVal === '정' ? '꺽' : '정') : ((sp.main_reverse === '정' || sp.main_reverse === '꺽') ? sp.main_reverse : null);
+            // shape-pick API 응답 우선 (모양 카드 빠른 표시) — mainColor는 위에서 설정됨
             var incomingShapeVal = (lastShapePickFromApi && lastShapePickFromApi.round === currentRound && (lastShapePickFromApi.shape_pick === '정' || lastShapePickFromApi.shape_pick === '꺽')) ? lastShapePickFromApi.shape_pick : ((sp.shape_pick === '정' || sp.shape_pick === '꺽') ? sp.shape_pick : null);
             var incomingShapeColor = (lastShapePickFromApi && lastShapePickFromApi.round === currentRound && lastShapePickFromApi.shape_color) ? (String(lastShapePickFromApi.shape_color).toUpperCase().indexOf('RED') >= 0 || lastShapePickFromApi.shape_color === '빨강' ? 'RED' : 'BLACK') : (sp.shape_color ? (String(sp.shape_color).toUpperCase().indexOf('RED') >= 0 || sp.shape_color === '빨강' ? 'RED' : 'BLACK') : null);
             var incomingShapeRate = (lastShapePickFromApi && lastShapePickFromApi.round === currentRound && lastShapePickFromApi.shape_15_rate != null) ? lastShapePickFromApi.shape_15_rate : (sp.shape_15_rate != null ? sp.shape_15_rate : null);
@@ -10593,8 +10606,9 @@ RESULTS_HTML = '''
             var shapeColor = frozen ? frozen.color : incomingShapeColor;
             var shapeRate = frozen && frozen.rate != null ? frozen.rate : incomingShapeRate;
             var pongVal = (sp.pong_pick === '정' || sp.pong_pick === '꺽') ? sp.pong_pick : null;
-            var mainColor = sp.color ? (String(sp.color).toUpperCase().indexOf('RED') >= 0 || sp.color === '빨강' ? 'RED' : 'BLACK') : null;
-            var mainReverseColor = sp.main_reverse_color ? (String(sp.main_reverse_color).toUpperCase().indexOf('RED') >= 0 || sp.main_reverse_color === '빨강' ? 'RED' : 'BLACK') : null;
+            // mainColor는 위(lastMainByRound·frozenMain)에서 설정됨
+            // 메인반픽 색: 메인 픽이 있으면 메인에서 파생 (서버 불일치 깜빡임 방지)
+            var mainReverseColor = (mainVal && mainColor) ? (mainColor === 'RED' ? 'BLACK' : 'RED') : (sp.main_reverse_color ? (String(sp.main_reverse_color).toUpperCase().indexOf('RED') >= 0 || sp.main_reverse_color === '빨강' ? 'RED' : 'BLACK') : null);
             var pongColor = sp.pong_color ? (String(sp.pong_color).toUpperCase().indexOf('RED') >= 0 || sp.pong_color === '빨강' ? 'RED' : 'BLACK') : null;
             var roundStr = (sp.round != null) ? String(sp.round) : '—';
             var mainRate = sp.main_15_rate != null ? sp.main_15_rate : null;
@@ -10791,7 +10805,15 @@ RESULTS_HTML = '''
                         if (sp.calc_best_pred && sp.calc_best_color) { lastPrediction.calc_best_pred = sp.calc_best_pred; lastPrediction.calc_best_color = sp.calc_best_color; }
                         if (sp.calc_best_shape_pong_pred && sp.calc_best_shape_pong_color) { lastPrediction.calc_best_shape_pong_pred = sp.calc_best_shape_pong_pred; lastPrediction.calc_best_shape_pong_color = sp.calc_best_shape_pong_color; }
                         lastWarningU35 = !!(sp.warning_u35);
-                        try { updatePredictionPicksCards(sp); } catch (e) {}
+                        // light sp 병합: prediction_cache는 main_reverse·calc_best_type 등 없음 → lastSpForCards와 병합해 깜빡임 방지
+                        var spToUse = sp;
+                        if (lastSpForCards && sp.round != null && Number(sp.round) === Number(lastSpForCards.round)) {
+                            var isLight = (sp.main_reverse === undefined && sp.main_reverse_color === undefined) || sp.calc_best_type === undefined;
+                            if (isLight) {
+                                spToUse = Object.assign({}, lastSpForCards, { value: sp.value, round: sp.round, prob: sp.prob, color: sp.color, warning_u35: sp.warning_u35 });
+                            }
+                        }
+                        try { updatePredictionPicksCards(spToUse); } catch (e) {}
                         try { refreshPredictionPickOnly(); } catch (e) {}
                         // 새 픽 수신 즉시 배팅기로 전달 — 25ms 대기 없이
                         try { if (document.body && document.body.isConnected) CALC_IDS.forEach(function(id) { if (typeof updateCalcStatus === 'function') updateCalcStatus(id); }); } catch (e) {}
