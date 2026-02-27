@@ -4046,7 +4046,10 @@ def _compute_blend_data(prediction_history):
 def _symmetry_line_for_n(graph_values, n):
     """
     최근 n열만 사용해 좌우 대칭·줄 개수 계산. n=15(8+7), 20(10+10), 30(15+15) 지원.
-    반환: dict(symmetryPct, leftLineCount, rightLineCount, avgLeft, avgRight, lineSimilarityPct, maxLeftRunLength, recentRunLength) 또는 None.
+    반환: dict(symmetryPct, leftLineCount, rightLineCount, avgLeft, avgRight, avgLeft_line, avgRight_line,
+               lineSimilarityPct, maxLeftRunLength, recentRunLength) 또는 None.
+    - avgLeft/avgRight: 전체 run(줄+퐁당) 평균. 표시·lineSimilarityPct 폴백용.
+    - avgLeft_line/avgRight_line: 줄만(길이≥2) 평균. 예측픽 line_w 가산용(덩어리·줄 구간에서 정확한 줄 높이).
     """
     arr = [v for v in graph_values[:n] if v is True or v is False]
     if len(arr) < n:
@@ -4075,7 +4078,13 @@ def _symmetry_line_for_n(graph_values, n):
     right_runs = get_run_lengths(right)
     avg_l = sum(left_runs) / len(left_runs) if left_runs else 0
     avg_r = sum(right_runs) / len(right_runs) if right_runs else 0
-    line_diff = abs(avg_l - avg_r)
+    # 줄만(길이≥2) 평균 — 덩어리·줄 구간에서 퐁당(1) 제외해 정확한 줄 높이 반영
+    left_runs_line = [r for r in left_runs if r >= 2]
+    right_runs_line = [r for r in right_runs if r >= 2]
+    avg_l_line = sum(left_runs_line) / len(left_runs_line) if left_runs_line else 0
+    avg_r_line = sum(right_runs_line) / len(right_runs_line) if right_runs_line else 0
+    # lineSimilarityPct: 줄만 있으면 줄 기준, 없으면 전체 기준(폴백)
+    line_diff = abs(avg_l_line - avg_r_line) if (avg_l_line or avg_r_line) else abs(avg_l - avg_r)
     max_left_run = max(left_runs) if left_runs else 0
     recent_run_len = 1
     for ri in range(1, len(arr)):
@@ -4086,6 +4095,7 @@ def _symmetry_line_for_n(graph_values, n):
     return {
         'symmetryPct': sym_count / pair_count * 100 if pair_count else 0,
         'avgLeft': avg_l, 'avgRight': avg_r,
+        'avgLeft_line': avg_l_line, 'avgRight_line': avg_r_line,
         'lineSimilarityPct': max(0, 100 - min(100, line_diff * 25)),
         'leftLineCount': len(left_runs), 'rightLineCount': len(right_runs),
         'maxLeftRunLength': max_left_run, 'recentRunLength': recent_run_len,
@@ -4211,11 +4221,11 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         if total_w > 0:
             symmetry_windows_used = [w for w in SYM_WINDOWS if w in per_n]
             blend = {}
-            for key in ('symmetryPct', 'avgLeft', 'avgRight', 'lineSimilarityPct', 'leftLineCount', 'rightLineCount', 'maxLeftRunLength', 'recentRunLength'):
+            for key in ('symmetryPct', 'avgLeft', 'avgRight', 'avgLeft_line', 'avgRight_line', 'lineSimilarityPct', 'leftLineCount', 'rightLineCount', 'maxLeftRunLength', 'recentRunLength'):
                 blend[key] = 0
                 for i, w in enumerate(SYM_WINDOWS):
                     if w in per_n:
-                        blend[key] += (SYM_WEIGHTS[i] / total_w) * per_n[w][key]
+                        blend[key] += (SYM_WEIGHTS[i] / total_w) * per_n[w].get(key, 0)
                 if key in ('leftLineCount', 'rightLineCount', 'maxLeftRunLength', 'recentRunLength'):
                     blend[key] = round(blend[key])
             symmetry_line_data = blend
@@ -4304,18 +4314,18 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
             elif sp <= 30:
                 line_w *= (1.0 - (1.0 - SYM_LOW_MUL) * sym_mul)
                 pong_w *= (1.0 - (1.0 - SYM_LOW_MUL) * sym_mul)
-        # [올리는 방향] 좌우 줄 평균: avg_mean 높을수록 줄이 김 → line_w 가산 (어디까지: 3.5+ → 0.05, 2.8+ → 0.03, 2.2+ & 유사도70+ → 0.02)
-        avg_l = symmetry_line_data.get('avgLeft') or 0
-        avg_r = symmetry_line_data.get('avgRight') or 0
+        # [올리는 방향] 좌우 줄 평균(줄만): avg_mean_line 높을수록 줄이 김 → line_w 가산. 덩어리·줄 구간에서 퐁당(1) 제외해 정확히 반영.
+        avg_l_line = symmetry_line_data.get('avgLeft_line') or 0
+        avg_r_line = symmetry_line_data.get('avgRight_line') or 0
         line_sim = symmetry_line_data.get('lineSimilarityPct') or 0
-        avg_mean = (avg_l + avg_r) / 2.0 if (avg_l or avg_r) else 0
-        if avg_mean >= 3.5:
+        avg_mean_line = (avg_l_line + avg_r_line) / 2.0 if (avg_l_line or avg_r_line) else 0
+        if avg_mean_line >= 3.5:
             line_w = min(1.0, line_w + 0.05 * sym_mul)
             pong_w = max(0.0, pong_w - 0.025)
-        elif avg_mean >= 2.8:
+        elif avg_mean_line >= 2.8:
             line_w = min(1.0, line_w + 0.03 * sym_mul)
             pong_w = max(0.0, pong_w - 0.015)
-        elif avg_mean >= 2.2 and line_sim >= 70:
+        elif avg_mean_line >= 2.2 and line_sim >= 70:
             line_w = min(1.0, line_w + 0.02 * sym_mul)
             pong_w = max(0.0, pong_w - 0.01)
 
@@ -8204,13 +8214,18 @@ RESULTS_HTML = '''
                             var leftRuns = getRunLengths(left), rightRuns = getRunLengths(right);
                             var avgL = leftRuns.length ? leftRuns.reduce(function(s, x) { return s + x; }, 0) / leftRuns.length : 0;
                             var avgR = rightRuns.length ? rightRuns.reduce(function(s, x) { return s + x; }, 0) / rightRuns.length : 0;
-                            var lineDiff = Math.abs(avgL - avgR);
+                            var leftRunsLine = leftRuns.filter(function(x) { return x >= 2; });
+                            var rightRunsLine = rightRuns.filter(function(x) { return x >= 2; });
+                            var avgLLine = leftRunsLine.length ? leftRunsLine.reduce(function(s, x) { return s + x; }, 0) / leftRunsLine.length : 0;
+                            var avgRLine = rightRunsLine.length ? rightRunsLine.reduce(function(s, x) { return s + x; }, 0) / rightRunsLine.length : 0;
+                            var lineDiff = (avgLLine || avgRLine) ? Math.abs(avgLLine - avgRLine) : Math.abs(avgL - avgR);
                             var maxLeftRun = (leftRuns && leftRuns.length) ? Math.max.apply(null, leftRuns) : 0;
                             var recentRunLen = 1;
                             for (var ri = 1; ri < arr.length; ri++) { if (arr[ri] === arr[0]) recentRunLen++; else break; }
                             return {
                                 symmetryPct: pairCount ? symCount / pairCount * 100 : 0,
                                 avgLeft: avgL, avgRight: avgR,
+                                avgLeft_line: avgLLine, avgRight_line: avgRLine,
                                 lineSimilarityPct: Math.max(0, 100 - Math.min(100, lineDiff * 25)),
                                 leftLineCount: leftRuns.length,
                                 rightLineCount: rightRuns.length,
@@ -8230,7 +8245,7 @@ RESULTS_HTML = '''
                                 if (perN[SYM_WINDOWS[wi]]) totalW += SYM_WEIGHTS[wi];
                             }
                             if (totalW > 0) {
-                                var blend = { symmetryPct: 0, avgLeft: 0, avgRight: 0, lineSimilarityPct: 0, leftLineCount: 0, rightLineCount: 0, maxLeftRunLength: 0, recentRunLength: 0 };
+                                var blend = { symmetryPct: 0, avgLeft: 0, avgRight: 0, avgLeft_line: 0, avgRight_line: 0, lineSimilarityPct: 0, leftLineCount: 0, rightLineCount: 0, maxLeftRunLength: 0, recentRunLength: 0 };
                                 for (var wi = 0; wi < SYM_WINDOWS.length; wi++) {
                                     var w = SYM_WINDOWS[wi];
                                     if (!perN[w]) continue;
@@ -8238,6 +8253,8 @@ RESULTS_HTML = '''
                                     blend.symmetryPct += frac * perN[w].symmetryPct;
                                     blend.avgLeft += frac * perN[w].avgLeft;
                                     blend.avgRight += frac * perN[w].avgRight;
+                                    blend.avgLeft_line += frac * (perN[w].avgLeft_line || 0);
+                                    blend.avgRight_line += frac * (perN[w].avgRight_line || 0);
                                     blend.lineSimilarityPct += frac * perN[w].lineSimilarityPct;
                                     blend.leftLineCount += frac * perN[w].leftLineCount;
                                     blend.rightLineCount += frac * perN[w].rightLineCount;
@@ -8311,6 +8328,13 @@ RESULTS_HTML = '''
                                 prevSymmetryCounts.left = lc;
                                 prevSymmetryCounts.right = rc;
                             }
+                            // [올리는 방향] 좌우 줄 평균(줄만): avg_mean_line 높을수록 줄이 김 — 서버와 동일
+                            var avgLLine = symmetryLineData.avgLeft_line || 0, avgRLine = symmetryLineData.avgRight_line || 0;
+                            var avgMeanLine = (avgLLine || avgRLine) ? (avgLLine + avgRLine) / 2 : 0;
+                            var lineSim = symmetryLineData.lineSimilarityPct || 0;
+                            if (avgMeanLine >= 3.5) { lineW = Math.min(1, lineW + 0.05); pongW = Math.max(0, 1 - lineW); symmetryBoostNotice = true; }
+                            else if (avgMeanLine >= 2.8) { lineW = Math.min(1, lineW + 0.03); pongW = Math.max(0, 1 - lineW); symmetryBoostNotice = true; }
+                            else if (avgMeanLine >= 2.2 && lineSim >= 70) { lineW = Math.min(1, lineW + 0.02); pongW = Math.max(0, 1 - lineW); symmetryBoostNotice = true; }
                         }
                         lineW += chunkIdx * 0.2 + twoOneIdx * 0.1;
                         pongW += scatterIdx * 0.2;
@@ -8682,9 +8706,11 @@ RESULTS_HTML = '''
                                     '<tr><td>좌우 대칭도</td><td>' + s.symmetryPct.toFixed(1) + '%</td><td>좌반·우반 대칭 매칭</td></tr>' +
                                     '<tr><td>왼쪽 절반 줄 개수</td><td>' + s.leftLineCount + '</td><td>적을수록 긴 줄(추세), 많을수록 퐁당</td></tr>' +
                                     '<tr><td>오른쪽 절반 줄 개수</td><td>' + s.rightLineCount + '</td><td>적을수록 긴 줄(추세), 많을수록 퐁당</td></tr>' +
-                                    '<tr><td>왼쪽 평균 줄길이</td><td>' + s.avgLeft.toFixed(2) + '</td><td>연속 정/꺽 평균</td></tr>' +
-                                    '<tr><td>오른쪽 평균 줄길이</td><td>' + s.avgRight.toFixed(2) + '</td><td>연속 정/꺽 평균</td></tr>' +
-                                    '<tr><td>줄 유사도</td><td>' + s.lineSimilarityPct.toFixed(1) + '%</td><td>양쪽 평균 줄길이 차이 반영</td></tr></tbody></table>';
+                                    '<tr><td>왼쪽 평균 줄길이(전체)</td><td>' + s.avgLeft.toFixed(2) + '</td><td>연속 정/꺽 평균</td></tr>' +
+                                    '<tr><td>오른쪽 평균 줄길이(전체)</td><td>' + s.avgRight.toFixed(2) + '</td><td>연속 정/꺽 평균</td></tr>' +
+                                    '<tr><td>왼쪽 평균 줄길이(줄만)</td><td>' + (s.avgLeft_line != null ? s.avgLeft_line.toFixed(2) : '-') + '</td><td>2개 이상 연속만 — 예측픽 반영</td></tr>' +
+                                    '<tr><td>오른쪽 평균 줄길이(줄만)</td><td>' + (s.avgRight_line != null ? s.avgRight_line.toFixed(2) : '-') + '</td><td>2개 이상 연속만 — 예측픽 반영</td></tr>' +
+                                    '<tr><td>줄 유사도</td><td>' + s.lineSimilarityPct.toFixed(1) + '%</td><td>양쪽 평균 줄길이(줄만) 차이 반영</td></tr></tbody></table>';
                             } else {
                                 symmetryLineBody.innerHTML = '<p style="color:#888;font-size:0.9em">최근 15열 이상(정/꺽) 데이터가 부족합니다.</p>';
                             }

@@ -142,18 +142,20 @@ if prediction_history and len(prediction_history) >= 5:
 
 ---
 
-## 6. 좌우 줄 평균(avgLeft, avgRight) → 올리는 방향 가산
+## 6. 좌우 줄 평균(avgLeft_line, avgRight_line) → 올리는 방향 가산
 
-줄의 평균 높이(좌우 run 길이 평균)로 "어디까지 올릴지" 규칙:
+줄의 평균 높이(좌우 run 길이 평균)로 "어디까지 올릴지" 규칙. **줄만(길이≥2)** 평균 사용 — 덩어리·줄 구간에서 퐁당(1) 제외해 정확한 줄 높이 반영.
 
-| avg_mean = (avgLeft+avgRight)/2 | lineSimilarityPct | line_w 가산 | 의미 |
+| avg_mean_line = (avgLeft_line+avgRight_line)/2 | lineSimilarityPct | line_w 가산 | 의미 |
 |---------------------------------|-------------------|-------------|------|
 | ≥ 3.5 | - | +0.05 | 줄이 김 → 올리는 방향 |
 | ≥ 2.8, < 3.5 | - | +0.03 | 중간 줄 |
 | ≥ 2.2, < 2.8 | ≥ 70 | +0.02 | 좌우 비슷 + 줄 있음 |
 | < 2.2 | - | 0 | 퐁당 쪽에 가까움 |
 
-상한: 기존 symmetry·phase 가산과 합쳐도 line_w가 과도해지지 않도록 ±0.05 이내.
+- avgLeft/avgRight: 전체 run(줄+퐁당) 평균. 표시·lineSimilarityPct 폴백용.
+- avgLeft_line/avgRight_line: 줄만(길이≥2) 평균. 예측픽 line_w 가산용.
+- 상한: 기존 symmetry·phase 가산과 합쳐도 line_w가 과도해지지 않도록 ±0.05 이내.
 
 ---
 

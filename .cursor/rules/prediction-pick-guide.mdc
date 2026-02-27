@@ -73,7 +73,7 @@ last 반영 → predict = 정 또는 꺽
 | 요소 | 올리는(line_w) | 직진(pong_w) |
 |------|----------------|--------------|
 | phase | line_phase, chunk_*, pong_to_chunk | pong_phase, chunk_to_pong |
-| symmetry | avg_mean 높음, 좌우 유사 | - |
+| symmetry | avg_mean_line(줄만 평균) 높음, 좌우 유사 | - |
 | 퐁당 간격 | avg_pong_gap ≤1.5 | avg_pong_gap ≥3 |
 | 장줄/장퐁당 | line_runs[0]≥5 | pong_runs[0]≥5 → line_w (끊김 예상) |
 | shape_win_stats | 해당 모양에서 정 많음 + last=정 | 해당 모양에서 꺽 많음 + last=꺽 |
