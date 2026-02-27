@@ -3557,8 +3557,8 @@ def _detect_u_35_pattern(line_runs):
 
 def _detect_line1_pong1_pattern(line_runs, pong_runs, first_is_line):
     """
-    정정꺽꺽정정꺽꺽 같은 덩어리: 줄1·퐁당1·줄1·퐁당1 교차 패턴.
-    run 길이가 모두 1이면 (블록이 2개씩 반복) True. 최소 3 run 이상에서 4개가 1,1,1,1이면 인정.
+    정정꺽꺽정정꺽꺽 같은 덩어리(퐁당 아님): 줄·전환·줄·전환 교차, run 길이 모두 1.
+    블록이 2개씩 반복. 최소 3 run 이상에서 6개까지 모두 1이면 인정.
     """
     if not line_runs or not pong_runs:
         return False
@@ -3587,6 +3587,36 @@ def _detect_line1_pong1_pattern(line_runs, pong_runs, first_is_line):
     if all(r == 1 for r in runs[:n]):
         return True
     return False
+
+
+def _detect_lineN_pongN_pattern(line_runs, pong_runs, first_is_line, block_size=2):
+    """
+    줄2퐁당2, 줄3퐁당3 등: (line, pong) 쌍이 (N,N), (N,N), ... 형태로 반복.
+    정정정정꺽꺽꺽꺽정정정정꺽꺽꺽꺽 = 줄2퐁당2. block_size=2.
+    """
+    if not line_runs or not pong_runs:
+        return False
+    runs = []
+    li, pi = 0, 0
+    for i in range(min(8, len(line_runs) + len(pong_runs))):
+        if first_is_line:
+            if i % 2 == 0 and li < len(line_runs):
+                runs.append(line_runs[li])
+                li += 1
+            elif i % 2 == 1 and pi < len(pong_runs):
+                runs.append(pong_runs[pi])
+                pi += 1
+        else:
+            if i % 2 == 0 and pi < len(pong_runs):
+                runs.append(pong_runs[pi])
+                pi += 1
+            elif i % 2 == 1 and li < len(line_runs):
+                runs.append(line_runs[li])
+                li += 1
+    if len(runs) < 3:
+        return False
+    n = min(6, len(runs))
+    return all(r == block_size for r in runs[:n])
 
 
 def _detect_chunk_shape(line_runs, pong_runs, first_is_line):
@@ -3685,10 +3715,11 @@ def _chunk_profile_similarity(profile_a, profile_b):
 
 def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_short, pong_pct_prev):
     """
-    덩어리 / 줄 구간 판별. 시각화·예측픽 가중치에 사용. (퐁당 구간 감지 비활성화 — 덩어리 위주)
+    덩어리 / 퐁당 / 줄 구간 판별. 시각화·예측픽 가중치에 사용.
+    - 퐁당: 정꺽정꺽만 (1개씩 교대). line_runs 없음.
+    - 덩어리: 정정꺽꺽정정꺽꺽 등 2개 이상 묶음 반복. line_runs 있음.
     - 줄 구간: 한쪽으로 길게 이어짐 (line run >= 5).
-    - 덩어리 구간: 꺽줄-정-꺽줄-정 블록 반복, 줄1퐁당1, 또는 줄 2~4. debug에 chunk_shape(321/123/block_repeat) 추가.
-    - 덩어리→퐁당(chunk_to_pong): 최근 15 퐁당%가 직전 15보다 8%p 이상 높을 때, 또는 맨 앞 퐁당 run + 직전 줄 2 이상일 때 반환 (긴퐁당 조기 감지).
+    - 덩어리→퐁당(chunk_to_pong): 최근 15 퐁당%가 직전 15보다 8%p 이상 높을 때 등.
     """
     debug = {'first_run_type': None, 'first_run_len': 0, 'pong_pct_short': pong_pct_short, 'pong_pct_prev': pong_pct_prev, 'segment_type': None, 'chunk_shape': None}
     if not line_runs and not pong_runs:
@@ -3708,13 +3739,17 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
         debug['first_run_len'] = current_run_len
     else:
         return None, debug
-    # 줄1 퐁당1 줄1 퐁당1 패턴 → 덩어리
-    if _detect_line1_pong1_pattern(line_runs, pong_runs, first_is_line):
-        if first_is_line:
+    # 줄1퐁당1 / 줄2퐁당2 / 줄3퐁당3 패턴 → 덩어리 (정정꺽꺽정정꺽꺽, 정정정정꺽꺽꺽꺽... 등)
+    # first_is_line 여부와 무관하게 감지 — 퐁당으로 시작(꺽정정꺽꺽...)해도 덩어리로 인정
+    for block_size in (1, 2, 3):
+        if block_size == 1:
+            detected = _detect_line1_pong1_pattern(line_runs, pong_runs, first_is_line)
+        else:
+            detected = _detect_lineN_pongN_pattern(line_runs, pong_runs, first_is_line, block_size)
+        if detected:
             debug['segment_type'] = 'chunk'
-            debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, first_is_line)
+            debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, first_is_line) or f'block_{block_size}'
             return 'chunk_phase', debug
-        return None, debug
     # 전환 구간: 직전 15 vs 최근 15 퐁당%
     diff_prev_short = (pong_pct_prev - pong_pct_short) if pong_pct_prev is not None and pong_pct_short is not None else 0
     diff_short_prev = (pong_pct_short - pong_pct_prev) if pong_pct_short is not None and pong_pct_prev is not None else 0
@@ -3749,7 +3784,12 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
             return 'chunk_phase', debug
         return 'chunk_start', debug
     else:
-        # 퐁당 구간: 맨 앞이 퐁당(바뀜) run → 꺽(change) 가산 필요. CSV: 퐁당에서 정 고집 시 연패
+        # 퐁당 = 정꺽정꺽만 (1개씩 교대). line_runs가 있으면 덩어리(블록)가 있는 것 → chunk_phase
+        if line_runs:
+            debug['segment_type'] = 'chunk'
+            debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, first_is_line)
+            return 'chunk_phase', debug
+        # 순수 퐁당(정꺽정꺽): line_runs 없음, pong_runs만
         debug['segment_type'] = 'pong'
         return 'pong_phase', debug
 
