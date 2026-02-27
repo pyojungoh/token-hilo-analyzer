@@ -3925,7 +3925,17 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
         debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, True)
         return 'pong_to_chunk', debug
     # 덩어리→퐁당 전환: 최근 15 퐁당%가 직전 15보다 8%p 이상 높음 → 조기 감지 (덩어리 직후 긴퐁당 대응)
+    # 단, 주변 모양이 일관되거나 덩어리 2개 이상이면 chunk_phase 유지 (줄에서 내려와도 바로 퐁당으로 가지 않음)
     if diff_short_prev >= 8:
+        if pat_cons >= 0.5 and (pat_type in ('chunk_11', 'line_pong_21', 'line_pong_31') or (pat_type and pat_type.startswith('line') and '_pong' in pat_type)):
+            debug['segment_type'] = 'chunk'
+            debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, first_is_line) or pat_type
+            return 'chunk_phase', debug
+        # 덩어리 2개 이상: line_runs 2개 이상 + 줄 길이 2 이상 있으면 덩어리 구간 유지
+        if line_runs and len(line_runs) >= 2 and any(l >= 2 for l in line_runs):
+            debug['segment_type'] = 'chunk'
+            debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, first_is_line)
+            return 'chunk_phase', debug
         debug['segment_type'] = 'pong'
         debug['chunk_shape'] = 'chunk_to_pong'
         return 'chunk_to_pong', debug
