@@ -5150,7 +5150,7 @@ def _run_prediction_update_light():
 
 
 def _scheduler_apply_results():
-    """DB 결과로 계산기 회차 반영 + relay + prediction_cache. 0.2초마다 실행. fetch 완료 시 fetch 스레드에서도 즉시 호출."""
+    """DB 결과로 계산기 회차 반영 + relay + prediction_cache. 0.05초마다 실행. fetch 완료 시 fetch 스레드에서도 즉시 호출."""
     global _last_prediction_light_at
     t0 = time.time()
     if not DB_AVAILABLE or not DATABASE_URL:

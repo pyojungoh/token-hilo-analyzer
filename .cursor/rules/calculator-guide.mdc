@@ -51,7 +51,7 @@ alwaysApply: true
 
 - **반픽**: 예측픽 반대로 배팅.
 - **스마트 반픽**: 승률반픽+연패반픽+승률방향반픽 통합. 조건 하나라도 만족 시 반대픽 (모양승률≤% 또는 연패≥N회+승률≤% 또는 고점→저점).
-- **승률방향 포인트값**: `WIN_RATE_DIR_DELTA4`(0.35), `WIN_RATE_DIR_DELTA5`(0.42), `WIN_RATE_DIR_RATIO_LOW`(0.52), `WIN_RATE_DIR_RATIO_HIGH`(0.5). **민감도 조정 시 `.cursor/rules/win-rate-direction.mdc` 반드시 참고** — 포인트값만 수정, 서버·클라이언트·패널 동일 유지.
+- **승률방향 포인트값**: `WIN_RATE_DIR_DELTA4`(0.45), `WIN_RATE_DIR_DELTA5`(0.44), `R_LOW`(0.48), `R_HIGH`(0.57). **민감도 조정 시 `.cursor/rules/win-rate-direction.mdc` 반드시 참고** — 포인트값만 수정, 서버·클라이언트·패널 동일 유지.
 - **멈춤**: 기준 = **계산기 표 15회 승률**(해당 계산기 완료 회차 최근 15회). 설정 % **이하**일 때 배팅 멈춤, 배팅금액 `-`. **승패는 반드시 기록**. (마틴과의 관계는 위 “마틴과 멈춤 — 반드시 구분” 섹션 참고.)
 - **멈춤 서버 갱신**: `_update_calc_paused_after_round`로 **paused** 갱신. 기준 = `_server_recent_15_win_rate(completed)`. 멈춤 옵션 켜져 있을 때만; 마틴 중(직전이 패/조커)이면 갱신 안 함(마틴 끝난 뒤 멈춤). 완료 회차 0이면 paused 해제.
 - **시간**: 설정 시간 종료 시 배팅 정지.

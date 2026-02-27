@@ -15,21 +15,21 @@ alwaysApply: false
 
 ## 배팅중 금액 정확도 (절대 규칙)
 
-- **배팅중 금액 = 계산기 표 1열과 동일** (`getBetForRound` 출처)
+- **배팅중 금액 = 계산기 표 1열과 동일** (`getBetForRound` 출처) — 웹 계산기 표시용
 - **POST 수신**: 클라이언트 값 사용. **단, 마틴 끝 후** 서버에 직전 회차 결과가 있으면 `pending_bet_amount`로 덮어씀 (잘못된 마틴 금액 방지)
-- **매크로**: `suggested_amount`만 배팅에 사용. `_display_best_amount`는 표시용만.
+- **매크로**: 배팅 금액은 **round_actuals + _bet_history** 기반 마틴으로 **내부 계산만** 사용. 서버 `suggested_amount` 배팅 사용 **금지** (betting-in-display-to-macro-rule.mdc). `_display_best_amount`는 표시용만.
 - **마틴 승 후**: 반드시 초기 금액으로 리셋. 마틴 금액이 이어져 배팅되면 안 됨.
-- **상세**: `docs/AUTO_BETTING_AMOUNT_RULES.md`, `docs/AUTO_BETTING_DATA_FLOW.md` 참고
+- **상세**: `docs/AUTO_BETTING_AMOUNT_RULES.md`, `docs/AUTO_BETTING_DATA_FLOW.md`, `betting-in-display-to-macro-rule.mdc` 참고
 
 ## relay 캐시
 
-- **스케줄러**: 0.2초마다 `_update_current_pick_relay_cache` 호출
+- **스케줄러**: 0.05초마다 `_scheduler_apply_results` → `_update_relay_cache_for_running_calcs` → relay 갱신
 - **웹 POST**: relay 캐시 **항상** 즉시 갱신 (배팅중 픽 들어오자마자 매크로 전달 — 상세: `betting-in-display-to-macro-rule.mdc`)
 
 ## 완료된 작업
 
 - 매크로 표시 안정화: `(회차, 픽, 금액)`이 2회 연속 동일할 때만 UI 갱신 (`emulator_macro.py`)
-- relay 캐시: POST 즉시 갱신 + 스케줄러 0.2초마다 갱신 (매크로 즉시 수신)
+- relay 캐시: POST 즉시 갱신 + 스케줄러 0.05초마다 갱신 (매크로 즉시 수신)
 
 ## 10초 게임 8초 내 배팅 (타이밍)
 

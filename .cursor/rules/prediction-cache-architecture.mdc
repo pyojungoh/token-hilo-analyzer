@@ -13,7 +13,7 @@ alwaysApply: true
 | 변수 | 용도 |
 |------|------|
 | `results_cache` | 전체 페이로드. `_refresh_results_background`(외부 fetch) 또는 `get_results`(DB)로 갱신 |
-| `prediction_cache` | 예측픽만. **DB 전용** `_update_prediction_cache_from_db`(0.1초) + fetch 완료 시 `_refresh_results_background` |
+| `prediction_cache` | 예측픽만. **DB 전용** `_update_prediction_cache_from_db`로 갱신. apply 플로우(0.05초) 내 호출. apply 스킵 시 0.1초 스로틀로 `_run_prediction_update_light` 경량 갱신. fetch 완료 시 `_refresh_results_background`에서도 반영. |
 
 ## /api/current-prediction
 
@@ -22,8 +22,8 @@ alwaysApply: true
 
 ## 스케줄러
 
-- `_scheduler_fetch_results`: `_refresh_results_background` 호출 (외부 fetch 포함)
-- `_update_prediction_cache_from_db`: **외부 fetch 없음**, DB만 사용. `_start_scheduler_delayed` 내부에서 job 추가.
+- `_scheduler_fetch_results`: 0.05초마다 `_refresh_results_background` 호출 (외부 fetch 포함)
+- `_scheduler_apply_results`: 0.05초마다 실행. 내부에서 `_update_prediction_cache_from_db` 호출 (DB만 사용, 외부 fetch 없음)
 
 ## 수정 시 금지
 
