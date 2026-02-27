@@ -3619,6 +3619,50 @@ def _detect_lineN_pongN_pattern(line_runs, pong_runs, first_is_line, block_size=
     return all(r == block_size for r in runs[:n])
 
 
+def _get_surrounding_pattern_consistency(line_runs, pong_runs, first_is_line, min_columns=30):
+    """
+    주변 줄높이·퐁당길이 일관성 분석. 메인픽 그래프 최소 30열 기준.
+    - 줄 높이: 3개가 계속 이어짐, 2개3개가 이어짐 — 시퀀스 정밀 분석
+    - 퐁당 간격: 퐁당 3번 이뤄지고 다음번도 3번 — 덩어리 사이 퐁당 길이 시퀀스
+    반환: (dominant_pair, consistency_score, pattern_type)
+    """
+    if not line_runs or not pong_runs:
+        return None, 0.0, None
+    total_pairs = sum(line_runs) + sum(pong_runs)
+    if total_pairs + 1 < min_columns:
+        return None, 0.0, None
+    n = min(12, len(line_runs), len(pong_runs))
+    if n < 2:
+        return None, 0.0, None
+    from collections import Counter
+    pairs = [(line_runs[i], pong_runs[i]) for i in range(n)]
+    cnt = Counter(pairs)
+    dominant, count = cnt.most_common(1)[0]
+    pair_consistency = count / n
+    dl, dp = dominant
+    line_heights = line_runs[:n]
+    pong_gaps = pong_runs[:n]
+    line_cnt = Counter(line_heights)
+    pong_cnt = Counter(pong_gaps)
+    line_dom, line_n = line_cnt.most_common(1)[0]
+    pong_dom, pong_n = pong_cnt.most_common(1)[0]
+    line_seq_cons = line_n / n
+    pong_seq_cons = pong_n / n
+    seq_boost = (line_seq_cons + pong_seq_cons) / 2
+    consistency = max(pair_consistency, pair_consistency * 0.6 + seq_boost * 0.4)
+    if consistency < 0.5:
+        return dominant, consistency, None
+    if dl == 1 and dp == 1:
+        pattern_type = 'chunk_11'
+    elif dp == 1 and dl >= 2:
+        pattern_type = f'line_pong_{dl}1'
+    elif line_seq_cons >= 0.6 or pong_seq_cons >= 0.6:
+        pattern_type = f'line{line_dom}_pong{pong_dom}'
+    else:
+        pattern_type = None
+    return dominant, consistency, pattern_type
+
+
 def _detect_chunk_shape(line_runs, pong_runs, first_is_line):
     """
     덩어리 구간일 때 블록 모양: 321(줄어듦), 123(늘어남), block_repeat(동일 블록 반복).
@@ -3739,6 +3783,11 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
         debug['first_run_len'] = current_run_len
     else:
         return None, debug
+    # 주변 모양 일관성 (줄높이·퐁당길이 비슷하면 그 패턴 유지 확률 높음)
+    dom_pair, pat_cons, pat_type = _get_surrounding_pattern_consistency(line_runs, pong_runs, first_is_line)
+    if pat_cons >= 0.5:
+        debug['pattern_consistency'] = round(pat_cons, 2)
+        debug['pattern_type'] = pat_type or (f'pair_{dom_pair[0]}_{dom_pair[1]}' if dom_pair else None)
     # 줄1퐁당1 / 줄2퐁당2 / 줄3퐁당3 패턴 → 덩어리 (정정꺽꺽정정꺽꺽, 정정정정꺽꺽꺽꺽... 등)
     # first_is_line 여부와 무관하게 감지 — 퐁당으로 시작(꺽정정꺽꺽...)해도 덩어리로 인정
     for block_size in (1, 2, 3):
@@ -3762,8 +3811,14 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
         debug['segment_type'] = 'pong'
         debug['chunk_shape'] = 'chunk_to_pong'
         return 'chunk_to_pong', debug
-    # 덩어리 직후 퐁당 진입: 맨 앞 퐁당 run + 직전 줄 2 이상 → chunk_to_pong (전환 직후 연패 방지)
+    # 덩어리 직후 퐁당 진입: 맨 앞 퐁당 run + 직전 줄 2 이상 → chunk_to_pong
+    # 단, 주변 모양이 일관되면(정정꺽꺽·줄퐁당줄퐁당) 그 패턴 유지 확률 높음 → chunk_phase 유지
     if not first_is_line and pong_runs and line_runs and len(pong_runs) >= 1 and line_runs[0] >= 2:
+        dom, cons, ptype = _get_surrounding_pattern_consistency(line_runs, pong_runs, first_is_line)
+        if cons >= 0.6 and (ptype in ('chunk_11', 'line_pong_21', 'line_pong_31') or (ptype and ptype.startswith('line') and '_pong' in ptype)):
+            debug['segment_type'] = 'chunk'
+            debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, first_is_line) or ptype
+            return 'chunk_phase', debug
         debug['segment_type'] = 'pong'
         debug['chunk_shape'] = 'chunk_to_pong'
         return 'chunk_to_pong', debug
@@ -3845,6 +3900,21 @@ def _apply_phase_line_pong_adjustments(line_w, pong_w, phase, chunk_shape, line_
         curr_line_len = line_runs[0] if (first_is_line_col and line_runs) else 0
         suppress_break = has_long_line and not allow_break_consideration
         is_321_bottom = (chunk_shape == '321' and curr_line_len <= 3 and line_runs and len(line_runs) >= 2 and line_runs[1] <= curr_line_len)
+
+        # 주변 모양 일관성: 줄높이·퐁당길이 비슷하면 그 패턴 유지 확률 높음
+        dom_pair, pat_cons, pat_type = _get_surrounding_pattern_consistency(
+            line_runs, pong_runs, (use_for_pattern[0] == use_for_pattern[1]) if len(use_for_pattern) >= 2 else True)
+        if pat_cons >= 0.6 and pat_type:
+            pm = pong_mul
+            if pat_type == 'chunk_11':
+                line_w += 0.04 * pm
+                pong_w = max(0.0, pong_w - 0.02 * pm)
+            elif pat_type and pat_type.startswith('line_pong_'):
+                pong_w += 0.04 * pm
+                line_w = max(0.0, line_w - 0.02 * pm)
+            elif pat_type and '_pong' in pat_type and pat_type.startswith('line'):
+                pong_w += 0.04 * pm
+                line_w = max(0.0, line_w - 0.02 * pm)
 
         if phase == 'pong_to_chunk':
             line_w += 0.08

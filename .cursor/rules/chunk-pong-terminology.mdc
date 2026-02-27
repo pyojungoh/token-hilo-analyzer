@@ -1,0 +1,37 @@
+---
+description: 덩어리/퐁당 용어 구분 — phase 판별·예측픽 수정 시 반드시 준수.
+globs: app.py
+alwaysApply: true
+---
+
+# 덩어리 vs 퐁당 용어 규칙 (절대 준수)
+
+**예측픽 전체 규칙은 `.cursor/rules/prediction-pick-guide.mdc` 참고.** 이 문서는 덩어리/퐁당 구분 요약.
+
+## 용어 정의
+
+| 용어 | 정의 | 예시 | 코드 조건 |
+|------|------|------|-----------|
+| **퐁당** | **정꺽정꺽** — 1개씩만 교대 | 정꺽정꺽정꺽 | `line_runs` 비어 있음 |
+| **덩어리** | **정정꺽꺽정정꺽꺽** — 2개 이상 묶음 반복 | 정정꺽꺽, 정정정정꺽꺽꺽꺽 | `line_runs` 존재 |
+
+## ⛔ 혼동 금지
+
+- **정정꺽꺽정정꺽꺽** → 덩어리 (퐁당 아님)
+- **정꺽정꺽** → 퐁당 (덩어리 아님)
+
+## 코드 적용
+
+- `pong_phase` 반환: **line_runs가 비어 있을 때만** (순수 퐁당)
+- `line_runs`가 있으면 → 덩어리 → `chunk_phase` 반환
+- `_detect_line1_pong1_pattern` 등으로 감지되는 정정꺽꺽 패턴은 **덩어리**
+
+## 주변 모양 일관성 (요약)
+
+- 주변 = 메인픽 그래프 **최소 30열**: `_get_surrounding_pattern_consistency` 30열 미만이면 적용 안 함.
+- chunk_11(정정꺽꺽) 일관 → line_w 가산. line_pong_21/31(줄퐁당줄퐁당) 일관 → pong_w 가산.
+- chunk_to_pong: 주변 패턴 일관되면 chunk_phase 유지.
+
+---
+
+상세: prediction-pick-guide.mdc 섹션 3·4·5
