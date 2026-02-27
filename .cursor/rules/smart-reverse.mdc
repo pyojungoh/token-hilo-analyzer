@@ -20,6 +20,7 @@ alwaysApply: false
 | **연패반픽** | N연패 이상 **그리고** 실제 경고 합산승률이 설정값 이하일 때 반대픽 | `smart_reverse_min_streak` (기본 3회), `smart_reverse_threshold` |
 | **승률방향반픽** | 롤링 100회 승률 구간이 고점→저점(high_falling)일 때 반대픽. 저점→고점(low_rising)은 정픽. 정체(mid_flat) 시 직전 방향 참조 | `.cursor/rules/win-rate-direction.mdc` 포인트값 |
 | **비대칭 임계값** | 15카드 승률 추세(올라가는 중/내려가는 중)로 반픽·정픽 전환 속도 조절. 내려갈 때 50% 이하→반픽, 올라갈 때 40% 이상→정픽 | `smart_reverse_asymmetric`, `smart_reverse_threshold_down`(50), `smart_reverse_threshold_up`(40) |
+| **줄 추종** (내장) | 줄 4 이상일 때 줄 방향 추종(정줄→정, 꺽줄→꺽). 줄 끝나면 blended≤설정값→반픽, >설정값→정픽. 체크박스 없이 스마트 반픽에 내장 | `_get_run_length_from_results`(서버), `getRunLengthFromGraphValues`(클라이언트) |
 
 ### UI 옵션 (계산기당)
 
@@ -72,6 +73,7 @@ alwaysApply: false
 | 메인 15경기 승률 | `_get_main_recent15_win_rate()` — 예측픽 vs actual |
 | 연패 | `_get_lose_streak_from_history(c['history'])` — 조커·패·no_bet 포함 |
 | 15카드 승률 추세 | `_get_win_rate_trend_from_15_cards(ph)` — prediction_history의 blended_win_rate 비교. 'up'/'down'/None. 비대칭 옵션 시 사용 |
+| 줄 길이(실시간) | `_get_run_length_from_results(results)` — results(graph_values) 기준. 줄 4 이상 시 추종. ph 폴백 |
 
 ### 연패 중 방향 고정
 

@@ -1534,6 +1534,28 @@ def _get_prediction_picks_best(results, predicted_round, ph, shape_pong_only=Fal
     return best_pred, color, best_type
 
 
+def _get_run_length_from_results(results, min_len=16):
+    """실제 결과(results, 최신순)에서 맨 앞 연속 같은 결과 개수. graph_values 기반.
+    반환: (run_length, last_value). last_value=True면 정, False면 꺽. 줄 4 이상 시 추종용."""
+    if not results or len(results) < min_len:
+        return 0, None
+    try:
+        gv = _build_graph_values(results)
+        if not gv or len(gv) < 2:
+            return 0, None
+        last = gv[0]
+        if last is not True and last is not False:
+            return 0, None
+        run = 1
+        for i in range(1, len(gv)):
+            if gv[i] is not last:
+                break
+            run += 1
+        return run, last
+    except Exception:
+        return 0, None
+
+
 def _get_current_result_run_length(ph):
     """실제 결과(actual) 기준 맨 끝에서 연속 같은 결과(정 또는 꺽) 개수. 조커 나오면 끊김."""
     if not ph:
@@ -2148,42 +2170,50 @@ def _apply_results_to_calcs(results):
                     pred_for_calc = '꺽' if pending_predicted == '정' else '정'
                     bet_color_for_history = _flip_pick_color(bet_color_for_history)
                 blended = _blended_win_rate(get_prediction_history(100))
-                # 스마트 반픽: 승률반픽+연패반픽. 비대칭 옵션 시 15카드 추세로 판별. 히스토리 기록용
+                # 스마트 반픽: 줄 4 이상 시 줄 추종 내장. 줄 끝나면 blended≤설정값→반픽. 히스토리 기록용
                 use_smart = c.get('smart_reverse') or c.get('win_rate_reverse') or c.get('lose_streak_reverse') or c.get('win_rate_direction_reverse')
                 ph = get_prediction_history(150)
-                run_length = _get_current_result_run_length(ph)
+                run_length, run_last_value = 0, None
+                if results_for_shape and len(results_for_shape) >= 16:
+                    run_length, run_last_value = _get_run_length_from_results(results_for_shape)
+                if run_length < 4:
+                    run_length = _get_current_result_run_length(ph)
                 no_reverse_in_streak = bool(c.get('streak_suppress_reverse', False)) and run_length >= 4
                 main_rate15 = _get_main_recent15_win_rate(ph)
-                if use_smart and not no_reverse_in_streak:
-                    thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 43)))
-                    thr_down = max(0, min(100, int(c.get('smart_reverse_threshold_down') or 50)))
-                    thr_up = max(0, min(100, int(c.get('smart_reverse_threshold_up') or 40)))
-                    min_streak = max(2, min(15, int(c.get('smart_reverse_min_streak') or c.get('lose_streak_reverse_min_streak') or 3)))
-                    lose_streak = _get_lose_streak_from_history(c.get('history') or [])
-                    do_reverse = False
-                    use_asymmetric = bool(c.get('smart_reverse_asymmetric', False))
-                    trend = _get_win_rate_trend_from_15_cards(ph) if use_asymmetric and ph else None
-                    if blended is not None and (main_rate15 is None or main_rate15 < 53):
-                        if use_asymmetric and trend is not None:
-                            if trend == 'down' and blended <= thr_down:
-                                do_reverse = True
-                            elif trend == 'up' and blended < thr_up:
-                                do_reverse = True
-                            elif trend == 'up' and blended >= thr_up:
-                                do_reverse = False
-                            elif trend == 'down' and blended > thr_down:
-                                do_reverse = False
-                        else:
-                            if blended <= thr:
-                                do_reverse = True
-                    if lose_streak >= min_streak and blended is not None and blended <= thr and (main_rate15 is None or main_rate15 < 53):
-                        do_reverse = True
-                    res_for_phase = results_for_shape if (results_for_shape and len(results_for_shape) >= 16) else results
-                    if do_reverse and res_for_phase and _suppress_smart_reverse_by_phase(res_for_phase):
+                if use_smart:
+                    if run_length >= 4 and run_last_value is not None:
+                        pred_for_calc = '정' if run_last_value else '꺽'
+                        bet_color_for_history = '빨강' if pred_for_calc == '정' else '검정'
+                    elif not no_reverse_in_streak:
+                        thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 43)))
+                        thr_down = max(0, min(100, int(c.get('smart_reverse_threshold_down') or 50)))
+                        thr_up = max(0, min(100, int(c.get('smart_reverse_threshold_up') or 40)))
+                        min_streak = max(2, min(15, int(c.get('smart_reverse_min_streak') or c.get('lose_streak_reverse_min_streak') or 3)))
+                        lose_streak = _get_lose_streak_from_history(c.get('history') or [])
                         do_reverse = False
-                    if do_reverse:
-                        pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
-                        bet_color_for_history = _flip_pick_color(bet_color_for_history)
+                        use_asymmetric = bool(c.get('smart_reverse_asymmetric', False))
+                        trend = _get_win_rate_trend_from_15_cards(ph) if use_asymmetric and ph else None
+                        if blended is not None and (main_rate15 is None or main_rate15 < 53):
+                            if use_asymmetric and trend is not None:
+                                if trend == 'down' and blended <= thr_down:
+                                    do_reverse = True
+                                elif trend == 'up' and blended < thr_up:
+                                    do_reverse = True
+                                elif trend == 'up' and blended >= thr_up:
+                                    do_reverse = False
+                                elif trend == 'down' and blended > thr_down:
+                                    do_reverse = False
+                            else:
+                                if blended <= thr:
+                                    do_reverse = True
+                        if lose_streak >= min_streak and blended is not None and blended <= thr and (main_rate15 is None or main_rate15 < 53):
+                            do_reverse = True
+                        res_for_phase = results_for_shape if (results_for_shape and len(results_for_shape) >= 16) else results
+                        if do_reverse and res_for_phase and _suppress_smart_reverse_by_phase(res_for_phase):
+                            do_reverse = False
+                        if do_reverse:
+                            pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
+                            bet_color_for_history = _flip_pick_color(bet_color_for_history)
                 if c.get('shape_prediction') and c.get('shape_prediction_reverse'):
                     sp15 = _get_shape_prediction_win_rate_15(c)
                     thr = max(0, min(100, int(c.get('shape_prediction_reverse_threshold') or 50)))
@@ -2512,54 +2542,68 @@ def _server_calc_effective_pick_and_amount(c):
         color = '빨강' if pred == '정' else '검정'
     ph = get_prediction_history(150)
     main_rate15 = _get_main_recent15_win_rate(ph)
-    run_length = _get_current_result_run_length(ph)
+    # 줄 감지: results 우선(실시간), ph 폴백. 줄 4 이상 시 추종, 줄 끝나면 설정 임계값 따름
+    run_length, run_last_value = 0, None
+    try:
+        results_rl = get_recent_results(hours=24)
+        if results_rl:
+            results_rl = _sort_results_newest_first(results_rl)
+            run_length, run_last_value = _get_run_length_from_results(results_rl)
+    except Exception:
+        pass
+    if run_length < 4:
+        run_length = _get_current_result_run_length(ph)
     streak_suppress = bool(c.get('streak_suppress_reverse', False))
-    # 줄 4 이상(4연승/4연패)일 때 반픽 억제 — 퐁당→긴줄 갑작스런 전환 시 연패 감소
     no_reverse_in_streak = streak_suppress and run_length >= 4
     # 반픽/승률반픽/연패반픽/승률방향 반픽 적용 (클라이언트와 동일). 메인 15경기 승률 좋으면(53% 이상) 반픽 억제.
     if c.get('reverse'):
         pred = '꺽' if pred == '정' else '정'
         color = _flip_pick_color(color)
     blended = _blended_win_rate(ph or get_prediction_history(100))
-    # 스마트 반픽: 승률반픽+연패반픽. 비대칭 임계값(올라갈때40%/내려갈때50%) 옵션 시 15카드 승률 추세로 판별
+    # 스마트 반픽: 줄 4 이상 시 줄 추종(체크박스 없이 내장). 줄 끝나면 blended≤설정값→반픽, >설정값→정픽
     use_smart = c.get('smart_reverse') or c.get('win_rate_reverse') or c.get('lose_streak_reverse') or c.get('win_rate_direction_reverse')
-    if use_smart and not no_reverse_in_streak:
-        thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 43)))
-        thr_down = max(0, min(100, int(c.get('smart_reverse_threshold_down') or 50)))  # 내려갈 때 반픽 기준
-        thr_up = max(0, min(100, int(c.get('smart_reverse_threshold_up') or 40)))       # 올라갈 때 정픽 기준
-        min_streak = max(2, min(15, int(c.get('smart_reverse_min_streak') or c.get('lose_streak_reverse_min_streak') or 3)))
-        lose_streak = _get_lose_streak_from_history(c.get('history') or [])
-        do_reverse = False
-        use_asymmetric = bool(c.get('smart_reverse_asymmetric', False))
-        trend = _get_win_rate_trend_from_15_cards(ph) if use_asymmetric and ph else None
-        if blended is not None and (main_rate15 is None or main_rate15 < 53):
-            if use_asymmetric and trend is not None:
-                if trend == 'down' and blended <= thr_down:
-                    do_reverse = True   # 잘 맞추다 못 맞출 때 → 50% 이하에서 반픽
-                elif trend == 'up' and blended < thr_up:
-                    do_reverse = True   # 못 맞추다 못 맞출 때 → 40% 미만에서 반픽
-                elif trend == 'up' and blended >= thr_up:
-                    do_reverse = False  # 못 맞추다 잘 맞출 때 → 40% 이상이면 정픽 유지
-                elif trend == 'down' and blended > thr_down:
-                    do_reverse = False  # 잘 맞추다 잘 맞출 때 → 50% 초과면 정픽 유지
-            else:
-                if blended <= thr:
-                    do_reverse = True
-        if lose_streak >= min_streak and blended is not None and blended <= thr and (main_rate15 is None or main_rate15 < 53):
-            do_reverse = True
-        # 패턴 기반 억제: 긴줄·긴 퐁당 구간에서는 승률만 보고 반픽하지 않음 (계속 틀리다 방향 바꿔서 또 틀림 방지)
-        if do_reverse:
-            try:
-                results_sr = get_recent_results(hours=24)
-                if results_sr:
-                    results_sr = _sort_results_newest_first(results_sr)
-                    if _suppress_smart_reverse_by_phase(results_sr):
-                        do_reverse = False
-            except Exception:
-                pass
-        if do_reverse:
-            pred = '꺽' if pred == '정' else '정'
-            color = _flip_pick_color(color)
+    if use_smart:
+        if run_length >= 4 and run_last_value is not None:
+            # 줄 구간: 줄 방향 추종
+            pred = '정' if run_last_value else '꺽'
+            color = '빨강' if pred == '정' else '검정'
+        elif not no_reverse_in_streak:
+            thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 43)))
+            thr_down = max(0, min(100, int(c.get('smart_reverse_threshold_down') or 50)))  # 내려갈 때 반픽 기준
+            thr_up = max(0, min(100, int(c.get('smart_reverse_threshold_up') or 40)))       # 올라갈 때 정픽 기준
+            min_streak = max(2, min(15, int(c.get('smart_reverse_min_streak') or c.get('lose_streak_reverse_min_streak') or 3)))
+            lose_streak = _get_lose_streak_from_history(c.get('history') or [])
+            do_reverse = False
+            use_asymmetric = bool(c.get('smart_reverse_asymmetric', False))
+            trend = _get_win_rate_trend_from_15_cards(ph) if use_asymmetric and ph else None
+            if blended is not None and (main_rate15 is None or main_rate15 < 53):
+                if use_asymmetric and trend is not None:
+                    if trend == 'down' and blended <= thr_down:
+                        do_reverse = True   # 잘 맞추다 못 맞출 때 → 50% 이하에서 반픽
+                    elif trend == 'up' and blended < thr_up:
+                        do_reverse = True   # 못 맞추다 못 맞출 때 → 40% 미만에서 반픽
+                    elif trend == 'up' and blended >= thr_up:
+                        do_reverse = False  # 못 맞추다 잘 맞출 때 → 40% 이상이면 정픽 유지
+                    elif trend == 'down' and blended > thr_down:
+                        do_reverse = False  # 잘 맞추다 잘 맞출 때 → 50% 초과면 정픽 유지
+                else:
+                    if blended <= thr:
+                        do_reverse = True
+            if lose_streak >= min_streak and blended is not None and blended <= thr and (main_rate15 is None or main_rate15 < 53):
+                do_reverse = True
+            # 패턴 기반 억제: 긴줄·긴 퐁당 구간에서는 승률만 보고 반픽하지 않음 (계속 틀리다 방향 바꿔서 또 틀림 방지)
+            if do_reverse:
+                try:
+                    results_sr = get_recent_results(hours=24)
+                    if results_sr:
+                        results_sr = _sort_results_newest_first(results_sr)
+                        if _suppress_smart_reverse_by_phase(results_sr):
+                            do_reverse = False
+                except Exception:
+                    pass
+            if do_reverse:
+                pred = '꺽' if pred == '정' else '정'
+                color = _flip_pick_color(color)
     if c.get('shape_prediction') and c.get('shape_prediction_reverse'):
         sp15 = _get_shape_prediction_win_rate_15(c)
         thr = max(0, min(100, int(c.get('shape_prediction_reverse_threshold') or 50)))
@@ -2592,40 +2636,48 @@ def _server_calc_effective_pick_and_amount(c):
             color = '검정' if pred == '정' else '빨강'
         else:
             color = '빨강' if pred == '정' else '검정'
-        # 모양 픽에 반픽/스마트 반픽 적용 (다른 옵션과 중복 사용 가능)
+        # 모양 픽에 반픽/스마트 반픽 적용 (다른 옵션과 중복 사용 가능). 줄 4 이상 시 줄 추종 내장
         if c.get('reverse'):
             pred = '꺽' if pred == '정' else '정'
             color = _flip_pick_color(color)
-        if use_smart and not no_reverse_in_streak:
-            thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 43)))
-            thr_down = max(0, min(100, int(c.get('smart_reverse_threshold_down') or 50)))
-            thr_up = max(0, min(100, int(c.get('smart_reverse_threshold_up') or 40)))
-            min_streak = max(2, min(15, int(c.get('smart_reverse_min_streak') or c.get('lose_streak_reverse_min_streak') or 3)))
-            lose_streak = _get_lose_streak_from_history(c.get('history') or [])
-            blended = _blended_win_rate(ph or get_prediction_history(100))
-            do_reverse = False
-            use_asymmetric = bool(c.get('smart_reverse_asymmetric', False))
-            trend = _get_win_rate_trend_from_15_cards(ph) if use_asymmetric and ph else None
-            if blended is not None and (main_rate15 is None or main_rate15 < 53):
-                if use_asymmetric and trend is not None:
-                    if trend == 'down' and blended <= thr_down:
-                        do_reverse = True
-                    elif trend == 'up' and blended < thr_up:
-                        do_reverse = True
-                    elif trend == 'up' and blended >= thr_up:
-                        do_reverse = False
-                    elif trend == 'down' and blended > thr_down:
-                        do_reverse = False
-                else:
-                    if blended <= thr:
-                        do_reverse = True
-            if lose_streak >= min_streak and blended is not None and blended <= thr and (main_rate15 is None or main_rate15 < 53):
-                do_reverse = True
-            if do_reverse and _suppress_smart_reverse_by_phase(results):
+        if use_smart:
+            run_len_so, run_last_so = _get_run_length_from_results(results)
+            if run_len_so < 4:
+                run_len_so = _get_current_result_run_length(ph)
+            no_rev_so = streak_suppress and run_len_so >= 4
+            if run_len_so >= 4 and run_last_so is not None:
+                pred = '정' if run_last_so else '꺽'
+                color = '빨강' if pred == '정' else '검정'
+            elif not no_rev_so:
+                thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 43)))
+                thr_down = max(0, min(100, int(c.get('smart_reverse_threshold_down') or 50)))
+                thr_up = max(0, min(100, int(c.get('smart_reverse_threshold_up') or 40)))
+                min_streak = max(2, min(15, int(c.get('smart_reverse_min_streak') or c.get('lose_streak_reverse_min_streak') or 3)))
+                lose_streak = _get_lose_streak_from_history(c.get('history') or [])
+                blended = _blended_win_rate(ph or get_prediction_history(100))
                 do_reverse = False
-            if do_reverse:
-                pred = '꺽' if pred == '정' else '정'
-                color = _flip_pick_color(color)
+                use_asymmetric = bool(c.get('smart_reverse_asymmetric', False))
+                trend = _get_win_rate_trend_from_15_cards(ph) if use_asymmetric and ph else None
+                if blended is not None and (main_rate15 is None or main_rate15 < 53):
+                    if use_asymmetric and trend is not None:
+                        if trend == 'down' and blended <= thr_down:
+                            do_reverse = True
+                        elif trend == 'up' and blended < thr_up:
+                            do_reverse = True
+                        elif trend == 'up' and blended >= thr_up:
+                            do_reverse = False
+                        elif trend == 'down' and blended > thr_down:
+                            do_reverse = False
+                    else:
+                        if blended <= thr:
+                            do_reverse = True
+                if lose_streak >= min_streak and blended is not None and blended <= thr and (main_rate15 is None or main_rate15 < 53):
+                    do_reverse = True
+                if do_reverse and _suppress_smart_reverse_by_phase(results):
+                    do_reverse = False
+                if do_reverse:
+                    pred = '꺽' if pred == '정' else '정'
+                    color = _flip_pick_color(color)
         pick_color = 'RED' if color == '빨강' else ('BLACK' if color == '검정' else None)
     if c.get('paused'):
         return pick_color, 0, pred
@@ -7652,6 +7704,7 @@ RESULTS_HTML = '''
                 
                 // 그래프용 정/꺽 (전체: results.length - 15개, 쭉 표시)
                 const graphValues = (results.length >= 16) ? graphColorMatchResults : [];
+                try { window.__lastGraphValues = graphValues; } catch (e) {}
                 
                 displayResults.forEach((result, index) => {
                     try {
@@ -7856,7 +7909,9 @@ RESULTS_HTML = '''
                         blended = 0.65 * r15 + 0.25 * r30 + 0.10 * r100;
                         lowWinRateForRecord = (c15 > 0 || c30 > 0 || c100 > 0) && blended <= 50;
                     } catch (e) {}
-                    var runLen = getCurrentResultRunLength(typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory) ? predictionHistory : []);
+                    var runLenObj = getRunLengthFromGraphValues(typeof window.__lastGraphValues !== 'undefined' ? window.__lastGraphValues : []);
+                    var runLen = runLenObj.run;
+                    if (runLen < 4) runLen = getCurrentResultRunLength(typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory) ? predictionHistory : []);
                     if (!alreadyRecordedRound && predForRound) {
                         const isActualJoker = displayResults.length > 0 && !!displayResults[0].joker;
                         if (isActualJoker) {
@@ -7884,8 +7939,13 @@ RESULTS_HTML = '''
                                     betColor = normalizePickColor(predForRound.color);
                                     if (baseForPred !== predForRound.value) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
-                                    var doRev = getSmartReverseDoRev(id, blended, r15, noRevByStreak5);
-                                    if (doRev) { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
+                                    if (runLenObj.run >= 4 && runLenObj.last != null) {
+                                        pred = runLenObj.last ? '정' : '꺽';
+                                        betColor = pred === '정' ? '빨강' : '검정';
+                                    } else {
+                                        var doRev = getSmartReverseDoRev(id, blended, r15, noRevByStreak5);
+                                        if (doRev) { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
+                                    }
                                     var shapePredRev = !!(calcState[id] && calcState[id].shape_prediction_reverse);
                                     var shapePredRevThr = (calcState[id] != null && typeof calcState[id].shape_prediction_reverse_threshold === 'number') ? calcState[id].shape_prediction_reverse_threshold : 50;
                                     if (!!(calcState[id] && calcState[id].shape_prediction) && shapePredRev && typeof getShapePredictionWinRate15 === 'function') {
@@ -7948,8 +8008,13 @@ RESULTS_HTML = '''
                                     betColorActual = normalizePickColor(predForRound.color);
                                     if (baseForPredA !== predForRound.value) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
-                                    var doRevA = getSmartReverseDoRev(id, blended, r15, noRevByStreak5A);
-                                    if (doRevA) { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; }
+                                    if (runLenObj.run >= 4 && runLenObj.last != null) {
+                                        pred = runLenObj.last ? '정' : '꺽';
+                                        betColorActual = pred === '정' ? '빨강' : '검정';
+                                    } else {
+                                        var doRevA = getSmartReverseDoRev(id, blended, r15, noRevByStreak5A);
+                                        if (doRevA) { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; }
+                                    }
                                     if (!!(calcState[id] && calcState[id].shape_prediction) && shapePredRevA && typeof getShapePredictionWinRate15 === 'function' && sp15A != null && sp15A <= shapePredRevThrA) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                 }
                                 if (betPredForServerActual == null) { betPredForServerActual = pred; betColorForServerActual = betColorActual || null; }
@@ -8024,8 +8089,13 @@ RESULTS_HTML = '''
                                     var noRevByStreak52 = !(streakSuppress2 && runLen >= 4);
                                     betColor = normalizePickColor(predForRound.color);
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
-                                    var doRev2 = getSmartReverseDoRev(id, blended, r15, noRevByStreak52);
-                                    if (doRev2) { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
+                                    if (runLenObj.run >= 4 && runLenObj.last != null) {
+                                        pred = runLenObj.last ? '정' : '꺽';
+                                        betColor = pred === '정' ? '빨강' : '검정';
+                                    } else {
+                                        var doRev2 = getSmartReverseDoRev(id, blended, r15, noRevByStreak52);
+                                        if (doRev2) { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
+                                    }
                                 }
                                 var pendingIdx2 = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
                                 if (pendingIdx2 >= 0) {
@@ -8068,8 +8138,13 @@ RESULTS_HTML = '''
                                     var noRevByStreak53 = !(streakSuppress3 && runLen >= 4);
                                     betColorActual = normalizePickColor(predForRound.color);
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
-                                    var doRev3 = getSmartReverseDoRev(id, blended, r15, noRevByStreak53);
-                                    if (doRev3) { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; }
+                                    if (runLenObj.run >= 4 && runLenObj.last != null) {
+                                        pred = runLenObj.last ? '정' : '꺽';
+                                        betColorActual = pred === '정' ? '빨강' : '검정';
+                                    } else {
+                                        var doRev3 = getSmartReverseDoRev(id, blended, r15, noRevByStreak53);
+                                        if (doRev3) { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; }
+                                    }
                                 }
                                 var pendingIdx3 = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
                                 if (pendingIdx3 >= 0) {
@@ -9376,7 +9451,19 @@ RESULTS_HTML = '''
             var v = (el && !isNaN(parseInt(el.value, 10))) ? Math.max(2, Math.min(15, parseInt(el.value, 10))) : (calcState[id] != null && typeof calcState[id].smart_reverse_min_streak === 'number' ? calcState[id].smart_reverse_min_streak : 3);
             return typeof v === 'number' && !isNaN(v) ? v : 3;
         }
-        /** 스마트 반픽 doRev 판정. 서버 _server_calc_effective_pick_and_amount와 동일 기준. */
+        /** graphValues에서 맨 앞 연속 같은 결과 개수. 줄 4 이상 시 추종용. 서버 _get_run_length_from_results와 동일. */
+        function getRunLengthFromGraphValues(gv) {
+            if (!gv || !Array.isArray(gv) || gv.length < 2) return { run: 0, last: null };
+            var last = gv[0];
+            if (last !== true && last !== false) return { run: 0, last: null };
+            var run = 1;
+            for (var i = 1; i < gv.length; i++) {
+                if (gv[i] !== last) break;
+                run++;
+            }
+            return { run: run, last: last };
+        }
+        /** 스마트 반픽 doRev 판정. 서버 _server_calc_effective_pick_and_amount와 동일 기준. 줄 4 이상 시 줄 추종은 호출 전에 처리. */
         function getSmartReverseDoRev(id, blended, r15, noRevByStreak5) {
             var useSmart = !!(calcState[id] && calcState[id].smart_reverse);
             if (!useSmart || !noRevByStreak5) return false;
@@ -9883,7 +9970,9 @@ RESULTS_HTML = '''
                             var c100 = hit100r + loss100; var r100 = c100 > 0 ? 100 * hit100r / c100 : 50;
                             blendedCard = 0.65 * r15Card + 0.25 * r30 + 0.10 * r100;
                         } catch (e2) {}
-                        var runLenCard = getCurrentResultRunLength(typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory) ? predictionHistory : []);
+                        var runLenObjCard = getRunLengthFromGraphValues(typeof window.__lastGraphValues !== 'undefined' ? window.__lastGraphValues : []);
+                        var runLenCard = runLenObjCard.run;
+                        if (runLenCard < 4) runLenCard = getCurrentResultRunLength(typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory) ? predictionHistory : []);
                         var noRevByMain15Card = (r15Card == null || r15Card < 53);
                         var noRevByStreak5Card = !(calcState[id].streak_suppress_reverse && runLenCard >= 4);
                         var shapePredOn = !!(document.getElementById('calc-' + id + '-shape-prediction') && document.getElementById('calc-' + id + '-shape-prediction').checked);
@@ -9906,8 +9995,13 @@ RESULTS_HTML = '''
                             bettingIsRed = predictionIsRed;
                             const rev = !!(calcState[id] && calcState[id].reverse);
                             if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
-                            var doRevCard = getSmartReverseDoRev(id, blendedCard, r15Card, noRevByStreak5Card);
-                            if (doRevCard) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                            if (runLenObjCard.run >= 4 && runLenObjCard.last != null) {
+                                bettingText = runLenObjCard.last ? '정' : '꺽';
+                                bettingIsRed = !!runLenObjCard.last;
+                            } else {
+                                var doRevCard = getSmartReverseDoRev(id, blendedCard, r15Card, noRevByStreak5Card);
+                                if (doRevCard) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                            }
                             var shapePredRev = !!(document.getElementById('calc-' + id + '-shape-prediction-reverse') && document.getElementById('calc-' + id + '-shape-prediction-reverse').checked);
                             var shapePredRevThrEl = document.getElementById('calc-' + id + '-shape-prediction-reverse-threshold');
                             var shapePredRevThr = (shapePredRevThrEl && !isNaN(parseFloat(shapePredRevThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(shapePredRevThrEl.value))) : 50;
@@ -9931,8 +10025,13 @@ RESULTS_HTML = '''
                                 // 모양 픽에 반픽/승률반픽/연패반픽/승률방향 반픽 적용 (다른 옵션과 중복 사용 가능)
                                 const rev = !!(calcState[id] && calcState[id].reverse);
                                 if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
-                                var doRevCard2 = getSmartReverseDoRev(id, blendedCard, r15Card, noRevByStreak5Card);
-                                if (doRevCard2) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                                if (runLenObjCard.run >= 4 && runLenObjCard.last != null) {
+                                    bettingText = runLenObjCard.last ? '정' : '꺽';
+                                    bettingIsRed = !!runLenObjCard.last;
+                                } else {
+                                    var doRevCard2 = getSmartReverseDoRev(id, blendedCard, r15Card, noRevByStreak5Card);
+                                    if (doRevCard2) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
+                                }
                                 if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
                             } else {
                                 bettingText = '보류';
