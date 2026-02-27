@@ -4727,9 +4727,9 @@ def load_game_data():
         'timestamp': current_status_data.get('timestamp', datetime.now().isoformat())
     }
 
-# 외부 result.json 요청 시 타임아웃 (10초 게임·8초 내 배팅: 경로당 1초, 전체 2.5초)
-RESULTS_FETCH_TIMEOUT_PER_PATH = 1
-RESULTS_FETCH_OVERALL_TIMEOUT = 2.5
+# 외부 result.json 요청 시 타임아웃 (10초 게임·8초 내 배팅: 경로당 0.6초, 전체 1.5초 — 지연 시 빠른 재시도)
+RESULTS_FETCH_TIMEOUT_PER_PATH = 0.6
+RESULTS_FETCH_OVERALL_TIMEOUT = 1.5
 RESULTS_FETCH_MAX_RETRIES = 1
 
 
@@ -4886,9 +4886,9 @@ def _scheduler_apply_results():
     if not DB_AVAILABLE or not DATABASE_URL:
         return
     if not _apply_lock.acquire(blocking=False):
-        # apply 스킵 시 예측픽만 경량 갱신 (0.4초 스로틀)
+        # apply 스킵 시 예측픽만 경량 갱신 (0.1초 스로틀 — 지연 완화)
         now_pl = time.time()
-        if (now_pl - _last_prediction_light_at) >= 0.2:
+        if (now_pl - _last_prediction_light_at) >= 0.1:
             _last_prediction_light_at = now_pl
             threading.Thread(target=_run_prediction_update_light, daemon=True).start()
         return
@@ -11601,7 +11601,7 @@ _results_refreshing = False
 _last_refresh_trigger_at = 0.0  # /api/results에서 refresh 트리거 스로틀 (1.5초)
 _apply_lock = threading.Lock()
 _prediction_light_lock = threading.Lock()
-_last_prediction_light_at = 0.0  # apply 스킵 시 경량 prediction 갱신 스로틀 (0.4초)
+_last_prediction_light_at = 0.0  # apply 스킵 시 경량 prediction 갱신 스로틀 (0.1초)
 
 def _update_prediction_cache_from_db(results=None):
     """DB만 사용해 예측픽 캐시 갱신. 경량 경로(_build_server_prediction_light) 사용 — calc_best·shape_pick 등 생략해 속도 개선."""
@@ -11694,9 +11694,9 @@ def get_results():
                     'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}},
                     'blended_win_rate': None, 'round_actuals': {}, 'joker_stats': {}
                 }
-        # refresh 트리거: 10초 게임 8초 내 배팅 — 0.3초 스로틀
+        # refresh 트리거: 10초 게임 8초 내 배팅 — 0.2초 스로틀 (지연 완화)
         now_tr = time.time()
-        if not _results_refreshing and (now_tr - _last_refresh_trigger_at) >= 0.3:
+        if not _results_refreshing and (now_tr - _last_refresh_trigger_at) >= 0.2:
             _last_refresh_trigger_at = now_tr
             threading.Thread(target=_refresh_results_background, daemon=True).start()
         
