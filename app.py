@@ -4107,6 +4107,20 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
             elif sp <= 30:
                 line_w *= (1.0 - (1.0 - SYM_LOW_MUL) * sym_mul)
                 pong_w *= (1.0 - (1.0 - SYM_LOW_MUL) * sym_mul)
+        # [올리는 방향] 좌우 줄 평균: avg_mean 높을수록 줄이 김 → line_w 가산 (어디까지: 3.5+ → 0.05, 2.8+ → 0.03, 2.2+ & 유사도70+ → 0.02)
+        avg_l = symmetry_line_data.get('avgLeft') or 0
+        avg_r = symmetry_line_data.get('avgRight') or 0
+        line_sim = symmetry_line_data.get('lineSimilarityPct') or 0
+        avg_mean = (avg_l + avg_r) / 2.0 if (avg_l or avg_r) else 0
+        if avg_mean >= 3.5:
+            line_w = min(1.0, line_w + 0.05 * sym_mul)
+            pong_w = max(0.0, pong_w - 0.025)
+        elif avg_mean >= 2.8:
+            line_w = min(1.0, line_w + 0.03 * sym_mul)
+            pong_w = max(0.0, pong_w - 0.015)
+        elif avg_mean >= 2.2 and line_sim >= 70:
+            line_w = min(1.0, line_w + 0.02 * sym_mul)
+            pong_w = max(0.0, pong_w - 0.01)
 
     first_is_line_col = (use_for_pattern[0] == use_for_pattern[1]) if len(use_for_pattern) >= 2 else True
     u35_detected = _detect_u_35_pattern(line_runs)  # U자+줄3~5: 예측 안정화·과신 방지
@@ -4124,10 +4138,28 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         has_long_line, allow_break_consideration, chunk_sub_break,
         use_shape_adjustments, pong_weight
     )
+    # 덩어리/줄 사이 퐁당 간격: 짧으면(≤1.5) 올리는, 길면(≥3) 직진
+    if pong_runs and len(pong_runs) >= 2:
+        recent_pong = pong_runs[:min(5, len(pong_runs))]
+        avg_pong_gap = sum(recent_pong) / len(recent_pong)
+        pong_gap_mul = pong_weight if use_shape_adjustments else 1.0
+        if avg_pong_gap <= 1.5:
+            # [올리는 방향] 짧은 퐁당 간격: 덩어리/줄이 가깝게 붙어있음
+            line_w = min(1.0, line_w + 0.03 * pong_gap_mul)
+            pong_w = max(0.0, pong_w - 0.015)
+        elif avg_pong_gap >= 3.0:
+            # [직진 방향] 긴 퐁당 간격: 퐁당이 김, 번갈아 픽
+            pong_w = min(1.0, pong_w + 0.03 * pong_gap_mul)
+            line_w = max(0.0, line_w - 0.015)
     # [올리는 방향] 장줄(5+) 이후 끊김 예측 완화: 같은 픽 유지
     if first_is_line_col and line_runs and line_runs[0] >= 5:
         line_w = min(1.0, line_w + 0.08)
         pong_w = max(0.0, pong_w - 0.04)
+    # [올리는 방향] 장퐁당(5+): 퐁당이 길면 줄로 전환 예상 → line_w 가산 (analyze_pong_run_limit.py로 임계값 조정)
+    if not first_is_line_col and pong_runs and pong_runs[0] >= 5:
+        mul = pong_weight if use_shape_adjustments else 1.0
+        line_w = min(1.0, line_w + 0.05 * mul)
+        pong_w = max(0.0, pong_w - 0.025)
     # [올리는 방향] 긴줄 구간 끊김 예측 억제: 같은 픽 유지
     suppress_break = has_long_line and not allow_break_consideration
     if suppress_break:
