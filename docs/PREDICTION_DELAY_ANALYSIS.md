@@ -20,13 +20,13 @@
 **새 회차 결과가 DB에 들어오는 시점:**
 - `_refresh_results_background` → `_build_results_payload()` → `load_results_data()` (외부 fetch)
 - fetch 성공 시 `save_game_result()`로 DB 저장
-- **fetch가 1.5초(최대) 걸리면**, 그동안 DB에는 새 회차가 없음 (경로당 0.6초, 전체 1.5초 타임아웃)
+- **fetch가 2.5초(최대) 걸리면**, 그동안 DB에는 새 회차가 없음 (경로당 1초, 전체 2.5초 타임아웃)
 
 ### 3. **충돌 지점**
 
 | 충돌 | 설명 |
 |------|------|
-| **A. fetch 지연** | `load_results_data()`가 `result.json` 등 6개 경로 병렬 시도. 경로당 0.6초·전체 1.5초 타임아웃 |
+| **A. fetch 지연** | `load_results_data()`가 `result.json` 등 6개 경로 병렬 시도. 경로당 1초·전체 2.5초 타임아웃 |
 | **B. _results_refresh_lock** | fetch가 끝날 때까지 lock 유지. 그동안 새 fetch 시작 불가 |
 | **C. _apply_lock 경쟁** | apply 스킵 시 `_run_prediction_update_light` (0.1초 스로틀)로 예측픽만 경량 갱신 |
 | **D. DB → round_predictions 순서** | 새 결과가 DB에 들어온 뒤에야 `ensure_stored_prediction_for_current_round`가 새 회차 예측을 계산·저장 |
@@ -34,7 +34,7 @@
 ### 4. **데이터 흐름 요약**
 
 ```
-[외부 result.json] --load_results_data(최대 1.5초)--→ [DB game_results]
+[외부 result.json] --load_results_data(최대 2.5초)--→ [DB game_results]
                                                           ↓
 [0.05초마다] _scheduler_apply_results: get_recent_results ←─┘
                     ↓

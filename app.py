@@ -3837,11 +3837,11 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         _perf_log('compute_prediction', (time.time() - t0) * 1000)
         return {'value': None, 'round': 0, 'prob': 0, 'color': None}
     graph_values = _build_graph_values(results)
-    if len(graph_values) < 2:
+    if len(graph_values) < 1:
         _perf_log('compute_prediction', (time.time() - t0) * 1000)
         return {'value': None, 'round': 0, 'prob': 0, 'color': None}
     valid_gv = [v for v in graph_values if v is True or v is False]
-    if len(valid_gv) < 2:
+    if len(valid_gv) < 1:
         _perf_log('compute_prediction', (time.time() - t0) * 1000)
         return {'value': None, 'round': 0, 'prob': 0, 'color': None}
 
@@ -3860,7 +3860,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     full = _calc_transitions(graph_values)
     recent30 = _calc_transitions(graph_values[:30])
     short15 = _calc_transitions(graph_values[:15]) if len(graph_values) >= 15 else None
-    last = graph_values[0]
+    last = graph_values[0] if graph_values[0] in (True, False) else (valid_gv[0] if valid_gv else None)
     pong_pct, line_pct = 50.0, 50.0
     if len([v for v in graph_values[:15] if v is True or v is False]) >= 2:
         pong_pct, line_pct = _pong_line_pct(graph_values[:15])
@@ -4727,9 +4727,9 @@ def load_game_data():
         'timestamp': current_status_data.get('timestamp', datetime.now().isoformat())
     }
 
-# 외부 result.json 요청 시 타임아웃 (10초 게임·8초 내 배팅: 경로당 0.6초, 전체 1.5초 — 지연 시 빠른 재시도)
-RESULTS_FETCH_TIMEOUT_PER_PATH = 0.6
-RESULTS_FETCH_OVERALL_TIMEOUT = 1.5
+# 외부 result.json 요청 시 타임아웃 (10초 게임·8초 내 배팅. 0.6/1.5초는 응답 전 타임아웃으로 그래프 미갱신 발생 → 1/2.5초로 완화)
+RESULTS_FETCH_TIMEOUT_PER_PATH = 1
+RESULTS_FETCH_OVERALL_TIMEOUT = 2.5
 RESULTS_FETCH_MAX_RETRIES = 1
 
 
@@ -7069,7 +7069,7 @@ RESULTS_HTML = '''
                         var prevRound = (lastPrediction && lastPrediction.round != null) ? Number(lastPrediction.round) : NaN;
                         if (!isNaN(newRound) && (isNaN(prevRound) || newRound >= prevRound)) {
                             var normColor = normalizePickColor(sp.color) || sp.color || null;
-                            lastPrediction = { value: sp.value, round: sp.round, prob: sp.prob != null ? sp.prob : 0, color: normColor };
+                            lastPrediction = { value: sp.value, round: sp.round, prob: (sp.prob != null ? sp.prob : 0), color: normColor };
                             if (sp.shape_predicted === '정' || sp.shape_predicted === '꺽') lastPrediction.shape_predicted = sp.shape_predicted;
                             if (sp.calc_best_pred && sp.calc_best_color) { lastPrediction.calc_best_pred = sp.calc_best_pred; lastPrediction.calc_best_color = sp.calc_best_color; }
                             if (sp.calc_best_shape_pong_pred && sp.calc_best_shape_pong_color) { lastPrediction.calc_best_shape_pong_pred = sp.calc_best_shape_pong_pred; lastPrediction.calc_best_shape_pong_color = sp.calc_best_shape_pong_color; }
@@ -10927,11 +10927,7 @@ def _build_server_prediction_light(results=None, hours=24):
                 }
             else:
                 sp = {'value': None, 'round': predicted_round, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}}
-        if joker_stats.get('skip_bet') and sp:
-            sp['value'] = None
-            sp['color'] = None
-            sp['joker_warning'] = True
-            sp['joker_warning_reason'] = joker_stats.get('warning_reason', '')
+        # skip_bet 제거: 15번 카드 조커일 때만 보류 (compute_prediction에서 value=None). 조커 다발 등은 경고만.
         return sp
     except Exception as e:
         print(f"[API] server_prediction_light 오류: {str(e)[:80]}")
