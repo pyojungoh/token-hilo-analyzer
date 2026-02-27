@@ -1314,6 +1314,27 @@ def _blended_win_rate(prediction_history):
     return comp[3] if comp else None
 
 
+def _get_win_rate_trend_from_15_cards(ph, min_diff_pct=0.5):
+    """15카드(최근 회차)별 저장된 blended_win_rate와 현재 합산승률 비교 → 올라가는 중/내려가는 중 판별.
+    prediction_history 각 record의 blended_win_rate = 해당 회차 시점의 실제 경고 합산승률.
+    반환: 'up' | 'down' | None. None이면 추세 불명확 → 기존 단일 임계값 사용."""
+    if not ph or len(ph) < 5:
+        return None
+    # ph: 과거→현재 순. ph[-1]=최신, blended_win_rate는 해당 회차 시점의 승률
+    recent = [h.get('blended_win_rate') for h in ph[-6:-1] if h and isinstance(h.get('blended_win_rate'), (int, float))]
+    if len(recent) < 3:
+        return None
+    recent_avg = sum(recent) / len(recent)
+    current = _blended_win_rate(ph)
+    if current is None:
+        return None
+    if current > recent_avg + min_diff_pct:
+        return 'up'   # 승률이 올라가는 중 (못 맞추다 잘 맞출 때)
+    if current < recent_avg - min_diff_pct:
+        return 'down'  # 승률이 내려가는 중 (잘 맞추다 못 맞출 때)
+    return None
+
+
 def _blended_win_rate_components(prediction_history):
     """예측 이력으로 15/30/100 승률 및 합산. (r15, r30, r100, blended). 가중치: 15회 65%, 30회 25%, 100회 10%.
     predicted·actual이 정/꺽인 회차만 포함 (예측 없음/조커 제외)."""
@@ -2127,7 +2148,7 @@ def _apply_results_to_calcs(results):
                     pred_for_calc = '꺽' if pending_predicted == '정' else '정'
                     bet_color_for_history = _flip_pick_color(bet_color_for_history)
                 blended = _blended_win_rate(get_prediction_history(100))
-                # 스마트 반픽: 승률반픽+연패반픽만 (zone 제거). 히스토리 기록용
+                # 스마트 반픽: 승률반픽+연패반픽. 비대칭 옵션 시 15카드 추세로 판별. 히스토리 기록용
                 use_smart = c.get('smart_reverse') or c.get('win_rate_reverse') or c.get('lose_streak_reverse') or c.get('win_rate_direction_reverse')
                 ph = get_prediction_history(150)
                 run_length = _get_current_result_run_length(ph)
@@ -2135,11 +2156,26 @@ def _apply_results_to_calcs(results):
                 main_rate15 = _get_main_recent15_win_rate(ph)
                 if use_smart and not no_reverse_in_streak:
                     thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 43)))
+                    thr_down = max(0, min(100, int(c.get('smart_reverse_threshold_down') or 50)))
+                    thr_up = max(0, min(100, int(c.get('smart_reverse_threshold_up') or 40)))
                     min_streak = max(2, min(15, int(c.get('smart_reverse_min_streak') or c.get('lose_streak_reverse_min_streak') or 3)))
                     lose_streak = _get_lose_streak_from_history(c.get('history') or [])
                     do_reverse = False
-                    if blended is not None and blended <= thr and (main_rate15 is None or main_rate15 < 53):
-                        do_reverse = True
+                    use_asymmetric = bool(c.get('smart_reverse_asymmetric', False))
+                    trend = _get_win_rate_trend_from_15_cards(ph) if use_asymmetric and ph else None
+                    if blended is not None and (main_rate15 is None or main_rate15 < 53):
+                        if use_asymmetric and trend is not None:
+                            if trend == 'down' and blended <= thr_down:
+                                do_reverse = True
+                            elif trend == 'up' and blended < thr_up:
+                                do_reverse = True
+                            elif trend == 'up' and blended >= thr_up:
+                                do_reverse = False
+                            elif trend == 'down' and blended > thr_down:
+                                do_reverse = False
+                        else:
+                            if blended <= thr:
+                                do_reverse = True
                     if lose_streak >= min_streak and blended is not None and blended <= thr and (main_rate15 is None or main_rate15 < 53):
                         do_reverse = True
                     res_for_phase = results_for_shape if (results_for_shape and len(results_for_shape) >= 16) else results
@@ -2485,15 +2521,30 @@ def _server_calc_effective_pick_and_amount(c):
         pred = '꺽' if pred == '정' else '정'
         color = _flip_pick_color(color)
     blended = _blended_win_rate(ph or get_prediction_history(100))
-    # 스마트 반픽: 승률반픽+연패반픽만. zone(승률방향) 제거 — 예상 기반 꺽기가 틀리면 연패로 이어짐
+    # 스마트 반픽: 승률반픽+연패반픽. 비대칭 임계값(올라갈때40%/내려갈때50%) 옵션 시 15카드 승률 추세로 판별
     use_smart = c.get('smart_reverse') or c.get('win_rate_reverse') or c.get('lose_streak_reverse') or c.get('win_rate_direction_reverse')
     if use_smart and not no_reverse_in_streak:
         thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 43)))
+        thr_down = max(0, min(100, int(c.get('smart_reverse_threshold_down') or 50)))  # 내려갈 때 반픽 기준
+        thr_up = max(0, min(100, int(c.get('smart_reverse_threshold_up') or 40)))       # 올라갈 때 정픽 기준
         min_streak = max(2, min(15, int(c.get('smart_reverse_min_streak') or c.get('lose_streak_reverse_min_streak') or 3)))
         lose_streak = _get_lose_streak_from_history(c.get('history') or [])
         do_reverse = False
-        if blended is not None and blended <= thr and (main_rate15 is None or main_rate15 < 53):
-            do_reverse = True
+        use_asymmetric = bool(c.get('smart_reverse_asymmetric', False))
+        trend = _get_win_rate_trend_from_15_cards(ph) if use_asymmetric and ph else None
+        if blended is not None and (main_rate15 is None or main_rate15 < 53):
+            if use_asymmetric and trend is not None:
+                if trend == 'down' and blended <= thr_down:
+                    do_reverse = True   # 잘 맞추다 못 맞출 때 → 50% 이하에서 반픽
+                elif trend == 'up' and blended < thr_up:
+                    do_reverse = True   # 못 맞추다 못 맞출 때 → 40% 미만에서 반픽
+                elif trend == 'up' and blended >= thr_up:
+                    do_reverse = False  # 못 맞추다 잘 맞출 때 → 40% 이상이면 정픽 유지
+                elif trend == 'down' and blended > thr_down:
+                    do_reverse = False  # 잘 맞추다 잘 맞출 때 → 50% 초과면 정픽 유지
+            else:
+                if blended <= thr:
+                    do_reverse = True
         if lose_streak >= min_streak and blended is not None and blended <= thr and (main_rate15 is None or main_rate15 < 53):
             do_reverse = True
         # 패턴 기반 억제: 긴줄·긴 퐁당 구간에서는 승률만 보고 반픽하지 않음 (계속 틀리다 방향 바꿔서 또 틀림 방지)
@@ -2547,12 +2598,27 @@ def _server_calc_effective_pick_and_amount(c):
             color = _flip_pick_color(color)
         if use_smart and not no_reverse_in_streak:
             thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 43)))
+            thr_down = max(0, min(100, int(c.get('smart_reverse_threshold_down') or 50)))
+            thr_up = max(0, min(100, int(c.get('smart_reverse_threshold_up') or 40)))
             min_streak = max(2, min(15, int(c.get('smart_reverse_min_streak') or c.get('lose_streak_reverse_min_streak') or 3)))
             lose_streak = _get_lose_streak_from_history(c.get('history') or [])
             blended = _blended_win_rate(ph or get_prediction_history(100))
             do_reverse = False
-            if blended is not None and blended <= thr and (main_rate15 is None or main_rate15 < 53):
-                do_reverse = True
+            use_asymmetric = bool(c.get('smart_reverse_asymmetric', False))
+            trend = _get_win_rate_trend_from_15_cards(ph) if use_asymmetric and ph else None
+            if blended is not None and (main_rate15 is None or main_rate15 < 53):
+                if use_asymmetric and trend is not None:
+                    if trend == 'down' and blended <= thr_down:
+                        do_reverse = True
+                    elif trend == 'up' and blended < thr_up:
+                        do_reverse = True
+                    elif trend == 'up' and blended >= thr_up:
+                        do_reverse = False
+                    elif trend == 'down' and blended > thr_down:
+                        do_reverse = False
+                else:
+                    if blended <= thr:
+                        do_reverse = True
             if lose_streak >= min_streak and blended is not None and blended <= thr and (main_rate15 is None or main_rate15 < 53):
                 do_reverse = True
             if do_reverse and _suppress_smart_reverse_by_phase(results):
@@ -6351,7 +6417,7 @@ RESULTS_HTML = '''
                                     <div class="calc-options-toggle"><span class="calc-options-label">옵션</span><span class="calc-options-icon">▼</span></div>
                                     <div class="calc-options-body">
                                         <table class="calc-settings-table">
-                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-smart-reverse" title="승률반픽+연패반픽+승률방향반픽 통합. 조건 하나라도 만족 시 반픽" checked> 스마트 반픽</label> <label title="승률 이 값 이하일 때 반픽">승률≤<input type="number" id="calc-1-smart-reverse-threshold" min="0" max="100" value="43" class="calc-threshold-input">%</label> <label title="이 값 이상 연패+승률≤%일 때 반픽">연패≥<input type="number" id="calc-1-smart-reverse-min-streak" min="2" max="15" value="3" class="calc-threshold-input">회</label></td></tr>
+                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-smart-reverse" title="승률반픽+연패반픽+승률방향반픽 통합. 조건 하나라도 만족 시 반픽" checked> 스마트 반픽</label> <label title="승률 이 값 이하일 때 반픽">승률≤<input type="number" id="calc-1-smart-reverse-threshold" min="0" max="100" value="43" class="calc-threshold-input">%</label> <label title="이 값 이상 연패+승률≤%일 때 반픽">연패≥<input type="number" id="calc-1-smart-reverse-min-streak" min="2" max="15" value="3" class="calc-threshold-input">회</label> <label title="15카드 승률 추세로 비대칭 임계값 적용"><input type="checkbox" id="calc-1-smart-reverse-asymmetric"> 비대칭</label> <label title="승률 내려갈 때 반픽 기준">↓≤<input type="number" id="calc-1-smart-reverse-threshold-down" min="0" max="100" value="50" class="calc-threshold-input" style="width:2.5em">%</label> <label title="승률 올라갈 때 정픽 기준">↑≥<input type="number" id="calc-1-smart-reverse-threshold-up" min="0" max="100" value="40" class="calc-threshold-input" style="width:2.5em">%</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-streak-suppress-reverse" title="4연승 또는 4연패일 때 반픽 억제 (퐁당→긴줄 전환 시 연패 감소)" checked> 줄 4 이상 반픽 억제</label> <label><input type="checkbox" id="calc-1-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>예측기픽</td><td><label><input type="checkbox" id="calc-1-prediction-picks-best" title="예측기픽 메뉴에서 강조된 카드(15회 승률 최고) 픽으로 배팅"> 예측기픽 메뉴 강조 픽으로 배팅</label> <label><input type="checkbox" id="calc-1-prediction-picks-shape-pong-only" title="예측기픽 사용 시 모양·퐁당만 사용 (메인·메인반픽 제외)"> 모양·퐁당만</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-1-shape-only-latest-next-pick" title="퐁당 구간→모양판별 픽, 덩어리/줄 구간→가장 최근 다음 픽. 자동 스위칭. 값 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
@@ -6407,7 +6473,7 @@ RESULTS_HTML = '''
                                     <div class="calc-options-toggle"><span class="calc-options-label">옵션</span><span class="calc-options-icon">▼</span></div>
                                     <div class="calc-options-body">
                                         <table class="calc-settings-table">
-                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-smart-reverse" title="승률반픽+연패반픽+승률방향반픽 통합. 조건 하나라도 만족 시 반픽"> 스마트 반픽</label> <label title="승률 이 값 이하일 때 반픽">승률≤<input type="number" id="calc-2-smart-reverse-threshold" min="0" max="100" value="43" class="calc-threshold-input">%</label> <label title="이 값 이상 연패+승률≤%일 때 반픽">연패≥<input type="number" id="calc-2-smart-reverse-min-streak" min="2" max="15" value="3" class="calc-threshold-input">회</label></td></tr>
+                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-smart-reverse" title="승률반픽+연패반픽+승률방향반픽 통합. 조건 하나라도 만족 시 반픽"> 스마트 반픽</label> <label title="승률 이 값 이하일 때 반픽">승률≤<input type="number" id="calc-2-smart-reverse-threshold" min="0" max="100" value="43" class="calc-threshold-input">%</label> <label title="이 값 이상 연패+승률≤%일 때 반픽">연패≥<input type="number" id="calc-2-smart-reverse-min-streak" min="2" max="15" value="3" class="calc-threshold-input">회</label> <label title="15카드 승률 추세로 비대칭 임계값 적용"><input type="checkbox" id="calc-2-smart-reverse-asymmetric"> 비대칭</label> <label title="승률 내려갈 때 반픽 기준">↓≤<input type="number" id="calc-2-smart-reverse-threshold-down" min="0" max="100" value="50" class="calc-threshold-input" style="width:2.5em">%</label> <label title="승률 올라갈 때 정픽 기준">↑≥<input type="number" id="calc-2-smart-reverse-threshold-up" min="0" max="100" value="40" class="calc-threshold-input" style="width:2.5em">%</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-streak-suppress-reverse" title="4연승 또는 4연패일 때 반픽 억제"> 줄 4 이상 반픽 억제</label> <label><input type="checkbox" id="calc-2-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>예측기픽</td><td><label><input type="checkbox" id="calc-2-prediction-picks-best" title="예측기픽 메뉴에서 강조된 카드(15회 승률 최고) 픽으로 배팅"> 예측기픽 메뉴 강조 픽으로 배팅</label> <label><input type="checkbox" id="calc-2-prediction-picks-shape-pong-only" title="예측기픽 사용 시 모양·퐁당만 사용 (메인·메인반픽 제외)"> 모양·퐁당만</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-2-shape-only-latest-next-pick" title="퐁당 구간→모양판별 픽, 덩어리/줄 구간→가장 최근 다음 픽. 자동 스위칭. 값 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
@@ -6463,7 +6529,7 @@ RESULTS_HTML = '''
                                     <div class="calc-options-toggle"><span class="calc-options-label">옵션</span><span class="calc-options-icon">▼</span></div>
                                     <div class="calc-options-body">
                                         <table class="calc-settings-table">
-                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-smart-reverse" title="승률반픽+연패반픽+승률방향반픽 통합. 조건 하나라도 만족 시 반픽"> 스마트 반픽</label> <label title="승률 이 값 이하일 때 반픽">승률≤<input type="number" id="calc-3-smart-reverse-threshold" min="0" max="100" value="43" class="calc-threshold-input">%</label> <label title="이 값 이상 연패+승률≤%일 때 반픽">연패≥<input type="number" id="calc-3-smart-reverse-min-streak" min="2" max="15" value="3" class="calc-threshold-input">회</label></td></tr>
+                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-smart-reverse" title="승률반픽+연패반픽+승률방향반픽 통합. 조건 하나라도 만족 시 반픽"> 스마트 반픽</label> <label title="승률 이 값 이하일 때 반픽">승률≤<input type="number" id="calc-3-smart-reverse-threshold" min="0" max="100" value="43" class="calc-threshold-input">%</label> <label title="이 값 이상 연패+승률≤%일 때 반픽">연패≥<input type="number" id="calc-3-smart-reverse-min-streak" min="2" max="15" value="3" class="calc-threshold-input">회</label> <label title="15카드 승률 추세로 비대칭 임계값 적용"><input type="checkbox" id="calc-3-smart-reverse-asymmetric"> 비대칭</label> <label title="승률 내려갈 때 반픽 기준">↓≤<input type="number" id="calc-3-smart-reverse-threshold-down" min="0" max="100" value="50" class="calc-threshold-input" style="width:2.5em">%</label> <label title="승률 올라갈 때 정픽 기준">↑≥<input type="number" id="calc-3-smart-reverse-threshold-up" min="0" max="100" value="40" class="calc-threshold-input" style="width:2.5em">%</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-streak-suppress-reverse" title="4연승 또는 4연패일 때 반픽 억제"> 줄 4 이상 반픽 억제</label> <label><input type="checkbox" id="calc-3-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>예측기픽</td><td><label><input type="checkbox" id="calc-3-prediction-picks-best" title="예측기픽 메뉴에서 강조된 카드(15회 승률 최고) 픽으로 배팅"> 예측기픽 메뉴 강조 픽으로 배팅</label> <label><input type="checkbox" id="calc-3-prediction-picks-shape-pong-only" title="예측기픽 사용 시 모양·퐁당만 사용 (메인·메인반픽 제외)"> 모양·퐁당만</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-3-shape-only-latest-next-pick" title="퐁당 구간→모양판별 픽, 덩어리/줄 구간→가장 최근 다음 픽. 자동 스위칭. 값 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
@@ -6798,6 +6864,9 @@ RESULTS_HTML = '''
                 smart_reverse: false,
                 smart_reverse_threshold: 43,
                 smart_reverse_min_streak: 3,
+                smart_reverse_asymmetric: false,
+                smart_reverse_threshold_down: 50,
+                smart_reverse_threshold_up: 40,
                 streak_suppress_reverse: false,
                 lock_direction_on_lose_streak: true,
                 prediction_picks_best: false,
@@ -6870,6 +6939,9 @@ RESULTS_HTML = '''
                     smart_reverse: !!(smartRevEl && smartRevEl.checked),
                     smart_reverse_threshold: (function() { var v = (smartRevThrEl && !isNaN(parseFloat(smartRevThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(smartRevThrEl.value))) : 43; return typeof v === 'number' && !isNaN(v) ? v : 43; })(),
                     smart_reverse_min_streak: (function() { var v = (smartRevMinEl && !isNaN(parseInt(smartRevMinEl.value, 10))) ? Math.max(2, Math.min(15, parseInt(smartRevMinEl.value, 10))) : 3; return typeof v === 'number' && !isNaN(v) ? v : 3; })(),
+                    smart_reverse_asymmetric: !!(document.getElementById('calc-' + id + '-smart-reverse-asymmetric') && document.getElementById('calc-' + id + '-smart-reverse-asymmetric').checked),
+                    smart_reverse_threshold_down: (function() { var el = document.getElementById('calc-' + id + '-smart-reverse-threshold-down'); return (el && !isNaN(parseFloat(el.value))) ? Math.max(0, Math.min(100, parseFloat(el.value))) : 50; })(),
+                    smart_reverse_threshold_up: (function() { var el = document.getElementById('calc-' + id + '-smart-reverse-threshold-up'); return (el && !isNaN(parseFloat(el.value))) ? Math.max(0, Math.min(100, parseFloat(el.value))) : 40; })(),
                     streak_suppress_reverse: !!(document.getElementById('calc-' + id + '-streak-suppress-reverse') && document.getElementById('calc-' + id + '-streak-suppress-reverse').checked),
                     lock_direction_on_lose_streak: !!(document.getElementById('calc-' + id + '-lock-direction-on-lose-streak') && document.getElementById('calc-' + id + '-lock-direction-on-lose-streak').checked),
                     prediction_picks_best: !!(document.getElementById('calc-' + id + '-prediction-picks-best') && document.getElementById('calc-' + id + '-prediction-picks-best').checked),
@@ -7061,6 +7133,9 @@ RESULTS_HTML = '''
                 calcState[id].smart_reverse_threshold = smartThrRestore;
                 var smartMinStreakRestore = (typeof c.smart_reverse_min_streak === 'number' && c.smart_reverse_min_streak >= 2 && c.smart_reverse_min_streak <= 15) ? c.smart_reverse_min_streak : ((typeof c.lose_streak_reverse_min_streak === 'number' && c.lose_streak_reverse_min_streak >= 2 && c.lose_streak_reverse_min_streak <= 15) ? c.lose_streak_reverse_min_streak : 3);
                 calcState[id].smart_reverse_min_streak = smartMinStreakRestore;
+                calcState[id].smart_reverse_asymmetric = !!c.smart_reverse_asymmetric;
+                calcState[id].smart_reverse_threshold_down = (typeof c.smart_reverse_threshold_down === 'number' && c.smart_reverse_threshold_down >= 0 && c.smart_reverse_threshold_down <= 100) ? c.smart_reverse_threshold_down : 50;
+                calcState[id].smart_reverse_threshold_up = (typeof c.smart_reverse_threshold_up === 'number' && c.smart_reverse_threshold_up >= 0 && c.smart_reverse_threshold_up <= 100) ? c.smart_reverse_threshold_up : 40;
                 calcState[id].streak_suppress_reverse = !!c.streak_suppress_reverse;
                 calcState[id].lock_direction_on_lose_streak = c.lock_direction_on_lose_streak !== false;
                 calcState[id].prediction_picks_best = !!c.prediction_picks_best;
@@ -7095,9 +7170,15 @@ RESULTS_HTML = '''
                 const smartRevEl = document.getElementById('calc-' + id + '-smart-reverse');
                 const smartRevThrEl = document.getElementById('calc-' + id + '-smart-reverse-threshold');
                 const smartRevMinEl = document.getElementById('calc-' + id + '-smart-reverse-min-streak');
+                const smartRevAsymEl = document.getElementById('calc-' + id + '-smart-reverse-asymmetric');
+                const smartRevThrDownEl = document.getElementById('calc-' + id + '-smart-reverse-threshold-down');
+                const smartRevThrUpEl = document.getElementById('calc-' + id + '-smart-reverse-threshold-up');
                 if (smartRevEl) smartRevEl.checked = !!calcState[id].smart_reverse;
                 if (smartRevThrEl) smartRevThrEl.value = String(Math.round(calcState[id].smart_reverse_threshold || 43));
                 if (smartRevMinEl) smartRevMinEl.value = String(Math.max(2, Math.min(15, calcState[id].smart_reverse_min_streak || 3)));
+                if (smartRevAsymEl) smartRevAsymEl.checked = !!calcState[id].smart_reverse_asymmetric;
+                if (smartRevThrDownEl) smartRevThrDownEl.value = String(Math.round(calcState[id].smart_reverse_threshold_down != null ? calcState[id].smart_reverse_threshold_down : 50));
+                if (smartRevThrUpEl) smartRevThrUpEl.value = String(Math.round(calcState[id].smart_reverse_threshold_up != null ? calcState[id].smart_reverse_threshold_up : 40));
                 var streakSuppressEl = document.getElementById('calc-' + id + '-streak-suppress-reverse');
                 if (streakSuppressEl) streakSuppressEl.checked = !!calcState[id].streak_suppress_reverse;
                 var lockDirEl = document.getElementById('calc-' + id + '-lock-direction-on-lose-streak');
@@ -7797,21 +7878,13 @@ RESULTS_HTML = '''
                                     var baseForPred = (!!(calcState[id] && calcState[id].shape_prediction) && (predForRound.shape_predicted === '정' || predForRound.shape_predicted === '꺽')) ? predForRound.shape_predicted : predForRound.value;
                                     const rev = !!(calcState[id] && calcState[id].reverse);
                                     pred = rev ? (baseForPred === '정' ? '꺽' : '정') : baseForPred;
-                                    var useSmart = !!(calcState[id] && calcState[id].smart_reverse);
-                                    var smartThrEl = document.getElementById('calc-' + id + '-smart-reverse-threshold');
-                                    var smartThr = (smartThrEl && !isNaN(parseFloat(smartThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrEl.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 43);
                                     var streakSuppress = !!(calcState[id] && calcState[id].streak_suppress_reverse);
-                                    var noRevByMain15 = (r15 == null || r15 < 53);
                                     var noRevByStreak5 = !(streakSuppress && runLen >= 4);
                                     betColor = normalizePickColor(predForRound.color);
                                     if (baseForPred !== predForRound.value) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
-                                    var doRev = false;
-                                    if (useSmart && noRevByStreak5) {
-                                        if (typeof blended === 'number' && blended <= smartThr && noRevByMain15) doRev = true;
-                                        if (!doRev && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= smartThr && noRevByMain15) doRev = true;
-                                        if (doRev) { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
-                                    }
+                                    var doRev = getSmartReverseDoRev(id, blended, r15, noRevByStreak5);
+                                    if (doRev) { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
                                     var shapePredRev = !!(calcState[id] && calcState[id].shape_prediction_reverse);
                                     var shapePredRevThr = (calcState[id] != null && typeof calcState[id].shape_prediction_reverse_threshold === 'number') ? calcState[id].shape_prediction_reverse_threshold : 50;
                                     if (!!(calcState[id] && calcState[id].shape_prediction) && shapePredRev && typeof getShapePredictionWinRate15 === 'function') {
@@ -7863,11 +7936,7 @@ RESULTS_HTML = '''
                                     var baseForPredA = (!!(calcState[id] && calcState[id].shape_prediction) && (predForRound.shape_predicted === '정' || predForRound.shape_predicted === '꺽')) ? predForRound.shape_predicted : predForRound.value;
                                     const rev = !!(calcState[id] && calcState[id].reverse);
                                     pred = rev ? (baseForPredA === '정' ? '꺽' : '정') : baseForPredA;
-                                    var useSmartA = !!(calcState[id] && calcState[id].smart_reverse);
-                                    var smartThrElA = document.getElementById('calc-' + id + '-smart-reverse-threshold');
-                                    var smartThrA = (smartThrElA && !isNaN(parseFloat(smartThrElA.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrElA.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 43);
                                     var streakSuppressA = !!(calcState[id] && calcState[id].streak_suppress_reverse);
-                                    var noRevByMain15A = (r15 == null || r15 < 53);
                                     var noRevByStreak5A = !(streakSuppressA && runLen >= 4);
                                     var shapePredRevA = !!(calcState[id] && calcState[id].shape_prediction_reverse);
                                     var shapePredRevThrA = (calcState[id] != null && typeof calcState[id].shape_prediction_reverse_threshold === 'number') ? calcState[id].shape_prediction_reverse_threshold : 50;
@@ -7878,12 +7947,8 @@ RESULTS_HTML = '''
                                     betColorActual = normalizePickColor(predForRound.color);
                                     if (baseForPredA !== predForRound.value) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
-                                    var doRevA = false;
-                                    if (useSmartA && noRevByStreak5A) {
-                                        if (typeof blended === 'number' && blended <= smartThrA && noRevByMain15A) doRevA = true;
-                                        if (!doRevA && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= smartThrA && noRevByMain15A) doRevA = true;
-                                        if (doRevA) { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; }
-                                    }
+                                    var doRevA = getSmartReverseDoRev(id, blended, r15, noRevByStreak5A);
+                                    if (doRevA) { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; }
                                     if (!!(calcState[id] && calcState[id].shape_prediction) && shapePredRevA && typeof getShapePredictionWinRate15 === 'function' && sp15A != null && sp15A <= shapePredRevThrA) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                 }
                                 if (betPredForServerActual == null) { betPredForServerActual = pred; betColorForServerActual = betColorActual || null; }
@@ -7954,20 +8019,12 @@ RESULTS_HTML = '''
                                     var baseForPred = (!!(calcState[id] && calcState[id].shape_prediction) && (predForRound.shape_predicted === '정' || predForRound.shape_predicted === '꺽')) ? predForRound.shape_predicted : predForRound.value;
                                     const rev = !!(calcState[id] && calcState[id].reverse);
                                     pred = rev ? (baseForPred === '정' ? '꺽' : '정') : baseForPred;
-                                    var useSmart2 = !!(calcState[id] && calcState[id].smart_reverse);
-                                    var smartThrEl2 = document.getElementById('calc-' + id + '-smart-reverse-threshold');
-                                    var smartThr2 = (smartThrEl2 && !isNaN(parseFloat(smartThrEl2.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrEl2.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 43);
                                     var streakSuppress2 = !!(calcState[id] && calcState[id].streak_suppress_reverse);
-                                    var noRevByMain152 = (r15 == null || r15 < 53);
                                     var noRevByStreak52 = !(streakSuppress2 && runLen >= 4);
                                     betColor = normalizePickColor(predForRound.color);
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
-                                    var doRev2 = false;
-                                    if (useSmart2 && noRevByStreak52) {
-                                        if (typeof blended === 'number' && blended <= smartThr2 && noRevByMain152) doRev2 = true;
-                                        if (!doRev2 && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= smartThr2 && noRevByMain152) doRev2 = true;
-                                        if (doRev2) { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
-                                    }
+                                    var doRev2 = getSmartReverseDoRev(id, blended, r15, noRevByStreak52);
+                                    if (doRev2) { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
                                 }
                                 var pendingIdx2 = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
                                 if (pendingIdx2 >= 0) {
@@ -8006,20 +8063,12 @@ RESULTS_HTML = '''
                                     var baseForPredA = (!!(calcState[id] && calcState[id].shape_prediction) && (predForRound.shape_predicted === '정' || predForRound.shape_predicted === '꺽')) ? predForRound.shape_predicted : predForRound.value;
                                     const rev = !!(calcState[id] && calcState[id].reverse);
                                     pred = rev ? (baseForPredA === '정' ? '꺽' : '정') : baseForPredA;
-                                    var useSmart3 = !!(calcState[id] && calcState[id].smart_reverse);
-                                    var smartThrEl3 = document.getElementById('calc-' + id + '-smart-reverse-threshold');
-                                    var smartThr3 = (smartThrEl3 && !isNaN(parseFloat(smartThrEl3.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrEl3.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 43);
                                     var streakSuppress3 = !!(calcState[id] && calcState[id].streak_suppress_reverse);
-                                    var noRevByMain153 = (r15 == null || r15 < 53);
                                     var noRevByStreak53 = !(streakSuppress3 && runLen >= 4);
                                     betColorActual = normalizePickColor(predForRound.color);
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
-                                    var doRev3 = false;
-                                    if (useSmart3 && noRevByStreak53) {
-                                        if (typeof blended === 'number' && blended <= smartThr3 && noRevByMain153) doRev3 = true;
-                                        if (!doRev3 && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blended === 'number' && blended <= smartThr3 && noRevByMain153) doRev3 = true;
-                                        if (doRev3) { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; }
-                                    }
+                                    var doRev3 = getSmartReverseDoRev(id, blended, r15, noRevByStreak53);
+                                    if (doRev3) { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; }
                                 }
                                 var pendingIdx3 = calcState[id].history.findIndex(function(h) { return h && Number(h.round) === currentRoundNum && h.actual === 'pending'; });
                                 if (pendingIdx3 >= 0) {
@@ -9290,6 +9339,24 @@ RESULTS_HTML = '''
             var r100 = v100.length > 0 ? 100 * v100.filter(function(h) { return h.predicted === h.actual; }).length / v100.length : 50;
             return 0.65 * r15 + 0.25 * r30 + 0.10 * r100;
         }
+        /** 15카드(최근 회차)별 blended_win_rate와 현재 합산승률 비교 → 올라가는 중/내려가는 중. 서버 _get_win_rate_trend_from_15_cards와 동일. */
+        function getWinRateTrendFrom15Cards(minDiff) {
+            var ph = Array.isArray(predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object'; }) : [];
+            if (ph.length < 5) return null;
+            var recent = [];
+            for (var i = Math.max(0, ph.length - 6); i < ph.length - 1 && i >= 0; i++) {
+                var bw = ph[i] && (ph[i].blended_win_rate ?? ph[i].warningWinRate);
+                if (typeof bw === 'number' && !isNaN(bw)) recent.push(bw);
+            }
+            if (recent.length < 3) return null;
+            var recentAvg = recent.reduce(function(a, b) { return a + b; }, 0) / recent.length;
+            var current = getBlendedWinRate();
+            if (current == null || typeof current !== 'number') return null;
+            var diff = (typeof minDiff === 'number' && minDiff > 0) ? minDiff : 0.5;
+            if (current > recentAvg + diff) return 'up';
+            if (current < recentAvg - diff) return 'down';
+            return null;
+        }
         function getLoseStreak(id) {
             var hist = calcState[id] && calcState[id].history;
             if (!Array.isArray(hist)) return 0;
@@ -9307,6 +9374,33 @@ RESULTS_HTML = '''
             var el = document.getElementById('calc-' + id + '-smart-reverse-min-streak');
             var v = (el && !isNaN(parseInt(el.value, 10))) ? Math.max(2, Math.min(15, parseInt(el.value, 10))) : (calcState[id] != null && typeof calcState[id].smart_reverse_min_streak === 'number' ? calcState[id].smart_reverse_min_streak : 3);
             return typeof v === 'number' && !isNaN(v) ? v : 3;
+        }
+        /** 스마트 반픽 doRev 판정. 서버 _server_calc_effective_pick_and_amount와 동일 기준. */
+        function getSmartReverseDoRev(id, blended, r15, noRevByStreak5) {
+            var useSmart = !!(calcState[id] && calcState[id].smart_reverse);
+            if (!useSmart || !noRevByStreak5) return false;
+            var noRevByMain15 = (r15 == null || r15 < 53);
+            if (!noRevByMain15) return false;
+            if (typeof blended !== 'number' || isNaN(blended)) return false;
+            var thrEl = document.getElementById('calc-' + id + '-smart-reverse-threshold');
+            var thr = (thrEl && !isNaN(parseFloat(thrEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrEl.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 43);
+            var thrDownEl = document.getElementById('calc-' + id + '-smart-reverse-threshold-down');
+            var thrDown = (thrDownEl && !isNaN(parseFloat(thrDownEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrDownEl.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold_down === 'number' ? calcState[id].smart_reverse_threshold_down : 50);
+            var thrUpEl = document.getElementById('calc-' + id + '-smart-reverse-threshold-up');
+            var thrUp = (thrUpEl && !isNaN(parseFloat(thrUpEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrUpEl.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold_up === 'number' ? calcState[id].smart_reverse_threshold_up : 40);
+            var useAsym = !!(calcState[id] && calcState[id].smart_reverse_asymmetric);
+            var trend = useAsym ? getWinRateTrendFrom15Cards(0.5) : null;
+            var doRev = false;
+            if (useAsym && trend != null) {
+                if (trend === 'down' && blended <= thrDown) doRev = true;
+                else if (trend === 'up' && blended < thrUp) doRev = true;
+                else if (trend === 'up' && blended >= thrUp) doRev = false;
+                else if (trend === 'down' && blended > thrDown) doRev = false;
+            } else {
+                if (blended <= thr) doRev = true;
+            }
+            if (getLoseStreak(id) >= getLoseStreakMin(id) && blended <= thr) doRev = true;
+            return doRev;
         }
         /** 마틴 사용 중 연패 구간이면 멈춤(paused) 적용 안 함 — 마틴을 마친 다음(연패 후 승)에만 멈춤.
          * 연패정지 대기/일시정지 상태면 배팅 없음(no_bet) 처리. */
@@ -9811,16 +9905,8 @@ RESULTS_HTML = '''
                             bettingIsRed = predictionIsRed;
                             const rev = !!(calcState[id] && calcState[id].reverse);
                             if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
-                            var blended = blendedCard;
-                            var useSmartCard = !!(calcState[id] && calcState[id].smart_reverse);
-                            var smartThrCardEl = document.getElementById('calc-' + id + '-smart-reverse-threshold');
-                            var smartThrCard = (smartThrCardEl && !isNaN(parseFloat(smartThrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrCardEl.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 43);
-                            var doRevCard = false;
-                            if (useSmartCard && noRevByStreak5Card) {
-                                if (typeof blendedCard === 'number' && blendedCard <= smartThrCard && noRevByMain15Card) doRevCard = true;
-                                if (!doRevCard && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blendedCard === 'number' && blendedCard <= smartThrCard && noRevByMain15Card) doRevCard = true;
-                                if (doRevCard) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
-                            }
+                            var doRevCard = getSmartReverseDoRev(id, blendedCard, r15Card, noRevByStreak5Card);
+                            if (doRevCard) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                             var shapePredRev = !!(document.getElementById('calc-' + id + '-shape-prediction-reverse') && document.getElementById('calc-' + id + '-shape-prediction-reverse').checked);
                             var shapePredRevThrEl = document.getElementById('calc-' + id + '-shape-prediction-reverse-threshold');
                             var shapePredRevThr = (shapePredRevThrEl && !isNaN(parseFloat(shapePredRevThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(shapePredRevThrEl.value))) : 50;
@@ -9844,15 +9930,8 @@ RESULTS_HTML = '''
                                 // 모양 픽에 반픽/승률반픽/연패반픽/승률방향 반픽 적용 (다른 옵션과 중복 사용 가능)
                                 const rev = !!(calcState[id] && calcState[id].reverse);
                                 if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
-                                var useSmartCard2 = !!(calcState[id] && calcState[id].smart_reverse);
-                                var smartThrCardEl2 = document.getElementById('calc-' + id + '-smart-reverse-threshold');
-                                var smartThrCard2 = (smartThrCardEl2 && !isNaN(parseFloat(smartThrCardEl2.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrCardEl2.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 43);
-                                var doRevCard2 = false;
-                                if (useSmartCard2 && noRevByStreak5Card) {
-                                    if (typeof blendedCard === 'number' && blendedCard <= smartThrCard2 && noRevByMain15Card) doRevCard2 = true;
-                                    if (!doRevCard2 && getLoseStreak(id) >= getLoseStreakMin(id) && typeof blendedCard === 'number' && blendedCard <= smartThrCard2 && noRevByMain15Card) doRevCard2 = true;
-                                    if (doRevCard2) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
-                                }
+                                var doRevCard2 = getSmartReverseDoRev(id, blendedCard, r15Card, noRevByStreak5Card);
+                                if (doRevCard2) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                                 if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
                             } else {
                                 bettingText = '보류';
@@ -10495,6 +10574,12 @@ RESULTS_HTML = '''
                 calcState[id].smart_reverse_threshold = (smartRevThrRun && parseFloat(smartRevThrRun.value) != null && !isNaN(parseFloat(smartRevThrRun.value))) ? Math.max(0, Math.min(100, parseFloat(smartRevThrRun.value))) : 43;
                 const smartRevMinRunEl = document.getElementById('calc-' + id + '-smart-reverse-min-streak');
                 calcState[id].smart_reverse_min_streak = (smartRevMinRunEl && !isNaN(parseInt(smartRevMinRunEl.value, 10))) ? Math.max(2, Math.min(15, parseInt(smartRevMinRunEl.value, 10))) : 3;
+                const smartRevAsymRun = document.getElementById('calc-' + id + '-smart-reverse-asymmetric');
+                calcState[id].smart_reverse_asymmetric = !!(smartRevAsymRun && smartRevAsymRun.checked);
+                const smartRevThrDownRun = document.getElementById('calc-' + id + '-smart-reverse-threshold-down');
+                calcState[id].smart_reverse_threshold_down = (smartRevThrDownRun && !isNaN(parseFloat(smartRevThrDownRun.value))) ? Math.max(0, Math.min(100, parseFloat(smartRevThrDownRun.value))) : 50;
+                const smartRevThrUpRun = document.getElementById('calc-' + id + '-smart-reverse-threshold-up');
+                calcState[id].smart_reverse_threshold_up = (smartRevThrUpRun && !isNaN(parseFloat(smartRevThrUpRun.value))) ? Math.max(0, Math.min(100, parseFloat(smartRevThrUpRun.value))) : 40;
                 var streakSuppressRun = document.getElementById('calc-' + id + '-streak-suppress-reverse');
                 calcState[id].streak_suppress_reverse = !!(streakSuppressRun && streakSuppressRun.checked);
                 var lockDirRun = document.getElementById('calc-' + id + '-lock-direction-on-lose-streak');
@@ -10659,6 +10744,12 @@ RESULTS_HTML = '''
             calcState[id].smart_reverse_threshold = (smartRevThrEl && !isNaN(parseFloat(smartRevThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(smartRevThrEl.value))) : 43;
             const smartRevMinEl = document.getElementById('calc-' + id + '-smart-reverse-min-streak');
             calcState[id].smart_reverse_min_streak = (smartRevMinEl && !isNaN(parseInt(smartRevMinEl.value, 10))) ? Math.max(2, Math.min(15, parseInt(smartRevMinEl.value, 10))) : 3;
+            const smartRevAsymEl = document.getElementById('calc-' + id + '-smart-reverse-asymmetric');
+            calcState[id].smart_reverse_asymmetric = !!(smartRevAsymEl && smartRevAsymEl.checked);
+            const smartRevThrDownEl = document.getElementById('calc-' + id + '-smart-reverse-threshold-down');
+            calcState[id].smart_reverse_threshold_down = (smartRevThrDownEl && !isNaN(parseFloat(smartRevThrDownEl.value))) ? Math.max(0, Math.min(100, parseFloat(smartRevThrDownEl.value))) : 50;
+            const smartRevThrUpEl = document.getElementById('calc-' + id + '-smart-reverse-threshold-up');
+            calcState[id].smart_reverse_threshold_up = (smartRevThrUpEl && !isNaN(parseFloat(smartRevThrUpEl.value))) ? Math.max(0, Math.min(100, parseFloat(smartRevThrUpEl.value))) : 40;
             const streakSuppressEl = document.getElementById('calc-' + id + '-streak-suppress-reverse');
             calcState[id].streak_suppress_reverse = !!(streakSuppressEl && streakSuppressEl.checked);
             const lockDirEl = document.getElementById('calc-' + id + '-lock-direction-on-lose-streak');
@@ -10730,7 +10821,7 @@ RESULTS_HTML = '''
             const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
             if (targetEnabledEl) targetEnabledEl.addEventListener('change', () => { updateCalcSummary(id); });
             // 게임 중 옵션(반픽/승률반픽/연패반픽 등) 변경 시 즉시 반영
-            ['reverse', 'smart-reverse', 'smart-reverse-threshold', 'smart-reverse-min-streak', 'streak-suppress-reverse', 'lock-direction-on-lose-streak', 'shape-only-latest-next-pick', 'shape-prediction', 'shape-prediction-reverse', 'shape-prediction-reverse-threshold', 'shape-weight', 'chunk-weight', 'pong-weight', 'symmetry-weight', 'pause-low-win-rate', 'pause-win-rate-threshold'].forEach(f => {
+            ['reverse', 'smart-reverse', 'smart-reverse-threshold', 'smart-reverse-min-streak', 'smart-reverse-asymmetric', 'smart-reverse-threshold-down', 'smart-reverse-threshold-up', 'streak-suppress-reverse', 'lock-direction-on-lose-streak', 'shape-only-latest-next-pick', 'shape-prediction', 'shape-prediction-reverse', 'shape-prediction-reverse-threshold', 'shape-weight', 'chunk-weight', 'pong-weight', 'symmetry-weight', 'pause-low-win-rate', 'pause-win-rate-threshold'].forEach(f => {
                 const el = document.getElementById('calc-' + id + '-' + f);
                 if (el) el.addEventListener('change', function() { onCalcOptionChange(id); });
             });
@@ -12250,7 +12341,7 @@ def api_calc_state():
             if state is None:
                 state = {}
             # 계산기 1,2,3만 반환 (레거시 defense 제거 후 클라이언트 호환)
-            _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'smart_reverse': False, 'smart_reverse_threshold': 43, 'smart_reverse_min_streak': 3, 'streak_suppress_reverse': False, 'prediction_picks_best': False, 'prediction_picks_shape_pong_only': False, 'shape_only_latest_next_pick': False, 'shape_prediction': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'streak_wait_enabled': False, 'streak_wait_target': 3, 'streak_wait_target_wins': 15, 'streak_wait_state': 'waiting', 'streak_wait_cumulative_wins': 0, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None}
+            _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'smart_reverse': False, 'smart_reverse_threshold': 43, 'smart_reverse_min_streak': 3, 'smart_reverse_asymmetric': False, 'smart_reverse_threshold_down': 50, 'smart_reverse_threshold_up': 40, 'streak_suppress_reverse': False, 'prediction_picks_best': False, 'prediction_picks_shape_pong_only': False, 'shape_only_latest_next_pick': False, 'shape_prediction': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'streak_wait_enabled': False, 'streak_wait_target': 3, 'streak_wait_target_wins': 15, 'streak_wait_state': 'waiting', 'streak_wait_cumulative_wins': 0, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None}
             calcs = {}
             for cid in ('1', '2', '3'):
                 calcs[cid] = state[cid] if (cid in state and isinstance(state.get(cid), dict)) else dict(_default)
@@ -12327,6 +12418,9 @@ def api_calc_state():
                     'smart_reverse': bool(c.get('smart_reverse') or c.get('win_rate_reverse') or c.get('lose_streak_reverse') or c.get('win_rate_direction_reverse')),
                     'smart_reverse_threshold': max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 43))),
                     'smart_reverse_min_streak': max(2, min(15, int(c.get('smart_reverse_min_streak') or c.get('lose_streak_reverse_min_streak') or 3))),
+                    'smart_reverse_asymmetric': bool(c.get('smart_reverse_asymmetric')),
+                    'smart_reverse_threshold_down': max(0, min(100, int(c.get('smart_reverse_threshold_down') or 50))),
+                    'smart_reverse_threshold_up': max(0, min(100, int(c.get('smart_reverse_threshold_up') or 40))),
                     'streak_suppress_reverse': bool(c.get('streak_suppress_reverse')),
                     'lock_direction_on_lose_streak': bool(c.get('lock_direction_on_lose_streak', True)),
                     'prediction_picks_best': bool(c.get('prediction_picks_best')),
@@ -12393,7 +12487,7 @@ def api_calc_state():
         session_id = ((request.get_json(force=True, silent=True) or {}).get('session_id') or '').strip() or 'default'
         calcs = (request.get_json(force=True, silent=True) or {}).get('calcs') or {}
         out_fallback = {}
-        _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'smart_reverse': False, 'smart_reverse_threshold': 43, 'smart_reverse_min_streak': 3, 'streak_suppress_reverse': False, 'prediction_picks_best': False, 'prediction_picks_shape_pong_only': False, 'shape_only_latest_next_pick': False, 'shape_prediction': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'streak_wait_enabled': False, 'streak_wait_target': 3, 'streak_wait_target_wins': 15, 'streak_wait_state': 'waiting', 'streak_wait_cumulative_wins': 0, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None}
+        _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'smart_reverse': False, 'smart_reverse_threshold': 43, 'smart_reverse_min_streak': 3, 'smart_reverse_asymmetric': False, 'smart_reverse_threshold_down': 50, 'smart_reverse_threshold_up': 40, 'streak_suppress_reverse': False, 'prediction_picks_best': False, 'prediction_picks_shape_pong_only': False, 'shape_only_latest_next_pick': False, 'shape_prediction': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'streak_wait_enabled': False, 'streak_wait_target': 3, 'streak_wait_target_wins': 15, 'streak_wait_state': 'waiting', 'streak_wait_cumulative_wins': 0, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None}
         for cid in ('1', '2', '3'):
             c = calcs.get(cid) or {}
             if isinstance(c, dict):

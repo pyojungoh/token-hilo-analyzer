@@ -19,18 +19,23 @@ alwaysApply: false
 | **승률반픽** | 메인 픽 승률(경고 합산승률)이 설정값 이하일 때 반대픽 | `smart_reverse_threshold` (기본 43%) |
 | **연패반픽** | N연패 이상 **그리고** 실제 경고 합산승률이 설정값 이하일 때 반대픽 | `smart_reverse_min_streak` (기본 3회), `smart_reverse_threshold` |
 | **승률방향반픽** | 롤링 100회 승률 구간이 고점→저점(high_falling)일 때 반대픽. 저점→고점(low_rising)은 정픽. 정체(mid_flat) 시 직전 방향 참조 | `.cursor/rules/win-rate-direction.mdc` 포인트값 |
+| **비대칭 임계값** | 15카드 승률 추세(올라가는 중/내려가는 중)로 반픽·정픽 전환 속도 조절. 내려갈 때 50% 이하→반픽, 올라갈 때 40% 이상→정픽 | `smart_reverse_asymmetric`, `smart_reverse_threshold_down`(50), `smart_reverse_threshold_up`(40) |
 
 ### UI 옵션 (계산기당)
 
 - **스마트 반픽** 체크박스: `calc-N-smart-reverse`
 - **승률≤** 입력: `calc-N-smart-reverse-threshold` (0~100, 기본 43)
 - **연패≥** 입력: `calc-N-smart-reverse-min-streak` (2~15, 기본 3)
+- **비대칭** 체크박스: `calc-N-smart-reverse-asymmetric` — 15카드 승률 추세로 비대칭 임계값 적용
+- **↓≤** 입력: `calc-N-smart-reverse-threshold-down` (0~100, 기본 50) — 승률 내려갈 때 반픽 기준
+- **↑≥** 입력: `calc-N-smart-reverse-threshold-up` (0~100, 기본 40) — 승률 올라갈 때 정픽 기준
 - **줄 5 이상 반픽 억제**: `calc-N-streak-suppress-reverse` — 5연승/5연패일 때 스마트 반픽 미적용
 - **연패 중 방향 고정**: `calc-N-lock-direction-on-lose-streak` — 연패 중에는 방향 전환 안 함 (기본 켜짐)
 
 ### calc_sessions 저장 키
 
 - `smart_reverse`, `smart_reverse_threshold`, `smart_reverse_min_streak`
+- `smart_reverse_asymmetric`, `smart_reverse_threshold_down`, `smart_reverse_threshold_up`
 - `streak_suppress_reverse`, `lock_direction_on_lose_streak`
 - `last_trend_direction`, `last_win_rate_zone`, `last_win_rate_zone_on_win`
 
@@ -66,6 +71,7 @@ alwaysApply: false
 | 메인 픽 승률(경고 합산) | `_blended_win_rate()` — 15/30/100 가중 (승률반픽·연패반픽 공통 기준) |
 | 메인 15경기 승률 | `_get_main_recent15_win_rate()` — 예측픽 vs actual |
 | 연패 | `_get_lose_streak_from_history(c['history'])` — 조커·패·no_bet 포함 |
+| 15카드 승률 추세 | `_get_win_rate_trend_from_15_cards(ph)` — prediction_history의 blended_win_rate 비교. 'up'/'down'/None. 비대칭 옵션 시 사용 |
 
 ### 연패 중 방향 고정
 
