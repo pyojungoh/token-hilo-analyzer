@@ -4242,6 +4242,11 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     # 현재 줄이 5 이상이면 chunk_2pair여도 끊김 억제 유지 (5에서 끊김 과다 방지)
     current_seg_5plus = bool(col_heights_break and col_heights_break[0] >= 5)
     allow_break_consideration = (chunk_sub_break == 'chunk_2pair') and not current_seg_5plus
+    first_is_line_col = True
+    if len(use_for_pattern) >= 2:
+        a, b = use_for_pattern[0], use_for_pattern[1]
+        if (a is True or a is False) and (b is True or b is False):
+            first_is_line_col = (a == b)
     if flow_state == 'line_strong':
         # [올리는 방향] 줄 강함: 같은 픽 유지
         line_w = min(1.0, line_w + 0.25)
@@ -4314,7 +4319,6 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
             line_w = min(1.0, line_w + 0.02 * sym_mul)
             pong_w = max(0.0, pong_w - 0.01)
 
-    first_is_line_col = (use_for_pattern[0] == use_for_pattern[1]) if len(use_for_pattern) >= 2 else True
     u35_detected = _detect_u_35_pattern(line_runs)  # U자+줄3~5: 예측 안정화·과신 방지
     # === 2단계: phase별 방향 가산 (올리는=같은픽 / 직진=번갈아) ===
     pong_chunk_debug = {}
