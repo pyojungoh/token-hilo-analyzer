@@ -2134,7 +2134,7 @@ def _apply_results_to_calcs(results):
                 no_reverse_in_streak = bool(c.get('streak_suppress_reverse', False)) and run_length >= 4
                 main_rate15 = _get_main_recent15_win_rate(ph)
                 if use_smart and not no_reverse_in_streak:
-                    thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 50)))
+                    thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 43)))
                     min_streak = max(2, min(15, int(c.get('smart_reverse_min_streak') or c.get('lose_streak_reverse_min_streak') or 3)))
                     lose_streak = _get_lose_streak_from_history(c.get('history') or [])
                     do_reverse = False
@@ -2488,7 +2488,7 @@ def _server_calc_effective_pick_and_amount(c):
     # 스마트 반픽: 승률반픽+연패반픽만. zone(승률방향) 제거 — 예상 기반 꺽기가 틀리면 연패로 이어짐
     use_smart = c.get('smart_reverse') or c.get('win_rate_reverse') or c.get('lose_streak_reverse') or c.get('win_rate_direction_reverse')
     if use_smart and not no_reverse_in_streak:
-        thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 50)))
+        thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 43)))
         min_streak = max(2, min(15, int(c.get('smart_reverse_min_streak') or c.get('lose_streak_reverse_min_streak') or 3)))
         lose_streak = _get_lose_streak_from_history(c.get('history') or [])
         do_reverse = False
@@ -2546,7 +2546,7 @@ def _server_calc_effective_pick_and_amount(c):
             pred = '꺽' if pred == '정' else '정'
             color = _flip_pick_color(color)
         if use_smart and not no_reverse_in_streak:
-            thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 50)))
+            thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 43)))
             min_streak = max(2, min(15, int(c.get('smart_reverse_min_streak') or c.get('lose_streak_reverse_min_streak') or 3)))
             lose_streak = _get_lose_streak_from_history(c.get('history') or [])
             blended = _blended_win_rate(ph or get_prediction_history(100))
@@ -2900,30 +2900,25 @@ def _compute_joker_stats(results):
         out["intervals"] = intervals[:10]
         out["avg_interval"] = round(sum(intervals) / len(intervals), 1) if intervals else None
     # 경고 조건: 15번 카드 조커는 compute_prediction에서 이미 처리.
-    # 15카드 내 조커 2개 이상 → 조커 다발 구간, 배팅 보류
+    # skip_bet은 사용하지 않음 — 15번 카드가 조커일 때만 보류 (compute_prediction에서 value=None 반환)
     if count >= 2:
         out["warning"] = True
         out["warning_reason"] = f"15카드 내 조커 {count}개 (다발 구간)"
-        out["skip_bet"] = True
-    # 15카드 내 조커 1개 + 15번 카드가 조커면 이미 skip됨. 15번이 조커가 아닌데 1개만 있으면 경고만(배팅 가능)
     elif count == 1:
         out["warning"] = True
         out["warning_reason"] = "15카드 내 조커 1개"
-        # 1개만 있으면 skip_bet=False (15번이 조커면 compute_prediction에서 이미 None 반환)
-    # 최근 30카드 내 조커 3개 이상 → 조커 빈발 구간
-    if out["count_in_30"] >= 3 and not out["skip_bet"]:
+    if out["count_in_30"] >= 3:
         out["warning"] = True
         if out["warning_reason"]:
             out["warning_reason"] += f" · 30카드 내 조커 {out['count_in_30']}개"
         else:
             out["warning_reason"] = f"30카드 내 조커 {out['count_in_30']}개 (빈발 구간)"
-        out["skip_bet"] = True
     # 다음 조커까지 예상 남은 회차 (평균 간격 - 마지막 조커 경과)
     if out["avg_interval"] is not None and out["last_joker_rounds_ago"] is not None:
         est = max(0, round(out["avg_interval"]) - out["last_joker_rounds_ago"])
         out["next_joker_rounds_est"] = est
-    # 조커 예고: 10회 전부터 경고 (의미 있는 선제 알림)
-    if out.get("next_joker_rounds_est") is not None and 1 <= out["next_joker_rounds_est"] <= 10 and not out["skip_bet"]:
+    # 조커 예고: 10회 전부터 경고 (의미 있는 선제 알림) — 보류는 15번 카드 조커일 때만
+    if out.get("next_joker_rounds_est") is not None and 1 <= out["next_joker_rounds_est"] <= 10:
         out["warning"] = True
         if out["warning_reason"]:
             out["warning_reason"] += f" · 조커 예고 약 {out['next_joker_rounds_est']}회 전"
@@ -6050,7 +6045,7 @@ RESULTS_HTML = '''
                                     <div class="calc-options-toggle"><span class="calc-options-label">옵션</span><span class="calc-options-icon">▼</span></div>
                                     <div class="calc-options-body">
                                         <table class="calc-settings-table">
-                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-smart-reverse" title="승률반픽+연패반픽+승률방향반픽 통합. 조건 하나라도 만족 시 반픽" checked> 스마트 반픽</label> <label title="승률 이 값 이하일 때 반픽">승률≤<input type="number" id="calc-1-smart-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%</label> <label title="이 값 이상 연패+승률≤%일 때 반픽">연패≥<input type="number" id="calc-1-smart-reverse-min-streak" min="2" max="15" value="3" class="calc-threshold-input">회</label></td></tr>
+                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-1-reverse"> 반픽</label> <label><input type="checkbox" id="calc-1-smart-reverse" title="승률반픽+연패반픽+승률방향반픽 통합. 조건 하나라도 만족 시 반픽" checked> 스마트 반픽</label> <label title="승률 이 값 이하일 때 반픽">승률≤<input type="number" id="calc-1-smart-reverse-threshold" min="0" max="100" value="43" class="calc-threshold-input">%</label> <label title="이 값 이상 연패+승률≤%일 때 반픽">연패≥<input type="number" id="calc-1-smart-reverse-min-streak" min="2" max="15" value="3" class="calc-threshold-input">회</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-1-streak-suppress-reverse" title="4연승 또는 4연패일 때 반픽 억제 (퐁당→긴줄 전환 시 연패 감소)" checked> 줄 4 이상 반픽 억제</label> <label><input type="checkbox" id="calc-1-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>예측기픽</td><td><label><input type="checkbox" id="calc-1-prediction-picks-best" title="예측기픽 메뉴에서 강조된 카드(15회 승률 최고) 픽으로 배팅"> 예측기픽 메뉴 강조 픽으로 배팅</label> <label><input type="checkbox" id="calc-1-prediction-picks-shape-pong-only" title="예측기픽 사용 시 모양·퐁당만 사용 (메인·메인반픽 제외)"> 모양·퐁당만</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-1-shape-only-latest-next-pick" title="퐁당 구간→모양판별 픽, 덩어리/줄 구간→가장 최근 다음 픽. 자동 스위칭. 값 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
@@ -6106,7 +6101,7 @@ RESULTS_HTML = '''
                                     <div class="calc-options-toggle"><span class="calc-options-label">옵션</span><span class="calc-options-icon">▼</span></div>
                                     <div class="calc-options-body">
                                         <table class="calc-settings-table">
-                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-smart-reverse" title="승률반픽+연패반픽+승률방향반픽 통합. 조건 하나라도 만족 시 반픽"> 스마트 반픽</label> <label title="승률 이 값 이하일 때 반픽">승률≤<input type="number" id="calc-2-smart-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%</label> <label title="이 값 이상 연패+승률≤%일 때 반픽">연패≥<input type="number" id="calc-2-smart-reverse-min-streak" min="2" max="15" value="3" class="calc-threshold-input">회</label></td></tr>
+                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-2-reverse"> 반픽</label> <label><input type="checkbox" id="calc-2-smart-reverse" title="승률반픽+연패반픽+승률방향반픽 통합. 조건 하나라도 만족 시 반픽"> 스마트 반픽</label> <label title="승률 이 값 이하일 때 반픽">승률≤<input type="number" id="calc-2-smart-reverse-threshold" min="0" max="100" value="43" class="calc-threshold-input">%</label> <label title="이 값 이상 연패+승률≤%일 때 반픽">연패≥<input type="number" id="calc-2-smart-reverse-min-streak" min="2" max="15" value="3" class="calc-threshold-input">회</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-2-streak-suppress-reverse" title="4연승 또는 4연패일 때 반픽 억제"> 줄 4 이상 반픽 억제</label> <label><input type="checkbox" id="calc-2-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>예측기픽</td><td><label><input type="checkbox" id="calc-2-prediction-picks-best" title="예측기픽 메뉴에서 강조된 카드(15회 승률 최고) 픽으로 배팅"> 예측기픽 메뉴 강조 픽으로 배팅</label> <label><input type="checkbox" id="calc-2-prediction-picks-shape-pong-only" title="예측기픽 사용 시 모양·퐁당만 사용 (메인·메인반픽 제외)"> 모양·퐁당만</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-2-shape-only-latest-next-pick" title="퐁당 구간→모양판별 픽, 덩어리/줄 구간→가장 최근 다음 픽. 자동 스위칭. 값 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
@@ -6162,7 +6157,7 @@ RESULTS_HTML = '''
                                     <div class="calc-options-toggle"><span class="calc-options-label">옵션</span><span class="calc-options-icon">▼</span></div>
                                     <div class="calc-options-body">
                                         <table class="calc-settings-table">
-                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-smart-reverse" title="승률반픽+연패반픽+승률방향반픽 통합. 조건 하나라도 만족 시 반픽"> 스마트 반픽</label> <label title="승률 이 값 이하일 때 반픽">승률≤<input type="number" id="calc-3-smart-reverse-threshold" min="0" max="100" value="50" class="calc-threshold-input">%</label> <label title="이 값 이상 연패+승률≤%일 때 반픽">연패≥<input type="number" id="calc-3-smart-reverse-min-streak" min="2" max="15" value="3" class="calc-threshold-input">회</label></td></tr>
+                                            <tr><td>픽/승률</td><td><label class="calc-reverse"><input type="checkbox" id="calc-3-reverse"> 반픽</label> <label><input type="checkbox" id="calc-3-smart-reverse" title="승률반픽+연패반픽+승률방향반픽 통합. 조건 하나라도 만족 시 반픽"> 스마트 반픽</label> <label title="승률 이 값 이하일 때 반픽">승률≤<input type="number" id="calc-3-smart-reverse-threshold" min="0" max="100" value="43" class="calc-threshold-input">%</label> <label title="이 값 이상 연패+승률≤%일 때 반픽">연패≥<input type="number" id="calc-3-smart-reverse-min-streak" min="2" max="15" value="3" class="calc-threshold-input">회</label></td></tr>
                                             <tr><td>승률방향</td><td><label><input type="checkbox" id="calc-3-streak-suppress-reverse" title="4연승 또는 4연패일 때 반픽 억제"> 줄 4 이상 반픽 억제</label> <label><input type="checkbox" id="calc-3-lock-direction-on-lose-streak" title="배팅이 연패 중일 때 방향을 바꾸지 않고 진행하던 방향 유지" checked> 연패 중 방향 고정</label></td></tr>
                                             <tr><td>예측기픽</td><td><label><input type="checkbox" id="calc-3-prediction-picks-best" title="예측기픽 메뉴에서 강조된 카드(15회 승률 최고) 픽으로 배팅"> 예측기픽 메뉴 강조 픽으로 배팅</label> <label><input type="checkbox" id="calc-3-prediction-picks-shape-pong-only" title="예측기픽 사용 시 모양·퐁당만 사용 (메인·메인반픽 제외)"> 모양·퐁당만</label></td></tr>
                                             <tr><td>모양</td><td><label><input type="checkbox" id="calc-3-shape-only-latest-next-pick" title="퐁당 구간→모양판별 픽, 덩어리/줄 구간→가장 최근 다음 픽. 자동 스위칭. 값 없으면 배팅 안 함"> 가장 최근 다음 픽에만 배팅 (값 없으면 배팅 안 함)</label></td></tr>
@@ -6495,7 +6490,7 @@ RESULTS_HTML = '''
                 use_duration_limit: false,
                 reverse: false,
                 smart_reverse: false,
-                smart_reverse_threshold: 50,
+                smart_reverse_threshold: 43,
                 smart_reverse_min_streak: 3,
                 streak_suppress_reverse: false,
                 lock_direction_on_lose_streak: true,
@@ -6567,7 +6562,7 @@ RESULTS_HTML = '''
                     use_duration_limit: use_duration_limit,
                     reverse: !!(revEl && revEl.checked),
                     smart_reverse: !!(smartRevEl && smartRevEl.checked),
-                    smart_reverse_threshold: (function() { var v = (smartRevThrEl && !isNaN(parseFloat(smartRevThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(smartRevThrEl.value))) : 50; return typeof v === 'number' && !isNaN(v) ? v : 50; })(),
+                    smart_reverse_threshold: (function() { var v = (smartRevThrEl && !isNaN(parseFloat(smartRevThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(smartRevThrEl.value))) : 43; return typeof v === 'number' && !isNaN(v) ? v : 43; })(),
                     smart_reverse_min_streak: (function() { var v = (smartRevMinEl && !isNaN(parseInt(smartRevMinEl.value, 10))) ? Math.max(2, Math.min(15, parseInt(smartRevMinEl.value, 10))) : 3; return typeof v === 'number' && !isNaN(v) ? v : 3; })(),
                     streak_suppress_reverse: !!(document.getElementById('calc-' + id + '-streak-suppress-reverse') && document.getElementById('calc-' + id + '-streak-suppress-reverse').checked),
                     lock_direction_on_lose_streak: !!(document.getElementById('calc-' + id + '-lock-direction-on-lose-streak') && document.getElementById('calc-' + id + '-lock-direction-on-lose-streak').checked),
@@ -6756,7 +6751,7 @@ RESULTS_HTML = '''
                 // 폴링 시 실행 중이면 paused는 클라이언트 유지(서버의 예전 paused=true가 마틴 중 다시 멈춤 걸리지 않도록)
                 if (fullRestore || !localRunning) calcState[id].paused = !!c.paused;
                 calcState[id].smart_reverse = !!(c.smart_reverse || c.win_rate_reverse || c.lose_streak_reverse || c.win_rate_direction_reverse);
-                var smartThrRestore = (typeof c.smart_reverse_threshold === 'number' && c.smart_reverse_threshold >= 0 && c.smart_reverse_threshold <= 100) ? c.smart_reverse_threshold : ((typeof c.win_rate_threshold === 'number' && c.win_rate_threshold >= 0 && c.win_rate_threshold <= 100) ? c.win_rate_threshold : 50);
+                var smartThrRestore = (typeof c.smart_reverse_threshold === 'number' && c.smart_reverse_threshold >= 0 && c.smart_reverse_threshold <= 100) ? c.smart_reverse_threshold : ((typeof c.win_rate_threshold === 'number' && c.win_rate_threshold >= 0 && c.win_rate_threshold <= 100) ? c.win_rate_threshold : 43);
                 calcState[id].smart_reverse_threshold = smartThrRestore;
                 var smartMinStreakRestore = (typeof c.smart_reverse_min_streak === 'number' && c.smart_reverse_min_streak >= 2 && c.smart_reverse_min_streak <= 15) ? c.smart_reverse_min_streak : ((typeof c.lose_streak_reverse_min_streak === 'number' && c.lose_streak_reverse_min_streak >= 2 && c.lose_streak_reverse_min_streak <= 15) ? c.lose_streak_reverse_min_streak : 3);
                 calcState[id].smart_reverse_min_streak = smartMinStreakRestore;
@@ -6795,7 +6790,7 @@ RESULTS_HTML = '''
                 const smartRevThrEl = document.getElementById('calc-' + id + '-smart-reverse-threshold');
                 const smartRevMinEl = document.getElementById('calc-' + id + '-smart-reverse-min-streak');
                 if (smartRevEl) smartRevEl.checked = !!calcState[id].smart_reverse;
-                if (smartRevThrEl) smartRevThrEl.value = String(Math.round(calcState[id].smart_reverse_threshold || 50));
+                if (smartRevThrEl) smartRevThrEl.value = String(Math.round(calcState[id].smart_reverse_threshold || 43));
                 if (smartRevMinEl) smartRevMinEl.value = String(Math.max(2, Math.min(15, calcState[id].smart_reverse_min_streak || 3)));
                 var streakSuppressEl = document.getElementById('calc-' + id + '-streak-suppress-reverse');
                 if (streakSuppressEl) streakSuppressEl.checked = !!calcState[id].streak_suppress_reverse;
@@ -7498,7 +7493,7 @@ RESULTS_HTML = '''
                                     pred = rev ? (baseForPred === '정' ? '꺽' : '정') : baseForPred;
                                     var useSmart = !!(calcState[id] && calcState[id].smart_reverse);
                                     var smartThrEl = document.getElementById('calc-' + id + '-smart-reverse-threshold');
-                                    var smartThr = (smartThrEl && !isNaN(parseFloat(smartThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrEl.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 50);
+                                    var smartThr = (smartThrEl && !isNaN(parseFloat(smartThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrEl.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 43);
                                     var streakSuppress = !!(calcState[id] && calcState[id].streak_suppress_reverse);
                                     var noRevByMain15 = (r15 == null || r15 < 53);
                                     var noRevByStreak5 = !(streakSuppress && runLen >= 4);
@@ -7564,7 +7559,7 @@ RESULTS_HTML = '''
                                     pred = rev ? (baseForPredA === '정' ? '꺽' : '정') : baseForPredA;
                                     var useSmartA = !!(calcState[id] && calcState[id].smart_reverse);
                                     var smartThrElA = document.getElementById('calc-' + id + '-smart-reverse-threshold');
-                                    var smartThrA = (smartThrElA && !isNaN(parseFloat(smartThrElA.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrElA.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 50);
+                                    var smartThrA = (smartThrElA && !isNaN(parseFloat(smartThrElA.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrElA.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 43);
                                     var streakSuppressA = !!(calcState[id] && calcState[id].streak_suppress_reverse);
                                     var noRevByMain15A = (r15 == null || r15 < 53);
                                     var noRevByStreak5A = !(streakSuppressA && runLen >= 4);
@@ -7655,7 +7650,7 @@ RESULTS_HTML = '''
                                     pred = rev ? (baseForPred === '정' ? '꺽' : '정') : baseForPred;
                                     var useSmart2 = !!(calcState[id] && calcState[id].smart_reverse);
                                     var smartThrEl2 = document.getElementById('calc-' + id + '-smart-reverse-threshold');
-                                    var smartThr2 = (smartThrEl2 && !isNaN(parseFloat(smartThrEl2.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrEl2.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 50);
+                                    var smartThr2 = (smartThrEl2 && !isNaN(parseFloat(smartThrEl2.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrEl2.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 43);
                                     var streakSuppress2 = !!(calcState[id] && calcState[id].streak_suppress_reverse);
                                     var noRevByMain152 = (r15 == null || r15 < 53);
                                     var noRevByStreak52 = !(streakSuppress2 && runLen >= 4);
@@ -7707,7 +7702,7 @@ RESULTS_HTML = '''
                                     pred = rev ? (baseForPredA === '정' ? '꺽' : '정') : baseForPredA;
                                     var useSmart3 = !!(calcState[id] && calcState[id].smart_reverse);
                                     var smartThrEl3 = document.getElementById('calc-' + id + '-smart-reverse-threshold');
-                                    var smartThr3 = (smartThrEl3 && !isNaN(parseFloat(smartThrEl3.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrEl3.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 50);
+                                    var smartThr3 = (smartThrEl3 && !isNaN(parseFloat(smartThrEl3.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrEl3.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 43);
                                     var streakSuppress3 = !!(calcState[id] && calcState[id].streak_suppress_reverse);
                                     var noRevByMain153 = (r15 == null || r15 < 53);
                                     var noRevByStreak53 = !(streakSuppress3 && runLen >= 4);
@@ -9497,7 +9492,7 @@ RESULTS_HTML = '''
                             var blended = blendedCard;
                             var useSmartCard = !!(calcState[id] && calcState[id].smart_reverse);
                             var smartThrCardEl = document.getElementById('calc-' + id + '-smart-reverse-threshold');
-                            var smartThrCard = (smartThrCardEl && !isNaN(parseFloat(smartThrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrCardEl.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 50);
+                            var smartThrCard = (smartThrCardEl && !isNaN(parseFloat(smartThrCardEl.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrCardEl.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 43);
                             var doRevCard = false;
                             if (useSmartCard && noRevByStreak5Card) {
                                 if (typeof blendedCard === 'number' && blendedCard <= smartThrCard && noRevByMain15Card) doRevCard = true;
@@ -9529,7 +9524,7 @@ RESULTS_HTML = '''
                                 if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                                 var useSmartCard2 = !!(calcState[id] && calcState[id].smart_reverse);
                                 var smartThrCardEl2 = document.getElementById('calc-' + id + '-smart-reverse-threshold');
-                                var smartThrCard2 = (smartThrCardEl2 && !isNaN(parseFloat(smartThrCardEl2.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrCardEl2.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 50);
+                                var smartThrCard2 = (smartThrCardEl2 && !isNaN(parseFloat(smartThrCardEl2.value))) ? Math.max(0, Math.min(100, parseFloat(smartThrCardEl2.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold === 'number' ? calcState[id].smart_reverse_threshold : 43);
                                 var doRevCard2 = false;
                                 if (useSmartCard2 && noRevByStreak5Card) {
                                     if (typeof blendedCard === 'number' && blendedCard <= smartThrCard2 && noRevByMain15Card) doRevCard2 = true;
@@ -10175,7 +10170,7 @@ RESULTS_HTML = '''
                 const smartRevRun = document.getElementById('calc-' + id + '-smart-reverse');
                 calcState[id].smart_reverse = !!(smartRevRun && smartRevRun.checked);
                 const smartRevThrRun = document.getElementById('calc-' + id + '-smart-reverse-threshold');
-                calcState[id].smart_reverse_threshold = (smartRevThrRun && parseFloat(smartRevThrRun.value) != null && !isNaN(parseFloat(smartRevThrRun.value))) ? Math.max(0, Math.min(100, parseFloat(smartRevThrRun.value))) : 50;
+                calcState[id].smart_reverse_threshold = (smartRevThrRun && parseFloat(smartRevThrRun.value) != null && !isNaN(parseFloat(smartRevThrRun.value))) ? Math.max(0, Math.min(100, parseFloat(smartRevThrRun.value))) : 43;
                 const smartRevMinRunEl = document.getElementById('calc-' + id + '-smart-reverse-min-streak');
                 calcState[id].smart_reverse_min_streak = (smartRevMinRunEl && !isNaN(parseInt(smartRevMinRunEl.value, 10))) ? Math.max(2, Math.min(15, parseInt(smartRevMinRunEl.value, 10))) : 3;
                 var streakSuppressRun = document.getElementById('calc-' + id + '-streak-suppress-reverse');
@@ -10339,7 +10334,7 @@ RESULTS_HTML = '''
             const smartRevEl = document.getElementById('calc-' + id + '-smart-reverse');
             calcState[id].smart_reverse = !!(smartRevEl && smartRevEl.checked);
             const smartRevThrEl = document.getElementById('calc-' + id + '-smart-reverse-threshold');
-            calcState[id].smart_reverse_threshold = (smartRevThrEl && !isNaN(parseFloat(smartRevThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(smartRevThrEl.value))) : 50;
+            calcState[id].smart_reverse_threshold = (smartRevThrEl && !isNaN(parseFloat(smartRevThrEl.value))) ? Math.max(0, Math.min(100, parseFloat(smartRevThrEl.value))) : 43;
             const smartRevMinEl = document.getElementById('calc-' + id + '-smart-reverse-min-streak');
             calcState[id].smart_reverse_min_streak = (smartRevMinEl && !isNaN(parseInt(smartRevMinEl.value, 10))) ? Math.max(2, Math.min(15, parseInt(smartRevMinEl.value, 10))) : 3;
             const streakSuppressEl = document.getElementById('calc-' + id + '-streak-suppress-reverse');
@@ -11924,7 +11919,7 @@ def api_calc_state():
             if state is None:
                 state = {}
             # 계산기 1,2,3만 반환 (레거시 defense 제거 후 클라이언트 호환)
-            _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'smart_reverse': False, 'smart_reverse_threshold': 50, 'smart_reverse_min_streak': 3, 'streak_suppress_reverse': False, 'prediction_picks_best': False, 'prediction_picks_shape_pong_only': False, 'shape_only_latest_next_pick': False, 'shape_prediction': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'streak_wait_enabled': False, 'streak_wait_target': 3, 'streak_wait_target_wins': 15, 'streak_wait_state': 'waiting', 'streak_wait_cumulative_wins': 0, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None}
+            _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'smart_reverse': False, 'smart_reverse_threshold': 43, 'smart_reverse_min_streak': 3, 'streak_suppress_reverse': False, 'prediction_picks_best': False, 'prediction_picks_shape_pong_only': False, 'shape_only_latest_next_pick': False, 'shape_prediction': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'streak_wait_enabled': False, 'streak_wait_target': 3, 'streak_wait_target_wins': 15, 'streak_wait_state': 'waiting', 'streak_wait_cumulative_wins': 0, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None}
             calcs = {}
             for cid in ('1', '2', '3'):
                 calcs[cid] = state[cid] if (cid in state and isinstance(state.get(cid), dict)) else dict(_default)
@@ -11999,7 +11994,7 @@ def api_calc_state():
                     'reverse': bool(c.get('reverse')),
                     'timer_completed': bool(c.get('timer_completed')),
                     'smart_reverse': bool(c.get('smart_reverse') or c.get('win_rate_reverse') or c.get('lose_streak_reverse') or c.get('win_rate_direction_reverse')),
-                    'smart_reverse_threshold': max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 50))),
+                    'smart_reverse_threshold': max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 43))),
                     'smart_reverse_min_streak': max(2, min(15, int(c.get('smart_reverse_min_streak') or c.get('lose_streak_reverse_min_streak') or 3))),
                     'streak_suppress_reverse': bool(c.get('streak_suppress_reverse')),
                     'lock_direction_on_lose_streak': bool(c.get('lock_direction_on_lose_streak', True)),
@@ -12041,7 +12036,7 @@ def api_calc_state():
                 if current_c.get('pending_shape_debug') and c.get('pending_round') == current_c.get('pending_round'):
                     out[cid]['pending_shape_debug'] = current_c['pending_shape_debug']
             else:
-                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'smart_reverse': False, 'smart_reverse_threshold': 50, 'smart_reverse_min_streak': 3, 'streak_suppress_reverse': False, 'lock_direction_on_lose_streak': True, 'prediction_picks_best': False, 'prediction_picks_shape_pong_only': False, 'shape_only_latest_next_pick': False, 'shape_prediction': False, 'shape_weight': 1, 'chunk_weight': 1, 'pong_weight': 1, 'symmetry_weight': 1, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None, 'last_win_rate_zone_on_win': None}
+                out[cid] = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'smart_reverse': False, 'smart_reverse_threshold': 43, 'smart_reverse_min_streak': 3, 'streak_suppress_reverse': False, 'lock_direction_on_lose_streak': True, 'prediction_picks_best': False, 'prediction_picks_shape_pong_only': False, 'shape_only_latest_next_pick': False, 'shape_prediction': False, 'shape_weight': 1, 'chunk_weight': 1, 'pong_weight': 1, 'symmetry_weight': 1, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None, 'last_win_rate_zone_on_win': None}
         save_calc_state(session_id, out)
         # 계산기 running 상태를 current_pick에 반영 → 에뮬레이터 매크로가 목표 달성 시 자동 중지
         if bet_int:
@@ -12067,7 +12062,7 @@ def api_calc_state():
         session_id = ((request.get_json(force=True, silent=True) or {}).get('session_id') or '').strip() or 'default'
         calcs = (request.get_json(force=True, silent=True) or {}).get('calcs') or {}
         out_fallback = {}
-        _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'smart_reverse': False, 'smart_reverse_threshold': 50, 'smart_reverse_min_streak': 3, 'streak_suppress_reverse': False, 'prediction_picks_best': False, 'prediction_picks_shape_pong_only': False, 'shape_only_latest_next_pick': False, 'shape_prediction': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'streak_wait_enabled': False, 'streak_wait_target': 3, 'streak_wait_target_wins': 15, 'streak_wait_state': 'waiting', 'streak_wait_cumulative_wins': 0, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None}
+        _default = {'running': False, 'started_at': 0, 'history': [], 'capital': 1000000, 'base': 10000, 'odds': 1.97, 'duration_limit': 0, 'use_duration_limit': False, 'reverse': False, 'timer_completed': False, 'smart_reverse': False, 'smart_reverse_threshold': 43, 'smart_reverse_min_streak': 3, 'streak_suppress_reverse': False, 'prediction_picks_best': False, 'prediction_picks_shape_pong_only': False, 'shape_only_latest_next_pick': False, 'shape_prediction': False, 'last_trend_direction': None, 'martingale': False, 'martingale_type': 'pyo', 'target_enabled': False, 'target_amount': 0, 'pause_low_win_rate_enabled': False, 'pause_win_rate_threshold': 45, 'streak_wait_enabled': False, 'streak_wait_target': 3, 'streak_wait_target_wins': 15, 'streak_wait_state': 'waiting', 'streak_wait_cumulative_wins': 0, 'paused': False, 'max_win_streak_ever': 0, 'max_lose_streak_ever': 0, 'first_bet_round': 0, 'pending_round': None, 'pending_predicted': None, 'pending_prob': None, 'pending_color': None, 'pending_bet_amount': None, 'last_win_rate_zone': None, 'last_win_rate_zone_change_round': None}
         for cid in ('1', '2', '3'):
             c = calcs.get(cid) or {}
             if isinstance(c, dict):
@@ -12785,6 +12780,11 @@ GRAPH_ANALYSIS_CSV_PROMPT = [
     '# 5. 스마트반픽 옵션에 유리한 승율을 파악한다.',
     '# 6. 연패 3회 이상 손실 구간, 줄 4+ 꺽 예측 과다, 승률 50% 이하 반대픽 효과 검증.',
     '# 7. 위 분석 결과로 app.py 예측 공식·가중치 수정. .cursor/rules 준수.',
+    '#',
+    '# 8. [엑셀/CSV만 보고 임계값 권장] 경고승률(열5) 구간별 정픽승률·반픽승률 계산:',
+    '#    - 경고승률 ≤43%, 43~50%, 50~57%, ≥57% 구간으로 나누어 각 구간별 정픽(픽=실제) 승률과 반픽(픽≠실제) 승률을 산출.',
+    '#    - 반픽이 유리한 구간(반픽승률 > 정픽승률)의 상한을 스마트반픽 임계값 권장으로 제시. 예: ≤43%에서만 반픽 유리면 43% 권장.',
+    '#    - 43~50%에서 정픽 유리한데 임계값이 50%면 43~50%에서 잘못 반픽 적용됨 → 임계값을 43%로 낮추는 것이 맞음.',
 ]
 
 

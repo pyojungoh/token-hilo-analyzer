@@ -16,14 +16,14 @@ alwaysApply: false
 
 | 구성 요소 | 설명 | 설정값 |
 |-----------|------|--------|
-| **승률반픽** | 메인 픽 승률(경고 합산승률)이 설정값 이하일 때 반대픽 | `smart_reverse_threshold` (기본 40%) |
+| **승률반픽** | 메인 픽 승률(경고 합산승률)이 설정값 이하일 때 반대픽 | `smart_reverse_threshold` (기본 43%) |
 | **연패반픽** | N연패 이상 **그리고** 실제 경고 합산승률이 설정값 이하일 때 반대픽 | `smart_reverse_min_streak` (기본 3회), `smart_reverse_threshold` |
 | **승률방향반픽** | 롤링 100회 승률 구간이 고점→저점(high_falling)일 때 반대픽. 저점→고점(low_rising)은 정픽. 정체(mid_flat) 시 직전 방향 참조 | `.cursor/rules/win-rate-direction.mdc` 포인트값 |
 
 ### UI 옵션 (계산기당)
 
 - **스마트 반픽** 체크박스: `calc-N-smart-reverse`
-- **승률≤** 입력: `calc-N-smart-reverse-threshold` (0~100, 기본 40)
+- **승률≤** 입력: `calc-N-smart-reverse-threshold` (0~100, 기본 43)
 - **연패≥** 입력: `calc-N-smart-reverse-min-streak` (2~15, 기본 3)
 - **줄 5 이상 반픽 억제**: `calc-N-streak-suppress-reverse` — 5연승/5연패일 때 스마트 반픽 미적용
 - **연패 중 방향 고정**: `calc-N-lock-direction-on-lose-streak` — 연패 중에는 방향 전환 안 함 (기본 켜짐)
