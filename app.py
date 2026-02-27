@@ -6465,7 +6465,8 @@ RESULTS_HTML = '''
         var lastPongChunkPhase = null;    // 퐁당/덩어리 구간 판별 결과
         var lastPongChunkDebug = {};      // 퐁당/덩어리 판별 디버그 데이터
         var lastCalcBestTypeSeen = null;  // calc_best 디바운스: 직전 수신값
-        var lastCalcBestTypeStable = null;  // calc_best 디바운스: 2회 연속 동일 시 적용값
+        var lastCalcBestTypeStable = null;  // calc_best 디바운스: N회 연속 동일 시 적용값
+        var lastCalcBestTypeConsecutive = 0;  // calc_best 디바운스: 연속 동일 횟수 (깜빡임 방지)
         var lastCalcBestRound = null;     // calc_best 디바운스: 회차 변경 시 리셋용
         var lastShapePickByRound = {};    // 모양 카드 회차별 고정: { round: { val, color, rate } } — 나중에 바뀌는 것 방지
         var lastShapePickFromApi = null;  // shape-pick API 응답 — 모양 카드 빠른 표시용, 우선 사용
@@ -10604,9 +10605,12 @@ RESULTS_HTML = '''
                 var v = card.querySelector('.pred-pick-value');
                 var c = card.querySelector('.pred-pick-color');
                 var r = card.querySelector('.pred-pick-rate');
-                if (v) v.textContent = val || '—';
-                if (c) c.textContent = color ? (color === 'RED' ? 'RED' : 'BLACK') : '—';
-                if (r) r.textContent = rate != null ? '15회 승률: ' + rate + '%' : '15회 승률: —';
+                var newVal = val || '—';
+                var newColor = color ? (color === 'RED' ? 'RED' : 'BLACK') : '—';
+                var newRate = rate != null ? '15회 승률: ' + rate + '%' : '15회 승률: —';
+                if (v && v.textContent !== newVal) v.textContent = newVal;
+                if (c && c.textContent !== newColor) c.textContent = newColor;
+                if (r && r.textContent !== newRate) r.textContent = newRate;
                 if (val && color) {
                     card.style.borderColor = color === 'RED' ? '#b71c1c' : '#212121';
                     card.style.background = color === 'RED' ? 'linear-gradient(135deg,#8b1a1a 0%,#b71c1c 50%,#6b1515 100%)' : 'linear-gradient(135deg,#1a1a1a 0%,#111 50%,#0d0d0d 100%)';
@@ -10634,18 +10638,25 @@ RESULTS_HTML = '''
                 lastCalcBestRound = currentRound;
                 lastCalcBestTypeSeen = incomingBest;
                 lastCalcBestTypeStable = incomingBest;
+                lastCalcBestTypeConsecutive = 1;
             } else if (lastCalcBestTypeStable == null) {
                 lastCalcBestTypeSeen = incomingBest;
                 lastCalcBestTypeStable = incomingBest;
+                lastCalcBestTypeConsecutive = 1;
             } else if (incomingBest === lastCalcBestTypeSeen) {
-                lastCalcBestTypeStable = incomingBest;
+                lastCalcBestTypeConsecutive = (lastCalcBestTypeConsecutive || 0) + 1;
+                if (lastCalcBestTypeConsecutive >= 3) lastCalcBestTypeStable = incomingBest;
             } else {
                 lastCalcBestTypeSeen = incomingBest;
+                lastCalcBestTypeConsecutive = 1;
             }
             var bestType = lastCalcBestTypeStable;
-            [mainCard, mainReverseCard, shapeCard, pongCard].forEach(function(c) { if (c) c.classList.remove('pred-pick-card-calc-best'); });
+            var prevBestCard = cards.querySelector('.pred-pick-card.pred-pick-card-calc-best');
             var bestCard = (bestType === 'main' && mainCard) || (bestType === 'main_reverse' && mainReverseCard) || (bestType === 'shape' && shapeCard) || (bestType === 'pong' && pongCard);
-            if (bestCard) bestCard.classList.add('pred-pick-card-calc-best');
+            if (prevBestCard !== bestCard) {
+                [mainCard, mainReverseCard, shapeCard, pongCard].forEach(function(c) { if (c) c.classList.remove('pred-pick-card-calc-best'); });
+                if (bestCard) bestCard.classList.add('pred-pick-card-calc-best');
+            }
         }
         
         function updateCalcJokerBadge() {
