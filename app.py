@@ -8030,6 +8030,11 @@ RESULTS_HTML = '''
                                     var streakSuppress = !!(calcState[id] && calcState[id].streak_suppress_reverse);
                                     var noRevByStreak5 = !(streakSuppress && runLen >= 4);
                                     betColor = normalizePickColor(predForRound.color);
+                                    if (betColor !== '빨강' && betColor !== '검정') {
+                                        if (is15RedForRound === true || is15RedForRound === false) {
+                                            betColor = (baseForPred === '정') ? (is15RedForRound ? '빨강' : '검정') : (is15RedForRound ? '검정' : '빨강');
+                                        } else { betColor = baseForPred === '정' ? '빨강' : '검정'; }
+                                    }
                                     if (baseForPred !== predForRound.value) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (runLenObj.run >= 4 && runLenObj.last != null) {
@@ -8096,11 +8101,17 @@ RESULTS_HTML = '''
                                     var noRevByStreak5A = !(streakSuppressA && runLen >= 4);
                                     var shapePredRevA = !!(calcState[id] && calcState[id].shape_prediction_reverse);
                                     var shapePredRevThrA = (calcState[id] != null && typeof calcState[id].shape_prediction_reverse_threshold === 'number') ? calcState[id].shape_prediction_reverse_threshold : 50;
+                                    var sp15A = null;
                                     if (!!(calcState[id] && calcState[id].shape_prediction) && shapePredRevA && typeof getShapePredictionWinRate15 === 'function') {
-                                        var sp15A = getShapePredictionWinRate15(id);
+                                        sp15A = getShapePredictionWinRate15(id);
                                         if (sp15A != null && sp15A <= shapePredRevThrA) pred = pred === '정' ? '꺽' : '정';
                                     }
                                     betColorActual = normalizePickColor(predForRound.color);
+                                    if (betColorActual !== '빨강' && betColorActual !== '검정') {
+                                        if (is15RedForRound === true || is15RedForRound === false) {
+                                            betColorActual = (baseForPredA === '정') ? (is15RedForRound ? '빨강' : '검정') : (is15RedForRound ? '검정' : '빨강');
+                                        } else { betColorActual = baseForPredA === '정' ? '빨강' : '검정'; }
+                                    }
                                     if (baseForPredA !== predForRound.value) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (runLenObj.run >= 4 && runLenObj.last != null) {
@@ -8185,6 +8196,12 @@ RESULTS_HTML = '''
                                     var streakSuppress2 = !!(calcState[id] && calcState[id].streak_suppress_reverse);
                                     var noRevByStreak52 = !(streakSuppress2 && runLen >= 4);
                                     betColor = normalizePickColor(predForRound.color);
+                                    if (betColor !== '빨강' && betColor !== '검정') {
+                                        if (is15RedForRound === true || is15RedForRound === false) {
+                                            betColor = (baseForPred === '정') ? (is15RedForRound ? '빨강' : '검정') : (is15RedForRound ? '검정' : '빨강');
+                                        } else { betColor = baseForPred === '정' ? '빨강' : '검정'; }
+                                    }
+                                    if (baseForPred !== predForRound.value) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (runLenObj.run >= 4 && runLenObj.last != null) {
                                         pred = runLenObj.last ? '정' : '꺽';
@@ -8236,6 +8253,12 @@ RESULTS_HTML = '''
                                     var streakSuppress3 = !!(calcState[id] && calcState[id].streak_suppress_reverse);
                                     var noRevByStreak53 = !(streakSuppress3 && runLen >= 4);
                                     betColorActual = normalizePickColor(predForRound.color);
+                                    if (betColorActual !== '빨강' && betColorActual !== '검정') {
+                                        if (is15RedForRound === true || is15RedForRound === false) {
+                                            betColorActual = (baseForPredA === '정') ? (is15RedForRound ? '빨강' : '검정') : (is15RedForRound ? '검정' : '빨강');
+                                        } else { betColorActual = baseForPredA === '정' ? '빨강' : '검정'; }
+                                    }
+                                    if (baseForPredA !== predForRound.value) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (runLenObj.run >= 4 && runLenObj.last != null) {
                                         pred = runLenObj.last ? '정' : '꺽';
@@ -8607,7 +8630,15 @@ RESULTS_HTML = '''
                         predict = lastPrediction.value;
                         predProb = (lastPrediction.prob != null && !isNaN(lastPrediction.prob)) ? lastPrediction.prob : predProb;
                         var serverColor = normalizePickColor(lastPrediction.color);
-                        colorToPick = (serverColor === '빨강' || serverColor === '검정') ? serverColor : (lastPrediction.value === '정' ? '빨강' : '검정');
+                        if (serverColor === '빨강' || serverColor === '검정') {
+                            colorToPick = serverColor;
+                        } else {
+                            var card15Fallback = (displayResults && displayResults.length >= 15 && typeof parseCardValue === 'function') ? parseCardValue(displayResults[14].result || '') : null;
+                            var is15RedFb = card15Fallback ? card15Fallback.isRed : null;
+                            if (is15RedFb === true || is15RedFb === false) {
+                                colorToPick = (lastPrediction.value === '정') ? (is15RedFb ? '빨강' : '검정') : (is15RedFb ? '검정' : '빨강');
+                            } else { colorToPick = lastPrediction.value === '정' ? '빨강' : '검정'; }
+                        }
                         colorClass = colorToPick === '빨강' ? 'red' : 'black';
                     } else {
                         predict = '보류';
@@ -10091,7 +10122,19 @@ RESULTS_HTML = '''
                         var colorFromShapePong = (predPicksBestOn && predPicksShapePongOnlyOn && lastPrediction.calc_best_shape_pong_color) ? normalizePickColor(lastPrediction.calc_best_shape_pong_color) : null;
                         var predictionText = predFromShapePong || predFromBest || ((shapePredOn && (lastPrediction.shape_predicted === '정' || lastPrediction.shape_predicted === '꺽')) ? lastPrediction.shape_predicted : lastPrediction.value);
                         var predColorNorm = colorFromShapePong || colorFromBest || ((shapePredOn && (lastPrediction.shape_predicted === '정' || lastPrediction.shape_predicted === '꺽')) ? normalizePickColor(lastPrediction.color) : normalizePickColor(lastPrediction.color));
-                        var predictionIsRed = (predColorNorm === '빨강' || predColorNorm === '검정') ? (predColorNorm === '빨강') : (predictionText === '정');
+                        var predictionIsRed;
+                        if (predColorNorm === '빨강' || predColorNorm === '검정') {
+                            predictionIsRed = (predColorNorm === '빨강');
+                        } else {
+                            // pick-color-core-rule: color 없을 때 15번 카드 기준. 고정 정=빨강 금지.
+                            var card15Pred = (typeof allResults !== 'undefined' && allResults && allResults.length >= 15 && typeof parseCardValue === 'function') ? parseCardValue(allResults[14].result || '') : null;
+                            var is15RedPred = card15Pred ? card15Pred.isRed : null;
+                            if (is15RedPred === true || is15RedPred === false) {
+                                predictionIsRed = (predictionText === '정') ? is15RedPred : !is15RedPred;
+                            } else {
+                                predictionIsRed = (predictionText === '정');  // 15번 미확인 시 폴백
+                            }
+                        }
                         var bettingText, bettingIsRed;
                         if (saved && (saved.value === '정' || saved.value === '꺽')) {
                             bettingText = saved.value;
@@ -11351,7 +11394,15 @@ RESULTS_HTML = '''
                 predict = lastPrediction.value;
                 predProb = (lastPrediction.prob != null && !isNaN(lastPrediction.prob)) ? lastPrediction.prob : 0;
                 var sc = normalizePickColor(lastPrediction.color);
-                colorToPick = (sc === '빨강' || sc === '검정') ? sc : (lastPrediction.value === '정' ? '빨강' : '검정');
+                if (sc === '빨강' || sc === '검정') {
+                    colorToPick = sc;
+                } else {
+                    var card15Sc = (disp && disp.length >= 15 && typeof parseCardValue === 'function') ? parseCardValue(disp[14].result || '') : null;
+                    var is15RedSc = card15Sc ? card15Sc.isRed : null;
+                    if (is15RedSc === true || is15RedSc === false) {
+                        colorToPick = (lastPrediction.value === '정') ? (is15RedSc ? '빨강' : '검정') : (is15RedSc ? '검정' : '빨강');
+                    } else { colorToPick = lastPrediction.value === '정' ? '빨강' : '검정'; }
+                }
                 colorClass = colorToPick === '빨강' ? 'red' : 'black';
             }
             var showHold = is15Joker || jokerSkipBet || predict === '보류';
