@@ -3997,6 +3997,11 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
         debug['segment_type'] = 'chunk'
         debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, True)
         return 'pong_to_chunk', debug
+    # 긴 퐁당(5+) → 덩어리 전환: 퐁당% 하락 중이면 줄(정) 쪽 가산 — "긴줄→퐁당 길게→다시 덩어리"에서 꺽만 고집 방지
+    if not first_is_line and pong_runs and pong_runs[0] >= 5 and diff_prev_short >= 8:
+        debug['segment_type'] = 'chunk'
+        debug['chunk_shape'] = 'pong_long_then_chunk'
+        return 'pong_to_chunk', debug
     # 덩어리→퐁당 전환: 최근 15 퐁당%가 직전 15보다 8%p 이상 높음 → 조기 감지 (덩어리 직후 긴퐁당 대응)
     # 단, chunk_11(정정꺽꺽 반복)만 chunk_phase 유지. line_pong_21/31(줄퐁당줄퐁당)은 pong_w 가산 → chunk_to_pong.
     if diff_short_prev >= 8:
@@ -4580,8 +4585,8 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     if first_is_line_col and line_runs and line_runs[0] >= 5:
         line_w = min(1.0, line_w + 0.08)
         pong_w = max(0.0, pong_w - 0.04)
-    # [직진 방향] 퐁당 2~6 구간: 퐁당 유지 강화 (줄→퐁당4~5→덩어리에서 퐁당을 줄로 착각 방지)
-    if not first_is_line_col and pong_runs and 2 <= pong_runs[0] <= 6:
+    # [직진 방향] 퐁당 2~6 구간: 퐁당 유지 강화. 단 pong_to_chunk(퐁당→덩어리 전환)일 때는 적용 안 함 — 줄 쪽 가산 유지
+    if not first_is_line_col and pong_runs and 2 <= pong_runs[0] <= 6 and phase != 'pong_to_chunk':
         mul = pong_weight if use_shape_adjustments else 1.0
         pong_w = min(1.0, pong_w + 0.05 * mul)
         line_w = max(0.0, line_w - 0.025)

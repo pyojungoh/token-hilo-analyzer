@@ -177,8 +177,9 @@ if prediction_history and len(prediction_history) >= 5:
 
 | 조건 | 방향 | line_w/pong_w | 의미 |
 |------|------|---------------|------|
-| first_is_line=False + pong_runs[0] 2~6 | 직진 | +0.05 / -0.025 | 퐁당 유지 강화 (퐁당을 줄로 착각 방지) |
+| first_is_line=False + pong 2~6 + phase≠pong_to_chunk | 직진 | +0.05 / -0.025 | 퐁당 유지 강화 (퐁당→덩어리 전환 시 line_w 유지) |
 | first_is_line=False + pong_runs[0] ≥ 7 | 올리는 | +0.05 / -0.025 | 퐁당 끊김 예상 → 줄 전환 |
+| pong 5+ + diff_prev_short≥8 | pong_to_chunk | line_w +0.08 | 긴퐁당→덩어리 전환 시 꺽만 고집 방지 |
 
 **임계값 조정**: `analyze_pong_run_limit.py`로 CSV 분석 후, 퐁당 run 길이별 다음 결과(정/꺽) 분포 확인. 정 52%+ 나오기 시작하는 길이를 장퐁당(끊김) 임계값으로 사용.
 
