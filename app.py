@@ -3471,22 +3471,8 @@ def _compute_graph_analysis_for_export(results):
         h = ','.join(str(x) for x in heights[:30])
         phase_ko = {'line_phase': '줄구간', 'pong_phase': '퐁당구간', 'chunk_phase': '덩어리구간', 'chunk_start': '덩어리시작', 'pong_to_chunk': '퐁당→덩어리', 'chunk_to_pong': '덩어리→퐁당'}.get(phase, phase or ('퐁당구간' if pong_pct >= 60 else '-'))
         chunk_shape = (debug or {}).get('chunk_shape') or '-'
-        dyn_thresh = _get_dynamic_line_threshold(heights, 20)
-        long_cols = sum(1 for x in heights if x >= dyn_thresh)
-        short_cols = sum(1 for x in heights if 2 <= x < dyn_thresh)
-        pong_cols = sum(1 for x in heights if x == 1)
-        total = len(heights)
-        if phase_ko and '덩어리' in str(phase_ko):
-            if pong_cols >= total * 0.4:
-                chunk_type = '띄엄띄엄'
-            elif long_cols >= total * 0.5:
-                chunk_type = '높은덩어리'
-            elif short_cols >= total * 0.5:
-                chunk_type = '낮은덩어리'
-            else:
-                chunk_type = '혼합덩어리'
-        else:
-            chunk_type = '-'
+        chunk_type = _compute_chunk_type(heights, phase, line_runs)
+        dyn_thresh = _get_dynamic_line_threshold(heights, 30)
         return {
             'h': h, 'seg': seg,
             'line_cnt': len(line_runs), 'pong_cnt': len(pong_runs),
@@ -3500,10 +3486,11 @@ def _compute_graph_analysis_for_export(results):
         return None
 
 
-def _get_dynamic_line_threshold(heights, window=20):
+def _get_dynamic_line_threshold(heights, window=30):
     """
     최근 window개 열 높이에서 줄(2+)의 평균을 보고 장줄 기준을 동적으로 계산.
     평균이 높으면 임계값 상향(예: 4→5), 낮으면 하향(예: 4→3). 3~6 범위, fallback 4.
+    window=30: 그래프 30열 전체 기준으로 판단.
     """
     if not heights:
         return 4
@@ -3513,6 +3500,39 @@ def _get_dynamic_line_threshold(heights, window=20):
     avg = sum(line_heights) / len(line_heights)
     raw = round(avg + 0.5)
     return max(3, min(6, raw))
+
+
+def _compute_chunk_type(col_heights, phase, line_runs):
+    """
+    그래프 30열 기준으로 덩어리/줄 유형 판별.
+    - 덩어리 구간: 띄엄띄엄(퐁당 많음), 높은덩어리(높은 줄로 구성), 낮은덩어리(낮은 줄로 구성), 혼합덩어리
+    - 줄 구간: 높은줄(5+ 연속), 낮은줄(2~4 연속), 중간줄(1 연속)
+    """
+    if not col_heights:
+        return '-'
+    total = len(col_heights)
+    dyn_thresh = _get_dynamic_line_threshold(col_heights, 30)
+    long_cols = sum(1 for h in col_heights if h >= dyn_thresh)
+    short_cols = sum(1 for h in col_heights if 2 <= h < dyn_thresh)
+    pong_cols = sum(1 for h in col_heights if h == 1)
+    if phase == 'line_phase' and line_runs:
+        n = line_runs[0]
+        if n >= 5:
+            return '높은줄'
+        elif n >= 2:
+            return '낮은줄'
+        else:
+            return '중간줄'
+    if phase in ('chunk_start', 'chunk_phase', 'pong_to_chunk'):
+        if pong_cols >= total * 0.4:
+            return '띄엄띄엄'
+        elif long_cols >= total * 0.5:
+            return '높은덩어리'
+        elif short_cols >= total * 0.5:
+            return '낮은덩어리'
+        else:
+            return '혼합덩어리'
+    return '-'
 
 
 def _get_column_heights(graph_values, max_cols=30):
@@ -3536,18 +3556,27 @@ def _get_column_heights(graph_values, max_cols=30):
 
 def _build_prediction_reason_summary(phase, chunk_shape, line_runs, pong_runs, first_is_line,
                                      long_short_stats, pong_pct, line_pct, line_w, pong_w,
-                                     avg_pong_gap=None, u35_detected=False, has_long_line=False):
-    """예측픽 상황 설명 문장 (2~3문장) 생성. 카드 아래 표시용."""
+                                     avg_pong_gap=None, u35_detected=False, has_long_line=False,
+                                     chunk_type=None):
+    """예측픽 상황 설명 문장 (2~3문장) 생성. 카드 아래 표시용. chunk_type: 30열 기준 덩어리/줄 유형."""
     lines = []
-    # 1문장: 현재 그래프 상태
+    chunk_type = chunk_type or '-'
+    # 1문장: 현재 그래프 상태 (30열 기준 디테일 반영)
     if phase == 'line_phase' and line_runs:
-        n = line_runs[0]
-        if n >= 5:
-            lines.append('긴 줄이 이어지는 구간입니다.')
-        elif n >= 2:
-            lines.append('중간 길이 줄이 이어지는 구간입니다.')
-        else:
+        if chunk_type == '높은줄':
+            lines.append('높은 줄(5회 이상 연속)이 이어지는 구간입니다.')
+        elif chunk_type == '낮은줄':
+            lines.append('낮은 줄(2~4회 연속)이 이어지는 구간입니다.')
+        elif chunk_type == '중간줄':
             lines.append('줄이 시작된 구간입니다.')
+        else:
+            n = line_runs[0]
+            if n >= 5:
+                lines.append('긴 줄이 이어지는 구간입니다.')
+            elif n >= 2:
+                lines.append('중간 길이 줄이 이어지는 구간입니다.')
+            else:
+                lines.append('줄이 시작된 구간입니다.')
     elif phase == 'pong_phase' and pong_runs:
         n = pong_runs[0]
         if n >= 5:
@@ -3561,7 +3590,15 @@ def _build_prediction_reason_summary(phase, chunk_shape, line_runs, pong_runs, f
     elif phase == 'pong_to_chunk':
         lines.append('퐁당에서 덩어리로 전환 중입니다.')
     elif phase in ('chunk_start', 'chunk_phase', 'pong_to_chunk'):
-        if chunk_shape == '321':
+        if chunk_type == '높은덩어리':
+            lines.append('높은 줄로 이루어진 덩어리 구간입니다.')
+        elif chunk_type == '낮은덩어리':
+            lines.append('낮은 덩어리(짧은 줄들) 구간입니다.')
+        elif chunk_type == '띄엄띄엄':
+            lines.append('띄엄띄엄(퐁당이 많이 끼어든) 덩어리 구간입니다.')
+        elif chunk_type == '혼합덩어리':
+            lines.append('혼합 덩어리(높은 줄·낮은 줄 섞임) 구간입니다.')
+        elif chunk_shape == '321':
             lines.append('321 형태의 덩어리 구간입니다.')
         elif chunk_shape == '123':
             lines.append('123 형태의 덩어리 구간입니다.')
@@ -4392,7 +4429,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     pong_w = pong_pct / 100.0
     # 긴줄/2개짜리 짧은줄 조기 판별: 긴줄 있으면 끊김 예측 억제, chunk_2pair일 때만 끊김 고려
     col_heights_break = _get_column_heights(graph_values, 30)
-    dyn_thresh_break = _get_dynamic_line_threshold(col_heights_break, 20) if col_heights_break else 4
+    dyn_thresh_break = _get_dynamic_line_threshold(col_heights_break, 30) if col_heights_break else 4
     chunk_sub_break = _detect_chunk_subpattern(col_heights_break, 15) if col_heights_break else None
     has_long_line = any(h >= dyn_thresh_break for h in (col_heights_break[:20] if col_heights_break else []))
     # 현재 줄이 5 이상이면 chunk_2pair여도 끊김 억제 유지 (5에서 끊김 과다 방지)
@@ -4483,6 +4520,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         use_for_pattern[:2] if len(use_for_pattern) >= 2 else None,
         pong_pct, pong_prev15
     )
+    chunk_type = _compute_chunk_type(col_heights_break, phase, line_runs) if col_heights_break else '-'
     chunk_shape = (pong_chunk_debug or {}).get('chunk_shape')
     line_w, pong_w, pong_chunk_phase, is_321_bottom = _apply_phase_line_pong_adjustments(
         line_w, pong_w, phase, chunk_shape, line_runs, pong_runs,
@@ -4490,6 +4528,13 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         has_long_line, allow_break_consideration, chunk_sub_break,
         use_shape_adjustments, pong_weight
     )
+    # [30열 기준] chunk_type 기반 소폭 조정: 높은덩어리/높은줄→줄 유지, 낮은덩어리/낮은줄→전환 가능
+    if chunk_type == '높은덩어리' or chunk_type == '높은줄':
+        line_w = min(1.0, line_w + 0.03)
+        pong_w = max(0.0, pong_w - 0.015)
+    elif chunk_type == '낮은덩어리' or chunk_type == '낮은줄':
+        pong_w = min(1.0, pong_w + 0.02)
+        line_w = max(0.0, line_w - 0.01)
     # 덩어리/줄 사이 퐁당 간격: 짧으면(≤1.5) 올리는, 길면(≥3) 직진
     avg_pong_gap_val = None
     if pong_runs and len(pong_runs) >= 2:
@@ -4683,7 +4728,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         pong_chunk_debug['pattern_len_used'] = pattern_len_used
         col_heights = _get_column_heights(graph_values, 30)
         pong_chunk_debug['column_heights'] = col_heights  # 열 높이 (장줄/짧은줄 파악용)
-        dyn_thresh = _get_dynamic_line_threshold(col_heights, 20)
+        dyn_thresh = _get_dynamic_line_threshold(col_heights, 30)
         long_cols = sum(1 for h in col_heights if h >= dyn_thresh)
         short_cols = sum(1 for h in col_heights if 2 <= h < dyn_thresh)
         pong_cols = sum(1 for h in col_heights if h == 1)
@@ -4691,6 +4736,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         pong_chunk_debug['chunk_subpattern'] = _detect_chunk_subpattern(col_heights, 15)
         pong_chunk_debug['ngram_matches'] = ngram_matches
         pong_chunk_debug['long_short_stats'] = {'long': long_cols, 'short': short_cols, 'pong': pong_cols, 'total': len(col_heights), 'threshold': dyn_thresh}  # 장줄(threshold+), 짧은줄(2~threshold-1), 퐁당(1)
+        pong_chunk_debug['chunk_type'] = chunk_type  # 30열 기준: 높은덩어리/낮은덩어리/띄엄띄엄/혼합덩어리, 높은줄/낮은줄/중간줄
         pong_chunk_debug['symmetry_windows_used'] = symmetry_windows_used
         pong_chunk_debug['u_shape'] = u35_detected
         pong_chunk_debug['shape_signature'] = _get_shape_signature(results)  # 저장·대조용 모양 코드 (S/M/L 구간, 예: L,S,M)
@@ -4707,7 +4753,8 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     reason_summary = _build_prediction_reason_summary(
         pong_chunk_phase, chunk_shape, line_runs, pong_runs, first_is_line_col,
         ls, pong_pct, line_pct, line_w, pong_w,
-        avg_pong_gap_val, u35_detected, has_long_line
+        avg_pong_gap_val, u35_detected, has_long_line,
+        chunk_type=chunk_type
     )
     if use_shape_adjustments and shape_debug_out is not None and isinstance(shape_debug_out, dict):
         shape_debug_out['phase'] = pong_chunk_phase
@@ -6396,12 +6443,12 @@ RESULTS_HTML = '''
                         <li><strong>퐁당 / 줄</strong> · 최근 15회에서 «바뀜» 비율 = 퐁당%, «유지» 비율 = 줄%. 퐁당%·줄%로 각각 가중치 초기값 설정.</li>
                         <li><strong>흐름 보정</strong> · 15회 vs 30회 유지 확률 차이가 15%p 이상이면 «줄 강함» 또는 «퐁당 강함»으로 판단. 줄 강함이면 줄 가중치 +0.25, 퐁당 강함이면 퐁당 가중치 +0.25.</li>
                         <li><strong>15·20·30열 대칭·줄</strong> · 15열·20열·30열 각각 좌반/우반 대칭도·줄 개수 계산 후 가중 평균(0.35·0.40·0.25) 반영. 새 구간 감지 시 줄 +0.22, 대칭 70% 이상·우측 줄 적으면 줄 +0.28 등 보정.</li>
-                        <li><strong>30회 패턴</strong> · «덩어리»(줄이 2개 이상 이어짐) 비율·«띄엄»(줄 1개씩)·«두줄한개» 비율을 지수로 계산. 덩어리/두줄한개는 줄 가중치에, 띄엄은 퐁당 가중치에 반영.</li>
+                        <li><strong>30회 패턴 (30열 전체)</strong> · 그래프 30열 전체를 보고 «덩어리»(줄 2개 이상 이어짐)·«띄엄»(줄 1개씩)·«두줄한개» 비율을 지수로 계산. 덩어리/두줄한개는 줄 가중치에, 띄엄은 퐁당 가중치에 반영. 높은 덩어리(높은 줄로 구성)·낮은 덩어리(짧은 줄들)·높은 줄(5+ 연속)·낮은 줄(2~4 연속)을 구분해 예측에 반영.</li>
                         <li><strong>가중치 정규화</strong> · 위에서 나온 줄 가중치(lineW)와 퐁당 가중치(pongW)를 더한 뒤 1이 되도록 나눔.</li>
                         <li><strong>V자 패턴 보정</strong> · 그래프가 «긴 줄 → 퐁당 1~2개 → 짧은 줄 → 퐁당 → …» 형태(V자 밸런스)일 때 연패가 많아서, 퐁당(바뀜) 가중치를 올려 이 구간을 넘기기 쉽게 보정함.</li>
                         <li><strong>U자 구간 보정</strong> · «높은 줄 → 낮은 줄(1~2) → 다시 3~5 길이 줄»(U자 모양)일 때 연패가 많음. 감지 시 줄(유지) 가중치 +0.14, 퐁당(반전) -0.07로 유지 쪽 픽 강화·과한 반전 픽 축소. 58% 상한 적용. 계산기에서는 멈춤 권장.</li>
                         <li><strong>연패 길이 보정</strong> · 맨 왼쪽(최신) 열이 꺽(연패)이고 그 연속 길이가 4 이상이면, 퐁당(바뀜) 가중치를 올려 «다음은 정» 쪽으로 픽을 내도록 보정함. (그래프만 봤을 때 연패 구간에서 승을 끌어올리기 위한 보정)</li>
-                        <li><strong>덩어리/줄 구간 판별</strong> · 줄(한쪽으로 길게 이어짐)→유지 가중치 가산, 덩어리(블록 반복·줄2~4)→줄 가중치 우선. 퐁당 구간 감지 비활성화(덩어리 위주). 덩어리 모양 321(줄어듦)이면 바뀜 소폭 가산.</li>
+                        <li><strong>덩어리/줄 구간 판별 (30열 기준)</strong> · 그래프 30열 전체를 보고 디테일하게 판별합니다. <em>줄 구간</em>: 높은 줄(5회 이상 연속)→유지 가산, 낮은 줄(2~4회 연속)→전환 가능성 반영. <em>덩어리 구간</em>: 높은 덩어리(높은 줄로 구성)→유지 가산, 낮은 덩어리(짧은 줄들)→전환 가산, 띄엄띄엄(퐁당 많이 끼어듦)·혼합 덩어리도 구분. 321(줄어듦)·123(늘어남)·block_repeat 등 모양별 가산.</li>
                         <li><strong>유지 vs 바뀜</strong> · «유지 확률 = 전이에서 구한 유지 확률», «바뀜 확률 = 전이에서 구한 바뀜 확률». 각각 lineW, pongW를 곱해 <em>adjSame</em>, <em>adjChange</em> 계산 후 다시 합으로 나누어 0~1로 만듦.</li>
                         <li><strong>최종 픽</strong> · adjSame ≥ adjChange 이면 직전과 <strong>같은 방향</strong>(직전 정→정, 직전 꺽→꺽), 아니면 <strong>반대</strong>(직전 정→꺽, 직전 꺽→정). 15번 카드가 빨강이면 정=빨강/꺽=검정, 검정이면 정=검정/꺽=빨강으로 <em>배팅 색</em> 결정.</li>
                     </ol>
@@ -8894,9 +8941,11 @@ RESULTS_HTML = '''
                             var phaseLabel = (lastPongChunkPhase && phaseLabels[lastPongChunkPhase]) ? phaseLabels[lastPongChunkPhase] : (lastPongChunkPhase || '—');
                             var segmentLabels = { 'line': '줄', 'pong': '퐁당', 'chunk': '덩어리' };
                             var chunkShapeLabels = { '321': '321 (줄어듦)', '123': '123 (늘어남)', 'block_repeat': '블록 반복', 'chunk_to_pong': '덩어리→퐁당' };
+                            var chunkTypeLabels = { '높은덩어리': '높은 줄로 구성', '낮은덩어리': '낮은 줄(짧은 줄들)', '띄엄띄엄': '퐁당 많이 끼어듦', '혼합덩어리': '높은·낮은 줄 섞임', '높은줄': '5회 이상 연속', '낮은줄': '2~4회 연속', '중간줄': '1회 연속' };
                             var d = lastPongChunkDebug || {};
                             var segmentLabel = (d.segment_type && segmentLabels[d.segment_type]) ? segmentLabels[d.segment_type] : (d.segment_type || '—');
                             var chunkShapeLabel = (d.chunk_shape && chunkShapeLabels[d.chunk_shape]) ? chunkShapeLabels[d.chunk_shape] : (d.chunk_shape || '—');
+                            var chunkTypeLabel = (d.chunk_type && chunkTypeLabels[d.chunk_type]) ? chunkTypeLabels[d.chunk_type] : (d.chunk_type || '—');
                             var i321BottomLabel = (d['321_bottom'] === true) ? '감지됨 (쭉 내려왔다 쭉 올라가는 전환점 → 줄 가산)' : '—';
                             var uShapeLabel = (d.u_shape === true) ? '감지됨 (유지 가중치↑, 멈춤 권장)' : '—';
                             var chunkProfileStatsLabel = '—';
@@ -8925,10 +8974,12 @@ RESULTS_HTML = '''
                             var longShortLabel = '—';
                             if (d.long_short_stats && d.long_short_stats.total > 0) {
                                 var ls = d.long_short_stats;
-                                longShortLabel = '장줄(4+): ' + (ls.long || 0) + '개, 짧은줄(2~3): ' + (ls.short || 0) + '개, 퐁당(1): ' + (ls.pong || 0) + '개 / ' + ls.total + '열';
+                                var th = ls.threshold != null ? ls.threshold : 4;
+                                longShortLabel = '장줄(' + th + '+): ' + (ls.long || 0) + '개, 짧은줄(2~' + (th - 1) + '): ' + (ls.short || 0) + '개, 퐁당(1): ' + (ls.pong || 0) + '개 / ' + ls.total + '열';
                             }
                             var rows = '<tr><td>판별 구간</td><td>' + phaseLabel + '</td></tr>' +
                                 '<tr><td>구간 유형</td><td>' + segmentLabel + '</td></tr>' +
+                                '<tr><td>덩어리/줄 디테일 (30열)</td><td>' + chunkTypeLabel + '</td><td>높은/낮은 덩어리·줄 구분</td></tr>' +
                                 '<tr><td>덩어리 모양</td><td>' + chunkShapeLabel + '</td></tr>' +
                                 '<tr><td>321 바닥</td><td>' + i321BottomLabel + '</td></tr>' +
                                 '<tr><td>U자 구간</td><td>' + uShapeLabel + '</td></tr>' +
