@@ -2549,20 +2549,27 @@ def _server_calc_effective_pick_and_amount(c):
     pred = c.get('pending_predicted')
     if pr is None or pred is None:
         return None, 0, None
-    color = _normalize_pick_color_value(c.get('pending_color'))
-    if color is None:
-        color = '빨강' if pred == '정' else '검정'
-    ph = get_prediction_history(150)
-    main_rate15 = _get_main_recent15_win_rate(ph)
-    # 줄 감지: results 우선(실시간), ph 폴백. 줄 4 이상 시 추종, 줄 끝나면 설정 임계값 따름
-    run_length, run_last_value = 0, None
+    # results 한 번 로드 — color 계산·run_length 둘 다 사용
+    results_rl = None
     try:
         results_rl = get_recent_results(hours=24)
         if results_rl:
             results_rl = _sort_results_newest_first(results_rl)
-            run_length, run_last_value = _get_run_length_from_results(results_rl)
     except Exception:
         pass
+    run_length, run_last_value = _get_run_length_from_results(results_rl) if results_rl else (0, None)
+    color = _normalize_pick_color_value(c.get('pending_color'))
+    if color is None:
+        # pick-color-core-rule: 정/꺽→빨강/검정은 15번 카드 기준. 고정 매핑 금지.
+        is_15_red = _get_card_15_color_for_round(results_rl, pr) if results_rl and pr else None
+        if is_15_red is True:
+            color = '빨강' if pred == '정' else '검정'
+        elif is_15_red is False:
+            color = '검정' if pred == '정' else '빨강'
+        else:
+            color = '빨강' if pred == '정' else '검정'  # 15번 미확인 시 폴백
+    ph = get_prediction_history(150)
+    main_rate15 = _get_main_recent15_win_rate(ph)
     if run_length < 4:
         run_length = _get_current_result_run_length(ph)
     streak_suppress = bool(c.get('streak_suppress_reverse', False))
@@ -2665,7 +2672,14 @@ def _server_calc_effective_pick_and_amount(c):
             no_rev_so = streak_suppress and run_len_so >= 4
             if run_len_so >= 4 and run_last_so is not None:
                 pred = '정' if run_last_so else '꺽'
-                color = '빨강' if pred == '정' else '검정'
+                # pick-color-core-rule: 줄 추종 시에도 15번 카드 기준. 고정 매핑 금지.
+                is_15_red = _get_card_15_color_for_round(results, pr) if results and pr else None
+                if is_15_red is True:
+                    color = '빨강' if pred == '정' else '검정'
+                elif is_15_red is False:
+                    color = '검정' if pred == '정' else '빨강'
+                else:
+                    color = '빨강' if pred == '정' else '검정'
             elif not no_rev_so:
                 thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 43)))
                 thr_down = max(0, min(100, int(c.get('smart_reverse_threshold_down') or 50)))
