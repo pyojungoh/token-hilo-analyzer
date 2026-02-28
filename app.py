@@ -10260,6 +10260,17 @@ RESULTS_HTML = '''
                             }
                             if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
                         }
+                        // pick-color-core-rule: 정/꺽 픽은 맞는데 15번 카드와 색이 다를 때 방지 — 픽 확정 후 항상 15번 카드로 색 재계산
+                        if ((bettingText === '정' || bettingText === '꺽')) {
+                            var card15Final = (typeof allResults !== 'undefined' && allResults && allResults.length >= 15 && typeof parseCardValue === 'function') ? parseCardValue(allResults[14].result || '') : null;
+                            var is15RedFinal = card15Final ? card15Final.isRed : null;
+                            if (is15RedFinal === true || is15RedFinal === false) {
+                                bettingIsRed = (bettingText === '정') ? is15RedFinal : !is15RedFinal;
+                                if (curRound != null && calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === curRound) {
+                                    calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed };
+                                }
+                            }
+                        }
                         // 모양: 가장 최근 다음 픽에만 배팅 — 값 있으면 그 픽을 기준으로, 반픽/승률반픽 등 적용 후 표시. 없으면 보류
                         var predBeforeShapeOnly = bettingText;
                         var predBeforeShapeOnlyIsRed = bettingIsRed;
