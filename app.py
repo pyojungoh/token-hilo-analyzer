@@ -1190,7 +1190,8 @@ def _is_completed_actual(act):
 
 
 def _merge_calc_histories(client_hist, server_hist):
-    """회차별 병합: 서버 행 기준. 단 actual 완료 시 더 완전한 쪽 우선(마틴 단계·금액 정확도). 픽은 클라이언트 유지."""
+    """회차별 병합: 서버 행 기준. 단 actual 완료 시 더 완전한 쪽 우선(마틴 단계·금액 정확도).
+    픽: pending 행은 클라이언트 유지(1열 배팅중), 완료 행은 서버 pred_for_calc 유지(픽 오등록 방지)."""
     by_round = {}
     for h in (server_hist or []):
         if not isinstance(h, dict):
@@ -1231,6 +1232,9 @@ def _merge_calc_histories(client_hist, server_hist):
                     by_round[rn]['betAmount'] = 0
     for rn, pick in client_pick_by_round.items():
         if rn in by_round and pick.get('predicted') in ('정', '꺽'):
+            # 완료 행(actual 정/꺽/조커): 서버 pred_for_calc 유지 — 클라이언트 덮어쓰기로 픽 오등록 방지
+            if _is_completed_actual(by_round[rn].get('actual')):
+                continue
             by_round[rn]['predicted'] = pick['predicted']
             if pick.get('pickColor') is not None:
                 by_round[rn]['pickColor'] = pick['pickColor']
