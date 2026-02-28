@@ -2519,13 +2519,14 @@ def _flip_pick_color(color):
 
 def _get_card_15_color_for_round(results, round_id):
     """해당 회차 게임의 15번째 카드 색상. True=빨강, False=검정, None=미확인.
-    pick-color-core-rule: 정/꺽→빨강/검정은 15번 카드 기준. 고정 매핑 금지."""
+    pick-color-core-rule: 정/꺽→빨강/검정은 15번 카드 기준. 고정 매핑 금지.
+    results[i..i+14] = 해당 회차 15장. 15번 카드 = results[i+14]."""
     if not results or len(results) < 16 or round_id is None:
         return None
     rid = str(round_id)
-    for i in range(len(results) - 1):
-        if str(results[i].get('gameID')) == rid and i + 1 < len(results):
-            return get_card_color_from_result(results[i + 1])
+    for i in range(len(results) - 14):
+        if str(results[i].get('gameID')) == rid and i + 14 < len(results):
+            return get_card_color_from_result(results[i + 14])
     return None
 
 

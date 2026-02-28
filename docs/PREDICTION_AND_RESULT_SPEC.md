@@ -50,7 +50,7 @@ def _build_graph_values(results):
 |------|----------------|------|
 | `_get_card_15_color_for_latest_round(results)` | `results[14]` | 예측기픽 메뉴·메인 예측픽 색상 |
 | `compute_prediction` 내부 | `results[14]` | 메인 예측 color_to_pick |
-| `_get_card_15_color_for_round(results, round_id)` | `results[i+1]` (gameID==round_id인 i의 다음) | 특정 회차 배팅 색 |
+| `_get_card_15_color_for_round(results, round_id)` | `results[i+14]` (gameID==round_id인 i의 15번째 카드) | 특정 회차 배팅 색 |
 
 ### 3.3 색상 매핑 규칙
 

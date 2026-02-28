@@ -89,7 +89,15 @@ var merged = existing ? Object.assign({}, existing, h) : Object.assign({}, h);
 
 ---
 
-### 2.6 서버 pending_predicted 출처
+### 2.6 _get_card_15_color_for_round 15번 카드 인덱스 오류 ✅ 수정 완료
+
+- **문제**: `results[i+1]`(2번 카드)를 반환하고 있었음. 15번 카드는 `results[i+14]`여야 함.
+- **영향**: 특정 회차 배팅 색상(RED/BLACK) 오류 → 계산기표·그래프 색상 불일치.
+- **수정**: `results[i+14]` 반환, `i + 14 < len(results)` 조건 추가. (app.py 2520-2530행)
+
+---
+
+### 2.7 서버 pending_predicted 출처
 
 - `c.get('pending_predicted')`: calc_state에 저장된 값 (이전 apply 또는 클라이언트 POST)
 - 없을 때: `get_stored_round_prediction`(round_predictions) — **예측픽**
