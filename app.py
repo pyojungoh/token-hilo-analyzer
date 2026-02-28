@@ -3658,7 +3658,9 @@ def _build_prediction_reason_summary(phase, chunk_shape, line_runs, pong_runs, f
             lines.append('덩어리/줄 사이 퐁당 간격이 깁니다.')
     if first_is_line and line_runs and line_runs[0] >= 5:
         lines.append('긴 줄 직후라 끊김 예측을 완화했습니다.')
-    elif not first_is_line and pong_runs and pong_runs[0] >= 5:
+    elif not first_is_line and pong_runs and 2 <= pong_runs[0] <= 6:
+        lines.append('퐁당 구간이라 퐁당 유지를 예상합니다.')
+    elif not first_is_line and pong_runs and pong_runs[0] >= 7:
         lines.append('긴 퐁당 직후라 줄 전환을 예상합니다.')
     if u35_detected:
         lines.append('U자 구간 감지 — 유지 쪽 보정 적용.')
@@ -4576,8 +4578,13 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     if first_is_line_col and line_runs and line_runs[0] >= 5:
         line_w = min(1.0, line_w + 0.08)
         pong_w = max(0.0, pong_w - 0.04)
-    # [올리는 방향] 장퐁당(5+): 퐁당이 길면 줄로 전환 예상 → line_w 가산 (analyze_pong_run_limit.py로 임계값 조정)
-    if not first_is_line_col and pong_runs and pong_runs[0] >= 5:
+    # [직진 방향] 퐁당 2~6 구간: 퐁당 유지 강화 (줄→퐁당4~5→덩어리에서 퐁당을 줄로 착각 방지)
+    if not first_is_line_col and pong_runs and 2 <= pong_runs[0] <= 6:
+        mul = pong_weight if use_shape_adjustments else 1.0
+        pong_w = min(1.0, pong_w + 0.05 * mul)
+        line_w = max(0.0, line_w - 0.025)
+    # [올리는 방향] 장퐁당(7+): 퐁당이 매우 길 때만 줄 전환 예상 → line_w 가산 (5~6은 퐁당 유지)
+    elif not first_is_line_col and pong_runs and pong_runs[0] >= 7:
         mul = pong_weight if use_shape_adjustments else 1.0
         line_w = min(1.0, line_w + 0.05 * mul)
         pong_w = max(0.0, pong_w - 0.025)
