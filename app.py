@@ -4733,7 +4733,7 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
     elif is_15_red is False:
         color_to_pick = '검정' if predict == '정' else '빨강'
     else:
-        color_to_pick = '빨강'
+        color_to_pick = '빨강' if predict == '정' else '검정'  # 15번 미확인 시 폴백
     if isinstance(pong_chunk_debug, dict):
         pong_chunk_debug = dict(pong_chunk_debug)
         pong_chunk_debug['overall_pong_dominant'] = overall_pong  # 전체 퐁당 우세·줄 낮음·덩어리 적음 (위에서 계산됨)
@@ -8765,7 +8765,21 @@ RESULTS_HTML = '''
                     if (shouldShowLoseEffect) lastLoseEffectRound = lastEntry.round;
                     var resultBarHtml = '';
                     if (lastEntry && lastEntry.actual !== 'joker') {
-                        var lastPickColor = normalizePickColor(lastEntry.pickColor || lastEntry.pick_color) || (lastEntry.predicted === '정' ? '빨강' : lastEntry.predicted === '꺽' ? '검정' : '') || '-';
+                        var lastPickColor = normalizePickColor(lastEntry.pickColor || lastEntry.pick_color);
+                        if (!lastPickColor && results && results.length >= 16 && typeof parseCardValue === 'function') {
+                            var idxLast = -1;
+                            for (var j = 0; j < results.length - 14; j++) {
+                                if (String(results[j].gameID || '') === String(lastEntry.round || '')) { idxLast = j; break; }
+                            }
+                            if (idxLast >= 0 && idxLast + 14 < results.length) {
+                                var card15Last = parseCardValue(results[idxLast + 14].result || '');
+                                var is15RedLast = card15Last ? card15Last.isRed : null;
+                                if (is15RedLast === true || is15RedLast === false) {
+                                    lastPickColor = (lastEntry.predicted === '정') ? (is15RedLast ? '빨강' : '검정') : (lastEntry.predicted === '꺽') ? (is15RedLast ? '검정' : '빨강') : '';
+                                }
+                            }
+                        }
+                        lastPickColor = lastPickColor || (lastEntry.predicted === '정' ? '빨강' : lastEntry.predicted === '꺽' ? '검정' : '') || '-';
                         var resultBarClass = lastIsWin ? 'pick-result-bar result-win' : 'pick-result-bar result-lose';
                         var resultBarText = displayRound(lastEntry.round) + '회 ' + (lastIsWin ? '성공' : '실패') + ' (' + (lastEntry.predicted || '-') + ' / ' + lastPickColor + ')';
                         resultBarHtml = '<div class="' + resultBarClass + '">' + resultBarText + '</div>';
@@ -8842,7 +8856,9 @@ RESULTS_HTML = '''
                             }).join('');
                             const rowReversePick = '<td>반픽</td>' + rev.map(function(h) {
                                 var rp = (h.predicted === '정') ? '꺽' : (h.predicted === '꺽') ? '정' : null;
-                                var c = rp === '정' ? pickColorToClass('빨강') : rp === '꺽' ? pickColorToClass('검정') : '';
+                                var mainC = normalizePickColor(h.pickColor || h.pick_color);
+                                var revC = (mainC === '빨강') ? '검정' : (mainC === '검정') ? '빨강' : (rp === '정' ? '빨강' : rp === '꺽' ? '검정' : '');
+                                var c = pickColorToClass(revC);
                                 return '<td class="' + (c || '') + '">' + (rp || '-') + '</td>';
                             }).join('');
                             const rowReverseOutcome = '<td>반픽</td>' + rev.map(function(h) {
@@ -8862,7 +8878,9 @@ RESULTS_HTML = '''
                             }).join('');
                             const rowShapePick = '<td>모양</td>' + rev.map(function(h) {
                                 const sp = (h.shape_pick && (h.shape_pick === '정' || h.shape_pick === '꺽')) ? h.shape_pick : null;
-                                var c = sp === '정' ? pickColorToClass('빨강') : sp === '꺽' ? pickColorToClass('검정') : '';
+                                var mainC = normalizePickColor(h.pickColor || h.pick_color);
+                                var spC = (mainC === '빨강' || mainC === '검정') ? (sp === h.predicted ? mainC : (mainC === '빨강' ? '검정' : '빨강')) : (sp === '정' ? '빨강' : sp === '꺽' ? '검정' : '');
+                                var c = pickColorToClass(spC);
                                 return '<td class="' + (c || '') + '">' + (sp || '-') + '</td>';
                             }).join('');
                             const rowShapeOutcome = '<td>모양</td>' + rev.map(function(h) {
@@ -8876,7 +8894,9 @@ RESULTS_HTML = '''
                             }).join('');
                             const rowPongPick = '<td>퐁당</td>' + rev.map(function(h) {
                                 const pp = (h.pong_pick && (h.pong_pick === '정' || h.pong_pick === '꺽')) ? h.pong_pick : null;
-                                var c = pp === '정' ? pickColorToClass('빨강') : pp === '꺽' ? pickColorToClass('검정') : '';
+                                var mainC = normalizePickColor(h.pickColor || h.pick_color);
+                                var ppC = (mainC === '빨강' || mainC === '검정') ? (pp === h.predicted ? mainC : (mainC === '빨강' ? '검정' : '빨강')) : (pp === '정' ? '빨강' : pp === '꺽' ? '검정' : '');
+                                var c = pickColorToClass(ppC);
                                 return '<td class="' + (c || '') + '">' + (pp || '-') + '</td>';
                             }).join('');
                             const rowPongOutcome = '<td>퐁당</td>' + rev.map(function(h) {
