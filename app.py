@@ -3994,25 +3994,26 @@ def _detect_pong_chunk_phase(line_runs, pong_runs, graph_values_head, pong_pct_s
         debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, True)
         return 'pong_to_chunk', debug
     # 덩어리→퐁당 전환: 최근 15 퐁당%가 직전 15보다 8%p 이상 높음 → 조기 감지 (덩어리 직후 긴퐁당 대응)
-    # 단, 주변 모양이 일관되거나 덩어리 2개 이상이면 chunk_phase 유지 (줄에서 내려와도 바로 퐁당으로 가지 않음)
+    # 단, chunk_11(정정꺽꺽 반복)만 chunk_phase 유지. line_pong_21/31(줄퐁당줄퐁당)은 pong_w 가산 → chunk_to_pong.
     if diff_short_prev >= 8:
-        if pat_cons >= 0.5 and (pat_type in ('chunk_11', 'line_pong_21', 'line_pong_31') or (pat_type and pat_type.startswith('line') and '_pong' in pat_type)):
+        if pat_cons >= 0.5 and pat_type == 'chunk_11':
             debug['segment_type'] = 'chunk'
             debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, first_is_line) or pat_type
             return 'chunk_phase', debug
-        # 덩어리 2개 이상: line_runs 2개 이상 + 줄 길이 2 이상 있으면 덩어리 구간 유지
+        # 덩어리 2개 이상: line_runs 2개 이상 + 줄 길이 2 이상. 단 line_pong_21/31(2덩어리 퐁당 반복)이면 chunk_to_pong.
         if line_runs and len(line_runs) >= 2 and any(l >= 2 for l in line_runs):
-            debug['segment_type'] = 'chunk'
-            debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, first_is_line)
-            return 'chunk_phase', debug
+            if not (pat_type and (pat_type in ('line_pong_21', 'line_pong_31') or (pat_type.startswith('line') and '_pong' in pat_type))):
+                debug['segment_type'] = 'chunk'
+                debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, first_is_line)
+                return 'chunk_phase', debug
         debug['segment_type'] = 'pong'
         debug['chunk_shape'] = 'chunk_to_pong'
         return 'chunk_to_pong', debug
     # 덩어리 직후 퐁당 진입: 맨 앞 퐁당 run + 직전 줄 2 이상 → chunk_to_pong
-    # 단, 주변 모양이 일관되면(정정꺽꺽·줄퐁당줄퐁당) 그 패턴 유지 확률 높음 → chunk_phase 유지
+    # chunk_11(정정꺽꺽 반복)만 chunk_phase 유지. line_pong_21/31(줄퐁당줄퐁당)은 패턴 유지=퐁당 전환 → chunk_to_pong.
     if not first_is_line and pong_runs and line_runs and len(pong_runs) >= 1 and line_runs[0] >= 2:
         dom, cons, ptype = _get_surrounding_pattern_consistency(line_runs, pong_runs, first_is_line)
-        if cons >= 0.6 and (ptype in ('chunk_11', 'line_pong_21', 'line_pong_31') or (ptype and ptype.startswith('line') and '_pong' in ptype)):
+        if cons >= 0.6 and ptype == 'chunk_11':
             debug['segment_type'] = 'chunk'
             debug['chunk_shape'] = _detect_chunk_shape(line_runs, pong_runs, first_is_line) or ptype
             return 'chunk_phase', debug
@@ -4106,10 +4107,8 @@ def _apply_phase_line_pong_adjustments(line_w, pong_w, phase, chunk_shape, line_
             if pat_type == 'chunk_11':
                 line_w += 0.04 * pm
                 pong_w = max(0.0, pong_w - 0.02 * pm)
-            elif pat_type and pat_type.startswith('line_pong_'):
-                pong_w += 0.04 * pm
-                line_w = max(0.0, line_w - 0.02 * pm)
-            elif pat_type and '_pong' in pat_type and pat_type.startswith('line'):
+            elif pat_type and (pat_type.startswith('line_pong_') or ('_pong' in pat_type and pat_type.startswith('line'))):
+                # [직진 방향] 줄퐁당줄퐁당(line_pong_21/31): 2덩어리 퐁당 반복 → 퐁당 전환 pong_w
                 pong_w += 0.04 * pm
                 line_w = max(0.0, line_w - 0.02 * pm)
 
@@ -4127,6 +4126,10 @@ def _apply_phase_line_pong_adjustments(line_w, pong_w, phase, chunk_shape, line_
             if curr_line_len == 2 and not suppress_break:
                 pong_w += 0.05
                 line_w = max(0.0, line_w - 0.025)
+                # [직진 방향] block_repeat(2,1)(2,1) = 2덩어리 퐁당 반복. 줄2 끝 → 퐁당 전환.
+                if chunk_shape == 'block_repeat' and line_runs and line_runs[0] == 2:
+                    pong_w += 0.04 * pong_mul
+                    line_w = max(0.0, line_w - 0.02 * pong_mul)
             else:
                 line_w += 0.05
                 pong_w = max(0.0, pong_w - 0.025)
@@ -4157,6 +4160,10 @@ def _apply_phase_line_pong_adjustments(line_w, pong_w, phase, chunk_shape, line_
             if curr_line_len == 2 and not suppress_break:
                 pong_w += 0.08
                 line_w = max(0.0, line_w - 0.04)
+                # [직진 방향] block_repeat(2,1)(2,1) = 2덩어리 퐁당 반복. 줄2 끝 → 퐁당 전환.
+                if chunk_shape == 'block_repeat' and line_runs and line_runs[0] == 2:
+                    pong_w += 0.04
+                    line_w = max(0.0, line_w - 0.02)
             else:
                 line_w += 0.10
                 if not suppress_break:
