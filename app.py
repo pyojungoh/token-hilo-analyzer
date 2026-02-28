@@ -2187,7 +2187,14 @@ def _apply_results_to_calcs(results):
                 if use_smart:
                     if run_length >= 4 and run_last_value is not None:
                         pred_for_calc = '정' if run_last_value else '꺽'
-                        bet_color_for_history = '빨강' if pred_for_calc == '정' else '검정'
+                        # pick-color-core-rule: 줄 추종 시에도 15번 카드 기준. 고정 매핑 금지.
+                        is_15_red = _get_card_15_color_for_round(results, pending_round)
+                        if is_15_red is True:
+                            bet_color_for_history = '빨강' if pred_for_calc == '정' else '검정'
+                        elif is_15_red is False:
+                            bet_color_for_history = '검정' if pred_for_calc == '정' else '빨강'
+                        else:
+                            bet_color_for_history = '빨강' if pred_for_calc == '정' else '검정'
                     elif not no_reverse_in_streak:
                         thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 43)))
                         thr_down = max(0, min(100, int(c.get('smart_reverse_threshold_down') or 50)))
@@ -2568,9 +2575,15 @@ def _server_calc_effective_pick_and_amount(c):
     use_smart = c.get('smart_reverse') or c.get('win_rate_reverse') or c.get('lose_streak_reverse') or c.get('win_rate_direction_reverse')
     if use_smart:
         if run_length >= 4 and run_last_value is not None:
-            # 줄 구간: 줄 방향 추종
+            # 줄 구간: 줄 방향 추종. pick-color-core-rule: 15번 카드 기준.
             pred = '정' if run_last_value else '꺽'
-            color = '빨강' if pred == '정' else '검정'
+            is_15_red = _get_card_15_color_for_round(results_rl, pr) if results_rl and pr else None
+            if is_15_red is True:
+                color = '빨강' if pred == '정' else '검정'
+            elif is_15_red is False:
+                color = '검정' if pred == '정' else '빨강'
+            else:
+                color = '빨강' if pred == '정' else '검정'
         elif not no_reverse_in_streak:
             thr = max(0, min(100, int(c.get('smart_reverse_threshold') or c.get('win_rate_threshold') or 43)))
             thr_down = max(0, min(100, int(c.get('smart_reverse_threshold_down') or 50)))  # 내려갈 때 반픽 기준
@@ -4112,7 +4125,8 @@ def _apply_phase_line_pong_adjustments(line_w, pong_w, phase, chunk_shape, line_
         pong_chunk_phase = phase
 
     elif phase == 'chunk_to_pong':
-        pong_w = min(1.0, pong_w + 0.12)
+        # [직진 방향] 덩어리→퐁당: 0.12→0.08 완화. CSV 연패분석에서 chunk_to_pong 시 실제로 줄 이어질 때 과도한 바뀜 예측으로 연패 다발
+        pong_w = min(1.0, pong_w + 0.08)
         line_w = max(0.0, 1.0 - pong_w)
         pong_chunk_phase = phase
 
@@ -7926,6 +7940,9 @@ RESULTS_HTML = '''
                     var runLenObj = getRunLengthFromGraphValues(typeof window.__lastGraphValues !== 'undefined' ? window.__lastGraphValues : []);
                     var runLen = runLenObj.run;
                     if (runLen < 4) runLen = getCurrentResultRunLength(typeof predictionHistory !== 'undefined' && Array.isArray(predictionHistory) ? predictionHistory : []);
+                    // pick-color-core-rule: 줄 추종 시 15번 카드 기준 betColor 계산용
+                    var card15ForRound = (displayResults && displayResults.length >= 15 && typeof parseCardValue === 'function') ? parseCardValue(displayResults[14].result || '') : null;
+                    var is15RedForRound = card15ForRound ? card15ForRound.isRed : null;
                     if (!alreadyRecordedRound && predForRound) {
                         const isActualJoker = displayResults.length > 0 && !!displayResults[0].joker;
                         if (isActualJoker) {
@@ -7955,7 +7972,9 @@ RESULTS_HTML = '''
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (runLenObj.run >= 4 && runLenObj.last != null) {
                                         pred = runLenObj.last ? '정' : '꺽';
-                                        betColor = pred === '정' ? '빨강' : '검정';
+                                        if (is15RedForRound === true || is15RedForRound === false) {
+                                            betColor = (pred === '정') ? (is15RedForRound ? '빨강' : '검정') : (is15RedForRound ? '검정' : '빨강');
+                                        } else { betColor = pred === '정' ? '빨강' : '검정'; }
                                     } else {
                                         var doRev = getSmartReverseDoRev(id, blended, r15, noRevByStreak5);
                                         if (doRev) { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
@@ -8024,7 +8043,9 @@ RESULTS_HTML = '''
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (runLenObj.run >= 4 && runLenObj.last != null) {
                                         pred = runLenObj.last ? '정' : '꺽';
-                                        betColorActual = pred === '정' ? '빨강' : '검정';
+                                        if (is15RedForRound === true || is15RedForRound === false) {
+                                            betColorActual = (pred === '정') ? (is15RedForRound ? '빨강' : '검정') : (is15RedForRound ? '검정' : '빨강');
+                                        } else { betColorActual = pred === '정' ? '빨강' : '검정'; }
                                     } else {
                                         var doRevA = getSmartReverseDoRev(id, blended, r15, noRevByStreak5A);
                                         if (doRevA) { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; }
@@ -8105,7 +8126,9 @@ RESULTS_HTML = '''
                                     if (rev) betColor = betColor === '빨강' ? '검정' : '빨강';
                                     if (runLenObj.run >= 4 && runLenObj.last != null) {
                                         pred = runLenObj.last ? '정' : '꺽';
-                                        betColor = pred === '정' ? '빨강' : '검정';
+                                        if (is15RedForRound === true || is15RedForRound === false) {
+                                            betColor = (pred === '정') ? (is15RedForRound ? '빨강' : '검정') : (is15RedForRound ? '검정' : '빨강');
+                                        } else { betColor = pred === '정' ? '빨강' : '검정'; }
                                     } else {
                                         var doRev2 = getSmartReverseDoRev(id, blended, r15, noRevByStreak52);
                                         if (doRev2) { pred = pred === '정' ? '꺽' : '정'; betColor = betColor === '빨강' ? '검정' : '빨강'; }
@@ -8154,7 +8177,9 @@ RESULTS_HTML = '''
                                     if (rev) betColorActual = betColorActual === '빨강' ? '검정' : '빨강';
                                     if (runLenObj.run >= 4 && runLenObj.last != null) {
                                         pred = runLenObj.last ? '정' : '꺽';
-                                        betColorActual = pred === '정' ? '빨강' : '검정';
+                                        if (is15RedForRound === true || is15RedForRound === false) {
+                                            betColorActual = (pred === '정') ? (is15RedForRound ? '빨강' : '검정') : (is15RedForRound ? '검정' : '빨강');
+                                        } else { betColorActual = pred === '정' ? '빨강' : '검정'; }
                                     } else {
                                         var doRev3 = getSmartReverseDoRev(id, blended, r15, noRevByStreak53);
                                         if (doRev3) { pred = pred === '정' ? '꺽' : '정'; betColorActual = betColorActual === '빨강' ? '검정' : '빨강'; }
@@ -8496,8 +8521,9 @@ RESULTS_HTML = '''
                             lineW = Math.min(1, lineW + 0.12);
                             pongW = Math.max(0, pongW - 0.12);
                         } else if (detectVPattern(lineRuns, pongRuns, useForPattern.slice(0, 2), vPatternThresh)) {
-                            pongW += 0.12;
-                            lineW = Math.max(0, lineW - 0.06);
+                            // chunk_to_pong(덩어리→퐁당) 0.12→0.08 완화. 서버와 동기화
+                            pongW += 0.08;
+                            lineW = Math.max(0, lineW - 0.04);
                         }
                         const totalW = lineW + pongW;
                         if (totalW > 0) { lineW = lineW / totalW; pongW = pongW / totalW; }
@@ -10011,7 +10037,11 @@ RESULTS_HTML = '''
                             if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                             if (runLenObjCard.run >= 4 && runLenObjCard.last != null) {
                                 bettingText = runLenObjCard.last ? '정' : '꺽';
-                                bettingIsRed = !!runLenObjCard.last;
+                                var card15Bet = (typeof allResults !== 'undefined' && allResults && allResults.length >= 15 && typeof parseCardValue === 'function') ? parseCardValue(allResults[14].result || '') : null;
+                                var is15RedBet = card15Bet ? card15Bet.isRed : null;
+                                if (is15RedBet === true || is15RedBet === false) {
+                                    bettingIsRed = (bettingText === '정') ? is15RedBet : !is15RedBet;
+                                } else { bettingIsRed = (bettingText === '정'); }
                             } else {
                                 var doRevCard = getSmartReverseDoRev(id, blendedCard, r15Card, noRevByStreak5Card);
                                 if (doRevCard) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
@@ -10041,7 +10071,11 @@ RESULTS_HTML = '''
                                 if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                                 if (runLenObjCard.run >= 4 && runLenObjCard.last != null) {
                                     bettingText = runLenObjCard.last ? '정' : '꺽';
-                                    bettingIsRed = !!runLenObjCard.last;
+                                    var card15Bet2 = (typeof allResults !== 'undefined' && allResults && allResults.length >= 15 && typeof parseCardValue === 'function') ? parseCardValue(allResults[14].result || '') : null;
+                                    var is15RedBet2 = card15Bet2 ? card15Bet2.isRed : null;
+                                    if (is15RedBet2 === true || is15RedBet2 === false) {
+                                        bettingIsRed = (bettingText === '정') ? is15RedBet2 : !is15RedBet2;
+                                    } else { bettingIsRed = (bettingText === '정'); }
                                 } else {
                                     var doRevCard2 = getSmartReverseDoRev(id, blendedCard, r15Card, noRevByStreak5Card);
                                     if (doRevCard2) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
