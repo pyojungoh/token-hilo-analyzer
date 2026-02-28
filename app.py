@@ -8678,6 +8678,34 @@ RESULTS_HTML = '''
                                 colorToPick = (lastPrediction.value === '정') ? (is15RedFb ? '빨강' : '검정') : (is15RedFb ? '검정' : '빨강');
                             } else { colorToPick = lastPrediction.value === '정' ? '빨강' : '검정'; }
                         }
+                        // 계산기 실행 중이면 실제 배팅 픽(1열·매크로와 동일) 우선 — 배팅중 글씨·색 일치
+                        var curRoundTable = lastPrediction.round != null ? Number(lastPrediction.round) : null;
+                        var anyCalcRunningT = typeof CALC_IDS !== 'undefined' && CALC_IDS.some(function(cid) { var s = typeof calcState !== 'undefined' && calcState[cid]; return s && s.running; });
+                        if (curRoundTable != null && anyCalcRunningT) {
+                            for (var cti = 0; cti < CALC_IDS.length; cti++) {
+                                var stT = typeof calcState !== 'undefined' && calcState[CALC_IDS[cti]];
+                                if (!stT || !stT.running) continue;
+                                if (stT.lastBetPickForRound && Number(stT.lastBetPickForRound.round) === curRoundTable && (stT.lastBetPickForRound.value === '정' || stT.lastBetPickForRound.value === '꺽')) {
+                                    predict = stT.lastBetPickForRound.value;
+                                    colorToPick = stT.lastBetPickForRound.isRed ? '빨강' : '검정';
+                                    break;
+                                }
+                                if (stT.pending_round != null && Number(stT.pending_round) === curRoundTable && (stT.pending_predicted === '정' || stT.pending_predicted === '꺽')) {
+                                    var pcT = normalizePickColor(stT.pending_color);
+                                    if (pcT === '빨강' || pcT === '검정') {
+                                        predict = stT.pending_predicted;
+                                        colorToPick = pcT;
+                                        break;
+                                    }
+                                }
+                                var savedT = typeof savedBetPickByRound !== 'undefined' && savedBetPickByRound[curRoundTable];
+                                if (savedT && (savedT.value === '정' || savedT.value === '꺽')) {
+                                    predict = savedT.value;
+                                    colorToPick = savedT.isRed ? '빨강' : '검정';
+                                    break;
+                                }
+                            }
+                        }
                         colorClass = colorToPick === '빨강' ? 'red' : 'black';
                     } else {
                         predict = '보류';
@@ -11471,6 +11499,35 @@ RESULTS_HTML = '''
                         colorToPick = (lastPrediction.value === '정') ? (is15RedSc ? '빨강' : '검정') : (is15RedSc ? '검정' : '빨강');
                     } else { colorToPick = lastPrediction.value === '정' ? '빨강' : '검정'; }
                 }
+                // 계산기 실행 중이면 실제 배팅 픽(1열·매크로와 동일) 우선 — 메인 예측기와 색상 불일치 방지
+                var curRound = lastPrediction.round != null ? Number(lastPrediction.round) : null;
+                var anyCalcRunning = typeof CALC_IDS !== 'undefined' && CALC_IDS.some(function(cid) { var s = typeof calcState !== 'undefined' && calcState[cid]; return s && s.running; });
+                if (curRound != null && anyCalcRunning) {
+                    for (var ci = 0; ci < CALC_IDS.length; ci++) {
+                        var cid = CALC_IDS[ci];
+                        var st = typeof calcState !== 'undefined' && calcState[cid];
+                        if (!st || !st.running) continue;
+                        if (st.lastBetPickForRound && Number(st.lastBetPickForRound.round) === curRound && (st.lastBetPickForRound.value === '정' || st.lastBetPickForRound.value === '꺽')) {
+                            predict = st.lastBetPickForRound.value;
+                            colorToPick = st.lastBetPickForRound.isRed ? '빨강' : '검정';
+                            break;
+                        }
+                        if (st.pending_round != null && Number(st.pending_round) === curRound && (st.pending_predicted === '정' || st.pending_predicted === '꺽')) {
+                            var pc = normalizePickColor(st.pending_color);
+                            if (pc === '빨강' || pc === '검정') {
+                                predict = st.pending_predicted;
+                                colorToPick = pc;
+                                break;
+                            }
+                        }
+                        var saved = typeof savedBetPickByRound !== 'undefined' && savedBetPickByRound[curRound];
+                        if (saved && (saved.value === '정' || saved.value === '꺽')) {
+                            predict = saved.value;
+                            colorToPick = saved.isRed ? '빨강' : '검정';
+                            break;
+                        }
+                    }
+                }
                 colorClass = colorToPick === '빨강' ? 'red' : 'black';
             }
             var showHold = is15Joker || jokerSkipBet || predict === '보류';
@@ -11502,7 +11559,7 @@ RESULTS_HTML = '''
             if (shapePollIntervalId) clearInterval(shapePollIntervalId);
             
             // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·버벅임 발생
-            var resultsInterval = isTabVisible ? 150 : 1200;   // 150ms — 결과·그래프 체크 주기 (빠른 그래프 갱신)
+            var resultsInterval = isTabVisible ? 200 : 1200;   // 200ms — 결과·그래프 체크 주기 (부하 완화)
             var calcStatusInterval = isTabVisible ? 200 : 1200; // 200ms — 픽 서버 전달 (80ms→200ms 부하 완화)
             var calcStateInterval = isTabVisible ? 600 : 5000;  // 600ms — 계산기 상태·그래프 GET 간격 (빠른 갱신)
             var timerInterval = isTabVisible ? 300 : 1000;
@@ -11516,7 +11573,7 @@ RESULTS_HTML = '''
                     const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
                     const criticalPhase = r <= 3 || r >= 8;
                     // 백그라운드일 때는 최소 1초 간격. 너무 짧으면 서버 부하로 예측픽 안 나옴
-                    const baseInterval = allResults.length === 0 ? 200 : (anyRunning ? 100 : (criticalPhase ? 150 : 200));
+                    const baseInterval = allResults.length === 0 ? 200 : (anyRunning ? 180 : (criticalPhase ? 150 : 200));
                     const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
                     if (Date.now() - lastResultsUpdate > interval) {
                         loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
