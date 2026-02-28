@@ -1191,7 +1191,7 @@ def _is_completed_actual(act):
 
 def _merge_calc_histories(client_hist, server_hist):
     """회차별 병합: 서버 행 기준. 단 actual 완료 시 더 완전한 쪽 우선(마틴 단계·금액 정확도).
-    픽: pending 행은 클라이언트 유지(1열 배팅중), 완료 행은 서버 pred_for_calc 유지(픽 오등록 방지)."""
+    픽: 클라이언트가 predicted/pickColor를 가진 경우 우선 적용 — 배팅 시점 픽으로 승/패 정확히 표시."""
     by_round = {}
     for h in (server_hist or []):
         if not isinstance(h, dict):
@@ -1232,9 +1232,7 @@ def _merge_calc_histories(client_hist, server_hist):
                     by_round[rn]['betAmount'] = 0
     for rn, pick in client_pick_by_round.items():
         if rn in by_round and pick.get('predicted') in ('정', '꺽'):
-            # 완료 행(actual 정/꺽/조커): 서버 pred_for_calc 유지 — 클라이언트 덮어쓰기로 픽 오등록 방지
-            if _is_completed_actual(by_round[rn].get('actual')):
-                continue
+            # 클라이언트가 배팅 시점 픽을 가진 경우 우선 적용 — 승인데 패로 나오는 오표시 방지
             by_round[rn]['predicted'] = pick['predicted']
             if pick.get('pickColor') is not None:
                 by_round[rn]['pickColor'] = pick['pickColor']
@@ -2160,22 +2158,37 @@ def _apply_results_to_calcs(results):
                                 except Exception:
                                     pass
                 # 계산기 히스토리·표시용: 배팅한 픽(반픽/승률반픽 적용)
-                pred_for_calc = pending_predicted
-                bet_color_for_history = _normalize_pick_color_value(c.get('pending_color'))
-                if bet_color_for_history is None:
-                    # pick-color-core-rule: 정/꺽→빨강/검정은 15번 카드 기준. 고정 매핑 금지.
-                    is_15_red = _get_card_15_color_for_round(results, pending_round)
-                    if is_15_red is True:
-                        bet_color_for_history = '빨강' if pending_predicted == '정' else '검정'
-                    elif is_15_red is False:
-                        bet_color_for_history = '검정' if pending_predicted == '정' else '빨강'
-                    else:
-                        bet_color_for_history = '빨강' if pending_predicted == '정' else '검정'  # 15번 미확인 시 최후 폴백
-                if c.get('reverse'):
-                    pred_for_calc = '꺽' if pending_predicted == '정' else '정'
-                    bet_color_for_history = _flip_pick_color(bet_color_for_history)
+                # 클라이언트가 POST로 보낸 배팅 픽 우선 사용 — 서버 재계산 시점 차이로 승→패 오표시 방지
+                stored_bet = c.get('last_bet_pick_for_pending_round')
+                use_stored_bet = isinstance(stored_bet, dict) and stored_bet.get('round') == pending_round and stored_bet.get('predicted') in ('정', '꺽')
+                if use_stored_bet:
+                    pred_for_calc = stored_bet['predicted']
+                    bet_color_for_history = _normalize_pick_color_value(stored_bet.get('pickColor') or stored_bet.get('pick_color'))
+                    if bet_color_for_history is None:
+                        is_15_red = _get_card_15_color_for_round(results, pending_round)
+                        if is_15_red is True:
+                            bet_color_for_history = '빨강' if pred_for_calc == '정' else '검정'
+                        elif is_15_red is False:
+                            bet_color_for_history = '검정' if pred_for_calc == '정' else '빨강'
+                        else:
+                            bet_color_for_history = '빨강' if pred_for_calc == '정' else '검정'
+                else:
+                    pred_for_calc = pending_predicted
+                    bet_color_for_history = _normalize_pick_color_value(c.get('pending_color'))
+                    if bet_color_for_history is None:
+                        is_15_red = _get_card_15_color_for_round(results, pending_round)
+                        if is_15_red is True:
+                            bet_color_for_history = '빨강' if pending_predicted == '정' else '검정'
+                        elif is_15_red is False:
+                            bet_color_for_history = '검정' if pending_predicted == '정' else '빨강'
+                        else:
+                            bet_color_for_history = '빨강' if pending_predicted == '정' else '검정'
+                    if c.get('reverse'):
+                        pred_for_calc = '꺽' if pending_predicted == '정' else '정'
+                        bet_color_for_history = _flip_pick_color(bet_color_for_history)
                 blended = _blended_win_rate(get_prediction_history(100))
                 # 스마트 반픽: 줄 4 이상 시 줄 추종 내장. 줄 끝나면 blended≤설정값→반픽. 히스토리 기록용
+                # use_stored_bet이면 클라이언트가 이미 반픽 적용한 픽 사용 — 재계산 스킵
                 use_smart = c.get('smart_reverse') or c.get('win_rate_reverse') or c.get('lose_streak_reverse') or c.get('win_rate_direction_reverse')
                 ph = get_prediction_history(150)
                 run_length, run_last_value = 0, None
@@ -2185,7 +2198,7 @@ def _apply_results_to_calcs(results):
                     run_length = _get_current_result_run_length(ph)
                 no_reverse_in_streak = bool(c.get('streak_suppress_reverse', False)) and run_length >= 4
                 main_rate15 = _get_main_recent15_win_rate(ph)
-                if use_smart:
+                if use_smart and not use_stored_bet:
                     if run_length >= 4 and run_last_value is not None:
                         pred_for_calc = '정' if run_last_value else '꺽'
                         # pick-color-core-rule: 줄 추종 시에도 15번 카드 기준. 고정 매핑 금지.
@@ -2226,7 +2239,7 @@ def _apply_results_to_calcs(results):
                         if do_reverse:
                             pred_for_calc = '꺽' if pred_for_calc == '정' else '정'
                             bet_color_for_history = _flip_pick_color(bet_color_for_history)
-                if c.get('shape_prediction') and c.get('shape_prediction_reverse'):
+                if not use_stored_bet and c.get('shape_prediction') and c.get('shape_prediction_reverse'):
                     sp15 = _get_shape_prediction_win_rate_15(c)
                     thr = max(0, min(100, int(c.get('shape_prediction_reverse_threshold') or 50)))
                     if sp15 is not None and sp15 <= thr:
@@ -2235,6 +2248,8 @@ def _apply_results_to_calcs(results):
                 history_entry = {'round': pending_round, 'predicted': pred_for_calc, 'actual': actual}
                 if bet_color_for_history:
                     history_entry['pickColor'] = bet_color_for_history
+                    # API·매크로 일관성: RED/BLACK 보조 저장 (배팅중 표시 색상 정확도)
+                    history_entry['pick_color'] = 'RED' if bet_color_for_history == '빨강' else ('BLACK' if bet_color_for_history == '검정' else None)
                 # 경고 합산승률 저장
                 if blended is not None:
                     history_entry['warningWinRate'] = blended
@@ -2296,6 +2311,9 @@ def _apply_results_to_calcs(results):
                     except (TypeError, ValueError):
                         pass
                 c['history'] = (c.get('history') or []) + [history_entry]
+                # 사용한 배팅 픽 캐시 초기화 — 다음 회차에서 잘못 사용 방지
+                if use_stored_bet and c.get('last_bet_pick_for_pending_round', {}).get('round') == pending_round:
+                    c['last_bet_pick_for_pending_round'] = None
                 # 연패정지: 배팅 중 승이면 합산승수 증가. 목표 달성 시 일시정지
                 if c.get('streak_wait_enabled') and c.get('streak_wait_state') == 'betting':
                     if not history_entry.get('no_bet') and history_entry.get('actual') in ('정', '꺽') and history_entry.get('predicted') == history_entry.get('actual'):
@@ -12778,6 +12796,11 @@ def api_calc_state():
                     'pending_prob': c.get('pending_prob'),
                     'pending_color': c.get('pending_color'),
                     'pending_bet_amount': current_c.get('pending_bet_amount') if current_c.get('pending_bet_amount') is not None else c.get('pending_bet_amount'),
+                    'last_bet_pick_for_pending_round': (
+                        {'round': c['pending_round'], 'predicted': c['pending_predicted'], 'pickColor': c.get('pending_color') or c.get('pick_color')}
+                        if c.get('pending_round') is not None and c.get('pending_predicted') in ('정', '꺽')
+                        else current_c.get('last_bet_pick_for_pending_round')
+                    ),
                     'last_win_rate_zone': c.get('last_win_rate_zone') or current_c.get('last_win_rate_zone'),
                     'last_win_rate_zone_change_round': c.get('last_win_rate_zone_change_round') if c.get('last_win_rate_zone_change_round') is not None else current_c.get('last_win_rate_zone_change_round'),
                     'last_win_rate_zone_on_win': c.get('last_win_rate_zone_on_win') or current_c.get('last_win_rate_zone_on_win'),
