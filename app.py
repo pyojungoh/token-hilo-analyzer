@@ -2059,7 +2059,8 @@ def _apply_results_to_calcs(results):
                         c['pending_round'] = predicted_round
                         c['pending_predicted'] = stored_for_round['predicted']
                         c['pending_prob'] = stored_for_round.get('probability')
-                        c['pending_color'] = stored_for_round.get('pick_color')
+                        raw_pc = stored_for_round.get('pick_color') or stored_for_round.get('pickColor')
+                        c['pending_color'] = _normalize_pick_color_value(raw_pc) if raw_pc else None
                         # 예측기픽: 예측기픽 메뉴 강조 카드(calc_best)와 동일한 픽 사용 — 단일 출처
                         if c.get('prediction_picks_best') and results and len(results) >= 16:
                             try:
@@ -2098,8 +2099,8 @@ def _apply_results_to_calcs(results):
                                 pass
                         eff_pick, amt, eff_pred = _server_calc_effective_pick_and_amount(c)
                         c['pending_bet_amount'] = (amt if amt is not None and amt > 0 else None) if is_running else None
-                        # 모양옵션 체크 시: 실제 배팅 픽(shape 기준)으로 pending_color·pending_predicted 보정 → 1열과 배팅중 색 일치. 예측기픽 사용 시 스킵
-                        if c.get('shape_only_latest_next_pick') and not c.get('prediction_picks_best') and eff_pick and eff_pred:
+                        # 배팅중 픽 색상: 서버 계산값(eff_pick)으로 항상 보정 — 매크로·1열·표시 일치
+                        if eff_pick and eff_pred:
                             c['pending_predicted'] = eff_pred
                             c['pending_color'] = '빨강' if eff_pick == 'RED' else ('검정' if eff_pick == 'BLACK' else c.get('pending_color'))
                         updated = True
@@ -2316,7 +2317,8 @@ def _apply_results_to_calcs(results):
                     c['pending_round'] = predicted_round
                     c['pending_predicted'] = stored_for_round['predicted']
                     c['pending_prob'] = stored_for_round.get('probability')
-                    c['pending_color'] = stored_for_round.get('pick_color')
+                    raw_pc2 = stored_for_round.get('pick_color') or stored_for_round.get('pickColor')
+                    c['pending_color'] = _normalize_pick_color_value(raw_pc2) if raw_pc2 else None
                     # 예측기픽: 모양·퐁당만 포함 시 shape_pong_only 적용 (회차 처리 후 다음 회차 준비 시에도 동일)
                     if c.get('prediction_picks_best') and results and len(results) >= 16:
                         try:
@@ -2350,8 +2352,8 @@ def _apply_results_to_calcs(results):
                             pass
                     eff_pick, next_amt, eff_pred = _server_calc_effective_pick_and_amount(c)
                     c['pending_bet_amount'] = (next_amt if next_amt is not None and next_amt > 0 else None) if is_running else None
-                    # 모양옵션 체크 시: 실제 배팅 픽(shape 기준)으로 pending_color·pending_predicted 보정 → 1열과 배팅중 색 일치. 예측기픽 사용 시 스킵
-                    if c.get('shape_only_latest_next_pick') and not c.get('prediction_picks_best') and eff_pick and eff_pred:
+                    # 배팅중 픽 색상: 서버 계산값(eff_pick)으로 항상 보정 — 매크로·1열·표시 일치
+                    if eff_pick and eff_pred:
                         c['pending_predicted'] = eff_pred
                         c['pending_color'] = '빨강' if eff_pick == 'RED' else ('검정' if eff_pick == 'BLACK' else c.get('pending_color'))
                     updated = True
@@ -10124,6 +10126,11 @@ RESULTS_HTML = '''
                         } else {
                         // 배팅중인 회차는 이미 정한 계산기 픽만 유지 — lastPrediction이 잠깐 예측기로 바뀌어도 저장된 픽으로 POST/표시해 예측기 픽으로 배팅 나가는 것 방지
                         var curRound = lastPrediction && lastPrediction.round != null ? Number(lastPrediction.round) : null;
+                        // 서버 pending_color 우선 (배팅중 색상 일치: 매크로·1열·표시 동일 — 클라이언트 재계산과 서버 불일치 방지)
+                        var serverPendingMatch = (curRound != null && calcState[id].pending_round != null && Number(calcState[id].pending_round) === curRound);
+                        var pcNorm = normalizePickColor(calcState[id].pending_color);
+                        var serverColorOk = (pcNorm === '빨강' || pcNorm === '검정');
+                        var serverPredOk = (calcState[id].pending_predicted === '정' || calcState[id].pending_predicted === '꺽');
                         var saved = (calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === curRound) ? calcState[id].lastBetPickForRound : null;
                         // 반픽/승률반픽 등 판정용 — 모양 옵션과 중복 사용 시 shapeOnly 블록에서 필요
                         var r15Card = null, blendedCard = null;
@@ -10170,7 +10177,11 @@ RESULTS_HTML = '''
                             }
                         }
                         var bettingText, bettingIsRed;
-                        if (saved && (saved.value === '정' || saved.value === '꺽')) {
+                        if (serverPendingMatch && serverColorOk && serverPredOk) {
+                            bettingText = calcState[id].pending_predicted;
+                            bettingIsRed = (pcNorm === '빨강');
+                            if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
+                        } else if (saved && (saved.value === '정' || saved.value === '꺽')) {
                             bettingText = saved.value;
                             bettingIsRed = !!saved.isRed;
                         } else {
