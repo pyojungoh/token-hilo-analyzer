@@ -6266,6 +6266,12 @@ RESULTS_HTML = '''
         .calc-dropdown-header .calc-toggle { font-size: 0.8em; color: #888; }
         .calc-dropdown.collapsed .calc-dropdown-body { display: none !important; }
         .calc-dropdown:not(.collapsed) .calc-dropdown-header .calc-toggle { transform: rotate(180deg); }
+        /* 실행/정지/리셋 버튼은 collapse 영역 밖에 두어 항상 표시 — 리셋 사라짐 버그 방지 */
+        .calc-buttons-row { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: #252525; border-top: 1px solid #333; flex-wrap: wrap; }
+        .calc-buttons-row button { padding: 4px 10px; border-radius: 4px; border: 1px solid #555; background: #1a1a1a; color: #fff; cursor: pointer; font-size: 0.85em; }
+        .calc-buttons-row button.calc-run { background: #2e7d32; border-color: #4caf50; }
+        .calc-buttons-row button.calc-stop { background: #c62828; border-color: #e57373; }
+        .calc-buttons-row button.calc-reset { background: #455a64; }
         .calc-dropdown-body { padding: 8px 12px; background: #2a2a2a; display: flex; flex-direction: row; flex-wrap: wrap; gap: 12px; align-items: flex-start; min-width: 0; }
         .calc-body-row { display: flex; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 0; flex: 1 1 200px; min-width: 0; max-width: 100%; }
         .calc-inputs { display: flex; flex-direction: row; flex-wrap: wrap; gap: 6px 12px; align-items: center; min-width: 0; }
@@ -6588,6 +6594,11 @@ RESULTS_HTML = '''
                             <div class="calc-summary" id="calc-1-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
                         </div>
+                        <div class="calc-buttons-row">
+                            <button type="button" class="calc-run" data-calc="1">실행</button>
+                            <button type="button" class="calc-stop" data-calc="1">정지</button>
+                            <button type="button" class="calc-reset" data-calc="1">리셋</button>
+                        </div>
                         <div class="calc-dropdown-body" id="calc-1-body">
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
@@ -6612,11 +6623,6 @@ RESULTS_HTML = '''
                                             <tr><td>배팅복사</td><td><span id="calc-1-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
                                         </table>
                                     </div>
-                                </div>
-                                <div class="calc-buttons">
-                                    <button type="button" class="calc-run" data-calc="1">실행</button>
-                                    <button type="button" class="calc-stop" data-calc="1">정지</button>
-                                    <button type="button" class="calc-reset" data-calc="1">리셋</button>
                                 </div>
                             </div>
                             <div class="calc-detail" id="calc-1-detail">
@@ -6644,6 +6650,11 @@ RESULTS_HTML = '''
                             <div class="calc-summary" id="calc-2-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
                         </div>
+                        <div class="calc-buttons-row">
+                            <button type="button" class="calc-run" data-calc="2">실행</button>
+                            <button type="button" class="calc-stop" data-calc="2">정지</button>
+                            <button type="button" class="calc-reset" data-calc="2">리셋</button>
+                        </div>
                         <div class="calc-dropdown-body" id="calc-2-body">
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
@@ -6668,11 +6679,6 @@ RESULTS_HTML = '''
                                             <tr><td>배팅복사</td><td><span id="calc-2-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
                                         </table>
                                     </div>
-                                </div>
-                                <div class="calc-buttons">
-                                    <button type="button" class="calc-run" data-calc="2">실행</button>
-                                    <button type="button" class="calc-stop" data-calc="2">정지</button>
-                                    <button type="button" class="calc-reset" data-calc="2">리셋</button>
                                 </div>
                             </div>
                             <div class="calc-detail" id="calc-2-detail">
@@ -6700,6 +6706,11 @@ RESULTS_HTML = '''
                             <div class="calc-summary" id="calc-3-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
                         </div>
+                        <div class="calc-buttons-row">
+                            <button type="button" class="calc-run" data-calc="3">실행</button>
+                            <button type="button" class="calc-stop" data-calc="3">정지</button>
+                            <button type="button" class="calc-reset" data-calc="3">리셋</button>
+                        </div>
                         <div class="calc-dropdown-body" id="calc-3-body">
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
@@ -6724,11 +6735,6 @@ RESULTS_HTML = '''
                                             <tr><td>배팅복사</td><td><span id="calc-3-bet-copy-line" class="calc-bet-copy-line">—</span></td></tr>
                                         </table>
                                     </div>
-                                </div>
-                                <div class="calc-buttons">
-                                    <button type="button" class="calc-run" data-calc="3">실행</button>
-                                    <button type="button" class="calc-stop" data-calc="3">정지</button>
-                                    <button type="button" class="calc-reset" data-calc="3">리셋</button>
                                 </div>
                             </div>
                             <div class="calc-detail" id="calc-3-detail">
@@ -10817,7 +10823,7 @@ RESULTS_HTML = '''
         var _lastCalcDropdownToggleAt = 0;
         document.querySelectorAll('.calc-dropdown-header').forEach(h => {
             h.addEventListener('click', function(e) {
-                if (e.target.closest('.calc-dropdown-body')) return;
+                if (e.target.closest('.calc-dropdown-body') || e.target.closest('.calc-buttons-row')) return;
                 var now = Date.now();
                 if (now - _lastCalcDropdownToggleAt < 200) return;
                 _lastCalcDropdownToggleAt = now;

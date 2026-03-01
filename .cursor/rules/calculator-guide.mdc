@@ -69,12 +69,12 @@ alwaysApply: true
 
 ### ⛔ 계산기 HTML 구조 (변경 금지)
 
-- **calc-dropdown** > **calc-dropdown-header** + **calc-dropdown-body** (형제 관계).
+- **calc-dropdown** > **calc-dropdown-header** + **calc-buttons-row** + **calc-dropdown-body** (형제 관계).
+- **calc-buttons-row** > `calc-run` + `calc-stop` + `calc-reset` (순서 고정). — collapse 영역 밖에 두어 **항상 표시** (리셋 사라짐 버그 방지).
 - **calc-dropdown-body** > **calc-body-row** + **calc-detail**.
-- **calc-body-row** > calc-settings-table + calc-options-wrap + **calc-buttons**.
-- **calc-buttons** > `calc-run` + `calc-stop` + `calc-reset` (순서 고정).
+- **calc-body-row** > calc-settings-table + calc-options-wrap (버튼은 calc-buttons-row로 분리).
 
-닫는 `</div>` 들여쓰기 오류 시 **calc-dropdown-body**가 잘못된 부모 아래로 들어가 리셋 버튼이 없어졌다 생기는 버그 발생. 계산기 1·2·3 모두 **동일한 HTML 구조** 유지할 것.
+닫는 `</div>` 들여쓰기 오류 시 **calc-dropdown-body**가 잘못된 부모 아래로 들어가는 버그 발생. 계산기 1·2·3 모두 **동일한 HTML 구조** 유지할 것.
 
 ### collapse 토글 (사라졌다 생기는 버그 방지)
 
