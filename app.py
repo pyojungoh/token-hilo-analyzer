@@ -5209,7 +5209,7 @@ def fetch_with_retry(url, max_retries=MAX_RETRIES, silent=False, timeout_sec=Non
                     print(f"   응답 내용: {e.response.text[:300]}")
         except requests.exceptions.RequestException as e:
             if attempt < max_retries - 1:
-                time.sleep(1)
+                time.sleep(0.3)  # 재시도 대기 — 1초→0.3초 (결과 반영 속도 개선)
                 continue
             if not silent:
                 print(f"[❌ 요청 오류] {url}")
@@ -5268,8 +5268,8 @@ def load_game_data():
     }
 
 # 외부 result.json 요청 시 타임아웃 (10초 게임·8초 내 배팅. 0.6/1.5초는 응답 전 타임아웃으로 그래프 미갱신 발생 → 1/2.5초로 완화)
-RESULTS_FETCH_TIMEOUT_PER_PATH = 1
-RESULTS_FETCH_OVERALL_TIMEOUT = 2.5
+RESULTS_FETCH_TIMEOUT_PER_PATH = 0.6   # 경로별 타임아웃 — 빠른 실패로 먼저 성공한 경로 우선
+RESULTS_FETCH_OVERALL_TIMEOUT = 1.8    # 전체 타임아웃 — tgame365 결과 반영 속도 개선
 RESULTS_FETCH_MAX_RETRIES = 1
 
 
@@ -11627,7 +11627,7 @@ RESULTS_HTML = '''
             if (shapePollIntervalId) clearInterval(shapePollIntervalId);
             
             // 탭 가시성에 따라 간격 조정. 결과 반영 속도 우선
-            var resultsInterval = isTabVisible ? 100 : 1200;   // 100ms — 결과·그래프 체크 주기 (빠른 반영)
+            var resultsInterval = isTabVisible ? 80 : 1200;    // 80ms — 결과·그래프 체크 주기 (tgame365 반영 속도 개선)
             var calcStatusInterval = isTabVisible ? 200 : 1200; // 200ms — 픽 서버 전달 (80ms→200ms 부하 완화)
             var calcStateInterval = isTabVisible ? 1200 : 5000;  // 1200ms — 계산기 상태 GET 간격 (부하 완화)
             var timerInterval = isTabVisible ? 300 : 1000;
@@ -11641,7 +11641,7 @@ RESULTS_HTML = '''
                     const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
                     const criticalPhase = r <= 3 || r >= 8;
                     // 백그라운드일 때는 최소 1초 간격. 너무 짧으면 서버 부하로 예측픽 안 나옴
-                    const baseInterval = allResults.length === 0 ? 150 : (anyRunning ? 80 : (criticalPhase ? 80 : 120));
+                    const baseInterval = allResults.length === 0 ? 120 : (anyRunning ? 60 : (criticalPhase ? 60 : 100));
                     const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
                     if (Date.now() - lastResultsUpdate > interval) {
                         loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
@@ -12589,9 +12589,9 @@ def get_results():
                     'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}},
                     'blended_win_rate': None, 'round_actuals': {}, 'joker_stats': {}
                 }
-        # refresh 트리거: 10초 게임 8초 내 배팅 — 0.2초 스로틀 (지연 완화)
+        # refresh 트리거: 10초 게임 8초 내 배팅 — 0.1초 스로틀 (결과 반영 속도 개선)
         now_tr = time.time()
-        if not _results_refreshing and (now_tr - _last_refresh_trigger_at) >= 0.2:
+        if not _results_refreshing and (now_tr - _last_refresh_trigger_at) >= 0.1:
             _last_refresh_trigger_at = now_tr
             threading.Thread(target=_refresh_results_background, daemon=True).start()
         
