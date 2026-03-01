@@ -57,11 +57,29 @@ alwaysApply: true
 - **시간**: 설정 시간 종료 시 배팅 정지.
 - **목표**: 순익이 목표 도달 시 즉시 정지. 게임 중 변경 가능.
 
-## 버튼
+## 버튼 (정의·HTML 구조)
 
-- **실행**: 계산기 실행.
-- **정지**: 배팅만 멈춤. 픽·승패는 계속 기록(no_bet). history·pending 유지.
-- **리셋**: 계산기 표·서버 상태 완전 초기화.
+### 버튼별 정의
+
+| 버튼 | 클래스 | data-calc | 동작 |
+|------|--------|-----------|------|
+| **실행** | `calc-run` | 1\|2\|3 | `running=true`, `started_at` 설정. 배팅 시작. `saveCalcStateToServer({ immediate: true })` 호출. |
+| **정지** | `calc-stop` | 1\|2\|3 | `running=false`. 배팅만 멈춤. 픽·승패는 계속 기록(no_bet). history·pending 유지. `postCurrentPickIfChanged` null 전송. `saveCalcStateToServer({ skipApplyForIds: [id], immediate: true })`. |
+| **리셋** | `calc-reset` | 1\|2\|3 | `running=false`, `history=[]`, `started_at=0`, `elapsed=0`, `pending_round=null` 등 전부 초기화. `postCurrentPickIfChanged` null 전송. `saveCalcStateToServer({ skipApplyForIds: [id], immediate: true })`. |
+
+### ⛔ 계산기 HTML 구조 (변경 금지)
+
+- **calc-dropdown** > **calc-dropdown-header** + **calc-dropdown-body** (형제 관계).
+- **calc-dropdown-body** > **calc-body-row** + **calc-detail**.
+- **calc-body-row** > calc-settings-table + calc-options-wrap + **calc-buttons**.
+- **calc-buttons** > `calc-run` + `calc-stop` + `calc-reset` (순서 고정).
+
+닫는 `</div>` 들여쓰기 오류 시 **calc-dropdown-body**가 잘못된 부모 아래로 들어가 리셋 버튼이 없어졌다 생기는 버그 발생. 계산기 1·2·3 모두 **동일한 HTML 구조** 유지할 것.
+
+### 이벤트 바인딩
+
+- `document.querySelectorAll('.calc-run')`, `.calc-stop`, `.calc-reset` 각각 `forEach`로 클릭 핸들러 등록.
+- 페이지 로드 시 1회만 실행. DOM 교체 시 재바인딩 필요 없음 (계산기 영역은 innerHTML 교체 안 함).
 
 ---
 
