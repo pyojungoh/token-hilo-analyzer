@@ -386,22 +386,6 @@ def init_database():
             CREATE INDEX IF NOT EXISTS idx_chunk_profile_round
             ON chunk_profile_occurrences (round_num DESC)
         ''')
-        # daily_patterns: CSV 분석 후 등록한 오늘 패턴. 줄run+퐁당run 시그니처별 다음 유지/바뀜 분포.
-        cur.execute('''
-            CREATE TABLE IF NOT EXISTS daily_patterns (
-                id SERIAL PRIMARY KEY,
-                pattern_date DATE NOT NULL,
-                pattern_sig TEXT NOT NULL,
-                next_same_count INTEGER DEFAULT 0,
-                next_change_count INTEGER DEFAULT 0,
-                sample_count INTEGER DEFAULT 0,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        ''')
-        cur.execute('''
-            CREATE INDEX IF NOT EXISTS idx_daily_patterns_date
-            ON daily_patterns (pattern_date DESC)
-        ''')
         for col, typ in [('next_jung_count', 'INTEGER DEFAULT 0'), ('next_kkeok_count', 'INTEGER DEFAULT 0')]:
             cur.execute(
                 "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'shape_win_stats' AND column_name = %s",
@@ -4775,11 +4759,6 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
                 pong_w += ngram_boost * (ngram_kkeok - ngram_jung) / total_ng
             else:
                 line_w += ngram_boost * (ngram_kkeok - ngram_jung) / total_ng
-    # 오늘 패턴: CSV 분석 후 등록한 패턴과 매칭 시 line_w/pong_w 가산
-    dp_line, dp_pong = _get_daily_pattern_boost(line_runs, pong_runs)
-    if dp_line != 0 or dp_pong != 0:
-        line_w = max(0.0, line_w + dp_line)
-        pong_w = max(0.0, pong_w + dp_pong)
     total_w = line_w + pong_w
     if total_w > 0:
         line_w /= total_w
@@ -4823,8 +4802,6 @@ def compute_prediction(results, prediction_history, prev_symmetry_counts=None, s
         pong_chunk_debug['dynamic_line_threshold'] = dyn_thresh
         pong_chunk_debug['chunk_subpattern'] = _detect_chunk_subpattern(col_heights, 15)
         pong_chunk_debug['ngram_matches'] = ngram_matches
-        pong_chunk_debug['daily_pattern_line_add'] = dp_line
-        pong_chunk_debug['daily_pattern_pong_add'] = dp_pong
         pong_chunk_debug['long_short_stats'] = {'long': long_cols, 'short': short_cols, 'pong': pong_cols, 'total': len(col_heights), 'threshold': dyn_thresh}  # 장줄(threshold+), 짧은줄(2~threshold-1), 퐁당(1)
         pong_chunk_debug['chunk_type'] = chunk_type  # 30열 기준: 높은덩어리/낮은덩어리/띄엄띄엄/혼합덩어리, 높은줄/낮은줄/중간줄
         pong_chunk_debug['symmetry_windows_used'] = symmetry_windows_used
@@ -6472,7 +6449,6 @@ RESULTS_HTML = '''
                 <span class="analysis-tab" role="tab" data-panel="losing-streaks">연패 구간</span>
                 <span class="analysis-tab" role="tab" data-panel="win-rate-direction">승률 방향</span>
                 <span class="analysis-tab" role="tab" data-panel="symmetry-line">대칭/줄</span>
-                <span class="analysis-tab" role="tab" data-panel="daily-patterns">오늘 패턴</span>
                 <span class="analysis-tabs-collapse-btn" id="analysis-tabs-collapse-btn" title="접기/펼치기">▼</span>
             </div>
             <div id="panel-prediction-picks" class="analysis-panel active">
@@ -6609,36 +6585,6 @@ RESULTS_HTML = '''
             </div>
             <div id="panel-symmetry-line" class="analysis-panel">
                 <div id="symmetry-line-collapse-body" class="prob-bucket-collapse-body"></div>
-            </div>
-            <div id="panel-daily-patterns" class="analysis-panel">
-                <div id="daily-patterns-collapse-body" class="prob-bucket-collapse-body">
-                <div id="daily-patterns-section" style="margin-top:8px;padding:10px;background:#1a1a1a;border-radius:6px;border:1px solid #444;">
-                    <p style="font-size:0.9em;color:#aaa;margin:0 0 8px 0;">CSV 분석 후 등록한 <strong>오늘 패턴</strong>(줄run 시퀀스)입니다. 예측 시 현재 그래프와 유사하면 line_w/pong_w에 가산됩니다.</p>
-                    <div id="daily-patterns-date" style="font-size:0.85em;color:#81c784;margin-bottom:8px;">날짜: —</div>
-                    <table class="symmetry-line-table" style="width:100%;max-width:600px;margin-bottom:12px;">
-                        <thead><tr><th>모양</th><th>패턴(줄run)</th><th>유지</th><th>바뀜</th><th>n</th></tr></thead>
-                        <tbody id="daily-patterns-tbody"><tr><td colspan="5" style="color:#888;">로딩 중...</td></tr></tbody>
-                    </table>
-                    <div style="margin-top:12px;padding:10px;background:#252525;border-radius:6px;border:1px solid #444;">
-                        <div style="font-weight:bold;color:#64b5f6;margin-bottom:6px;">패턴 등록</div>
-                        <p style="font-size:0.85em;color:#888;margin:0 0 8px 0;">줄run 시그니처(예: 1,2,2,3,3,2,2)와 유지/바뀜 횟수. <strong>AI분석용 CSV</strong>(다운로드)를 선택하면 줄run별 유지/바뀜을 자동 집계해 등록합니다.</p>
-                        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;">
-                            <input type="text" id="daily-pattern-sig" placeholder="1,2,2,3,3,2,2" style="width:180px;padding:6px 12px;background:#333;color:#fff;border:1px solid #555;border-radius:4px;font-size:0.9em;" />
-                            <input type="number" id="daily-pattern-same" placeholder="유지" min="0" style="width:60px;padding:6px;background:#333;color:#fff;border:1px solid #555;border-radius:4px;font-size:0.9em;" />
-                            <input type="number" id="daily-pattern-change" placeholder="바뀜" min="0" style="width:60px;padding:6px;background:#333;color:#fff;border:1px solid #555;border-radius:4px;font-size:0.9em;" />
-                            <button type="button" id="daily-pattern-add-btn" class="btn btn-amount" style="padding:6px 12px;">추가</button>
-                        </div>
-                        <textarea id="daily-pattern-json" placeholder='[{"sig":"1,2,2,3", "next_same_count":45, "next_change_count":55}]' style="width:100%;min-height:60px;padding:8px;background:#333;color:#fff;border:1px solid #555;border-radius:4px;font-size:0.85em;box-sizing:border-box;resize:vertical;"></textarea>
-                        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;">
-                            <button type="button" id="daily-pattern-json-btn" class="btn btn-amount" style="padding:6px 12px;">JSON 일괄 등록</button>
-                            <label class="btn btn-amount" style="padding:6px 12px;cursor:pointer;margin:0;">CSV에서 일괄 등록
-                                <input type="file" id="daily-pattern-csv-file" accept=".csv" style="display:none;" />
-                            </label>
-                        </div>
-                        <span id="daily-pattern-status" style="margin-left:8px;font-size:0.85em;color:#81c784;"></span>
-                    </div>
-                </div>
-                </div>
             </div>
         </div>
         <div class="bet-calc">
@@ -10205,153 +10151,6 @@ RESULTS_HTML = '''
                 wrap.appendChild(barEl);
             }
         }
-        function loadDailyPatterns() {
-            var tbody = document.getElementById('daily-patterns-tbody');
-            var dateEl = document.getElementById('daily-patterns-date');
-            if (!tbody) return;
-            function renderPatternBars(sig) {
-                if (!sig || typeof sig !== 'string' || String(sig).trim() === '-' || !/^[0-9]/.test(String(sig).trim())) return '<span style="color:#666;">—</span>';
-                var parts = String(sig).split(',').map(function(x) { return parseInt(x.trim(), 10) || 1; });
-                var heights = { 1: 10, 2: 18, 3: 24 };
-                return '<div class="daily-pattern-bars" style="display:flex;align-items:flex-end;gap:3px;height:28px;min-width:' + (parts.length * 15) + 'px;">' + parts.map(function(run) { var h = heights[run] || 28; return '<div style="width:10px;height:' + h + 'px;background:linear-gradient(180deg,#4caf50,#2e7d32);border-radius:2px;" title="줄 ' + run + '"></div>'; }).join('') + '</div>';
-            }
-            fetch('/api/daily-patterns').then(function(r) { return r.json(); }).then(function(data) {
-                if (!data.ok || !Array.isArray(data.patterns)) {
-                    tbody.innerHTML = '<tr><td colspan="5" style="color:#888;">데이터 없음</td></tr>';
-                    if (dateEl) dateEl.textContent = '날짜: —';
-                    return;
-                }
-                if (dateEl) dateEl.textContent = '날짜: ' + (data.date || '—');
-                if (data.patterns.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="5" style="color:#888;">등록된 패턴 없음. 아래에서 추가하세요.</td></tr>';
-                    return;
-                }
-                var html = '';
-                data.patterns.forEach(function(p) {
-                    var same = p.next_same_count || 0;
-                    var change = p.next_change_count || 0;
-                    var n = p.sample_count || (same + change);
-                    var samePct = n > 0 ? (100 * same / n).toFixed(1) : '-';
-                    var changePct = n > 0 ? (100 * change / n).toFixed(1) : '-';
-                    var sig = p.pattern_sig || '-';
-                    var barsHtml = renderPatternBars(sig);
-                    html += '<tr><td style="vertical-align:middle;">' + barsHtml + '</td><td style="word-break:break-all;">' + sig + '</td><td>' + samePct + '%</td><td>' + changePct + '%</td><td>' + n + '</td></tr>';
-                });
-                tbody.innerHTML = html;
-            }).catch(function() {
-                tbody.innerHTML = '<tr><td colspan="5" style="color:#e57373;">로딩 실패</td></tr>';
-            });
-        }
-        function postDailyPatterns(payload, done) {
-            fetch('/api/daily-patterns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    if (data.ok) { loadDailyPatterns(); if (done) done(null, data); }
-                    else if (done) done(data.error || '실패', null);
-                })
-                .catch(function(e) { if (done) done(String(e), null); });
-        }
-        (function bindDailyPatternsUi() {
-            var addBtn = document.getElementById('daily-pattern-add-btn');
-            var jsonBtn = document.getElementById('daily-pattern-json-btn');
-            var statusEl = document.getElementById('daily-pattern-status');
-            if (addBtn) addBtn.addEventListener('click', function() {
-                var sig = (document.getElementById('daily-pattern-sig') || {}).value || '';
-                var same = parseInt((document.getElementById('daily-pattern-same') || {}).value, 10) || 0;
-                var change = parseInt((document.getElementById('daily-pattern-change') || {}).value, 10) || 0;
-                if (!sig.trim()) { if (statusEl) statusEl.textContent = '시그니처 입력'; return; }
-                if (statusEl) statusEl.textContent = '등록 중...';
-                postDailyPatterns({ patterns: [{ sig: sig.trim(), next_same_count: same, next_change_count: change }] }, function(err) {
-                    if (statusEl) statusEl.textContent = err ? ('오류: ' + err) : '등록됨';
-                    if (!err) { document.getElementById('daily-pattern-sig').value = ''; document.getElementById('daily-pattern-same').value = ''; document.getElementById('daily-pattern-change').value = ''; }
-                });
-            });
-            if (jsonBtn) jsonBtn.addEventListener('click', function() {
-                var ta = document.getElementById('daily-pattern-json');
-                var raw = (ta && ta.value || '').trim();
-                if (!raw) { if (statusEl) statusEl.textContent = 'JSON 입력'; return; }
-                try {
-                    var arr = JSON.parse(raw);
-                    if (!Array.isArray(arr)) arr = [arr];
-                    var patterns = arr.map(function(p) {
-                        return { sig: (p.sig || p.pattern_sig || '').toString().trim(), next_same_count: parseInt(p.next_same_count || p.same, 10) || 0, next_change_count: parseInt(p.next_change_count || p.change, 10) || 0 };
-                    }).filter(function(p) { return p.sig; });
-                    if (patterns.length === 0) { if (statusEl) statusEl.textContent = '유효한 패턴 없음'; return; }
-                    if (statusEl) statusEl.textContent = '등록 중...';
-                    postDailyPatterns({ patterns: patterns }, function(err) {
-                        if (statusEl) statusEl.textContent = err ? ('오류: ' + err) : (patterns.length + '건 등록됨');
-                        if (!err && ta) ta.value = '';
-                    });
-                } catch (e) { if (statusEl) statusEl.textContent = 'JSON 형식 오류'; }
-            });
-            var csvFileInput = document.getElementById('daily-pattern-csv-file');
-            if (csvFileInput) csvFileInput.addEventListener('change', function() {
-                var file = this.files && this.files[0];
-                if (!file) return;
-                var statusEl = document.getElementById('daily-pattern-status');
-                if (statusEl) statusEl.textContent = 'CSV 파싱 중...';
-                var reader = new FileReader();
-                reader.onload = function() {
-                    try {
-                        var text = (reader.result || '').toString().replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-                        var lines = text.split('\n').filter(function(l) { return l.trim(); });
-                        function parseCSVLine(line) {
-                            var r = [], cur = '', inQ = false;
-                            for (var i = 0; i < line.length; i++) {
-                                var c = line[i];
-                                if (c === '"') inQ = !inQ;
-                                else if (c === ',' && !inQ) { r.push(cur.trim()); cur = ''; }
-                                else cur += c;
-                            }
-                            r.push(cur.trim());
-                            return r;
-                        }
-                        var dataRows = [];
-                        var header = null;
-                        var idxLineRun = 10, idxActual = 2;
-                        for (var i = 0; i < lines.length; i++) {
-                            var row = parseCSVLine(lines[i]);
-                            if (row[0] && String(row[0]).indexOf('#') === 0) continue;
-                            if ((row[0] && (function(s){ return (s.charCodeAt(0)===0xFEFF ? s.substring(1) : s) === '회차'; })(String(row[0]))) || (row.length > 10 && row[10] === '줄run')) {
-                                header = row;
-                                idxLineRun = header.indexOf('줄run'); if (idxLineRun < 0) idxLineRun = 10;
-                                idxActual = header.indexOf('실제'); if (idxActual < 0) idxActual = 2;
-                                continue;
-                            }
-                            if (row.length > Math.max(idxLineRun, idxActual) && row[idxLineRun] && row[idxLineRun] !== '-') {
-                                dataRows.push({ lineRun: row[idxLineRun].trim(), actual: (row[idxActual] || '').trim() });
-                            }
-                        }
-                        var bySig = {};
-                        var prevActual = null;
-                        for (var j = 0; j < dataRows.length; j++) {
-                            var r = dataRows[j];
-                            var act = r.actual;
-                            if (act !== '정' && act !== '꺽') continue;
-                            if (prevActual === '정' || prevActual === '꺽') {
-                                var sig = r.lineRun;
-                                if (!bySig[sig]) bySig[sig] = { same: 0, change: 0 };
-                                if (prevActual === act) bySig[sig].same++; else bySig[sig].change++;
-                            }
-                            prevActual = act;
-                        }
-                        var patterns = [];
-                        for (var k in bySig) {
-                            var v = bySig[k];
-                            if ((v.same + v.change) >= 3) patterns.push({ sig: k, next_same_count: v.same, next_change_count: v.change });
-                        }
-                        if (patterns.length === 0) { if (statusEl) statusEl.textContent = '유효한 패턴 없음 (줄run·실제 컬럼 확인)'; return; }
-                        if (statusEl) statusEl.textContent = patterns.length + '건 등록 중...';
-                        postDailyPatterns({ patterns: patterns }, function(err) {
-                            if (statusEl) statusEl.textContent = err ? ('오류: ' + err) : (patterns.length + '건 CSV에서 등록됨');
-                            if (!err) csvFileInput.value = '';
-                        });
-                    } catch (e) { if (statusEl) statusEl.textContent = 'CSV 파싱 오류: ' + (e.message || e); }
-                };
-                reader.readAsText(file, 'UTF-8');
-                this.value = '';
-            });
-        })();
         document.getElementById('pause-guide-calc')?.addEventListener('click', function() { renderPauseGuideTable(); });
         function updateCalcStatus(id) {
             try {
@@ -11095,7 +10894,6 @@ RESULTS_HTML = '''
             var panel = document.getElementById('panel-' + panelId);
             if (panel) panel.classList.add('active');
             if (panelId === 'win-rate-direction' && typeof renderWinRateDirectionPanel === 'function') renderWinRateDirectionPanel();
-            if (panelId === 'daily-patterns' && typeof loadDailyPatterns === 'function') loadDailyPatterns();
         });
         var collapseBtn = document.getElementById('analysis-tabs-collapse-btn');
         if (collapseBtn && !collapseBtn.getAttribute('data-bound')) {
@@ -13891,13 +13689,12 @@ def api_betting_history_export():
 GRAPH_ANALYSIS_CSV_PROMPT = [
     '# CSV 배팅 어드바이스 지시:',
     '# 1. 이 CSV는 막대 그래프(높이·세그먼트·줄run·퐁당run) 데이터를 담고 있다.',
-    '# 2. 패턴(시퀀스) 단위 분석: 정꺽꺽정정정꺽꺽정 같은 전체 시퀀스(줄run·퐁당run·세그먼트)를 패턴으로 본다. "오늘 이 패턴이 많이 나왔다" 식으로 자주 나온 패턴을 식별하고, 비슷하게 매칭한다.',
-    '# 3. 밸런스(퐁당%/줄%, 구간 전환)와 모양(덩어리모양, run 패턴)을 분석한다.',
-    '# 4. 자주 나오는 패턴을 찾고, 각 패턴일 때 다음 회차 실제 결과(정/꺽) 비율을 집계한다.',
-    '# 5. 정 vs 꺽 "어느 쪽이 유리한가"가 아니라, "이 조건일 때 다음이 정/꺽 중 어느 쪽이 더 나왔는가"로 판단한다. "정 권장" "꺽 권장" 사용 금지.',
-    '# 6. 배팅 어드바이스: 현재 상태에 맞는 패턴을 매칭해 "이 패턴이 오늘 많이 나왔고, 비슷하게 매칭하겠다" 식으로 제시한다.',
-    '# 7. 임계값: 경고승률 구간별(≤43%, 43~50%, 50~57%, ≥57%) 정픽승률·반픽승률을 계산하고, 스마트반픽 임계값 권장을 제시한다.',
-    '# 8. 필요 시 app.py 예측 공식 반영 방향(모양별 line_w/pong_w)을 제안한다. 코딩은 하지 않는다.',
+    '# 2. 밸런스(퐁당%/줄%, 구간 전환)와 모양(덩어리모양, run 패턴)을 분석한다.',
+    '# 3. 자주 나오는 모양을 찾고, 각 모양일 때 다음 회차 실제 결과(정/꺽) 비율을 집계한다.',
+    '# 4. 정 vs 꺽 "어느 쪽이 유리한가"가 아니라, "이 조건일 때 다음이 정/꺽 중 어느 쪽이 더 나왔는가"로 판단한다.',
+    '# 5. 배팅 어드바이스: 현재 상태에 맞는 모양을 매칭해 픽(정/꺽) 권장을 제시한다.',
+    '# 6. 임계값: 경고승률 구간별(≤43%, 43~50%, 50~57%, ≥57%) 정픽승률·반픽승률을 계산하고, 스마트반픽 임계값 권장을 제시한다.',
+    '# 7. 필요 시 app.py 예측 공식 반영 방향(모양별 line_w/pong_w)을 제안한다. 코딩은 하지 않는다.',
     '# 상세: docs/CSV_BETTING_ADVICE_GUIDE.md',
 ]
 
@@ -13971,126 +13768,6 @@ def api_export_graph_analysis():
         print(f"[API] export-graph-analysis 오류: {str(e)[:200]}")
         from flask import Response
         return Response('오류: ' + str(e)[:200], status=500, mimetype='text/plain')
-
-
-def _get_daily_pattern_boost(line_runs, pong_runs, pattern_date=None):
-    """등록된 오늘 패턴과 현재 line_runs 매칭 시 line_w/pong_w 가산. 반환: (line_w_add, pong_w_add)."""
-    if not line_runs:
-        return 0.0, 0.0
-    try:
-        from datetime import date
-        d = pattern_date or date.today()
-        rows = _get_daily_patterns_for_date(d)
-        if not rows:
-            return 0.0, 0.0
-        cur_sig = ','.join(str(x) for x in line_runs[:12])
-        best = None
-        best_len = 0
-        for r in rows:
-            sig = (r.get('pattern_sig') or '').strip()
-            if not sig:
-                continue
-            if cur_sig == sig or cur_sig.startswith(sig + ',') or sig.startswith(cur_sig + ','):
-                if len(sig) > best_len:
-                    best_len = len(sig)
-                    best = r
-        if not best or best.get('sample_count', 0) < 5:
-            return 0.0, 0.0
-        same = max(0, int(best.get('next_same_count', 0)))
-        change = max(0, int(best.get('next_change_count', 0)))
-        total = same + change
-        if total < 5:
-            return 0.0, 0.0
-        prob_same = same / total
-        prob_change = change / total
-        w = 0.06 * min(1.0, total / 30)
-        line_add = w * (prob_same - 0.5)
-        pong_add = w * (prob_change - 0.5)
-        return line_add, pong_add
-    except Exception as e:
-        _log_throttle('daily_pattern_boost', 60, f"[daily_pattern] boost 오류: {str(e)[:80]}")
-        return 0.0, 0.0
-
-
-def _get_daily_patterns_for_date(pattern_date):
-    """오늘 패턴 조회. pattern_date: YYYY-MM-DD 문자열 또는 date. 반환: [{pattern_sig, next_same_count, next_change_count, sample_count}]"""
-    if not DB_AVAILABLE or not DATABASE_URL:
-        return []
-    try:
-        conn = get_db_connection(statement_timeout_sec=5)
-        if not conn:
-            return []
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute('''
-            SELECT pattern_sig, next_same_count, next_change_count, sample_count
-            FROM daily_patterns WHERE pattern_date = %s ORDER BY sample_count DESC
-        ''', (pattern_date,))
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return [dict(r) for r in rows]
-    except Exception as e:
-        print(f"[API] daily-patterns 조회 오류: {str(e)[:100]}")
-        return []
-
-
-@app.route('/api/daily-patterns', methods=['GET', 'POST'])
-def api_daily_patterns():
-    """GET: 오늘 패턴 조회. POST: 패턴 등록."""
-    try:
-        from datetime import date
-        if request.method == 'GET':
-            d = request.args.get('date')
-            if d:
-                try:
-                    pattern_date = datetime.strptime(d, '%Y-%m-%d').date()
-                except ValueError:
-                    pattern_date = date.today()
-            else:
-                pattern_date = date.today()
-            rows = _get_daily_patterns_for_date(pattern_date)
-            return jsonify({'ok': True, 'date': str(pattern_date), 'patterns': rows})
-        # POST
-        if not request.is_json:
-            return jsonify({'ok': False, 'error': 'JSON 필요'}), 400
-        data = request.get_json() or {}
-        d = data.get('date')
-        if d:
-            try:
-                pattern_date = datetime.strptime(str(d), '%Y-%m-%d').date()
-            except ValueError:
-                pattern_date = date.today()
-        else:
-            pattern_date = date.today()
-        patterns = data.get('patterns') or []
-        if not isinstance(patterns, list):
-            return jsonify({'ok': False, 'error': 'patterns 배열 필요'}), 400
-        if not DB_AVAILABLE or not DATABASE_URL:
-            return jsonify({'ok': False, 'error': 'DB 없음'}), 500
-        conn = get_db_connection(statement_timeout_sec=10)
-        if not conn:
-            return jsonify({'ok': False, 'error': 'DB 연결 실패'}), 500
-        cur = conn.cursor()
-        cur.execute('DELETE FROM daily_patterns WHERE pattern_date = %s', (pattern_date,))
-        for p in patterns:
-            sig = (p.get('sig') or p.get('pattern_sig') or '').strip()
-            if not sig:
-                continue
-            same = max(0, int(p.get('next_same_count', p.get('same', 0))))
-            change = max(0, int(p.get('next_change_count', p.get('change', 0))))
-            total = same + change
-            if total < 1:
-                total = 1
-            cur.execute('''
-                INSERT INTO daily_patterns (pattern_date, pattern_sig, next_same_count, next_change_count, sample_count)
-                VALUES (%s, %s, %s, %s, %s)
-            ''', (pattern_date, sig[:500], same, change, total))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return jsonify({'ok': True, 'date': str(pattern_date), 'count': len(patterns)})
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)[:150]}), 500
 
 
 def _build_calc_options_header(calc_state):
