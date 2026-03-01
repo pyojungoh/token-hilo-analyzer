@@ -7484,7 +7484,9 @@ RESULTS_HTML = '''
                         }
                     } catch (e) { /* ignore */ }
                 }
-                applyCalcsToState(calcs, lastServerTimeSec, restoreUi);
+                // 리셋 직후 15초 이내: 해당 calc는 서버 응답으로 덮어쓰지 않음 — 히스토리 복원 버그 방지
+                var skipApplyForRecentlyReset = (Date.now() - lastResetAt < 15000) ? (lastResetCalcIds || []) : [];
+                applyCalcsToState(calcs, lastServerTimeSec, restoreUi, skipApplyForRecentlyReset);
                 CALC_IDS.forEach(function(id) { if (typeof updateCalcStatus === 'function') updateCalcStatus(id); });
                 CALC_IDS.forEach(function(id) { ensurePendingRowForRunningCalc(id); });
                 CALC_IDS.forEach(function(id) { if (typeof updateCalcStatus === 'function') updateCalcStatus(id); });
@@ -11097,6 +11099,9 @@ RESULTS_HTML = '''
                 state.pending_bet_amount = null;
                 state.paused = false;
                 lastResetOrRunAt = Date.now();
+                lastResetCalcIds = [id];
+                lastResetAt = Date.now();
+                try { localStorage.setItem(CALC_STATE_BACKUP_KEY, JSON.stringify(buildCalcPayload())); } catch (e2) { /* ignore */ }
                 updateCalcSummary(id);
                 updateCalcStatus(id);
                 updateCalcDetail(id);
@@ -11369,6 +11374,8 @@ RESULTS_HTML = '''
         var shapePollIntervalId = null;
         // 리셋/실행 직후에는 서버 폴링 스킵 (저장 반영 전에 예전 상태로 덮어쓰는 것 방지)
         var lastResetOrRunAt = 0;
+        var lastResetCalcIds = [];  // 리셋한 calc id 목록 — loadCalcStateFromServer에서 이 id들은 서버로 덮어쓰지 않음 (히스토리 복원 방지)
+        var lastResetAt = 0;
         
         function updatePredictionPicksCards(sp) {
             var cards = document.getElementById('prediction-picks-cards');
