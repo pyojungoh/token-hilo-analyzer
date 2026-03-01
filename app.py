@@ -6621,7 +6621,7 @@ RESULTS_HTML = '''
                     </table>
                     <div style="margin-top:12px;padding:10px;background:#252525;border-radius:6px;border:1px solid #444;">
                         <div style="font-weight:bold;color:#64b5f6;margin-bottom:6px;">패턴 등록</div>
-                        <p style="font-size:0.85em;color:#888;margin:0 0 8px 0;">줄run 시그니처(예: 1,2,2,3,3,2,2)와 유지/바뀜 횟수. CSV 분석 결과를 JSON으로 붙여넣거나 개별 입력.</p>
+                        <p style="font-size:0.85em;color:#888;margin:0 0 8px 0;">줄run 시그니처(예: 1,2,2,3,3,2,2)와 유지/바뀜 횟수. <strong>AI분석용 CSV</strong>(다운로드)를 선택하면 줄run별 유지/바뀜을 자동 집계해 등록합니다.</p>
                         <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;">
                             <input type="text" id="daily-pattern-sig" placeholder="1,2,2,3,3,2,2" style="width:180px;padding:6px 12px;background:#333;color:#fff;border:1px solid #555;border-radius:4px;font-size:0.9em;" />
                             <input type="number" id="daily-pattern-same" placeholder="유지" min="0" style="width:60px;padding:6px;background:#333;color:#fff;border:1px solid #555;border-radius:4px;font-size:0.9em;" />
@@ -6629,7 +6629,12 @@ RESULTS_HTML = '''
                             <button type="button" id="daily-pattern-add-btn" class="btn btn-amount" style="padding:6px 12px;">추가</button>
                         </div>
                         <textarea id="daily-pattern-json" placeholder='[{"sig":"1,2,2,3", "next_same_count":45, "next_change_count":55}]' style="width:100%;min-height:60px;padding:8px;background:#333;color:#fff;border:1px solid #555;border-radius:4px;font-size:0.85em;box-sizing:border-box;resize:vertical;"></textarea>
-                        <button type="button" id="daily-pattern-json-btn" class="btn btn-amount" style="margin-top:6px;padding:6px 12px;">JSON 일괄 등록</button>
+                        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;">
+                            <button type="button" id="daily-pattern-json-btn" class="btn btn-amount" style="padding:6px 12px;">JSON 일괄 등록</button>
+                            <label class="btn btn-amount" style="padding:6px 12px;cursor:pointer;margin:0;">CSV에서 일괄 등록
+                                <input type="file" id="daily-pattern-csv-file" accept=".csv" style="display:none;" />
+                            </label>
+                        </div>
                         <span id="daily-pattern-status" style="margin-left:8px;font-size:0.85em;color:#81c784;"></span>
                     </div>
                 </div>
@@ -10278,6 +10283,73 @@ RESULTS_HTML = '''
                         if (!err && ta) ta.value = '';
                     });
                 } catch (e) { if (statusEl) statusEl.textContent = 'JSON 형식 오류'; }
+            });
+            var csvFileInput = document.getElementById('daily-pattern-csv-file');
+            if (csvFileInput) csvFileInput.addEventListener('change', function() {
+                var file = this.files && this.files[0];
+                if (!file) return;
+                var statusEl = document.getElementById('daily-pattern-status');
+                if (statusEl) statusEl.textContent = 'CSV 파싱 중...';
+                var reader = new FileReader();
+                reader.onload = function() {
+                    try {
+                        var text = (reader.result || '').toString().replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                        var lines = text.split('\n').filter(function(l) { return l.trim(); });
+                        function parseCSVLine(line) {
+                            var r = [], cur = '', inQ = false;
+                            for (var i = 0; i < line.length; i++) {
+                                var c = line[i];
+                                if (c === '"') inQ = !inQ;
+                                else if (c === ',' && !inQ) { r.push(cur.trim()); cur = ''; }
+                                else cur += c;
+                            }
+                            r.push(cur.trim());
+                            return r;
+                        }
+                        var dataRows = [];
+                        var header = null;
+                        var idxLineRun = 10, idxActual = 2;
+                        for (var i = 0; i < lines.length; i++) {
+                            var row = parseCSVLine(lines[i]);
+                            if (row[0] && String(row[0]).indexOf('#') === 0) continue;
+                            if ((row[0] && String(row[0]).replace(/^\ufeff/, '') === '회차') || (row.length > 10 && row[10] === '줄run')) {
+                                header = row;
+                                idxLineRun = header.indexOf('줄run'); if (idxLineRun < 0) idxLineRun = 10;
+                                idxActual = header.indexOf('실제'); if (idxActual < 0) idxActual = 2;
+                                continue;
+                            }
+                            if (row.length > Math.max(idxLineRun, idxActual) && row[idxLineRun] && row[idxLineRun] !== '-') {
+                                dataRows.push({ lineRun: row[idxLineRun].trim(), actual: (row[idxActual] || '').trim() });
+                            }
+                        }
+                        var bySig = {};
+                        var prevActual = null;
+                        for (var j = 0; j < dataRows.length; j++) {
+                            var r = dataRows[j];
+                            var act = r.actual;
+                            if (act !== '정' && act !== '꺽') continue;
+                            if (prevActual === '정' || prevActual === '꺽') {
+                                var sig = r.lineRun;
+                                if (!bySig[sig]) bySig[sig] = { same: 0, change: 0 };
+                                if (prevActual === act) bySig[sig].same++; else bySig[sig].change++;
+                            }
+                            prevActual = act;
+                        }
+                        var patterns = [];
+                        for (var k in bySig) {
+                            var v = bySig[k];
+                            if ((v.same + v.change) >= 3) patterns.push({ sig: k, next_same_count: v.same, next_change_count: v.change });
+                        }
+                        if (patterns.length === 0) { if (statusEl) statusEl.textContent = '유효한 패턴 없음 (줄run·실제 컬럼 확인)'; return; }
+                        if (statusEl) statusEl.textContent = patterns.length + '건 등록 중...';
+                        postDailyPatterns({ patterns: patterns }, function(err) {
+                            if (statusEl) statusEl.textContent = err ? ('오류: ' + err) : (patterns.length + '건 CSV에서 등록됨');
+                            if (!err) csvFileInput.value = '';
+                        });
+                    } catch (e) { if (statusEl) statusEl.textContent = 'CSV 파싱 오류: ' + (e.message || e); }
+                };
+                reader.readAsText(file, 'UTF-8');
+                this.value = '';
             });
         })();
         document.getElementById('pause-guide-calc')?.addEventListener('click', function() { renderPauseGuideTable(); });
