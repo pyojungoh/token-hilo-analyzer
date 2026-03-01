@@ -6587,7 +6587,7 @@ RESULTS_HTML = '''
                             </span>
                             <div class="calc-summary" id="calc-1-summary">보유자산 - | 순익 - | 배팅중 -</div>
                             <span class="calc-toggle">▼</span>
-                </div>
+                        </div>
                         <div class="calc-dropdown-body" id="calc-1-body">
                             <div class="calc-body-row">
                                 <table class="calc-settings-table">
@@ -6617,7 +6617,7 @@ RESULTS_HTML = '''
                                     <button type="button" class="calc-run" data-calc="1">실행</button>
                                     <button type="button" class="calc-stop" data-calc="1">정지</button>
                                     <button type="button" class="calc-reset" data-calc="1">리셋</button>
-            </div>
+                                </div>
                             </div>
                             <div class="calc-detail" id="calc-1-detail">
                                 <div id="calc-1-result-cards-joker" class="calc-result-cards-joker"></div>
@@ -6961,6 +6961,7 @@ RESULTS_HTML = '''
         let lastPrediction = null;  // { value: '정'|'꺽', round: number }
         var lastServerPrediction = null;  // 서버 예측 (있으면 표시·pending 동기화용)
         var lastIs15Joker = false;  // 15번 카드 조커 여부 (계산기 예측픽에 보류 반영용)
+        var lastCard15IsRed = null;  // 15번 카드 색상 (헤더와 동일 출처 — 배팅중 색 일치용). true=빨강, false=검정, null=미확인
         var lastJokerSkipBet = false;  // 조커 2개 이상 등 skip_bet 시 계산기표·배팅중 보류
         var lastJokerStats = {};    // 조커 통계 (15카드 내 개수, 간격, 경고 등)
         /** 승률 방향 메뉴: 최근 100회 기준 고점/저점/방향. { round, rate50 } 최대 300개 */
@@ -7669,6 +7670,10 @@ RESULTS_HTML = '''
                 lastJokerStats = jokerStats;
                 lastIs15Joker = (displayResults.length >= 15 && !!displayResults[14].joker);
                 lastJokerSkipBet = !!(jokerStats && jokerStats.skip_bet);
+                if (displayResults.length >= 15 && !displayResults[14].joker && typeof parseCardValue === 'function') {
+                    var _c15 = parseCardValue(displayResults[14].result || '');
+                    lastCard15IsRed = !!_c15.isRed;
+                } else { lastCard15IsRed = null; }
                 try { if (typeof updateCalcJokerBadge === 'function') updateCalcJokerBadge(); } catch (e) {}
                 try { CALC_IDS.forEach(function(id) { updateCalcStatus(id); }); } catch (e) {}
                 
@@ -10260,10 +10265,13 @@ RESULTS_HTML = '''
                             }
                             if (curRound != null) { calcState[id].lastBetPickForRound = { round: curRound, value: bettingText, isRed: bettingIsRed }; }
                         }
-                        // pick-color-core-rule: 정/꺽 픽은 맞는데 15번 카드와 색이 다를 때 방지 — 픽 확정 후 항상 15번 카드로 색 재계산
+                        // pick-color-core-rule: 정/꺽 픽은 맞는데 15번 카드와 색이 다를 때 방지 — 헤더와 동일 출처(lastCard15IsRed)로 색 재계산
                         if ((bettingText === '정' || bettingText === '꺽')) {
-                            var card15Final = (typeof allResults !== 'undefined' && allResults && allResults.length >= 15 && typeof parseCardValue === 'function') ? parseCardValue(allResults[14].result || '') : null;
-                            var is15RedFinal = card15Final ? card15Final.isRed : null;
+                            var is15RedFinal = (typeof lastCard15IsRed === 'boolean') ? lastCard15IsRed : null;
+                            if (is15RedFinal === null && typeof allResults !== 'undefined' && allResults && allResults.length >= 15 && typeof parseCardValue === 'function') {
+                                var card15Final = parseCardValue(allResults[14].result || '');
+                                is15RedFinal = (card15Final && (card15Final.isRed === true || card15Final.isRed === false)) ? card15Final.isRed : null;
+                            }
                             if (is15RedFinal === true || is15RedFinal === false) {
                                 bettingIsRed = (bettingText === '정') ? is15RedFinal : !is15RedFinal;
                                 if (curRound != null && calcState[id].lastBetPickForRound && Number(calcState[id].lastBetPickForRound.round) === curRound) {
