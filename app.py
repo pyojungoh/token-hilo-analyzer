@@ -2028,13 +2028,13 @@ def _apply_results_to_calcs(results):
             if not state or not isinstance(state, dict):
                 continue
             updated = False
-            skipped_cids = set()  # 정지 calc — 저장 시 최신 DB 버전 사용 (리셋 덮어쓰기 방지)
+            skipped_cids = set()
             for cid in ('1', '2', '3'):
                 c = state.get(cid)
                 if not c or not isinstance(c, dict):
                     continue
                 is_running = c.get('running')
-                # 정지(running=false): 수정하지 않음. 저장 시 최신 DB 버전으로 유지 — 1번 계산기 리셋 DB 안 사라지는 버그 방지
+                # 정지(running=false): 수정하지 않음. 저장 시 메모리 우선 사용 — 클라이언트 POST 직후 스케줄러 덮어쓰기 방지
                 if not is_running:
                     skipped_cids.add(cid)
                     continue
@@ -2377,12 +2377,18 @@ def _apply_results_to_calcs(results):
                         c['pending_color'] = '빨강' if eff_pick == 'RED' else ('검정' if eff_pick == 'BLACK' else c.get('pending_color'))
                     updated = True
             if updated:
-                # 정지 calc는 최신 DB 버전 유지 — 클라이언트 리셋 POST가 스케줄러에 덮어쓰이지 않도록
+                # 정지 calc: _calc_state_memory 우선 (클라이언트 POST가 DB 커밋 전에 스케줄러가 덮어쓰는 레이스 방지)
                 if skipped_cids:
-                    fresh = get_calc_state(session_id) or {}
-                    for cid in skipped_cids:
-                        if cid in fresh and isinstance(fresh[cid], dict):
-                            state[cid] = fresh[cid]
+                    mem = _calc_state_memory.get(str(session_id)[:64])
+                    if mem and isinstance(mem, dict):
+                        for cid in skipped_cids:
+                            if cid in mem and isinstance(mem[cid], dict):
+                                state[cid] = mem[cid]
+                    else:
+                        fresh = get_calc_state(session_id) or {}
+                        for cid in skipped_cids:
+                            if cid in fresh and isinstance(fresh[cid], dict):
+                                state[cid] = fresh[cid]
                 save_calc_state(session_id, state)  # 먼저 저장 → _update_relay_cache_for_running_calcs에서 relay 픽 푸시
     except Exception as e:
         print(f"[스케줄러] 회차 반영 오류: {str(e)[:200]}")
