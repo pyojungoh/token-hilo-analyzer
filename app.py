@@ -12786,11 +12786,22 @@ def get_results():
             if results_cache and results_cache.get('results'):
                 payload = results_cache.copy()
             else:
-                payload = {
-                    'results': [], 'count': 0, 'timestamp': datetime.now().isoformat(),
-                    'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}},
-                    'blended_win_rate': None, 'round_actuals': {}, 'joker_stats': {}
-                }
+                # DB·캐시 모두 비어 있으면 외부 fetch 시도 (콜드스타트·다운 복구)
+                try:
+                    sync_payload = _build_results_payload()
+                    if sync_payload and sync_payload.get('results'):
+                        payload = sync_payload
+                        results_cache = sync_payload
+                        last_update_time = time.time() * 1000
+                        print(f"[API] 콜드스타트 fetch 성공: {len(payload.get('results', []))}건")
+                except Exception as e:
+                    print(f"[API] 콜드스타트 fetch 실패: {str(e)[:150]}")
+                if not payload or not payload.get('results'):
+                    payload = {
+                        'results': [], 'count': 0, 'timestamp': datetime.now().isoformat(),
+                        'error': 'loading', 'prediction_history': [], 'server_prediction': {'value': None, 'round': 0, 'prob': 0, 'color': None, 'warning_u35': False, 'pong_chunk_phase': None, 'pong_chunk_debug': {}},
+                        'blended_win_rate': None, 'round_actuals': {}, 'joker_stats': {}
+                    }
         # refresh 트리거: 10초 게임 8초 내 배팅 — 0.1초 스로틀 (결과 반영 속도 개선)
         now_tr = time.time()
         if not _results_refreshing and (now_tr - _last_refresh_trigger_at) >= 0.1:
