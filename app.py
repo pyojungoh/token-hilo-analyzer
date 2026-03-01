@@ -2028,15 +2028,16 @@ def _apply_results_to_calcs(results):
             if not state or not isinstance(state, dict):
                 continue
             updated = False
+            skipped_cids = set()  # 정지 calc — 저장 시 최신 DB 버전 사용 (리셋 덮어쓰기 방지)
             for cid in ('1', '2', '3'):
                 c = state.get(cid)
                 if not c or not isinstance(c, dict):
                     continue
                 is_running = c.get('running')
-                # 리셋(running=false, history=[]): 회차 반영 안 함 — 표가 다시 살아나는 버그 방지
-                if not is_running and len(c.get('history') or []) == 0:
+                # 정지(running=false): 수정하지 않음. 저장 시 최신 DB 버전으로 유지 — 1번 계산기 리셋 DB 안 사라지는 버그 방지
+                if not is_running:
+                    skipped_cids.add(cid)
                     continue
-                # 정지(running=false): 배팅만 멈춤. 픽/승패는 계속 기록(no_bet). relay는 _update_relay_cache_for_running_calcs에서 처리
                 # 연패정지: 대기/일시정지 상태면 패턴 확인. 준비되면 first_bet_round·betting으로 전환 (실행 중일 때만)
                 if is_running and c.get('streak_wait_enabled'):
                     sw_state = c.get('streak_wait_state') or 'waiting'
@@ -2376,6 +2377,12 @@ def _apply_results_to_calcs(results):
                         c['pending_color'] = '빨강' if eff_pick == 'RED' else ('검정' if eff_pick == 'BLACK' else c.get('pending_color'))
                     updated = True
             if updated:
+                # 정지 calc는 최신 DB 버전 유지 — 클라이언트 리셋 POST가 스케줄러에 덮어쓰이지 않도록
+                if skipped_cids:
+                    fresh = get_calc_state(session_id) or {}
+                    for cid in skipped_cids:
+                        if cid in fresh and isinstance(fresh[cid], dict):
+                            state[cid] = fresh[cid]
                 save_calc_state(session_id, state)  # 먼저 저장 → _update_relay_cache_for_running_calcs에서 relay 픽 푸시
     except Exception as e:
         print(f"[스케줄러] 회차 반영 오류: {str(e)[:200]}")
@@ -11603,8 +11610,8 @@ RESULTS_HTML = '''
             if (predictionPollIntervalId) clearInterval(predictionPollIntervalId);
             if (shapePollIntervalId) clearInterval(shapePollIntervalId);
             
-            // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·버벅임 발생
-            var resultsInterval = isTabVisible ? 200 : 1200;   // 200ms — 결과·그래프 체크 주기 (부하 완화)
+            // 탭 가시성에 따라 간격 조정. 결과 반영 속도 우선
+            var resultsInterval = isTabVisible ? 100 : 1200;   // 100ms — 결과·그래프 체크 주기 (빠른 반영)
             var calcStatusInterval = isTabVisible ? 200 : 1200; // 200ms — 픽 서버 전달 (80ms→200ms 부하 완화)
             var calcStateInterval = isTabVisible ? 1200 : 5000;  // 1200ms — 계산기 상태 GET 간격 (부하 완화)
             var timerInterval = isTabVisible ? 300 : 1000;
@@ -11618,7 +11625,7 @@ RESULTS_HTML = '''
                     const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
                     const criticalPhase = r <= 3 || r >= 8;
                     // 백그라운드일 때는 최소 1초 간격. 너무 짧으면 서버 부하로 예측픽 안 나옴
-                    const baseInterval = allResults.length === 0 ? 200 : (anyRunning ? 180 : (criticalPhase ? 150 : 200));
+                    const baseInterval = allResults.length === 0 ? 150 : (anyRunning ? 80 : (criticalPhase ? 80 : 120));
                     const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
                     if (Date.now() - lastResultsUpdate > interval) {
                         loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
