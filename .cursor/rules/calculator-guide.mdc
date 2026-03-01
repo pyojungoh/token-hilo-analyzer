@@ -76,6 +76,12 @@ alwaysApply: true
 
 닫는 `</div>` 들여쓰기 오류 시 **calc-dropdown-body**가 잘못된 부모 아래로 들어가 리셋 버튼이 없어졌다 생기는 버그 발생. 계산기 1·2·3 모두 **동일한 HTML 구조** 유지할 것.
 
+### collapse 토글 (사라졌다 생기는 버그 방지)
+
+- **계산기 1**: 기본 **펼침** (`collapsed` 클래스 없음). 버튼이 항상 보이도록.
+- **collapse 토글**: 200ms 디바운싱. `e.target.closest('.calc-dropdown-body')`면 토글 무시.
+- **버튼 클릭**: `e.stopPropagation()` 적용 — 헤더로 버블링 방지.
+
 ### 이벤트 바인딩
 
 - `document.querySelectorAll('.calc-run')`, `.calc-stop`, `.calc-reset` 각각 `forEach`로 클릭 핸들러 등록.

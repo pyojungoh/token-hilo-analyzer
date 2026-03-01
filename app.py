@@ -6577,7 +6577,7 @@ RESULTS_HTML = '''
             <div id="bet-calc-panel" class="bet-calc-panel active">
                 <div id="calc-joker-badge" class="calc-joker-badge" style="font-size:0.8em;color:#64b5f6;margin-bottom:6px;line-height:1.3">조커 15:- 30:- 평균:-회 마지막:-회 전</div>
                 <div class="calc-dropdowns">
-                    <div class="calc-dropdown collapsed" data-calc="1">
+                    <div class="calc-dropdown" data-calc="1">
                         <div class="calc-dropdown-header">
                             <span class="calc-title">계산기 1</span>
                             <span class="calc-status idle" id="calc-1-status">대기중</span>
@@ -10814,8 +10814,13 @@ RESULTS_HTML = '''
             statsEl.textContent = '최대연승: ' + r.maxWinStreak + ' | 최대연패: ' + r.maxLoseStreak + ' | 모양적중률: ' + shape50Str + ' | 표승률: ' + dispRateStr + ' | 15회승률: ' + rate15Str + ' | 모양판별승률(15회): ' + shapePred15Str;
             } catch (e) { console.warn('updateCalcDetail', id, e); }
         }
+        var _lastCalcDropdownToggleAt = 0;
         document.querySelectorAll('.calc-dropdown-header').forEach(h => {
-            h.addEventListener('click', function() {
+            h.addEventListener('click', function(e) {
+                if (e.target.closest('.calc-dropdown-body')) return;
+                var now = Date.now();
+                if (now - _lastCalcDropdownToggleAt < 200) return;
+                _lastCalcDropdownToggleAt = now;
                 const dd = this.closest('.calc-dropdown');
                 if (dd) dd.classList.toggle('collapsed');
             });
@@ -10931,7 +10936,8 @@ RESULTS_HTML = '''
         }
         try { updateAllCalcsImmediate(); } catch (e) { console.warn('초기 계산기 상태:', e); }
         document.querySelectorAll('.calc-run').forEach(btn => {
-            btn.addEventListener('click', async function() {
+            btn.addEventListener('click', async function(e) {
+                e.stopPropagation();
                 const rawId = this.getAttribute('data-calc');
                 const id = parseInt(rawId, 10);
                 if (!CALC_IDS.includes(id)) return;
@@ -11040,7 +11046,8 @@ RESULTS_HTML = '''
             });
         });
         document.querySelectorAll('.calc-stop').forEach(btn => {
-            btn.addEventListener('click', async function() {
+            btn.addEventListener('click', async function(e) {
+                e.stopPropagation();
                 const rawId = this.getAttribute('data-calc');
                 const id = parseInt(rawId, 10);
                 if (!CALC_IDS.includes(id)) return;
@@ -11060,7 +11067,8 @@ RESULTS_HTML = '''
             });
         });
         document.querySelectorAll('.calc-reset').forEach(btn => {
-            btn.addEventListener('click', async function() {
+            btn.addEventListener('click', async function(e) {
+                e.stopPropagation();
                 const rawId = this.getAttribute('data-calc');
                 const id = parseInt(rawId, 10);
                 if (!CALC_IDS.includes(id)) return;
