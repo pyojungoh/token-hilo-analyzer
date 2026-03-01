@@ -11659,13 +11659,19 @@ RESULTS_HTML = '''
                 } catch (e) {}
             }, calcStatusInterval);
             
-            // 계산기 실행 중일 때 서버 상태 주기적으로 가져와 UI 실시간 반영 (멈춰 보이는 현상 방지)
-            // 백그라운드일 때는 간격을 늘림 (브라우저 제한 고려)
+            // 계산기 상태 주기적 로드 — 실행 중일 때 빠르게, 모두 정지일 때도 주기적으로 (과거 데이터 덮어쓰기 루프 방지)
+            // 모두 정지 시 load를 안 하면 메모리에 예전 데이터가 남아 save 시 서버를 덮어써 과거 데이터가 계속 나오는 충돌 발생
             calcStatePollIntervalId = setInterval(() => {
                 if (Date.now() - lastResetOrRunAt < 6000) return;
                 const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
                 if (anyRunning) {
                     loadCalcStateFromServer(false).then(function() { updateAllCalcs(); }).catch(function(e) { console.warn('계산기 상태 폴링:', e); });
+                } else {
+                    // 모두 정지 시에도 5초마다 로드 — 리셋 후 서버 최신 상태 반영, save 시 예전 데이터 덮어쓰기 방지
+                    if (Date.now() - (window._lastCalcStateLoadWhenAllStopped || 0) >= 5000) {
+                        window._lastCalcStateLoadWhenAllStopped = Date.now();
+                        loadCalcStateFromServer(false).then(function() { updateAllCalcs(); }).catch(function(e) { console.warn('계산기 상태 폴링:', e); });
+                    }
                 }
             }, calcStateInterval);
             
