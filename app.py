@@ -7033,7 +7033,6 @@ RESULTS_HTML = '''
         const CALC_IDS = [1, 2, 3];
         const CALC_SESSION_KEY = 'tokenHiloCalcSessionId';
         const CALC_STATE_BACKUP_KEY = 'tokenHiloCalcStateBackup';
-        const CALC_LAST_RESET_KEY = 'tokenHiloCalcLastReset';  // 새로고침 후에도 리셋 직후 서버 덮어쓰기 방지
         const calcState = {};
         // 표마틴: 9단계 고정 금액 [5000, 10000, 15000, 30000, 55000, 105000, 200000, 380000, 600000]
         var MARTIN_PYO_TABLE = [5000, 10000, 15000, 30000, 55000, 105000, 200000, 380000, 600000];
@@ -7485,22 +7484,9 @@ RESULTS_HTML = '''
                         }
                     } catch (e) { /* ignore */ }
                 }
-                // 리셋 직후: 해당 calc는 서버 응답으로 덮어쓰지 않음 — 1번만 안 사라지고 2번만 사라지는 버그 방지 (calc별 시각 추적)
-                // 새로고침 후에도: localStorage에 저장된 리셋 시각 사용 — 저장 완료 전 새로고침 시 예전 데이터 복원 방지
+                // 리셋 직후 15초 이내: 해당 calc는 서버 응답으로 덮어쓰지 않음 (calc별 시각 추적)
                 var now = Date.now();
-                var RESET_SKIP_MS = 60000;  // 60초: 저장 완료 전 새로고침 대비
-                var persistedReset = {};
-                try { var pr = localStorage.getItem(CALC_LAST_RESET_KEY); if (pr) persistedReset = JSON.parse(pr); } catch (e4) {}
-                var skipApplyForRecentlyReset = CALC_IDS.filter(function(id) {
-                    var t = lastResetByCalcId[id] || persistedReset[String(id)];
-                    return t && (now - t) < RESET_SKIP_MS;
-                });
-                // 만료된 리셋 시각 정리 (localStorage 누적 방지)
-                try {
-                    var changed = false;
-                    for (var k in persistedReset) { if ((now - (persistedReset[k] || 0)) >= RESET_SKIP_MS) { delete persistedReset[k]; changed = true; } }
-                    if (changed) localStorage.setItem(CALC_LAST_RESET_KEY, JSON.stringify(persistedReset));
-                } catch (e5) {}
+                var skipApplyForRecentlyReset = CALC_IDS.filter(function(id) { var t = lastResetByCalcId[id]; return t && (now - t) < 15000; });
                 applyCalcsToState(calcs, lastServerTimeSec, restoreUi, skipApplyForRecentlyReset);
                 CALC_IDS.forEach(function(id) { if (typeof updateCalcStatus === 'function') updateCalcStatus(id); });
                 CALC_IDS.forEach(function(id) { ensurePendingRowForRunningCalc(id); });
@@ -11115,13 +11101,7 @@ RESULTS_HTML = '''
                 state.paused = false;
                 lastResetOrRunAt = Date.now();
                 lastResetByCalcId[id] = Date.now();
-                try {
-                    localStorage.setItem(CALC_STATE_BACKUP_KEY, JSON.stringify(buildCalcPayload()));
-                    var persisted = {};
-                    try { var p = localStorage.getItem(CALC_LAST_RESET_KEY); if (p) persisted = JSON.parse(p); } catch (e3) {}
-                    persisted[String(id)] = Date.now();
-                    localStorage.setItem(CALC_LAST_RESET_KEY, JSON.stringify(persisted));
-                } catch (e2) { /* ignore */ }
+                try { localStorage.setItem(CALC_STATE_BACKUP_KEY, JSON.stringify(buildCalcPayload())); } catch (e2) { /* ignore */ }
                 updateCalcSummary(id);
                 updateCalcStatus(id);
                 updateCalcDetail(id);
@@ -11129,6 +11109,12 @@ RESULTS_HTML = '''
                 postCurrentPickIfChanged(id, { pickColor: null, round: null, probability: null, suggested_amount: null, running: false });
                 try {
                     await saveCalcStateToServer({ skipApplyForIds: [id], immediate: true });
+                    // 리셋 후 2초 뒤 재저장 — 스케줄러가 예전 상태로 덮어쓸 수 있어 1번 계산기 DB가 안 사라지는 현상 방지
+                    setTimeout(function() {
+                        if (calcState[id] && (calcState[id].history || []).length === 0) {
+                            saveCalcStateToServer({ skipApplyForIds: [id], immediate: true }).catch(function(e) { console.warn('계산기 리셋 재저장:', e); });
+                        }
+                    }, 2000);
                 } catch (e) {
                     console.warn('계산기 리셋 저장 실패:', e);
                 }
@@ -11620,7 +11606,7 @@ RESULTS_HTML = '''
             // 탭 가시성에 따라 간격 조정. 너무 짧으면 서버 부하·버벅임 발생
             var resultsInterval = isTabVisible ? 200 : 1200;   // 200ms — 결과·그래프 체크 주기 (부하 완화)
             var calcStatusInterval = isTabVisible ? 200 : 1200; // 200ms — 픽 서버 전달 (80ms→200ms 부하 완화)
-            var calcStateInterval = isTabVisible ? 600 : 5000;  // 600ms — 계산기 상태·그래프 GET 간격 (빠른 갱신)
+            var calcStateInterval = isTabVisible ? 1200 : 5000;  // 1200ms — 계산기 상태 GET 간격 (부하 완화)
             var timerInterval = isTabVisible ? 300 : 1000;
             
             // 결과 폴링: 분당 4게임(15초 사이클) 기준. 계산기 실행 중이면 빠르게 해서 회차 놓침 방지
@@ -11696,7 +11682,7 @@ RESULTS_HTML = '''
                         try { if (document.body && document.body.isConnected) CALC_IDS.forEach(function(id) { if (typeof updateCalcStatus === 'function') updateCalcStatus(id); }); } catch (e) {}
                     }).catch(function() {});
                     } catch (e) {}
-                }, 200);
+                }, 300);  // 200→300ms 부하 완화
             }
             // 모양판별 픽 전용 폴링 (400ms) — shape-pick API가 DB 쿼리하므로 간격 완화
             if (isTabVisible) {
