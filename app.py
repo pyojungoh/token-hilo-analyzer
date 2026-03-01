@@ -7247,7 +7247,6 @@ RESULTS_HTML = '''
                     });
                     var serverDeduped = dedupeCalcHistoryByRound(raw);
                     var localHist = (calcState[id].history || []);
-                    // 로컬에 이미 저장된 픽(1열 배팅중 때 넣은 값) — 서버로 덮어쓰지 않고 유지
                     var localPickByRound = {};
                     localHist.forEach(function(h) {
                         if (!h || h.round == null) return;
@@ -7256,6 +7255,16 @@ RESULTS_HTML = '''
                             localPickByRound[rn] = { predicted: h.predicted, pickColor: h.pickColor || h.pick_color };
                         }
                     });
+                    // 리셋 후 2분 이내 + 로컬 빈 배열 + 서버에 예전 데이터 있으면 history 적용 스킵 (표 충돌 방지)
+                    var recentlyResetEmpty = lastResetByCalcId[id] && (Date.now() - lastResetByCalcId[id]) < 120000 && localHist.length === 0;
+                    if (recentlyResetEmpty && serverDeduped.length > 0) {
+                        /* history 업데이트 스킵 — 아래 merge/replace 로직 실행 안 함 */
+                    } else {
+                    // first_bet_round 이전 서버 회차 필터 — 이전 세션 데이터가 새 세션에 섞이지 않도록
+                    var firstBet = Math.max(0, calcState[id].first_bet_round || 0, parseInt(c.first_bet_round, 10) || 0);
+                    if (firstBet > 0) {
+                        serverDeduped = serverDeduped.filter(function(s) { var rn = Number(s.round); return !isNaN(rn) && rn >= firstBet; });
+                    }
                     if (localRunning && serverRunning) {
                         var byRound = {};
                         serverDeduped.forEach(function(s) {
@@ -7286,6 +7295,7 @@ RESULTS_HTML = '''
                         calcState[id].history = Object.keys(byRoundLocal).map(Number).sort(function(a, b) { return a - b; }).map(function(r) { return byRoundLocal[r]; });
                     } else {
                         calcState[id].history = serverDeduped;
+                    }
                     }
                     // 1열(배팅중)에 저장된 픽만 로컬 유지: 완료 행은 서버 predicted(배팅픽) 그대로 사용 → 승패 정확도 보장
                     calcState[id].history.forEach(function(row) {
@@ -7497,9 +7507,9 @@ RESULTS_HTML = '''
                         }
                     } catch (e) { /* ignore */ }
                 }
-                // 리셋 직후 15초 이내: 해당 calc는 서버 응답으로 덮어쓰지 않음 (calc별 시각 추적)
+                // 리셋 직후 60초 이내: 해당 calc는 서버 응답으로 덮어쓰지 않음 (calc별 시각 추적, 표 충돌 방지)
                 var now = Date.now();
-                var skipApplyForRecentlyReset = CALC_IDS.filter(function(id) { var t = lastResetByCalcId[id]; return t && (now - t) < 15000; });
+                var skipApplyForRecentlyReset = CALC_IDS.filter(function(id) { var t = lastResetByCalcId[id]; return t && (now - t) < 60000; });
                 applyCalcsToState(calcs, lastServerTimeSec, restoreUi, skipApplyForRecentlyReset);
                 CALC_IDS.forEach(function(id) { if (typeof updateCalcStatus === 'function') updateCalcStatus(id); });
                 CALC_IDS.forEach(function(id) { ensurePendingRowForRunningCalc(id); });
