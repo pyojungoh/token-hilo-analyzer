@@ -10312,7 +10312,7 @@ RESULTS_HTML = '''
                         for (var i = 0; i < lines.length; i++) {
                             var row = parseCSVLine(lines[i]);
                             if (row[0] && String(row[0]).indexOf('#') === 0) continue;
-                            if ((row[0] && String(row[0]).replace(/^\ufeff/, '') === '회차') || (row.length > 10 && row[10] === '줄run')) {
+                            if ((row[0] && (function(s){ return (s.charCodeAt(0)===0xFEFF ? s.substring(1) : s) === '회차'; })(String(row[0]))) || (row.length > 10 && row[10] === '줄run')) {
                                 header = row;
                                 idxLineRun = header.indexOf('줄run'); if (idxLineRun < 0) idxLineRun = 10;
                                 idxActual = header.indexOf('실제'); if (idxActual < 0) idxActual = 2;
