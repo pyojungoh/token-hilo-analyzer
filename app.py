@@ -7033,6 +7033,7 @@ RESULTS_HTML = '''
         const CALC_IDS = [1, 2, 3];
         const CALC_SESSION_KEY = 'tokenHiloCalcSessionId';
         const CALC_STATE_BACKUP_KEY = 'tokenHiloCalcStateBackup';
+        const CALC_LAST_RESET_KEY = 'tokenHiloCalcLastReset';  // 새로고침 후에도 리셋 직후 서버 덮어쓰기 방지
         const calcState = {};
         // 표마틴: 9단계 고정 금액 [5000, 10000, 15000, 30000, 55000, 105000, 200000, 380000, 600000]
         var MARTIN_PYO_TABLE = [5000, 10000, 15000, 30000, 55000, 105000, 200000, 380000, 600000];
@@ -7484,9 +7485,22 @@ RESULTS_HTML = '''
                         }
                     } catch (e) { /* ignore */ }
                 }
-                // 리셋 직후 15초 이내: 해당 calc는 서버 응답으로 덮어쓰지 않음 — 1번만 안 사라지고 2번만 사라지는 버그 방지 (calc별 시각 추적)
+                // 리셋 직후: 해당 calc는 서버 응답으로 덮어쓰지 않음 — 1번만 안 사라지고 2번만 사라지는 버그 방지 (calc별 시각 추적)
+                // 새로고침 후에도: localStorage에 저장된 리셋 시각 사용 — 저장 완료 전 새로고침 시 예전 데이터 복원 방지
                 var now = Date.now();
-                var skipApplyForRecentlyReset = CALC_IDS.filter(function(id) { var t = lastResetByCalcId[id]; return t && (now - t) < 15000; });
+                var RESET_SKIP_MS = 60000;  // 60초: 저장 완료 전 새로고침 대비
+                var persistedReset = {};
+                try { var pr = localStorage.getItem(CALC_LAST_RESET_KEY); if (pr) persistedReset = JSON.parse(pr); } catch (e4) {}
+                var skipApplyForRecentlyReset = CALC_IDS.filter(function(id) {
+                    var t = lastResetByCalcId[id] || persistedReset[String(id)];
+                    return t && (now - t) < RESET_SKIP_MS;
+                });
+                // 만료된 리셋 시각 정리 (localStorage 누적 방지)
+                try {
+                    var changed = false;
+                    for (var k in persistedReset) { if ((now - (persistedReset[k] || 0)) >= RESET_SKIP_MS) { delete persistedReset[k]; changed = true; } }
+                    if (changed) localStorage.setItem(CALC_LAST_RESET_KEY, JSON.stringify(persistedReset));
+                } catch (e5) {}
                 applyCalcsToState(calcs, lastServerTimeSec, restoreUi, skipApplyForRecentlyReset);
                 CALC_IDS.forEach(function(id) { if (typeof updateCalcStatus === 'function') updateCalcStatus(id); });
                 CALC_IDS.forEach(function(id) { ensurePendingRowForRunningCalc(id); });
@@ -11101,7 +11115,13 @@ RESULTS_HTML = '''
                 state.paused = false;
                 lastResetOrRunAt = Date.now();
                 lastResetByCalcId[id] = Date.now();
-                try { localStorage.setItem(CALC_STATE_BACKUP_KEY, JSON.stringify(buildCalcPayload())); } catch (e2) { /* ignore */ }
+                try {
+                    localStorage.setItem(CALC_STATE_BACKUP_KEY, JSON.stringify(buildCalcPayload()));
+                    var persisted = {};
+                    try { var p = localStorage.getItem(CALC_LAST_RESET_KEY); if (p) persisted = JSON.parse(p); } catch (e3) {}
+                    persisted[String(id)] = Date.now();
+                    localStorage.setItem(CALC_LAST_RESET_KEY, JSON.stringify(persisted));
+                } catch (e2) { /* ignore */ }
                 updateCalcSummary(id);
                 updateCalcStatus(id);
                 updateCalcDetail(id);
