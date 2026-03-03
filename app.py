@@ -11628,13 +11628,13 @@ RESULTS_HTML = '''
             if (predictionPollIntervalId) clearInterval(predictionPollIntervalId);
             if (shapePollIntervalId) clearInterval(shapePollIntervalId);
             
-            // 탭 가시성에 따라 간격 조정. 결과 반영 속도 우선
-            var resultsInterval = isTabVisible ? 80 : 1200;    // 80ms — 결과·그래프 체크 주기 (tgame365 반영 속도 개선)
-            var calcStatusInterval = isTabVisible ? 200 : 1200; // 200ms — 픽 서버 전달 (80ms→200ms 부하 완화)
-            var calcStateInterval = isTabVisible ? 1200 : 5000;  // 1200ms — 계산기 상태 GET 간격 (부하 완화)
+            // 탭 가시성에 따라 간격 조정. 3단계 최적화: 요청 수 감소 (80→200ms, 60/100→150/200/300ms)
+            var resultsInterval = isTabVisible ? 200 : 1200;   // 200ms — 결과·그래프 체크 주기
+            var calcStatusInterval = isTabVisible ? 200 : 1200; // 200ms — 픽 서버 전달
+            var calcStateInterval = isTabVisible ? 1200 : 5000;  // 1200ms — 계산기 상태 GET 간격
             var timerInterval = isTabVisible ? 300 : 1000;
             
-            // 결과 폴링: 분당 4게임(15초 사이클) 기준. 계산기 실행 중이면 빠르게 해서 회차 놓침 방지
+            // 결과 폴링: 계산기 실행 중일 때만 150ms, 그 외 200~300ms — 10초 게임에 충분 (3단계 최적화)
             // 백그라운드일 때는 브라우저 제한(최소 1초)을 고려해 간격 조정
             resultsPollIntervalId = setInterval(() => {
                 try {
@@ -11643,7 +11643,7 @@ RESULTS_HTML = '''
                     const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
                     const criticalPhase = r <= 3 || r >= 8;
                     // 백그라운드일 때는 최소 1초 간격. 너무 짧으면 서버 부하로 예측픽 안 나옴
-                    const baseInterval = allResults.length === 0 ? 120 : (anyRunning ? 60 : (criticalPhase ? 60 : 100));
+                    const baseInterval = allResults.length === 0 ? 200 : (anyRunning ? 150 : (criticalPhase ? 200 : 300));
                     const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
                     if (Date.now() - lastResultsUpdate > interval) {
                         loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
