@@ -1337,27 +1337,6 @@ def _get_win_rate_trend_from_15_cards(ph, min_diff_pct=0.5):
     return None
 
 
-def _get_short_term_trend_vs_blended(ph, min_diff_pct=3.0):
-    """최근 10회 승률 vs 15·30·100 blended 비교 → 단기 추세. blended는 천천히 움직이므로 rate10이 더 빠름.
-    rate10 < blended - min_diff_pct → 하락 추세 (단기가 장기보다 나쁨). 반픽 더 빨리 발동용.
-    반환: 'up' | 'down' | None."""
-    comp = _blended_win_rate_components(ph)
-    if not comp:
-        return None
-    r15, r30, r100, blended = comp
-    vh = [h for h in (ph or []) if h and h.get('predicted') in ('정', '꺽') and h.get('actual') in ('정', '꺽')]
-    last10 = vh[-10:] if len(vh) >= 10 else vh
-    if len(last10) < 5:
-        return None
-    wins10 = sum(1 for h in last10 if h.get('predicted') == h.get('actual'))
-    rate10 = 100.0 * wins10 / len(last10)
-    if rate10 < blended - min_diff_pct:
-        return 'down'  # 단기가 blended보다 나쁨 → 하락 추세
-    if rate10 > blended + min_diff_pct:
-        return 'up'    # 단기가 blended보다 좋음 → 상승 추세
-    return None
-
-
 def _blended_win_rate_components(prediction_history):
     """예측 이력으로 15/30/100 승률 및 합산. (r15, r30, r100, blended). 가중치: 15회 65%, 30회 25%, 100회 10%.
     predicted·actual이 정/꺽인 회차만 포함 (예측 없음/조커 제외)."""
@@ -1793,22 +1772,10 @@ def _server_win_rate_direction_zone(ph):
             if rate10_pct is not None and rate10_pct >= 53:
                 return 'mid_flat'
             return 'high_falling'
-        # 단기 추세: rate10 < blended-3 → 하락. high_falling 더 민감 (blended 천천히 내려와도 반대픽 빨리)
-        comp = _blended_win_rate_components(ph)
-        blended_val = comp[3] if comp else None
-        if rate10_pct is not None and blended_val is not None and rate10_pct < blended_val - 3.0:
-            if ratio_dynamic <= 0.60 and ratio_fixed >= 0.25 and (rate10_pct is None or rate10_pct < 53):
-                return 'high_falling'
     if delta5 < -WIN_RATE_DIR_DELTA5 and (ratio_fixed >= 0.5 or ratio_dynamic >= 0.57):
         if rate10_pct is not None and rate10_pct >= 53:
             return 'mid_flat'
         return 'high_falling'
-    # 단기 추세: rate10 < blended-3 → delta5 조건 완화해서 high_falling
-    comp = _blended_win_rate_components(ph)
-    blended_val = comp[3] if comp else None
-    if rate10_pct is not None and blended_val is not None and rate10_pct < blended_val - 3.0:
-        if (ratio_fixed >= 0.4 or ratio_dynamic >= 0.55) and rate10_pct < 53:
-            return 'high_falling'
     if delta5 > WIN_RATE_DIR_DELTA5 and (ratio_fixed <= 0.5 or ratio_dynamic >= 0.48):
         if rate10_pct is not None and rate10_pct <= 50:
             return 'mid_flat'
@@ -2252,7 +2219,6 @@ def _apply_results_to_calcs(results):
                         do_reverse = False
                         use_asymmetric = bool(c.get('smart_reverse_asymmetric', False))
                         trend = _get_win_rate_trend_from_15_cards(ph) if use_asymmetric and ph else None
-                        short_term = _get_short_term_trend_vs_blended(ph, 3.0) if ph else None  # rate10 < blended-3 → 하락
                         if blended is not None and (main_rate15 is None or main_rate15 < 53):
                             if use_asymmetric and trend is not None:
                                 if trend == 'down' and blended <= thr_down:
@@ -2263,9 +2229,6 @@ def _apply_results_to_calcs(results):
                                     do_reverse = False
                                 elif trend == 'down' and blended > thr_down:
                                     do_reverse = False
-                            elif short_term == 'down' and blended <= min(57, thr_down + 5):
-                                # 단기 추세: rate10 < blended → 하락. blended 천천히 내려와도 더 빨리 반픽
-                                do_reverse = True
                             else:
                                 if blended <= thr:
                                     do_reverse = True
@@ -2671,7 +2634,6 @@ def _server_calc_effective_pick_and_amount(c):
             do_reverse = False
             use_asymmetric = bool(c.get('smart_reverse_asymmetric', False))
             trend = _get_win_rate_trend_from_15_cards(ph) if use_asymmetric and ph else None
-            short_term = _get_short_term_trend_vs_blended(ph, 3.0) if ph else None  # rate10 < blended-3 → 하락
             if blended is not None and (main_rate15 is None or main_rate15 < 53):
                 if use_asymmetric and trend is not None:
                     if trend == 'down' and blended <= thr_down:
@@ -2682,8 +2644,6 @@ def _server_calc_effective_pick_and_amount(c):
                         do_reverse = False  # 못 맞추다 잘 맞출 때 → 40% 이상이면 정픽 유지
                     elif trend == 'down' and blended > thr_down:
                         do_reverse = False  # 잘 맞추다 잘 맞출 때 → 50% 초과면 정픽 유지
-                elif short_term == 'down' and blended <= min(57, thr_down + 5):
-                    do_reverse = True   # 단기 추세: rate10 < blended → 하락. blended 천천히 내려와도 더 빨리 반픽
                 else:
                     if blended <= thr:
                         do_reverse = True
@@ -2763,7 +2723,6 @@ def _server_calc_effective_pick_and_amount(c):
                 do_reverse = False
                 use_asymmetric = bool(c.get('smart_reverse_asymmetric', False))
                 trend = _get_win_rate_trend_from_15_cards(ph) if use_asymmetric and ph else None
-                short_term = _get_short_term_trend_vs_blended(ph, 3.0) if ph else None  # rate10 < blended-3 → 하락
                 if blended is not None and (main_rate15 is None or main_rate15 < 53):
                     if use_asymmetric and trend is not None:
                         if trend == 'down' and blended <= thr_down:
@@ -2774,8 +2733,6 @@ def _server_calc_effective_pick_and_amount(c):
                             do_reverse = False
                         elif trend == 'down' and blended > thr_down:
                             do_reverse = False
-                    elif short_term == 'down' and blended <= min(57, thr_down + 5):
-                        do_reverse = True   # 단기 추세: rate10 < blended → 하락. 더 빨리 반픽
                     else:
                         if blended <= thr:
                             do_reverse = True
@@ -9743,20 +9700,6 @@ RESULTS_HTML = '''
             if (current < recentAvg - diff) return 'down';
             return null;
         }
-        /** 최근 10회 승률 vs 15·30·100 blended 비교 → 단기 추세. rate10 < blended-3 → 하락. 서버 _get_short_term_trend_vs_blended와 동일. */
-        function getShortTermTrendVsBlended(minDiff) {
-            var ph = Array.isArray(predictionHistory) ? predictionHistory.filter(function(h) { return h && typeof h === 'object' && (h.predicted === '정' || h.predicted === '꺽') && (h.actual === '정' || h.actual === '꺽'); }) : [];
-            if (ph.length < 5) return null;
-            var last10 = ph.slice(-10);
-            var wins10 = last10.filter(function(h) { return h.predicted === h.actual; }).length;
-            var rate10 = 100 * wins10 / last10.length;
-            var blended = getBlendedWinRate();
-            if (blended == null || typeof blended !== 'number') return null;
-            var diff = (typeof minDiff === 'number' && minDiff > 0) ? minDiff : 3;
-            if (rate10 < blended - diff) return 'down';
-            if (rate10 > blended + diff) return 'up';
-            return null;
-        }
         function getLoseStreak(id) {
             var hist = calcState[id] && calcState[id].history;
             if (!Array.isArray(hist)) return 0;
@@ -9804,15 +9747,12 @@ RESULTS_HTML = '''
             var thrUp = (thrUpEl && !isNaN(parseFloat(thrUpEl.value))) ? Math.max(0, Math.min(100, parseFloat(thrUpEl.value))) : (calcState[id] != null && typeof calcState[id].smart_reverse_threshold_up === 'number' ? calcState[id].smart_reverse_threshold_up : 40);
             var useAsym = !!(calcState[id] && calcState[id].smart_reverse_asymmetric);
             var trend = useAsym ? getWinRateTrendFrom15Cards(0.5) : null;
-            var shortTerm = getShortTermTrendVsBlended(3);
             var doRev = false;
             if (useAsym && trend != null) {
                 if (trend === 'down' && blended <= thrDown) doRev = true;
                 else if (trend === 'up' && blended < thrUp) doRev = true;
                 else if (trend === 'up' && blended >= thrUp) doRev = false;
                 else if (trend === 'down' && blended > thrDown) doRev = false;
-            } else if (shortTerm === 'down' && blended <= Math.min(57, thrDown + 5)) {
-                doRev = true;  // 단기 추세: rate10 < blended → 하락. 더 빨리 반픽
             } else {
                 if (blended <= thr) doRev = true;
             }
@@ -10016,11 +9956,6 @@ RESULTS_HTML = '''
                     if (rate10Pct != null && rate10Pct >= 53) return 'mid_flat';
                     return 'high_falling';
                 }
-                // 단기 추세: rate10 < blended-3 → 하락. high_falling 더 민감
-                var blendedVal = typeof getBlendedWinRate === 'function' ? getBlendedWinRate() : null;
-                if (rate10Pct != null && blendedVal != null && rate10Pct < blendedVal - 3) {
-                    if (ratioDynamic <= 0.60 && ratioFixed >= 0.25 && (rate10Pct < 53)) return 'high_falling';
-                }
             }
             if (delta5 < -D5 && (ratioFixed >= 0.5 || ratioDynamic >= R_HIGH)) {
                 if (rate10Pct != null && rate10Pct >= 53) return 'mid_flat';
@@ -10029,11 +9964,6 @@ RESULTS_HTML = '''
             if (delta5 > D5 && (ratioFixed <= 0.5 || ratioDynamic >= R_LOW)) {
                 if (rate10Pct != null && rate10Pct <= 50) return 'mid_flat';
                 return 'low_rising';
-            }
-            // 단기 추세: rate10 < blended-3 → delta5 조건 완화해서 high_falling
-            var blendedVal = typeof getBlendedWinRate === 'function' ? getBlendedWinRate() : null;
-            if (rate10Pct != null && blendedVal != null && rate10Pct < blendedVal - 3) {
-                if ((ratioFixed >= 0.4 || ratioDynamic >= 0.55) && rate10Pct < 53) return 'high_falling';
             }
             return 'mid_flat';
         }

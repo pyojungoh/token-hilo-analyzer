@@ -36,13 +36,6 @@ alwaysApply: true
 
 세 곳 모두 동일한 숫자로 맞출 것.
 
-## 단기 추세 (rate10 vs blended) — 하락 시 반픽 더 빨리
-
-- **최근 10회 승률(rate10) < blended(15·30·100) - 3%p** → 하락 추세로 간주. blended는 천천히 움직이므로 rate10이 더 빠르게 반응.
-- **스마트 반픽**: short_term == 'down'이면 blended ≤ min(57, thr_down+5)에서 반픽 발동 (비대칭 옵션 없어도 적용).
-- **승률방향 zone**: rate10 < blended-3이면 high_falling 판정을 더 민감하게 (ratio_dynamic ≤ 0.60, ratio_fixed ≥ 0.25 등).
-- 서버 `_get_short_term_trend_vs_blended`, 클라이언트 `getShortTermTrendVsBlended` 동일.
-
 ## 최근 10경기 승률 가중 (정픽/반대픽 억제)
 
 - **메인 예측기 픽** 기준 최근 10경기 승률(조커 제외)을 계산해, 롤링 100회만으로 정픽/반대픽을 고집하는 것을 완화한다.
