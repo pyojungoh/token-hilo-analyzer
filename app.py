@@ -7471,7 +7471,9 @@ RESULTS_HTML = '''
                 } else {
                     bettingText = lastPrediction.value || '정';
                     bettingIsRed = (normalizePickColor(lastPrediction.color) === '빨강');
-                    var rev = !!(state.reverse);
+                    // DOM 체크박스 우선 — 서버 반영 전 calcState가 stale이면 반픽으로 깜빡이는 것 방지
+                    var revEl = document.getElementById('calc-' + id + '-reverse');
+                    var rev = !!(revEl && revEl.checked);
                     if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                 }
                 var jokerHoldRow = (typeof lastIs15Joker !== 'undefined' && lastIs15Joker) || (typeof lastJokerSkipBet !== 'undefined' && lastJokerSkipBet);
@@ -9728,9 +9730,11 @@ RESULTS_HTML = '''
             }
             return { run: run, last: last };
         }
-        /** 스마트 반픽 doRev 판정. 서버 _server_calc_effective_pick_and_amount와 동일 기준. 줄 4 이상 시 줄 추종은 호출 전에 처리. */
+        /** 스마트 반픽 doRev 판정. 서버 _server_calc_effective_pick_and_amount와 동일 기준. 줄 4 이상 시 줄 추종은 호출 전에 처리.
+         * DOM 체크박스 우선 — 사용자가 해제해도 서버 반영 전 calcState가 stale이면 반픽으로 깜빡이는 것 방지. */
         function getSmartReverseDoRev(id, blended, r15, noRevByStreak5) {
-            var useSmart = !!(calcState[id] && calcState[id].smart_reverse);
+            var smartRevEl = document.getElementById('calc-' + id + '-smart-reverse');
+            var useSmart = smartRevEl ? !!smartRevEl.checked : !!(calcState[id] && calcState[id].smart_reverse);
             if (!useSmart || !noRevByStreak5) return false;
             var noRevByMain15 = (r15 == null || r15 < 53);
             if (!noRevByMain15) return false;
@@ -10279,7 +10283,9 @@ RESULTS_HTML = '''
                         } else {
                             bettingText = predictionText;
                             bettingIsRed = predictionIsRed;
-                            const rev = !!(calcState[id] && calcState[id].reverse);
+                            // DOM 체크박스 우선 — 사용자가 해제해도 서버 반영 전 calcState가 stale이면 반픽으로 깜빡이는 것 방지
+                            var revEl = document.getElementById('calc-' + id + '-reverse');
+                            const rev = !!(revEl && revEl.checked);
                             if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                             if (runLenObjCard.run >= 4 && runLenObjCard.last != null) {
                                 bettingText = runLenObjCard.last ? '정' : '꺽';
@@ -10326,8 +10332,9 @@ RESULTS_HTML = '''
                                 var card15 = (allResults && allResults.length >= 15 && typeof parseCardValue === 'function') ? parseCardValue(allResults[14].result || '') : null;
                                 var is15Red = card15 ? !!card15.isRed : false;
                                 bettingIsRed = (latestNext === '정') ? is15Red : !is15Red;
-                                // 모양 픽에 반픽/승률반픽/연패반픽/승률방향 반픽 적용 (다른 옵션과 중복 사용 가능)
-                                const rev = !!(calcState[id] && calcState[id].reverse);
+                                // 모양 픽에 반픽/승률반픽/연패반픽/승률방향 반픽 적용 (다른 옵션과 중복 사용 가능). DOM 우선.
+                                var revElShape = document.getElementById('calc-' + id + '-reverse');
+                                const rev = !!(revElShape && revElShape.checked);
                                 if (rev) { bettingText = bettingText === '정' ? '꺽' : '정'; bettingIsRed = !bettingIsRed; }
                                 if (runLenObjCard.run >= 4 && runLenObjCard.last != null) {
                                     bettingText = runLenObjCard.last ? '정' : '꺽';
@@ -11254,7 +11261,7 @@ RESULTS_HTML = '''
             const targetEnabledEl = document.getElementById('calc-' + id + '-target-enabled');
             if (targetEnabledEl) targetEnabledEl.addEventListener('change', () => { updateCalcSummary(id); });
             // 게임 중 옵션(반픽/승률반픽/연패반픽 등) 변경 시 즉시 반영
-            ['reverse', 'smart-reverse', 'smart-reverse-threshold', 'smart-reverse-min-streak', 'smart-reverse-asymmetric', 'smart-reverse-threshold-down', 'smart-reverse-threshold-up', 'streak-suppress-reverse', 'lock-direction-on-lose-streak', 'shape-only-latest-next-pick', 'shape-prediction', 'shape-prediction-reverse', 'shape-prediction-reverse-threshold', 'shape-weight', 'chunk-weight', 'pong-weight', 'symmetry-weight', 'pause-low-win-rate', 'pause-win-rate-threshold'].forEach(f => {
+            ['reverse', 'smart-reverse', 'smart-reverse-threshold', 'smart-reverse-min-streak', 'smart-reverse-asymmetric', 'smart-reverse-threshold-down', 'smart-reverse-threshold-up', 'streak-suppress-reverse', 'lock-direction-on-lose-streak', 'prediction-picks-best', 'prediction-picks-shape-pong-only', 'shape-only-latest-next-pick', 'shape-prediction', 'shape-prediction-reverse', 'shape-prediction-reverse-threshold', 'shape-weight', 'chunk-weight', 'pong-weight', 'symmetry-weight', 'pause-low-win-rate', 'pause-win-rate-threshold'].forEach(f => {
                 const el = document.getElementById('calc-' + id + '-' + f);
                 if (el) el.addEventListener('change', function() { onCalcOptionChange(id); });
             });
