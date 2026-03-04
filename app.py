@@ -4178,8 +4178,9 @@ def _apply_phase_line_pong_adjustments(line_w, pong_w, phase, chunk_shape, line_
                     line_w += 0.04 * pong_mul
                     pong_w = max(0.0, pong_w - 0.02 * pong_mul)
                 else:
-                    pong_w += 0.05 * pong_mul
-                    line_w = max(0.0, line_w - 0.025 * pong_mul)
+                    # 321 비저점: CSV 321 정 51.2% 중립. 픽 변경 과다 완화
+                    pong_w += 0.03 * pong_mul
+                    line_w = max(0.0, line_w - 0.015 * pong_mul)
             elif chunk_shape == '123':
                 line_w += 0.06 * pong_mul
                 pong_w = max(0.0, pong_w - 0.03 * pong_mul)
@@ -4213,8 +4214,9 @@ def _apply_phase_line_pong_adjustments(line_w, pong_w, phase, chunk_shape, line_
                     line_w += 0.03 * pong_mul
                     pong_w = max(0.0, pong_w - 0.015 * pong_mul)
                 else:
-                    pong_w += 0.03 * pong_mul
-                    line_w = max(0.0, line_w - 0.015 * pong_mul)
+                    # 321 비저점: CSV 321 정 51.2% 중립. 픽 변경 과다 완화
+                    pong_w += 0.02 * pong_mul
+                    line_w = max(0.0, line_w - 0.01 * pong_mul)
             elif chunk_shape == '123':
                 line_w += 0.06
                 pong_w = max(0.0, pong_w - 0.03)
@@ -4224,8 +4226,8 @@ def _apply_phase_line_pong_adjustments(line_w, pong_w, phase, chunk_shape, line_
         pong_chunk_phase = phase
 
     elif phase == 'chunk_to_pong':
-        # [직진 방향] 덩어리→퐁당: 0.12→0.08 완화. CSV 연패분석에서 chunk_to_pong 시 실제로 줄 이어질 때 과도한 바뀜 예측으로 연패 다발
-        pong_w = min(1.0, pong_w + 0.08)
+        # [직진 방향] 덩어리→퐁당: 0.08→0.05 추가 완화. CSV 연패분석(픽 자주 바뀌는 구간 승률 44.9%)에서 덩어리→퐁당 시 정 52.8%로 줄 유지 더 많음 → pong_w 축소
+        pong_w = min(1.0, pong_w + 0.05)
         line_w = max(0.0, 1.0 - pong_w)
         pong_chunk_phase = phase
 
@@ -8684,9 +8686,9 @@ RESULTS_HTML = '''
                             lineW = Math.min(1, lineW + 0.12);
                             pongW = Math.max(0, pongW - 0.12);
                         } else if (detectVPattern(lineRuns, pongRuns, useForPattern.slice(0, 2), vPatternThresh)) {
-                            // chunk_to_pong(덩어리→퐁당) 0.12→0.08 완화. 서버와 동기화
-                            pongW += 0.08;
-                            lineW = Math.max(0, lineW - 0.04);
+                            // chunk_to_pong(덩어리→퐁당) 0.08→0.05 완화. 서버와 동기화. 픽 자주 바뀌는 구간 연패 다발 완화
+                            pongW += 0.05;
+                            lineW = Math.max(0, lineW - 0.02);
                         }
                         const totalW = lineW + pongW;
                         if (totalW > 0) { lineW = lineW / totalW; pongW = pongW / totalW; }
