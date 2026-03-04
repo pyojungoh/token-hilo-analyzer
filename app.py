@@ -11381,17 +11381,17 @@ RESULTS_HTML = '''
             }
         }
         
-        // 초기 로드: 서버에서 계산기 상태 복원 후 결과 로드 (실행중 상태 유지)
+        // 초기 로드: 결과 먼저 → 계산기 (회차 불일치 방지). 결과가 있어야 lastPrediction·회차 기준이 맞고, calc는 그 직후 로드해 최신 apply 반영
         async function initialLoad() {
+            try {
+                await loadResults().catch(e => console.warn('초기 결과 로드 실패:', e));
+            } catch (e) {
+                console.warn('초기 결과 로드 오류:', e);
+            }
             try {
                 await loadCalcStateFromServer();
                 updateAllCalcsImmediate();
             } catch (e) { console.warn('계산기 상태 로드:', e); }
-            try {
-                await loadResults().catch(e => console.warn('초기 결과 로드 실패:', e));
-            } catch (e) {
-                console.warn('초기 로드 오류:', e);
-            }
             updateTimer();
         }
         
