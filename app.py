@@ -2049,16 +2049,19 @@ def _calculate_calc_profit_server(calc_state, history_entry):
 def _apply_results_to_calcs(results):
     """결과 수집 후 실행 중인 계산기 회차 반영: pending_round 결과 있으면 history 반영 후 다음 예측으로 갱신.
     안정화: pending_*는 저장된 예측(round_predictions)만 사용. 저장은 스케줄러 ensure_stored에서만.
-    서버에서 계산기 수익, 마틴게일, 연승/연패 계산."""
+    서버에서 계산기 수익, 마틴게일, 연승/연패 계산. 반환: ph(relay 캐시용) 또는 None."""
     t0 = time.time()
+    _ph_for_apply = None
     if not results or len(results) < 16:
-        return
+        return None
     try:
         latest_gid = results[0].get('gameID')
         predicted_round = int(str(latest_gid or '0'), 10) + 1
         stored_for_round = get_stored_round_prediction(predicted_round) if predicted_round else None
         # get_shape_prediction_hint 캐시: 동일 results·가중치면 재사용 (세션 여러 개 시 ~120ms×N 절약)
         _shape_hint_cache = {}
+        # prediction_history 1회 조회 후 calc당 재사용 (10초 게임 8초 내 배팅)
+        _ph_for_apply = get_prediction_history(150)
 
         session_states = _get_all_calc_states()
         for session_id, state in session_states.items():
@@ -2133,7 +2136,7 @@ def _apply_results_to_calcs(results):
                                     c['pending_shape_debug'] = hint.get('debug') or {}
                             except Exception:
                                 pass
-                        eff_pick, amt, eff_pred = _server_calc_effective_pick_and_amount(c)
+                        eff_pick, amt, eff_pred = _server_calc_effective_pick_and_amount(c, results=results, ph=_ph_for_apply)
                         c['pending_bet_amount'] = (amt if amt is not None and amt > 0 else None) if is_running else None
                         # 배팅중 픽 색상: 서버 계산값(eff_pick)으로 항상 보정 — 매크로·1열·표시 일치
                         if eff_pick and eff_pred:
@@ -2406,7 +2409,7 @@ def _apply_results_to_calcs(results):
                                 c['pending_shape_debug'] = hint.get('debug') or {}
                         except Exception:
                             pass
-                    eff_pick, next_amt, eff_pred = _server_calc_effective_pick_and_amount(c)
+                    eff_pick, next_amt, eff_pred = _server_calc_effective_pick_and_amount(c, results=results, ph=_ph_for_apply)
                     c['pending_bet_amount'] = (next_amt if next_amt is not None and next_amt > 0 else None) if is_running else None
                     # 배팅중 픽 색상: 서버 계산값(eff_pick)으로 항상 보정 — 매크로·1열·표시 일치
                     if eff_pick and eff_pred:
@@ -2427,6 +2430,7 @@ def _apply_results_to_calcs(results):
         print(f"[스케줄러] 회차 반영 오류: {str(e)[:200]}")
     finally:
         _perf_log('apply_results_to_calcs', (time.time() - t0) * 1000)
+    return _ph_for_apply
 
 
 def get_prediction_history_before_round(conn, round_num, limit=100):
@@ -2603,9 +2607,10 @@ def _get_card_15_color_for_latest_round(results):
     return get_card_color_from_result(results[14])
 
 
-def _server_calc_effective_pick_and_amount(c):
+def _server_calc_effective_pick_and_amount(c, results=None, ph=None):
     """계산기 c의 pending_round 기준으로 배팅 픽(RED/BLACK)과 금액 계산. 매크로 current_pick 반영용.
-    반환: (pick_color, amt, pred) — pred는 모양옵션 시 1열·배팅중 일치용."""
+    반환: (pick_color, amt, pred) — pred는 모양옵션 시 1열·배팅중 일치용.
+    results, ph 전달 시 DB 조회 생략 (apply 경로에서 10초 게임 8초 내 배팅 보장)."""
     if not c or not c.get('running'):
         return None, 0, None
     # 연패정지: 대기/일시정지 상태면 배팅 0
@@ -2615,14 +2620,15 @@ def _server_calc_effective_pick_and_amount(c):
     pred = c.get('pending_predicted')
     if pr is None or pred is None:
         return None, 0, None
-    # results 한 번 로드 — color 계산·run_length 둘 다 사용
-    results_rl = None
-    try:
-        results_rl = get_recent_results(hours=24)
-        if results_rl:
-            results_rl = _sort_results_newest_first(results_rl)
-    except Exception:
-        pass
+    # results: 전달받으면 재사용 (get_recent_results 중복 제거)
+    results_rl = results
+    if results_rl is None:
+        try:
+            results_rl = get_recent_results(hours=24)
+            if results_rl:
+                results_rl = _sort_results_newest_first(results_rl)
+        except Exception:
+            pass
     run_length, run_last_value = _get_run_length_from_results(results_rl) if results_rl else (0, None)
     color = _normalize_pick_color_value(c.get('pending_color'))
     if color is None:
@@ -2634,7 +2640,7 @@ def _server_calc_effective_pick_and_amount(c):
             color = '검정' if pred == '정' else '빨강'
         else:
             color = '빨강' if pred == '정' else '검정'  # 15번 미확인 시 폴백
-    ph = get_prediction_history(150)
+    ph = ph if ph is not None else get_prediction_history(150)
     main_rate15 = _get_main_recent15_win_rate(ph)
     if run_length < 4:
         run_length = _get_current_result_run_length(ph)
@@ -2685,9 +2691,10 @@ def _server_calc_effective_pick_and_amount(c):
             # 패턴 기반 억제: 긴줄·긴 퐁당 구간에서는 승률만 보고 반픽하지 않음 (계속 틀리다 방향 바꿔서 또 틀림 방지)
             if do_reverse:
                 try:
-                    results_sr = get_recent_results(hours=24)
+                    results_sr = results_rl if results_rl else (get_recent_results(hours=24) or [])
                     if results_sr:
-                        results_sr = _sort_results_newest_first(results_sr)
+                        if not results_rl:
+                            results_sr = _sort_results_newest_first(results_sr)
                         if _suppress_smart_reverse_by_phase(results_sr):
                             do_reverse = False
                 except Exception:
@@ -2706,21 +2713,21 @@ def _server_calc_effective_pick_and_amount(c):
         return None, 0, None
     # 모양: 가장 최근 다음 픽에만 배팅 — 퐁당 구간이면 모양판별 픽, 덩어리/줄 구간이면 가장 최근 다음 픽. 값 없으면 배팅 안 함. 예측기픽 사용 시 스킵
     if c.get('shape_only_latest_next_pick') and not c.get('prediction_picks_best'):
-        results = None
-        try:
-            # 스위칭은 최신 결과 기준이므로 항상 DB에서 직접 조회 (results_cache는 갱신 지연 시 구간 전환 놓침)
-            results = get_recent_results(hours=24)
-            if results:
-                results = _sort_results_newest_first(results)
-        except Exception:
-            results = None
-        if not results or len(results) < 16:
+        results_so = results_rl
+        if results_so is None:
+            try:
+                results_so = get_recent_results(hours=24)
+                if results_so:
+                    results_so = _sort_results_newest_first(results_so)
+            except Exception:
+                results_so = None
+        if not results_so or len(results_so) < 16:
             return None, 0, None
-        latest_next, _ = _get_shape_only_pick_with_phase(results, exclude_round=None, calc_state=c)
+        latest_next, _ = _get_shape_only_pick_with_phase(results_so, exclude_round=None, calc_state=c)
         if not latest_next or latest_next not in ('정', '꺽'):
             return None, 0, None
         pred = latest_next
-        is_15_red = get_card_color_from_result(results[14]) if len(results) >= 15 else None
+        is_15_red = get_card_color_from_result(results_so[14]) if len(results_so) >= 15 else None
         if is_15_red is True:
             color = '빨강' if pred == '정' else '검정'
         elif is_15_red is False:
@@ -2732,14 +2739,14 @@ def _server_calc_effective_pick_and_amount(c):
             pred = '꺽' if pred == '정' else '정'
             color = _flip_pick_color(color)
         if use_smart:
-            run_len_so, run_last_so = _get_run_length_from_results(results)
+            run_len_so, run_last_so = _get_run_length_from_results(results_so)
             if run_len_so < 4:
                 run_len_so = _get_current_result_run_length(ph)
             no_rev_so = streak_suppress and run_len_so >= 4
             if run_len_so >= 4 and run_last_so is not None:
                 pred = '정' if run_last_so else '꺽'
                 # pick-color-core-rule: 줄 추종 시에도 15번 카드 기준. 고정 매핑 금지.
-                is_15_red = _get_card_15_color_for_round(results, pr) if results and pr else None
+                is_15_red = _get_card_15_color_for_round(results_so, pr) if results_so and pr else None
                 if is_15_red is True:
                     color = '빨강' if pred == '정' else '검정'
                 elif is_15_red is False:
@@ -2771,7 +2778,7 @@ def _server_calc_effective_pick_and_amount(c):
                             do_reverse = True
                 if lose_streak >= min_streak and blended is not None and blended <= thr and (main_rate15 is None or main_rate15 < 53):
                     do_reverse = True
-                if do_reverse and _suppress_smart_reverse_by_phase(results):
+                if do_reverse and _suppress_smart_reverse_by_phase(results_so):
                     do_reverse = False
                 if do_reverse:
                     pred = '꺽' if pred == '정' else '정'
@@ -2795,15 +2802,16 @@ def _server_calc_effective_pick_and_amount(c):
     return pick_color, amt, pred
 
 
-def _get_calc_row1_bundle(c):
+def _get_calc_row1_bundle(c, results=None, ph=None):
     """계산기 c의 1행(배팅중 행) — 회차·픽·금액·정꺽을 한 번에 반환. 동시에 생성되므로 불일치 없음.
-    반환: (round, pick_color, amount, pred) 또는 (None, None, 0, None) — pred는 매크로 정/꺽 표시·결과 매칭용"""
+    반환: (round, pick_color, amount, pred) 또는 (None, None, 0, None) — pred는 매크로 정/꺽 표시·결과 매칭용.
+    results, ph 전달 시 DB 조회 생략."""
     if not c or not c.get('running'):
         return None, None, 0, None
     pr = c.get('pending_round')
     if pr is None:
         return None, None, 0, None
-    pick_color, amt, pred = _server_calc_effective_pick_and_amount(c)
+    pick_color, amt, pred = _server_calc_effective_pick_and_amount(c, results=results, ph=ph)
     if pick_color is None:
         return pr, None, 0, None
     amt_int = int(amt or 0) if amt is not None else 0
@@ -2812,11 +2820,12 @@ def _get_calc_row1_bundle(c):
     return pr, pick_color, amt_int, pred
 
 
-def _push_current_pick_from_calc(calculator_id, c):
-    """서버에서 계산기 1행(회차·픽·금액·정꺽)을 current_pick DB·relay 캐시에 반영. 1행 번들만 사용."""
+def _push_current_pick_from_calc(calculator_id, c, results=None, ph=None):
+    """서버에서 계산기 1행(회차·픽·금액·정꺽)을 current_pick DB·relay 캐시에 반영. 1행 번들만 사용.
+    results, ph 전달 시 _server_calc_effective_pick_and_amount에서 DB 조회 생략."""
     if not bet_int or not DB_AVAILABLE or not DATABASE_URL:
         return
-    pr, pick_color, suggested_amount, pick_pred = _get_calc_row1_bundle(c)
+    pr, pick_color, suggested_amount, pick_pred = _get_calc_row1_bundle(c, results=results, ph=ph)
     if pick_color is None or pr is None:
         return
     calc_id = int(calculator_id) if calculator_id in (1, 2, 3) else 1
@@ -5409,13 +5418,15 @@ def load_results_data(base_url=None):
     return []
 
 
-def _update_relay_cache_for_running_calcs():
-    """실행 중인 계산기 relay 캐시 갱신. GET은 서버 직접 계산 사용, 캐시는 POST/기타용."""
+def _update_relay_cache_for_running_calcs(results=None, ph=None):
+    """실행 중인 계산기 relay 캐시 갱신. GET은 서버 직접 계산 사용, 캐시는 POST/기타용.
+    results, ph 전달 시 _server_calc_effective_pick_and_amount에서 DB 조회 생략 (10초 게임 8초 내 배팅)."""
     t0 = time.time()
     if not DB_AVAILABLE or not DATABASE_URL:
         return
     try:
         session_states = _get_all_calc_states()
+        ph_relay = ph if ph is not None else (get_prediction_history(150) if results else None)  # apply 직후 ph 재사용
         for session_id, state in session_states.items():
             if not state or not isinstance(state, dict):
                 continue
@@ -5427,7 +5438,7 @@ def _update_relay_cache_for_running_calcs():
                     _update_current_pick_relay_cache(int(cid), None, None, None, False, None, None)  # 정지 시 clear
                     continue
                 # relay 픽: 클라이언트 POST 없으면 서버 calc state(배팅중 픽)로 갱신 — 예측픽 폴백 방지
-                _push_current_pick_from_calc(int(cid), c)
+                _push_current_pick_from_calc(int(cid), c, results=results, ph=ph_relay)
     except Exception:
         pass
     finally:
@@ -5474,15 +5485,16 @@ def _scheduler_apply_results():
             # 예측픽 캐시 먼저 갱신 — 화면에 빠르게 표시 (경량 경로)
             _update_prediction_cache_from_db(results=results)
             ensure_stored_prediction_for_current_round(results)
-            _apply_results_to_calcs(results)
+            ph_apply = _apply_results_to_calcs(results)
             _backfill_latest_round_to_prediction_history(results)
             ra = _build_round_actuals(results)
             if ra:
                 cards = _build_cards_for_macro(results)
                 _ws_emit_round_actuals(ra, cards)
         else:
+            ph_apply = None
             _update_prediction_cache_from_db(results=results)
-        _update_relay_cache_for_running_calcs()
+        _update_relay_cache_for_running_calcs(results=results, ph=ph_apply)
     except Exception as e:
         print(f"[스케줄러] apply 오류: {str(e)[:100]}")
     finally:
@@ -12584,12 +12596,13 @@ def _refresh_results_background():
             if DB_AVAILABLE and DATABASE_URL and _apply_lock.acquire(blocking=False):
                 try:
                     results = get_recent_results(hours=24)
+                    ph_refresh = None
                     if results and len(results) >= 16:
                         ensure_stored_prediction_for_current_round(results)
-                        _apply_results_to_calcs(results)
+                        ph_refresh = _apply_results_to_calcs(results)
                         _backfill_latest_round_to_prediction_history(results)
                     _update_prediction_cache_from_db(results=results)
-                    _update_relay_cache_for_running_calcs()
+                    _update_relay_cache_for_running_calcs(results=results, ph=ph_refresh)
                 finally:
                     try:
                         _apply_lock.release()
