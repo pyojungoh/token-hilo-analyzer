@@ -23,7 +23,7 @@ alwaysApply: false
 
 ## relay 캐시
 
-- **스케줄러**: 0.05초마다 `_scheduler_apply_results` → `_update_relay_cache_for_running_calcs` → relay 갱신
+- **스케줄러**: 0.1초마다 `_scheduler_apply_results` → `_update_relay_cache_for_running_calcs` → relay 갱신
 - **웹 POST**: relay 캐시 **항상** 즉시 갱신 (배팅중 픽 들어오자마자 매크로 전달 — 상세: `betting-in-display-to-macro-rule.mdc`)
 
 ## 완료된 작업
@@ -34,7 +34,7 @@ alwaysApply: false
 ## 10초 게임 8초 내 배팅 (타이밍)
 
 - 결과 수집·예측·relay·매크로 배팅까지 **8초 안에** 완료되어야 함.
-- 분석기: fetch 0.05초, apply 0.05초, 스케줄러 5초 후 시작, fetch 타임아웃 1/2.5초
+- 분석기: fetch 0.1초, apply 0.1초, 스케줄러 5초 후 시작, fetch 타임아웃 1/2.5초
 - 매크로: 폴링 0.3초(WS 미연결 시), API 타임아웃 2/3초, 탭 지연 최소화
 
 ## 배팅 흐름 (절대 규칙)

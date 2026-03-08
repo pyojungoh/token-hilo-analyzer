@@ -5018,13 +5018,13 @@ def get_recent_results(hours=24):
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # 최근 N시간 데이터 조회, LIMIT 2000. 회차(game_id) 숫자 기준 최신순으로 정렬 (화면에 현재 회차 표시 보장)
+        # 최근 N시간 데이터 조회, LIMIT 2000. created_at DESC로 인덱스 활용 → Python _sort_results_newest_first에서 game_id 기준 재정렬
         cur.execute('''
-            SELECT game_id as "gameID", result, hi, lo, red, black, jqka, joker, 
+            SELECT game_id as "gameID", result, hi, lo, red, black, jqka, joker,
                    hash_value as hash, salt_value as salt
             FROM game_results
             WHERE created_at >= NOW() - (INTERVAL '1 hour' * %s)
-            ORDER BY (NULLIF(REGEXP_REPLACE(game_id::text, '[^0-9]', '', 'g'), '')::BIGINT) DESC NULLS LAST, created_at DESC
+            ORDER BY created_at DESC
             LIMIT 2000
         ''', (int(hours),))
         
@@ -5483,13 +5483,13 @@ def _scheduler_trim_shape_tables():
 
 if SCHEDULER_AVAILABLE:
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.05, id='fetch_results', max_instances=1)  # 0.05초마다 — 10초 게임 8초 내 배팅
-    _scheduler.add_job(_scheduler_apply_results, 'interval', seconds=0.05, id='apply_results', max_instances=1)  # 0.05초마다 apply
+    _scheduler.add_job(_scheduler_fetch_results, 'interval', seconds=0.1, id='fetch_results', max_instances=1)   # 0.1초마다 — 부하 완화, 10초 게임 8초 내 배팅 유지
+    _scheduler.add_job(_scheduler_apply_results, 'interval', seconds=0.1, id='apply_results', max_instances=1)   # 0.1초마다 apply
     _scheduler.add_job(_scheduler_trim_shape_tables, 'interval', seconds=300, id='trim_shape', max_instances=1)
     def _start_scheduler_delayed():
         time.sleep(5)
         _scheduler.start()
-        print("[✅] 결과 수집 스케줄러 시작 (fetch 0.05초, apply 0.05초 — 10초 게임 8초 내 배팅)")
+        print("[✅] 결과 수집 스케줄러 시작 (fetch 0.1초, apply 0.1초 — 10초 게임 8초 내 배팅)")
     threading.Thread(target=_start_scheduler_delayed, daemon=True).start()
     print("[⏳] 스케줄러는 5초 후 시작")
 else:
@@ -12648,7 +12648,7 @@ def get_results():
             payload = dict(payload)
             payload['results'] = _sort_results_newest_first(list(payload['results']))
             first_id = (payload['results'][0].get('gameID') if payload['results'] else None)
-            print(f"[API] 응답 결과 수: {len(payload['results'])}개, 맨 앞(최신) gameID: {first_id}")
+            _log_throttle('api_results_resp', 10, f"[API] 응답 결과 수: {len(payload['results'])}개, 맨 앞(최신) gameID: {first_id}")
         
         resp = jsonify(payload)
         resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
