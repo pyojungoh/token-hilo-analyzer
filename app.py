@@ -7766,6 +7766,10 @@ RESULTS_HTML = '''
                 } else { lastCard15IsRed = null; }
                 try { if (typeof updateCalcJokerBadge === 'function') updateCalcJokerBadge(); } catch (e) {}
                 try { CALC_IDS.forEach(function(id) { updateCalcStatus(id); }); } catch (e) {}
+                // 결과 반영 직후 계산기 상태 즉시 로드 — calcStateInterval(1200ms) 대기 없이 승/패/수익 갱신
+                if (resultsUpdated && CALC_IDS.some(function(id) { return calcState[id] && calcState[id].running; })) {
+                    loadCalcStateFromServer(false).then(function() { updateAllCalcs(); }).catch(function() {});
+                }
                 
                 // 이전회차·상태를 맨 앞에서 먼저 적용 (아래 예측/그래프 블록에서 예외 나도 화면에 현재 회차 반영)
                 if (displayResults.length > 0) {
