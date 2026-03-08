@@ -7766,9 +7766,13 @@ RESULTS_HTML = '''
                 } else { lastCard15IsRed = null; }
                 try { if (typeof updateCalcJokerBadge === 'function') updateCalcJokerBadge(); } catch (e) {}
                 try { CALC_IDS.forEach(function(id) { updateCalcStatus(id); }); } catch (e) {}
-                // 결과 반영 직후 계산기 상태 즉시 로드 — calcStateInterval(1200ms) 대기 없이 승/패/수익 갱신
+                // 결과 반영 직후 계산기 상태 로드 — 500ms 스로틀로 버벅임 방지, calcStateInterval(1200ms) 보완
                 if (resultsUpdated && CALC_IDS.some(function(id) { return calcState[id] && calcState[id].running; })) {
-                    loadCalcStateFromServer(false).then(function() { updateAllCalcs(); }).catch(function() {});
+                    var _now = Date.now();
+                    if (_now - _lastCalcStateLoadFromResultsAt >= 500) {
+                        _lastCalcStateLoadFromResultsAt = _now;
+                        loadCalcStateFromServer(false).then(function() { updateAllCalcs(); }).catch(function() {});
+                    }
                 }
                 
                 // 이전회차·상태를 맨 앞에서 먼저 적용 (아래 예측/그래프 블록에서 예외 나도 화면에 현재 회차 반영)
@@ -11471,6 +11475,7 @@ RESULTS_HTML = '''
         // 리셋/실행 직후에는 서버 폴링 스킵 (저장 반영 전에 예전 상태로 덮어쓰는 것 방지)
         var lastResetOrRunAt = 0;
         var lastResetByCalcId = {};  // calc id별 리셋 시각 — loadCalcStateFromServer에서 15초 이내 리셋한 calc는 서버로 덮어쓰지 않음 (히스토리 복원 방지)
+        var _lastCalcStateLoadFromResultsAt = 0;  // loadResults에서 loadCalcStateFromServer 트리거 시각 — 500ms 스로틀 (버벅임 방지)
         
         function updatePredictionPicksCards(sp) {
             var cards = document.getElementById('prediction-picks-cards');
