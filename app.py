@@ -1098,11 +1098,32 @@ def update_chunk_profile_occurrences(conn, profile, actual, round_num=None):
         print(f"[경고] chunk_profile_occurrences 저장 실패: {str(e)[:100]}")
 
 
+def _trim_calc_sessions(conn):
+    """calc_sessions: default 외 24시간 미갱신 세션 삭제. N+1·연결 한도 폭주 방지."""
+    if not conn or not DB_AVAILABLE:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute('''
+            DELETE FROM calc_sessions
+            WHERE session_id != 'default'
+            AND updated_at < NOW() - INTERVAL '24 hours'
+        ''')
+        deleted = cur.rowcount
+        conn.commit()
+        cur.close()
+        if deleted > 0:
+            _log_throttle('trim_calc_sessions', 60, f"[세션정리] calc_sessions {deleted}행 삭제 (24h 미갱신)")
+    except Exception as e:
+        _log_throttle('trim_calc_err', 60, f"[경고] calc_sessions 정리 실패: {str(e)[:80]}")
+
+
 def _trim_shape_tables(conn):
     """shape_win_occurrences, chunk_profile_occurrences 행 수가 상한 초과 시 가장 오래된 행 삭제. 속도 저하 방지."""
     if not conn or not DB_AVAILABLE:
         return
     try:
+        _trim_calc_sessions(conn)
         cur = conn.cursor()
         for table, max_rows in [
             ('shape_win_occurrences', SHAPE_MAX_OCCURRENCES),
@@ -1244,25 +1265,42 @@ def _merge_calc_histories(client_hist, server_hist):
 
 
 def _get_all_calc_session_ids():
-    """실행 중인 계산기 세션 ID 목록 (회차 반영용). DB 사용 시 calc_sessions 전체, 미사용 시 메모리 키."""
-    if DB_AVAILABLE and DATABASE_URL:
-        conn = get_db_connection(statement_timeout_sec=5)
-        if not conn:
-            return list(_calc_state_memory.keys())
+    """실행 중인 계산기 세션 ID 목록 (회차 반영용). 레거시 호환. 일괄 조회는 _get_all_calc_states 사용."""
+    return list(_get_all_calc_states().keys())
+
+
+def _get_all_calc_states():
+    """모든 계산기 세션 상태를 한 번에 조회 (N+1 제거). 반환: {session_id: state_dict}. 메모리(POST 최신) 우선."""
+    out = {}
+    if not DB_AVAILABLE or not DATABASE_URL:
+        return dict(_calc_state_memory)
+    conn = get_db_connection(statement_timeout_sec=5)
+    if not conn:
+        return dict(_calc_state_memory)
+    try:
+        cur = conn.cursor()
+        cur.execute('SELECT session_id, state_json FROM calc_sessions')
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        for r in (rows or []):
+            sid, sj = r[0], r[1]
+            if sid and sj:
+                try:
+                    out[str(sid)[:64]] = json.loads(sj)
+                except (TypeError, ValueError):
+                    pass
+        # _calc_state_memory 우선 (클라이언트 POST가 DB 커밋 직후 스케줄러와 레이스 시 최신 반영)
+        for k, v in _calc_state_memory.items():
+            if v and isinstance(v, dict):
+                out[k] = v
+        return out
+    except Exception:
         try:
-            cur = conn.cursor()
-            cur.execute('SELECT session_id FROM calc_sessions')
-            rows = cur.fetchall()
-            cur.close()
             conn.close()
-            return [r[0] for r in rows] if rows else []
         except Exception:
-            try:
-                conn.close()
-            except Exception:
-                pass
-            return list(_calc_state_memory.keys())
-    return list(_calc_state_memory.keys())
+            pass
+        return out
 
 
 def _get_actual_for_round(results, round_id):
@@ -2022,9 +2060,8 @@ def _apply_results_to_calcs(results):
         # get_shape_prediction_hint 캐시: 동일 results·가중치면 재사용 (세션 여러 개 시 ~120ms×N 절약)
         _shape_hint_cache = {}
 
-        session_ids = _get_all_calc_session_ids()
-        for session_id in session_ids:
-            state = get_calc_state(session_id)
+        session_states = _get_all_calc_states()
+        for session_id, state in session_states.items():
             if not state or not isinstance(state, dict):
                 continue
             updated = False
@@ -2384,11 +2421,7 @@ def _apply_results_to_calcs(results):
                         for cid in skipped_cids:
                             if cid in mem and isinstance(mem[cid], dict):
                                 state[cid] = mem[cid]
-                    else:
-                        fresh = get_calc_state(session_id) or {}
-                        for cid in skipped_cids:
-                            if cid in fresh and isinstance(fresh[cid], dict):
-                                state[cid] = fresh[cid]
+                    # mem 없으면 state(일괄 조회값)에 이미 포함됨 — get_calc_state 재호출 불필요
                 save_calc_state(session_id, state)  # 먼저 저장 → _update_relay_cache_for_running_calcs에서 relay 픽 푸시
     except Exception as e:
         print(f"[스케줄러] 회차 반영 오류: {str(e)[:200]}")
@@ -5382,9 +5415,8 @@ def _update_relay_cache_for_running_calcs():
     if not DB_AVAILABLE or not DATABASE_URL:
         return
     try:
-        session_ids = _get_all_calc_session_ids()
-        for session_id in session_ids:
-            state = get_calc_state(session_id)
+        session_states = _get_all_calc_states()
+        for session_id, state in session_states.items():
             if not state or not isinstance(state, dict):
                 continue
             for cid in ('1', '2', '3'):

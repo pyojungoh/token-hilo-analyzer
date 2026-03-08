@@ -1,5 +1,13 @@
 # 분석기 성능 점검 보고서 (2025-03)
 
+## ⚠️ "갑자기 느려짐" 핵심 원인 (추가)
+
+**calc_sessions 무한 누적 + N+1 쿼리** → DB 연결 한도 초과. 상세: `docs/SLOW_CAUSE_DIAGNOSIS.md`
+
+**적용 완료**: calc_sessions 24h 정리, get_calc_state → _get_all_calc_states 일괄 조회.
+
+---
+
 ## 요약
 
 분석기가 느린 주요 원인:
