@@ -5467,8 +5467,8 @@ def _run_prediction_update_light():
 
 
 def _scheduler_apply_results():
-    """DB 결과로 계산기 회차 반영 + relay + prediction_cache. 0.05초마다 실행. fetch 완료 시 fetch 스레드에서도 즉시 호출."""
-    global _last_prediction_light_at
+    """DB 결과로 계산기 회차 반영 + relay + prediction_cache + results_cache. 0.1초마다 실행. fetch 완료 시 fetch 스레드에서도 즉시 호출."""
+    global _last_prediction_light_at, results_cache, last_update_time
     t0 = time.time()
     if not DB_AVAILABLE or not DATABASE_URL:
         return
@@ -5491,6 +5491,14 @@ def _scheduler_apply_results():
             if ra:
                 cards = _build_cards_for_macro(results)
                 _ws_emit_round_actuals(ra, cards)
+            # apply에서 results_cache 갱신 — /api/results 캐시 히트율 상승, _build_results_payload_db_only 호출 감소
+            try:
+                payload = _build_results_payload_db_only(hours=24, backfill=False, results=results, ph=ph_apply)
+                if payload and payload.get('results'):
+                    results_cache = payload
+                    last_update_time = time.time() * 1000
+            except Exception as ec:
+                print(f"[스케줄러] results_cache 갱신 오류: {str(ec)[:80]}")
         else:
             ph_apply = None
             _update_prediction_cache_from_db(results=results)
@@ -11887,8 +11895,9 @@ def _build_server_prediction_light(results=None, hours=24):
         return None
 
 
-def _build_results_payload_db_only(hours=24, backfill=False, results=None):
-    """DB만으로 페이로드 생성 (네트워크 없음). results 전달 시 get_recent_results 생략(apply 중복 호출 방지)."""
+def _build_results_payload_db_only(hours=24, backfill=False, results=None, ph=None):
+    """DB만으로 페이로드 생성 (네트워크 없음). results 전달 시 get_recent_results 생략(apply 중복 호출 방지).
+    ph 전달 시 get_prediction_history(300) 생략 — apply에서 ph_apply(150) 재사용."""
     t0 = time.time()
     try:
         if not DB_AVAILABLE or not DATABASE_URL:
@@ -11906,8 +11915,9 @@ def _build_results_payload_db_only(hours=24, backfill=False, results=None):
         round_actuals = _build_round_actuals(results)
         _merge_round_predictions_into_history(round_actuals, results=results)
         joker_stats = _compute_joker_stats(results) if results else {"count_in_15": 0, "count_in_30": 0, "warning": False, "skip_bet": False, "warning_reason": ""}
-        # 100회 승률방향용: 클라이언트에 수백 회 내려줘야 함 (DB는 수백 회 저장됨)
-        ph = get_prediction_history(300)
+        # 100회 승률방향용: 클라이언트에 수백 회 내려줘야 함 (DB는 수백 회 저장됨). ph 전달 시 DB 조회 생략
+        if ph is None:
+            ph = get_prediction_history(300)
         # 안정화: 서버에 저장된 예측만 불러옴. 계산/저장은 스케줄러에서만(ensure_stored_prediction_for_current_round).
         server_pred = None
         if len(results) >= 16:
