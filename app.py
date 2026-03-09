@@ -10746,10 +10746,33 @@ RESULTS_HTML = '''
                 }
                 return (simCap > 0) ? Math.min(simCurrentBet, Math.floor(simCap)) : 0;
             }
-            // 회차별 픽/결과/승패/배팅금액/수익 행 목록 (pending=대기, completed=결과·수익)
+            // [성능] prediction_history 회차별 맵 — rows 루프에서 find 대신 O(1) 조회
+            var phByRound = {};
+            if (Array.isArray(predictionHistory)) {
+                predictionHistory.forEach(function(p) {
+                    if (!p || typeof p !== 'object' || p.round == null) return;
+                    var rn = Number(p.round);
+                    if (isNaN(rn)) return;
+                    var wr = (typeof p.blended_win_rate === 'number') ? p.blended_win_rate : (typeof p.warningWinRate === 'number' ? p.warningWinRate : null);
+                    if (wr != null && !isNaN(wr)) phByRound[rn] = wr;
+                });
+            }
+            // [성능] 완료 행 15회 승률 배치 계산 — getCalcRecent15WinRateAtRound 200회 호출 대체
+            var rate15AtRound = {};
+            for (var ri = 0; ri < completedHist.length; ri++) {
+                var start = Math.max(0, ri - 14);
+                var last15 = completedHist.slice(start, ri + 1);
+                if (last15.length < 1) continue;
+                var wins15 = last15.filter(function(he) { return he.actual !== 'joker' && he.predicted === he.actual; }).length;
+                rate15AtRound[completedHist[ri].round] = Math.round((wins15 / last15.length) * 1000) / 10;
+            }
+            var shapeWinRateCache = {};
+            // 회차별 픽/결과/승패/배팅금액/수익 행 목록 (pending=대기, completed=결과·수익). 200행 채우면 조기 종료(성능).
             let rows = [];
             var seenRoundNums = {};
+            const CALC_TABLE_DISPLAY_MAX = 200;
             for (let i = usedHist.length - 1; i >= 0; i--) {
+                if (rows.length >= CALC_TABLE_DISPLAY_MAX) break;
                 const h = usedHist[i];
                 if (!h || typeof h.predicted === 'undefined') continue;
                 const rn = h.round != null ? Number(h.round) : NaN;
@@ -10786,14 +10809,11 @@ RESULTS_HTML = '''
                         pickClass = 'pick-hold';  // 15번 카드 미확인 시 회색(잘못된 색상보다 안전)
                     }
                 }
-                // 경고승률: h.warningWinRate 우선. 없으면 prediction_history 해당 회차 blended_win_rate로 보정
+                // 경고승률: h.warningWinRate 우선. 없으면 phByRound(배치 맵)로 O(1) 조회
                 var wrVal = (typeof h.warningWinRate === 'number' && !isNaN(h.warningWinRate)) ? h.warningWinRate : null;
-                if (wrVal == null && Array.isArray(predictionHistory) && !isNaN(rn)) {
-                    var phAtRound = predictionHistory.find(function(p) { return p && Number(p.round) === rn; });
-                    if (phAtRound && (typeof phAtRound.blended_win_rate === 'number' || typeof phAtRound.warningWinRate === 'number')) {
-                        wrVal = phAtRound.blended_win_rate ?? phAtRound.warningWinRate;
-                        if (typeof wrVal === 'number') h.warningWinRate = wrVal;
-                    }
+                if (wrVal == null && !isNaN(rn) && phByRound[rn] != null) {
+                    wrVal = phByRound[rn];
+                    if (typeof wrVal === 'number') h.warningWinRate = wrVal;
                 }
                 const warningWinRateVal = (typeof wrVal === 'number' && !isNaN(wrVal)) ? wrVal.toFixed(1) + '%' : '-';
                 // 15회 승률: CALCULATOR_GUIDE — 표에는 회차별 저장값(rate15) 표시. 없으면 완료 행은 해당 시점 15회 승률 계산 후 저장(한 번만).
@@ -10806,13 +10826,11 @@ RESULTS_HTML = '''
                         rate15Val = (typeof r15 === 'number' && !isNaN(r15)) ? r15.toFixed(1) + '%' : '-';
                     } else rate15Val = '-';
                 } else {
-                    // 완료 행인데 rate15 없음 → 해당 회차 시점 15회 승률 계산 후 h.rate15에 저장(저장되면 다음부터 표시 유지)
-                    if (typeof getCalcRecent15WinRateAtRound === 'function' && !isNaN(rn)) {
-                        var atRound = getCalcRecent15WinRateAtRound(id, rn);
-                        if (atRound != null && !isNaN(atRound)) {
-                            h.rate15 = atRound;
-                            rate15Val = atRound.toFixed(1) + '%';
-                        } else rate15Val = '-';
+                    // 완료 행: rate15AtRound(배치 계산) 우선, 없으면 getCalcRecent15WinRateAtRound 폴백
+                    var atRound = (rate15AtRound[rn] != null) ? rate15AtRound[rn] : (typeof getCalcRecent15WinRateAtRound === 'function' ? getCalcRecent15WinRateAtRound(id, rn) : null);
+                    if (atRound != null && !isNaN(atRound)) {
+                        h.rate15 = atRound;
+                        rate15Val = atRound.toFixed(1) + '%';
                     } else rate15Val = '-';
                 }
                 var betStr, profitStr, res, outcome, resultClass, outClass;
@@ -10829,8 +10847,8 @@ RESULTS_HTML = '''
                         // 회차 간격: 간격 구간 패배 가정 시뮬레이션
                         amt = getBetForPendingRoundWithGap(rn);
                     } else {
-                        var simResult = (typeof getCalcResult === 'function') ? getCalcResult(id) : null;
-                        amt = (simResult && simResult.currentBet != null && simResult.currentBet > 0) ? Math.min(simResult.currentBet, Math.floor(simResult.cap || capIn)) : (lastCompletedRound != null && cap > 0 ? nextRoundBet : (typeof getBetForRound === 'function' ? getBetForRound(id, rn) : (h.betAmount > 0 ? h.betAmount : 0)));
+                        // getCalcResult 결과 r 재사용 (중복 호출 제거)
+                        amt = (r && r.currentBet != null && r.currentBet > 0) ? Math.min(r.currentBet, Math.floor(r.cap || capIn)) : (lastCompletedRound != null && cap > 0 ? nextRoundBet : (typeof getBetForRound === 'function' ? getBetForRound(id, rn) : (h.betAmount > 0 ? h.betAmount : 0)));
                     }
                     if (h && typeof amt === 'number') h.betAmount = amt;
                     betStr = amt > 0 ? Number(amt).toLocaleString() : '-';
@@ -10860,12 +10878,18 @@ RESULTS_HTML = '''
                     resultClass = res === '조' ? 'result-joker' : (res === '정' ? 'result-jung' : 'result-kkuk');
                     outClass = outcome === '승' ? 'win' : outcome === '패' ? 'lose' : outcome === '조' ? 'joker' : 'skip';
                 }
-                // h.shapeWinRate 없으면 클라이언트에서 해당 회차 기준 계산 (서버 미저장·기존 데이터 보정)
-                const shapeWinRateVal = (typeof h.shapeWinRate === 'number' && !isNaN(h.shapeWinRate)) ? h.shapeWinRate.toFixed(1) + '%' : (typeof getShape50WinRateExcludingRound === 'function' && !isNaN(rn)) ? ((function() { var sw = getShape50WinRateExcludingRound(rn); return sw != null ? sw.toFixed(1) + '%' : '-'; })()) : '-';
+                // h.shapeWinRate 없으면 캐시·계산 (같은 round 중복 호출 방지)
+                var shapeWinRateVal;
+                if (typeof h.shapeWinRate === 'number' && !isNaN(h.shapeWinRate)) {
+                    shapeWinRateVal = h.shapeWinRate.toFixed(1) + '%';
+                } else if (!isNaN(rn) && typeof getShape50WinRateExcludingRound === 'function') {
+                    var sw = shapeWinRateCache[rn];
+                    if (sw === undefined) { sw = getShape50WinRateExcludingRound(rn); shapeWinRateCache[rn] = sw; }
+                    shapeWinRateVal = sw != null ? sw.toFixed(1) + '%' : '-';
+                } else { shapeWinRateVal = '-'; }
                 rows.push({ roundStr: roundStr, roundNum: !isNaN(rn) ? rn : null, pick: pickVal, pickClass: pickClass, warningWinRate: warningWinRateVal, shapeWinRate: shapeWinRateVal, rate15: rate15Val, result: res, resultClass: resultClass, outcome: outcome, betAmount: betStr, profit: profitStr, outClass: outClass });
             }
             try { window.__calcDetailRows = window.__calcDetailRows || {}; window.__calcDetailRows[id] = rows; } catch (e) {}
-            const CALC_TABLE_DISPLAY_MAX = 200;
             const displayRows = rows.slice(0, CALC_TABLE_DISPLAY_MAX);
             if (tableWrap) {
                 if (displayRows.length === 0) {
