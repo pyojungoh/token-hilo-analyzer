@@ -7766,10 +7766,10 @@ RESULTS_HTML = '''
                 } else { lastCard15IsRed = null; }
                 try { if (typeof updateCalcJokerBadge === 'function') updateCalcJokerBadge(); } catch (e) {}
                 try { CALC_IDS.forEach(function(id) { updateCalcStatus(id); }); } catch (e) {}
-                // 결과 반영 직후 계산기 상태 로드 — 500ms 스로틀로 버벅임 방지, calcStateInterval(1200ms) 보완
+                // 결과 반영 직후 계산기 상태 로드 — 200ms 스로틀로 버벅임 방지, 8초 내 반영
                 if (resultsUpdated && CALC_IDS.some(function(id) { return calcState[id] && calcState[id].running; })) {
                     var _now = Date.now();
-                    if (_now - _lastCalcStateLoadFromResultsAt >= 500) {
+                    if (_now - _lastCalcStateLoadFromResultsAt >= 200) {
                         _lastCalcStateLoadFromResultsAt = _now;
                         loadCalcStateFromServer(false).then(function() { updateAllCalcs(); }).catch(function() {});
                     }
@@ -11475,7 +11475,7 @@ RESULTS_HTML = '''
         // 리셋/실행 직후에는 서버 폴링 스킵 (저장 반영 전에 예전 상태로 덮어쓰는 것 방지)
         var lastResetOrRunAt = 0;
         var lastResetByCalcId = {};  // calc id별 리셋 시각 — loadCalcStateFromServer에서 15초 이내 리셋한 calc는 서버로 덮어쓰지 않음 (히스토리 복원 방지)
-        var _lastCalcStateLoadFromResultsAt = 0;  // loadResults에서 loadCalcStateFromServer 트리거 시각 — 500ms 스로틀 (버벅임 방지)
+        var _lastCalcStateLoadFromResultsAt = 0;  // loadResults에서 loadCalcStateFromServer 트리거 시각 — 200ms 스로틀 (8초 내 반영)
         
         function updatePredictionPicksCards(sp) {
             var cards = document.getElementById('prediction-picks-cards');
@@ -11698,10 +11698,10 @@ RESULTS_HTML = '''
             if (predictionPollIntervalId) clearInterval(predictionPollIntervalId);
             if (shapePollIntervalId) clearInterval(shapePollIntervalId);
             
-            // 탭 가시성에 따라 간격 조정. 3단계 최적화: 요청 수 감소 (80→200ms, 60/100→150/200/300ms)
+            // 탭 가시성에 따라 간격 조정. 10초 게임 8초 내 배팅 — 계산기 결과 반영 8초 내 완료 목표
             var resultsInterval = isTabVisible ? 200 : 1200;   // 200ms — 결과·그래프 체크 주기
             var calcStatusInterval = isTabVisible ? 200 : 1200; // 200ms — 픽 서버 전달
-            var calcStateInterval = isTabVisible ? 1200 : 5000;  // 1200ms — 계산기 상태 GET 간격
+            var calcStateInterval = isTabVisible ? 400 : 5000;   // 400ms — 계산기 상태 GET (8초 내 반영)
             var timerInterval = isTabVisible ? 300 : 1000;
             
             // 결과 폴링: 계산기 실행 중일 때만 150ms, 그 외 200~300ms — 10초 게임에 충분 (3단계 최적화)

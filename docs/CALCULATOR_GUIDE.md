@@ -8,8 +8,9 @@
 
 계산기는 **컴퓨터가 꺼지거나 브라우저가 꺼져도 서버에서 항상 돌아가서**, 언제든 켜서 봤을 때 정확한 계산이 되어 있어야 한다.
 
-- 서버: `calc_sessions` 테이블에 계산기 상태(history 포함) 저장, 스케줄러가 **1초마다** 회차 반영·저장.
+- 서버: `calc_sessions` 테이블에 계산기 상태(history 포함) 저장, 스케줄러가 **0.1초마다** 회차 반영·저장.
 - 클라이언트: 새로고침/재접속 시 서버 상태를 불러와 계산기표·설정을 복원.
+- **10초 게임 8초 내 배팅**: 결과 수집·예측·계산기 반영·화면 표시까지 **8초 안에** 완료되어야 함. fetch 0.1초, apply 0.1초, 클라이언트 calc-state 400ms 폴링, loadResults→loadCalcState 200ms 스로틀.
 
 ---
 
@@ -101,7 +102,8 @@
 
 ## 구현 참고 (코드 위치)
 
-- 결과 수집 스케줄러: **1초마다** `_scheduler_fetch_results()` (앱 기동 25초 후 자동 시작, 클라이언트 무관).
+- 결과 수집 스케줄러: **0.1초마다** `_scheduler_fetch_results()` (앱 기동 5초 후 자동 시작, 클라이언트 무관). 8초 내 배팅 목표.
+- 클라이언트 타이밍: calcStateInterval 400ms(실행 중), loadResults→loadCalcState 스로틀 200ms.
 - 서버 회차 반영: `_apply_results_to_calcs`, `ensure_stored_prediction_for_current_round`
 - 계산기 상태 저장/조회: `save_calc_state`, `get_calc_state`, `calc_sessions`
 - 수익·마틴 계산: `_calculate_calc_profit_server`
