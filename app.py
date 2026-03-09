@@ -10527,7 +10527,9 @@ RESULTS_HTML = '''
                 updateCalcStatus(id);
                 return;
             }
-            const r = getCalcResult(id);
+            var r = (typeof window !== 'undefined' && window.__lastCalcResultForSummary && window.__lastCalcResultForSummary[id]);
+            if (!r) r = getCalcResult(id);
+            try { if (window.__lastCalcResultForSummary) window.__lastCalcResultForSummary[id] = undefined; } catch (e) {}
             const profitStr = (r.profit >= 0 ? '+' : '') + r.profit.toLocaleString() + '원';
             const profitClass = r.profit > 0 ? 'profit-plus' : (r.profit < 0 ? 'profit-minus' : '');
             var betDisplay;
@@ -10655,6 +10657,7 @@ RESULTS_HTML = '''
                 return;
             }
             const r = getCalcResult(id);
+            try { window.__lastCalcResultForSummary = window.__lastCalcResultForSummary || {}; window.__lastCalcResultForSummary[id] = r; } catch (e) {}
             const usedHist = dedupeCalcHistoryByRound(hist);
             // completedHist: pending이 아니고 actual이 있는 것만 (서버 동기화 후에는 실제 결과가 있음)
             const completedHist = usedHist.filter(function(h) { return h && h.actual !== 'pending' && h.actual != null && h.actual !== '' && typeof h.predicted !== 'undefined'; });
@@ -10746,6 +10749,10 @@ RESULTS_HTML = '''
                 }
                 return (simCap > 0) ? Math.min(simCurrentBet, Math.floor(simCap)) : 0;
             }
+            // [성능] 접힌 calc는 무거운 테이블 렌더 스킵 — streak·stats만 경량 갱신
+            var dd = tableWrap ? tableWrap.closest('.calc-dropdown') : null;
+            var isCollapsed = !!(dd && dd.classList.contains('collapsed'));
+            if (!isCollapsed) {
             // [성능] prediction_history 회차별 맵 — rows 루프에서 find 대신 O(1) 조회
             var phByRound = {};
             if (Array.isArray(predictionHistory)) {
@@ -10907,6 +10914,7 @@ RESULTS_HTML = '''
                     tableWrap.innerHTML = tbl;
                 }
             }
+            }
             // 경기결과는 완료된 회차만, 최근 30회 표시 (서버 동기화된 actual 사용)
             let arr = [];
             for (const h of completedHist) {
@@ -10927,11 +10935,20 @@ RESULTS_HTML = '''
             var rate15Str = (completedHist.length < 1) ? '-' : (rate15.toFixed(1) + '%');
             // 표시된 내역(최근 200회) 승률: 배팅한 완료 행만, 조커=패 (멈춤 행 제외)
             var dispWins = 0, dispLosses = 0;
-            displayRows.forEach(function(row) {
-                if (row.betAmount === '-' || row.outcome === '멈춤' || row.outcome === '대기') return;
-                if (row.outcome === '승') dispWins++;
-                else if (row.outcome === '패' || row.outcome === '조') dispLosses++;
-            });
+            if (!isCollapsed && typeof displayRows !== 'undefined') {
+                displayRows.forEach(function(row) {
+                    if (row.betAmount === '-' || row.outcome === '멈춤' || row.outcome === '대기') return;
+                    if (row.outcome === '승') dispWins++;
+                    else if (row.outcome === '패' || row.outcome === '조') dispLosses++;
+                });
+            } else if (isCollapsed) {
+                var betRows = completedHist.filter(function(h) { return h && !h.no_bet && h.actual && h.actual !== 'pending'; });
+                var lastN = betRows.slice(-200);
+                lastN.forEach(function(h) {
+                    if (h.actual === 'joker' || h.predicted !== h.actual) dispLosses++;
+                    else dispWins++;
+                });
+            }
             var dispTotal = dispWins + dispLosses;
             var dispRateStr = (dispTotal < 1) ? '-' : (dispWins / dispTotal * 100).toFixed(1) + '%';
             var shape50 = (typeof getShape50WinRate === 'function') ? getShape50WinRate() : null;
@@ -11049,7 +11066,7 @@ RESULTS_HTML = '''
             });
             }, 1000);
         var _updateAllCalcsDebounceId = null;
-        var _updateAllCalcsDebounceMs = 120;
+        var _updateAllCalcsDebounceMs = 150;  // 120→150ms 버벅임 완화
         function updateAllCalcs() {
             if (_updateAllCalcsDebounceId) clearTimeout(_updateAllCalcsDebounceId);
             _updateAllCalcsDebounceId = setTimeout(function() {
