@@ -14,6 +14,7 @@ import traceback
 import threading
 import re
 import uuid
+import copy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # .env 파일 로드 (DATABASE_URL 등)
@@ -1147,12 +1148,19 @@ def _trim_shape_tables(conn):
 
 # DB 없을 때 계산기 상태 in-memory 저장 (새로고침 시 유지, 서버 재시작 시 초기화)
 _calc_state_memory = {}
+# GET /api/calc-state 응답 속도: save 직후 150ms 이내 요청 시 DB 생략
+_calc_state_get_cache = {}  # session_id -> (state_dict, timestamp)
 
 def get_calc_state(session_id):
     """계산기 세션 상태 조회. 없으면 None. statement_timeout으로 먹통 방지."""
     if not session_id:
         return None
     sk = str(session_id)[:64]
+    now = time.time()
+    if sk in _calc_state_get_cache:
+        cached, ts = _calc_state_get_cache[sk]
+        if (now - ts) < 0.15:
+            return copy.deepcopy(cached)
     if DB_AVAILABLE and DATABASE_URL:
         conn = get_db_connection(statement_timeout_sec=5)
         if conn:
@@ -1179,6 +1187,7 @@ def save_calc_state(session_id, state_dict):
         return False
     sk = str(session_id)[:64]
     _calc_state_memory[sk] = state_dict
+    _calc_state_get_cache[sk] = (state_dict, time.time())
     if DB_AVAILABLE and DATABASE_URL:
         conn = get_db_connection(statement_timeout_sec=5)
         if conn:
@@ -7768,10 +7777,10 @@ RESULTS_HTML = '''
                 } else { lastCard15IsRed = null; }
                 try { if (typeof updateCalcJokerBadge === 'function') updateCalcJokerBadge(); } catch (e) {}
                 try { CALC_IDS.forEach(function(id) { updateCalcStatus(id); }); } catch (e) {}
-                // 결과 반영 직후 계산기 상태 로드 — 200ms 스로틀로 버벅임 방지, 8초 내 반영
+                // 결과 반영 직후 계산기 상태 로드 — 100ms 스로틀로 빠른 반영
                 if (resultsUpdated && CALC_IDS.some(function(id) { return calcState[id] && calcState[id].running; })) {
                     var _now = Date.now();
-                    if (_now - _lastCalcStateLoadFromResultsAt >= 200) {
+                    if (_now - _lastCalcStateLoadFromResultsAt >= 100) {
                         _lastCalcStateLoadFromResultsAt = _now;
                         loadCalcStateFromServer(false).then(function() { updateAllCalcs(); }).catch(function() {});
                     }
@@ -11744,7 +11753,7 @@ RESULTS_HTML = '''
             // 탭 가시성에 따라 간격 조정. 10초 게임 8초 내 배팅 — 계산기 결과 반영 8초 내 완료 목표
             var resultsInterval = isTabVisible ? 200 : 1200;   // 200ms — 결과·그래프 체크 주기
             var calcStatusInterval = isTabVisible ? 200 : 1200; // 200ms — 픽 서버 전달
-            var calcStateInterval = isTabVisible ? 400 : 5000;   // 400ms — 계산기 상태 GET (8초 내 반영)
+            var calcStateInterval = isTabVisible ? 250 : 5000;   // 250ms — 계산기 상태 GET (빠른 반영)
             var timerInterval = isTabVisible ? 300 : 1000;
             
             // 결과 폴링: 계산기 실행 중일 때만 150ms, 그 외 200~300ms — 10초 게임에 충분 (3단계 최적화)
@@ -11756,7 +11765,7 @@ RESULTS_HTML = '''
                     const r = typeof remainingSecForPoll === 'number' ? remainingSecForPoll : 10;
                     const criticalPhase = r <= 3 || r >= 8;
                     // 백그라운드일 때는 최소 1초 간격. 너무 짧으면 서버 부하로 예측픽 안 나옴
-                    const baseInterval = allResults.length === 0 ? 200 : (anyRunning ? 150 : (criticalPhase ? 200 : 300));
+                    const baseInterval = allResults.length === 0 ? 200 : (anyRunning ? 120 : (criticalPhase ? 200 : 300));
                     const interval = isTabVisible ? baseInterval : Math.max(1000, baseInterval);
                     if (Date.now() - lastResultsUpdate > interval) {
                         loadResults().catch(e => console.warn('결과 새로고침 실패:', e));
@@ -11777,7 +11786,7 @@ RESULTS_HTML = '''
             // 계산기 상태 주기적 로드 — 실행 중일 때 빠르게, 모두 정지일 때도 주기적으로 (과거 데이터 덮어쓰기 루프 방지)
             // 모두 정지 시 load를 안 하면 메모리에 예전 데이터가 남아 save 시 서버를 덮어써 과거 데이터가 계속 나오는 충돌 발생
             calcStatePollIntervalId = setInterval(() => {
-                if (Date.now() - lastResetOrRunAt < 2000) return;  // 6초→2초: 저장 완료 대기 후 곧바로 계산기 결과 반영
+                if (Date.now() - lastResetOrRunAt < 1000) return;  // 1초: 저장 완료 대기 후 곧바로 계산기 결과 반영
                 const anyRunning = CALC_IDS.some(id => calcState[id] && calcState[id].running);
                 if (anyRunning) {
                     loadCalcStateFromServer(false).then(function() { updateAllCalcs(); }).catch(function(e) { console.warn('계산기 상태 폴링:', e); });
