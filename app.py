@@ -2522,7 +2522,9 @@ def ensure_stored_prediction_for_current_round(results):
         if get_stored_round_prediction(predicted_round):
             return
         ph = get_prediction_history(100)
-        pred = compute_prediction(results, ph)
+        shape_stats = _get_shape_stats_for_results(results) if len(results) >= 16 else None
+        chunk_stats = _get_chunk_stats_for_results(results) if len(results) >= 16 else None
+        pred = compute_prediction(results, ph, shape_win_stats=shape_stats, chunk_profile_stats=chunk_stats)
         if pred and pred.get('round') and pred.get('value') is not None:
             save_round_prediction(
                 pred['round'], pred['value'],
