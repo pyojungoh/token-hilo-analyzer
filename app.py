@@ -1151,6 +1151,23 @@ _calc_state_memory = {}
 # GET /api/calc-state 응답 속도: save 직후 150ms 이내 요청 시 DB 생략
 _calc_state_get_cache = {}  # session_id -> (state_dict, timestamp)
 
+
+def _fast_copy_calc_state(state):
+    """calc_state 복사. deepcopy 대비 history만 얕은 복사로 속도 개선 (시간 경과 시 점점 느려지는 현상 완화)."""
+    if not state or not isinstance(state, dict):
+        return state
+    out = {}
+    for k, v in state.items():
+        if isinstance(v, dict) and 'history' in v:
+            out[k] = dict(v)
+            out[k]['history'] = [dict(h) for h in v.get('history', [])]
+        elif isinstance(v, dict):
+            out[k] = dict(v)
+        else:
+            out[k] = v
+    return out
+
+
 def get_calc_state(session_id):
     """계산기 세션 상태 조회. 없으면 None. statement_timeout으로 먹통 방지."""
     if not session_id:
@@ -1160,7 +1177,7 @@ def get_calc_state(session_id):
     if sk in _calc_state_get_cache:
         cached, ts = _calc_state_get_cache[sk]
         if (now - ts) < 0.15:
-            return copy.deepcopy(cached)
+            return _fast_copy_calc_state(cached)
     if DB_AVAILABLE and DATABASE_URL:
         conn = get_db_connection(statement_timeout_sec=5)
         if conn:
@@ -1181,13 +1198,26 @@ def get_calc_state(session_id):
     return _calc_state_memory.get(sk)
 
 
+CALC_HISTORY_MAX = 1000  # 시간 경과 시 점점 느려지는 현상 방지. 1000회차 초과 시 최근만 유지.
+
 def save_calc_state(session_id, state_dict):
     """계산기 세션 상태 저장. statement_timeout으로 먹통 방지."""
     if not session_id:
         return False
     sk = str(session_id)[:64]
-    _calc_state_memory[sk] = state_dict
-    _calc_state_get_cache[sk] = (state_dict, time.time())
+    to_save = state_dict
+    if isinstance(state_dict, dict):
+        to_save = {}
+        for cid, c in state_dict.items():
+            if isinstance(c, dict) and isinstance(c.get('history'), list):
+                hist = c.get('history', [])
+                c_copy = dict(c)
+                c_copy['history'] = hist[-CALC_HISTORY_MAX:] if len(hist) > CALC_HISTORY_MAX else hist
+                to_save[cid] = c_copy
+            else:
+                to_save[cid] = c if not isinstance(c, dict) else dict(c)
+    _calc_state_memory[sk] = to_save
+    _calc_state_get_cache[sk] = (to_save, time.time())
     if DB_AVAILABLE and DATABASE_URL:
         conn = get_db_connection(statement_timeout_sec=5)
         if conn:
@@ -1197,7 +1227,7 @@ def save_calc_state(session_id, state_dict):
                     INSERT INTO calc_sessions (session_id, state_json, updated_at)
                     VALUES (%s, %s, CURRENT_TIMESTAMP)
                     ON CONFLICT (session_id) DO UPDATE SET state_json = EXCLUDED.state_json, updated_at = CURRENT_TIMESTAMP
-                ''', (sk, json.dumps(state_dict)))
+                ''', (sk, json.dumps(to_save)))
                 conn.commit()
                 cur.close()
                 conn.close()
@@ -6713,7 +6743,7 @@ RESULTS_HTML = '''
                                     <div class="calc-mini-graph-body"><div class="calc-mini-graph-wrap" id="calc-1-mini-graph" title="최근 정/꺽 그래프 (좌=최신)"></div></div>
                                 </div>
                                 <div class="calc-round-table-wrap" id="calc-1-round-table-wrap"></div>
-                                <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="1">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
+                                <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="1">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 100회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-1-streak">경기결과 (최근 30회): -</div>
                                 <div class="calc-stats" id="calc-1-stats">최대연승: - | 최대연패: - | 모양적중률: - | 표승률: - | 15회승률: - | 모양판별승률: -</div>
                             </div>
@@ -6769,7 +6799,7 @@ RESULTS_HTML = '''
                                     <div class="calc-mini-graph-body"><div class="calc-mini-graph-wrap" id="calc-2-mini-graph" title="최근 정/꺽 그래프 (좌=최신)"></div></div>
                                 </div>
                                 <div class="calc-round-table-wrap" id="calc-2-round-table-wrap"></div>
-                                <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="2">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
+                                <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="2">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 100회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-2-streak">경기결과 (최근 30회): -</div>
                                 <div class="calc-stats" id="calc-2-stats">최대연승: - | 최대연패: - | 모양적중률: - | 표승률: - | 15회승률: - | 모양판별승률: -</div>
                             </div>
@@ -6825,7 +6855,7 @@ RESULTS_HTML = '''
                                     <div class="calc-mini-graph-body"><div class="calc-mini-graph-wrap" id="calc-3-mini-graph" title="최근 정/꺽 그래프 (좌=최신)"></div></div>
                                 </div>
                                 <div class="calc-round-table-wrap" id="calc-3-round-table-wrap"></div>
-                                <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="3">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 200회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
+                                <div class="calc-export-line" style="margin:6px 0;"><button type="button" class="calc-export-csv" data-calc="3">전체 내보내기 (CSV)</button> <span class="calc-export-hint" style="color:#888;font-size:0.85em">표는 최근 100회차까지 표시 (전체 내보내기로 전체 확인)</span></div>
                                 <div class="calc-streak" id="calc-3-streak">경기결과 (최근 30회): -</div>
                                 <div class="calc-stats" id="calc-3-stats">최대연승: - | 최대연패: - | 모양적중률: - | 표승률: - | 15회승률: - | 모양판별승률: -</div>
                             </div>
@@ -7688,7 +7718,10 @@ RESULTS_HTML = '''
                                 changed = true;
                             });
                         });
-                        if (changed) try { saveCalcStateToServer(); } catch (e) {}
+                        if (changed) {
+                            try { saveCalcStateToServer(); } catch (e) {}
+                            if (typeof updateAllCalcs === 'function') updateAllCalcs();
+                        }
                     })();
                 }
                 // lastServerPrediction/lastPrediction은 아래에서 results 수락 시에만 설정 (깜빡임 방지)
@@ -9540,9 +9573,14 @@ RESULTS_HTML = '''
             const s = Math.floor(sec % 60);
             return h + '시 ' + m + '분 ' + s + '초';
         }
+        var _getCalcResultCache = {};
         function getCalcResult(id) {
             try {
             if (!calcState[id]) return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-', processedCount: 0 };
+            const hist = dedupeCalcHistoryByRound(calcState[id].history || []);
+            const lastH = hist.length ? hist[hist.length - 1] : null;
+            const cacheKey = id + '_' + hist.length + '_' + (lastH && lastH.round != null ? lastH.round : '') + '_' + (lastH && lastH.actual || '');
+            if (_getCalcResultCache[cacheKey]) return _getCalcResultCache[cacheKey];
             const capIn = parseFloat(document.getElementById('calc-' + id + '-capital')?.value) || 1000000;
             const baseIn = parseFloat(document.getElementById('calc-' + id + '-base')?.value) || 10000;
             const oddsIn = parseFloat(document.getElementById('calc-' + id + '-odds')?.value) || 1.97;
@@ -9550,7 +9588,6 @@ RESULTS_HTML = '''
             const martingaleTypeEl = document.getElementById('calc-' + id + '-martingale-type');
             const useMartingale = !!(martingaleEl && martingaleEl.checked);
             const martingaleType = (martingaleTypeEl && martingaleTypeEl.value) || 'pyo';
-            const hist = dedupeCalcHistoryByRound(calcState[id].history || []);
             
             // [변경 금지] 순익·보유자산은 CALCULATOR_GUIDE에 따라 마틴게일 시뮬레이션으로만 계산.
             // 서버 h.profit/h.betAmount는 DB 병합 타이밍으로 어긋날 수 있으므로 사용하지 않음. 표와 동일 출처 보장.
@@ -9610,7 +9647,10 @@ RESULTS_HTML = '''
             const winRate = total > 0 ? (100 * wins / total).toFixed(1) : '-';
             const displayMaxWin = (calcState[id] && calcState[id].maxWinStreakEver != null) ? calcState[id].maxWinStreakEver : maxWinStreak;
             const displayMaxLose = (calcState[id] && calcState[id].maxLoseStreakEver != null) ? calcState[id].maxLoseStreakEver : maxLoseStreak;
-            return { cap: Math.max(0, Math.floor(cap)), profit, currentBet: bust ? 0 : currentBet, wins, losses, bust, maxWinStreak: displayMaxWin, maxLoseStreak: displayMaxLose, winRate, processedCount: bust ? processedCount : hist.length };
+            const out = { cap: Math.max(0, Math.floor(cap)), profit, currentBet: bust ? 0 : currentBet, wins, losses, bust, maxWinStreak: displayMaxWin, maxLoseStreak: displayMaxLose, winRate, processedCount: bust ? processedCount : hist.length };
+            if (Object.keys(_getCalcResultCache).length > 30) _getCalcResultCache = {};
+            _getCalcResultCache[cacheKey] = out;
+            return out;
             } catch (e) { console.warn('getCalcResult', id, e); return { cap: 0, profit: 0, currentBet: 0, wins: 0, losses: 0, bust: false, maxWinStreak: 0, maxLoseStreak: 0, winRate: '-', processedCount: 0 }; }
         }
         function getBetForRound(id, roundNum) {
@@ -10788,7 +10828,7 @@ RESULTS_HTML = '''
             // 회차별 픽/결과/승패/배팅금액/수익 행 목록 (pending=대기, completed=결과·수익). 200행 채우면 조기 종료(성능).
             let rows = [];
             var seenRoundNums = {};
-            const CALC_TABLE_DISPLAY_MAX = 200;
+            const CALC_TABLE_DISPLAY_MAX = 100;
             for (let i = usedHist.length - 1; i >= 0; i--) {
                 if (rows.length >= CALC_TABLE_DISPLAY_MAX) break;
                 const h = usedHist[i];
@@ -13002,7 +13042,7 @@ def api_calc_state():
                 else:
                     # 회차별 병합: 클라이언트 행 우선(no_bet/betAmount 유지). 새로고침 후에도 멈춤·배팅 구간 정확히 복원
                     use_history = _merge_calc_histories(client_history, current_history)
-                    use_history = use_history[-50000:] if len(use_history) > 50000 else use_history
+                    use_history = use_history[-1000:] if len(use_history) > 1000 else use_history
                 for ent in use_history:
                     if not isinstance(ent, dict):
                         continue
