@@ -121,20 +121,18 @@ PERF_PROFILE=1 python app.py
 
 ## 5. 권장 수정 방향 (우선순위)
 
-### 5.1 캐시 TTL 연장 ✅ 적용됨
+### 5.1 캐시 TTL 연장 ❌ 되돌림
 
-- `RESULTS_RESPONSE_CACHE_TTL_MS`: 150 → **250**
-- 120ms 폴링에서 apply 0.1초 갱신 시, 250ms면 2~3회 연속 캐시 히트 가능
+- 250ms 적용 시 예측픽·계산기표·그래프 전체가 느려져 **되돌림** (150ms 유지)
 
 ### 5.2 apply에서 results_cache 갱신 강화 (이미 적용됨)
 
 - 현재: apply가 `_build_results_payload_db_only(results, ph)`로 results_cache 갱신
 
-### 5.3 graphColorMatchResults 최적화 ✅ 적용됨
+### 5.3 graphColorMatchResults 최적화 ❌ 되돌림
 
-- **서버에서 graph_values 전달**: `_build_results_payload_db_only`, `_build_results_payload` 반환에 `graph_values` 포함
-- 클라이언트: `data.graph_values` 있으면 로컬 parseCardValue 루프 생략, 서버 값 사용
-- **효과**: parseCardValue 84~168회 제거, 클라이언트 DOM 처리 속도 개선
+- 서버 graph_values 전달 적용 시 전체 결과값·예측픽·계산기표가 느려져 **되돌림**
+- 원인 추정: payload 증가 또는 apply 경로 부담
 
 ### 5.4 graph-stats / 예측 카드 블록 분리 (미적용)
 
